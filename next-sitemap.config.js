@@ -2,14 +2,21 @@
 module.exports = {
   siteUrl: 'https://www.librechat.ai',
   generateRobotsTxt: true,
+  robotsTxtOptions: {
+    transformRobotsTxt: async (_, robotsTxt) =>
+      robotsTxt.replace(
+        'User-agent: *',
+        'User-agent: *\nContent-Signal: ai-train=no, search=yes, ai-input=yes',
+      ),
+  },
   changefreq: 'weekly',
   priority: 0.7,
   exclude: ['*/_meta'],
   // Per-route freshness + priority so search engines crawl the home page and
   // docs more aggressively than legal/utility pages.
   transform: async (config, path) => {
-    let {changefreq} = config
-    let {priority} = config
+    let { changefreq } = config
+    let { priority } = config
 
     if (path === '/') {
       changefreq = 'daily'

@@ -16,7 +16,7 @@ function getSlug(path: string): string {
 }
 
 function findEntry(slug: string) {
-  return changelog.find((entry) => getSlug(entry._file.path) === slug)
+  return changelog.find((entry) => getSlug(entry.info.path) === slug)
 }
 
 export default async function ChangelogDetailPage(props: PageProps) {
@@ -37,7 +37,7 @@ export default async function ChangelogDetailPage(props: PageProps) {
             headline: entry.title,
             description: entry.description,
             url: `/changelog/${params.slug}`,
-            image: (entry as any).ogImage ?? ogImageUrl({ title: entry.title, type: 'changelog' }),
+            image: entry.ogImage ?? ogImageUrl({ title: entry.title, type: 'changelog' }),
             datePublished: new Date(date).toISOString(),
           }),
           breadcrumbSchema([
@@ -67,9 +67,9 @@ export default async function ChangelogDetailPage(props: PageProps) {
               day: 'numeric',
             })}
           </time>
-          {(entry as any).version && (
+          {entry.version && (
             <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
-              v{(entry as any).version}
+              v{entry.version}
             </span>
           )}
         </div>
@@ -84,7 +84,7 @@ export default async function ChangelogDetailPage(props: PageProps) {
 
 export function generateStaticParams(): { slug: string }[] {
   return changelog.map((entry) => ({
-    slug: getSlug(entry._file.path),
+    slug: getSlug(entry.info.path),
   }))
 }
 
@@ -93,7 +93,7 @@ export async function generateMetadata(props: PageProps): Promise<Metadata> {
   const entry = findEntry(params.slug)
   if (!entry) notFound()
 
-  const ogImage = (entry as any).ogImage ?? ogImageUrl({ title: entry.title, type: 'changelog' })
+  const ogImage = entry.ogImage ?? ogImageUrl({ title: entry.title, type: 'changelog' })
 
   return {
     title: entry.title,

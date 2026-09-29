@@ -26,16 +26,21 @@ These are fields under `interface`:
 - `remoteAgents`
 - `skills`
 - `sharedLinks`
+- `schedules`
 - `temporaryChat`
 - `temporaryChatRetention`
+- `generalChatRetention`
 - `retentionMode`
 - `retainAgentFiles`
 - `autoSubmitFromUrl`
 - `customWelcome`
+- `codeHighlightThrottleMs`
 - `runCode`
 - `webSearch`
 - `fileSearch`
 - `fileCitations`
+- `feedback`
+- `defaultPinnedTools`
 - `peoplePicker`
 - `marketplace`
 
@@ -46,7 +51,7 @@ These are fields under `interface`:
 - Conditional logic in the application can further modify these settings based on other configurations like model specifications.
 
 <Callout type="warning" title="Deprecated: permission side-effect fields">
-Several fields below (`mcpServers`, `prompts`, `bookmarks`, `memories`, `multiConvo`, `agents`, `remoteAgents`, `skills`, `sharedLinks`, `temporaryChat`, `runCode`, `webSearch`, `fileSearch`, `fileCitations`, `peoplePicker`, `marketplace`) don't just toggle UI, they seed role permissions in the database at startup, and only for the built-in `USER` role.
+Several fields below (`mcpServers`, `prompts`, `bookmarks`, `memories`, `multiConvo`, `agents`, `remoteAgents`, `skills`, `sharedLinks`, `schedules`, `temporaryChat`, `runCode`, `webSearch`, `fileSearch`, `fileCitations`, `peoplePicker`, `marketplace`) don't just toggle UI, they seed role permissions in the database at startup, and only for the built-in `USER` role.
 
 For ongoing management, use the [**LibreChat Admin Panel**](/docs/features/admin_panel), which edits the permission matrix directly on each role (including custom roles). These YAML fields remain supported for bootstrapping a fresh instance or fully file-driven deployments, but should no longer be used as the primary way to manage feature permissions.
 
@@ -110,11 +115,25 @@ interface:
     create: true
     share: true
     public: false
+    snapshotFiles: true
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    fireConcurrency: 5
   customWelcome: 'Hey {{user.name}}! Welcome to LibreChat'
+  codeHighlightThrottleMs: 300
   runCode: true
   webSearch: true
   fileSearch: true
   fileCitations: true
+  feedback: true
+  defaultPinnedTools:
+    - artifacts
+    - execute_code
+    - mcp
 ```
 
 ## mcpServers
@@ -175,6 +194,18 @@ interface:
       'false',
     ],
     [
+      'toolsRefreshInterval',
+      'Number',
+      'Polling interval in milliseconds for refreshing MCP tool catalogs while MCP controls are visible. Set to 0 to disable polling.',
+      '300000',
+    ],
+    [
+      'statusRefreshInterval',
+      'Number',
+      'Polling interval in milliseconds for refreshing MCP connection status while MCP controls are visible. Set to 0 to disable polling.',
+      '30000',
+    ],
+    [
       'trustCheckbox',
       'Object',
       'Customizable labels for the trust checkbox in the MCP server dialog. Supports simple strings or language-keyed objects for internationalization.',
@@ -208,6 +239,8 @@ interface:
 interface:
   mcpServers:
     placeholder: 'Select MCP Server'
+    toolsRefreshInterval: 300000
+    statusRefreshInterval: 30000
     use: true
     create: true
     share: false
@@ -291,6 +324,8 @@ interface:
     ],
   ]}
 />
+
+When modal acceptance is enabled, LibreChat records both the acceptance state and the time it was accepted. After upgrading an existing deployment, run `npm run migrate:terms-timestamp` to backfill accepted users that do not have a timestamp. The migration asks for confirmation, processes all tenants, uses each user's account creation time as the fallback, and exits non-zero if any batch fails. Running `npm run reset-terms` clears both the acceptance state and its timestamp so users must accept again.
 
 ## modelSelect
 
@@ -836,6 +871,12 @@ For Skills behavior and invocation modes, see [Skills](/docs/features/skills).
       'Controls whether users can toggle "share with everyone" for a shared link. Anonymous viewing still requires ALLOW_SHARED_LINKS_PUBLIC=true.',
       'true',
     ],
+    [
+      'snapshotFiles',
+      'Boolean',
+      'Controls whether newly created shared links can snapshot referenced conversation files so recipients can preview or download them through the link.',
+      'true',
+    ],
   ]}
 />
 
@@ -847,9 +888,119 @@ interface:
     create: true
     share: true
     public: false
+    snapshotFiles: true
 ```
 
 For user-facing shared-link behavior, see [Shareable Links](/docs/features/shareable_links).
+
+## schedules
+
+Enables the experimental [Scheduled Chats](/docs/features/scheduled_chats) panel and configures its permissions and runtime limits.
+
+> **Deprecated for permission management.** The `use` and `create` sub-keys seed the `SCHEDULES` permissions at startup for the default `USER` role only. Prefer the [Admin Panel](/docs/features/admin_panel) for ongoing permission management. The runtime limit fields remain YAML settings.
+
+<Callout type="warning" title="Experimental and default-off">
+  The `schedules` field is absent from LibreChat's default interface configuration. Scheduled runs
+  can consume model and tool resources, so add this field only after reviewing the deployment
+  requirements in [Scheduled Chats](/docs/features/scheduled_chats#deployment-safety).
+</Callout>
+
+**Key:**
+
+<OptionTable
+  options={[
+    [
+      'schedules',
+      'Boolean or Object',
+      'Controls Scheduled Chats permissions and deployment limits.',
+      'Omitted by default (disabled).',
+    ],
+  ]}
+/>
+
+**Boolean behavior:**
+
+- `schedules: true` opts in with the default runtime limits without changing stored role permissions.
+- `schedules: false` is a deployment-wide stop. It cannot be re-enabled by a role, group, or user configuration override.
+- Object form opts in unless `use: false` is set.
+
+**Sub-keys:**
+
+<OptionTable
+  options={[
+    ['use', 'Boolean', 'Controls whether users can list and view their schedules.', 'true when opted in'],
+    [
+      'create',
+      'Boolean',
+      'Controls whether users can create, edit, enable, run, and delete schedules.',
+      'true',
+    ],
+    ['maxPerUser', 'Number', 'Maximum schedules per user. Set to 0 to prevent creation.', '10'],
+    ['minIntervalMinutes', 'Number', 'Shortest allowed interval between occurrences.', '60'],
+    [
+      'autoDisableAfterFailures',
+      'Number',
+      'Consecutive failed runs before a schedule is disabled.',
+      '5',
+    ],
+    [
+      'admissionConcurrency',
+      'Number',
+      'Maximum occurrences concurrently performing readiness admission per replica (1-100).',
+      '20',
+    ],
+    [
+      'fireConcurrency',
+      'Number',
+      'Maximum scheduled runs admitted concurrently across the deployment.',
+      '5',
+    ],
+    [
+      'mcpPreflightConcurrency',
+      'Number',
+      'Maximum MCP readiness connections opened concurrently by one schedule admission (1-10).',
+      '3',
+    ],
+    [
+      'mcpPreflightTimeoutMs',
+      'Number',
+      'Maximum wall-clock time for one schedule MCP readiness admission (1000-600000 ms).',
+      '300000',
+    ],
+    [
+      'requireProject',
+      'Boolean',
+      'Requires every schedule to resolve to an owned Chat Project at create/update time and again at each run.',
+      'false',
+    ],
+    [
+      'projectId',
+      'String',
+      'Pins every scheduled conversation to one Chat Project, overriding the stored choice and implying `requireProject`.',
+      '',
+    ],
+  ]}
+/>
+
+```yaml filename="interface / schedules"
+interface:
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    admissionConcurrency: 20
+    fireConcurrency: 5
+    mcpPreflightConcurrency: 3
+    mcpPreflightTimeoutMs: 300000
+    requireProject: false
+    # projectId: '000000000000000000000000'
+```
+
+The base YAML is authoritative for the global enable state. Configuration overrides can narrow access and tune inherited limits, but cannot re-enable a base `false` or `{ use: false }`. `SCHEDULES_DISABLED=true` is an additional emergency stop for both automatic and manual runs.
+
+`requireProject` is enforced both when a schedule is written and immediately before each run. A schedule that no longer satisfies the requirement is auto-disabled rather than starting an unscoped conversation. `projectId` outranks a schedule's stored selection and is resolved as the schedule owner; because projects are user-owned, it is primarily useful in per-role or per-user configuration overrides rather than as one deployment-wide value.
 
 ## temporaryChat
 
@@ -927,6 +1078,30 @@ interface:
 - **720 hours**: `temporaryChatRetention: 720` (30 days - default)
 - **8760 hours**: `temporaryChatRetention: 8760` (1 year - maximum)
 
+## generalChatRetention
+
+Controls how long regular chats are retained when `retentionMode` is set to `"all"`.
+
+<OptionTable
+  options={[
+    [
+      'generalChatRetention',
+      'Number',
+      'Sets the retention period for regular chats in hours under all-data retention.',
+      'Defaults to temporaryChatRetention when omitted',
+    ],
+  ]}
+/>
+
+The value must be between `1` and `8760` hours. This setting lets regular and temporary chats use different lifetimes. Changing either retention value affects deadlines assigned to new or updated records; LibreChat does not rewrite existing stored deadlines automatically.
+
+```yaml filename="interface / generalChatRetention"
+interface:
+  temporaryChatRetention: 168 # 7 days for temporary chats
+  generalChatRetention: 2160 # 90 days for regular chats
+  retentionMode: 'all'
+```
+
 ## retentionMode
 
 Controls which data receives retention deadlines.
@@ -957,6 +1132,7 @@ Controls which data receives retention deadlines.
 ```yaml filename="interface / retentionMode"
 interface:
   temporaryChatRetention: 168
+  generalChatRetention: 2160
   retentionMode: 'all'
 ```
 
@@ -1054,6 +1230,19 @@ interface:
 
 **Note:** You can use `{{user.name}}` within the `customWelcome` message to dynamically insert the user's name for a personalized greeting experience.
 
+## codeHighlightThrottleMs
+
+Controls the minimum interval between syntax-highlighting passes while a code block is changing during a streamed response. Throttling reduces repeated highlighting work without delaying the streamed text itself. The same value applies when rendering shared conversations.
+
+**Default:** `300` milliseconds
+
+Set the value to `0` to highlight every streamed update. Valid values range from `0` through `60000` milliseconds.
+
+```yaml filename="interface / codeHighlightThrottleMs"
+interface:
+  codeHighlightThrottleMs: 300
+```
+
 ## runCode
 
 Enables/disables the "Run Code" button for Markdown Code Blocks. More info on the [LibreChat Code Interpreter API](/docs/features/code_interpreter)
@@ -1083,7 +1272,7 @@ interface:
 
 Enables/disables the web search button in the chat interface. More info on [Web Search Configuration](/docs/configuration/librechat_yaml/object_structure/web_search)
 
-**Note:** This setting does not disable the [Agents Web Search Capability](/docs/features/agents#web-search). To disable the Agents Capability, see the [Agents Endpoint configuration](/docs/configuration/librechat_yaml/object_structure/agents) instead.
+**Note:** This setting does not disable the [Agents Web Search capability](/docs/features/agents#agent-capabilities). To disable the Agents capability, see the [Agents endpoint configuration](/docs/configuration/librechat_yaml/object_structure/agents#capabilities) instead.
 
 > **Deprecated for permission management.** Seeds the `WEB_SEARCH` role permission at startup for the default `USER` role only. Prefer the [Admin Panel](/docs/features/admin_panel).
 
@@ -1161,6 +1350,73 @@ Controls the global availability of file citations functionality. When disabled,
 ```yaml filename="interface / fileCitations"
 interface:
   fileCitations: true
+```
+
+## feedback
+
+Controls whether the thumbs up / thumbs down buttons are shown under responses. When set to `false`, the buttons are removed from the message action row and the server rejects feedback writes, so a deployment that hides the controls also stores no ratings.
+
+**Notes:**
+
+- The other message actions (read aloud, copy, edit, fork, and regenerate) are unaffected, and the action row reflows without leaving a gap.
+- With feedback disabled, `PUT /api/messages/:conversationId/:messageId/feedback` responds with `403` and `{"error": "Feedback is disabled"}` before anything is written to the database or exported.
+- Ratings collected while the feature was enabled stay on existing messages. The flag stops new writes, it does not delete stored feedback.
+- Ratings are only consumed outside LibreChat when Langfuse tracing is configured, where each one is sent as a `user-feedback` score. See [Message Feedback Scores](/docs/configuration/langfuse#message-feedback-scores).
+- This is a plain interface flag rather than a role permission, so there is nothing to grant per role in the [Admin Panel](/docs/features/admin_panel).
+
+**Key:**
+
+<OptionTable
+  options={[
+    [
+      'feedback',
+      'Boolean',
+      'Shows or hides the thumbs up/thumbs down feedback buttons on responses.',
+      'When disabled, the buttons are removed for every user and the feedback endpoint rejects writes with a 403.',
+    ],
+  ]}
+/>
+
+**Default:** `true`
+
+**Example:**
+
+```yaml filename="interface / feedback"
+interface:
+  feedback: false
+```
+
+## defaultPinnedTools
+
+Seeds the initial prompt-bar pinned tools for users who have not customized their pinned tool state. Once a user pins or unpins a tool, LibreChat preserves that user's choice.
+
+**Key:**
+
+<OptionTable
+  options={[
+    [
+      'defaultPinnedTools',
+      'Array of strings',
+      'Tool keys and MCP dropdown/server names that should start pinned in the prompt bar for new or uncustomized users.',
+      'When omitted, built-in tools start unpinned and the MCP dropdown keeps its default pinned state.',
+    ],
+  ]}
+/>
+
+**Supported values:**
+
+- Built-in tool keys: `artifacts`, `execute_code`, `web_search`, `file_search`, `skills`
+- `mcp` to pin the MCP servers dropdown
+- A specific MCP server name to seed that server as pinned
+
+**Example:**
+
+```yaml filename="interface / defaultPinnedTools"
+interface:
+  defaultPinnedTools:
+    - artifacts
+    - execute_code
+    - mcp
 ```
 
 ## peoplePicker

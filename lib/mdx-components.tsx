@@ -7,6 +7,7 @@ import { File as FumadocsFile, Folder, Files } from 'fumadocs-ui/components/file
 import { Accordion, Accordions } from 'fumadocs-ui/components/accordion'
 import { OptionTable } from '@/components/table'
 import { Frame } from '@/components/Frame'
+import { ThemeImage } from '@/components/ThemeImage'
 import { Video } from '@/components/Video'
 import { DocsHub } from '@/components/DocsHub'
 import { LocalInstallHub } from '@/components/LocalInstallHub'
@@ -17,6 +18,8 @@ import { TrackedLink, TrackedAnchor } from '@/components/TrackedLink'
 import { CredentialsGeneratorMDX } from '@/components/tools/CredentialsGeneratorMDX'
 import { YAMLValidatorMDX } from '@/components/tools/YAMLValidatorMDX'
 import { CompatibilityMatrix } from '@/components/CompatibilityMatrix'
+import { AnalyticsArchitecture } from '@/components/blog/AnalyticsArchitecture'
+import { SiteStats } from '@/components/blog/SiteStats'
 import type { ReactNode } from 'react'
 
 function mapCalloutType(type?: string): 'info' | 'warn' | 'error' {
@@ -216,8 +219,15 @@ function ImgCompat({ image: _, ...props }: { image?: boolean; [key: string]: any
   const src = typeof props.src === 'string' ? props.src : ''
   const isExternal = src.startsWith('http://') || src.startsWith('https://')
   if (isExternal) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img {...props} loading="lazy" />
+    // External images can't use next/image's static-import path, so render a
+    // plain <img> but still wrap it in ImageZoom (via children) so click-to-zoom
+    // works the same as for local images.
+    return (
+      <ImageZoom src={src} alt={props.alt ?? ''}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img {...props} loading="lazy" />
+      </ImageZoom>
+    )
   }
   // Local images: remarkImage rewrites these to a Next static-import object
   // (or a string) plus width/height, so let ImageZoom render them through
@@ -248,7 +258,10 @@ export const mdxComponents = {
   Accordions,
   OptionTable,
   CompatibilityMatrix,
+  AnalyticsArchitecture,
+  SiteStats,
   Frame,
+  ThemeImage,
   Video,
   Carousel,
   DocsHub,

@@ -11,7 +11,7 @@ icon: Settings
 
 <OptionTable
   options={[
-    ['version', 'String', 'Specifies the version of the configuration file.', 'version: 1.3.13'],
+    ['version', 'String', 'Specifies the version of the configuration file.', 'version: 1.3.15'],
   ]}
 />
 
@@ -28,6 +28,82 @@ icon: Settings
   ]}
 />
 
+## permissions
+
+Controls retry behavior for concurrent access-control-list writes.
+
+<OptionTable
+  options={[
+    [
+      'maxWriteAttempts',
+      'Integer',
+      'Maximum compare-and-swap attempts for each ACL document, including the initial write. Only write conflicts are retried.',
+      '3',
+    ],
+  ]}
+/>
+
+Valid values range from `1` through `100`.
+
+```yaml filename="permissions"
+permissions:
+  maxWriteAttempts: 3
+```
+
+## langfuse
+
+<OptionTable
+  options={[
+    [
+      'langfuse',
+      'Object',
+      'Configures the encrypted Langfuse connection and deployment-owned request headers.',
+      '',
+    ],
+  ]}
+/>
+
+**Subkeys:**
+
+<OptionTable
+  options={[
+    ['enabled', 'Boolean', 'Enables or disables Langfuse tracing for this config scope.', ''],
+    ['publicKey', 'String', 'Langfuse project public key.', ''],
+    ['secretKey', 'String', 'Encrypted Langfuse project secret key.', ''],
+    ['projectId', 'String', 'Verified Langfuse project identity.', ''],
+    ['secretKeyPreview', 'String', 'Server-generated masked preview of the stored secret key.', ''],
+    [
+      'destination',
+      'String',
+      'Selects one deployment-approved Langfuse destination key.',
+      '',
+    ],
+    [
+      'headers',
+      'Object/Map of Strings',
+      'Deployment-owned headers sent to one configured Langfuse origin for proxy or gateway authentication. Supports `${ENV_VAR}` references.',
+      '',
+    ],
+  ]}
+/>
+
+Manage connection fields through **Settings → Langfuse** or an authorized administrator configuration client. The Settings flow verifies the connection and derives `projectId`; authorized administrator writes encrypt `secretKey`, generate `secretKeyPreview`, and redact the secret from reads. Plaintext `secretKey` values placed directly in `librechat.yaml` are not accepted by the runtime connection path. The legacy `displaySecretKey` and `fanout.enabled` fields are no longer part of the schema.
+
+`headers` is different: it is deployment infrastructure and can only be set in `librechat.yaml`. Admin configuration writes reject both the whole map and individual header paths so gateway credentials are not stored or returned through Mongo-backed configuration. Values support `${ENV_VAR}` interpolation; use environment references instead of literals. LibreChat drops unresolved variables, protected infrastructure-secret references, blank values, and invalid HTTP header names with a warning.
+
+Custom headers are sent on trace and media export, feedback-score requests, project lookup, and admin credential verification only when the deployment resolves exactly one Langfuse origin. If central, tenant, or collector configuration produces multiple origins, LibreChat sends no custom headers and logs a warning because the map cannot safely identify a recipient. They cannot use per-user `{{...}}` placeholders, and the fanout collector forwards only `Authorization` upstream.
+
+```yaml filename="langfuse / headers"
+langfuse:
+  headers:
+    CF-Access-Client-Id: '${CF_ACCESS_CLIENT_ID}'
+    CF-Access-Client-Secret: '${CF_ACCESS_CLIENT_SECRET}'
+```
+
+`langfuse` is a base-configuration-only section. Role, group, and user configuration overrides cannot replace or tombstone it.
+
+See [Langfuse Configuration](/docs/configuration/langfuse) for availability rules, authenticated proxy setup, environment-managed credentials, and optional fanout deployment.
+
 ## skillSync
 
 <OptionTable
@@ -43,6 +119,23 @@ icon: Settings
 
 see: [Skill Sync Object Structure](/docs/configuration/librechat_yaml/object_structure/skill_sync)
 
+## filters
+
+<OptionTable
+  options={[
+    [
+      'filters',
+      'Object',
+      'Configures source-aware content protection for messages, prompts, Agent instructions, conversation starters and titles, feedback, Skills, memories, files, tool arguments, model parameters, and Action metadata.',
+      '',
+    ],
+  ]}
+/>
+
+`filters` is a base-configuration-only policy. Role, group, user, and database overrides cannot add, replace, or tombstone it. In a multi-replica deployment, coordinate the config rollout or restart so every replica loads the same policy.
+
+See: [Content Filter Object Structure](/docs/configuration/librechat_yaml/object_structure/message_filter#source-aware-filters)
+
 ## messageFilter
 
 <OptionTable
@@ -50,13 +143,13 @@ see: [Skill Sync Object Structure](/docs/configuration/librechat_yaml/object_str
     [
       'messageFilter',
       'Object',
-      'Configures server-side message filters. In v1.3.13, `messageFilter.pii` can reject credential-shaped submitted text before model calls and persistence.',
+      'Configures the legacy message-only PII policy. Existing deployments can keep this block while migrating to `filters.messages`; when both are configured, both policies apply.',
       '',
     ],
   ]}
 />
 
-see: [Message Filter Object Structure](/docs/configuration/librechat_yaml/object_structure/message_filter)
+See: [Legacy messageFilter](/docs/configuration/librechat_yaml/object_structure/message_filter#legacy-messagefilter)
 
 ## fileStrategy
 
@@ -76,7 +169,7 @@ see: [Message Filter Object Structure](/docs/configuration/librechat_yaml/object
 - **Notes**:
   - `"cloudfront"` stores files in S3 and returns CloudFront URLs for stable media delivery, signed cookies, and signed downloads.
   - `"firebase"` serves files through Firebase Storage and Firebase Hosting edge locations.
-  - S3 serves files via **presigned URLs** (temporary signed tokens) that expire. Once expired, any image or avatar referencing that URL will appear broken in the UI. This makes S3 unsuitable as a primary strategy for visual assets. See the [related discussion](https://github.com/danny-avila/LibreChat/discussions/10280#discussioncomment-14803903) for details.
+  - S3 serves files via **presigned URLs** (temporary signed tokens) that expire. Once expired, any image or avatar referencing that URL will appear broken in the UI. This makes S3 unsuitable as a primary strategy for visual assets. See the [related discussion](https://github.com/LibreChat-AI/LibreChat/discussions/10280#discussioncomment-14803903) for details.
   - For best performance of images and avatars, use `"cloudfront"` or `"firebase"`, or configure `fileStrategies` to route `avatar` and `image` to a CDN-backed strategy.
   - Please refer to the [File Storage & CDN documentation](/docs/configuration/cdn) for setup details
 
@@ -127,7 +220,7 @@ Allows granular control over file storage strategies for different file types.
 - **Notes**:
   - This setting takes precedence over the single `fileStrategy` option
   - If a specific file type is not configured, it falls back to `default`, then to `fileStrategy`, and finally to `"local"`
-  - Images and avatars need persistent, stable URLs to render correctly across the UI. S3 presigned URLs expire (AWS cap: 7 days for IAM users, hours for STS/role-based credentials), causing broken images in the model selector and chat UI. See the [related discussion](https://github.com/danny-avila/LibreChat/discussions/10280#discussioncomment-14803903) for full context. Use `"cloudfront"` or `"firebase"` for `avatar` and `image` to avoid this.
+  - Images and avatars need persistent, stable URLs to render correctly across the UI. S3 presigned URLs expire (AWS cap: 7 days for IAM users, hours for STS/role-based credentials), causing broken images in the model selector and chat UI. See the [related discussion](https://github.com/LibreChat-AI/LibreChat/discussions/10280#discussioncomment-14803903) for full context. Use `"cloudfront"` or `"firebase"` for `avatar` and `image` to avoid this.
   - S3 and Azure Blob Storage are well-suited for `document` storage, where short-lived presigned download URLs are appropriate.
   - Please refer to the [File Storage & CDN documentation](/docs/configuration/cdn) for setup details for each storage provider
 
@@ -247,9 +340,9 @@ see: [CloudFront Object Structure](/docs/configuration/librechat_yaml/object_str
 - **Notes**:
   - If `includedTools` and `filteredTools` are both specified, only `includedTools` will be recognized.
   - Affects both `gptPlugins` and `assistants` endpoints
-  - You can find the names of the tools to filter in [`api/app/clients/tools/manifest.json`](https://github.com/danny-avila/LibreChat/blob/main/api/app/clients/tools/manifest.json)
+  - You can find the names of the tools to filter in [`api/app/clients/tools/manifest.json`](https://github.com/LibreChat-AI/LibreChat/blob/main/api/app/clients/tools/manifest.json)
     - Use the `pluginKey` value
-  - Also, any listed under the ".well-known" directory [`api/app/clients/tools/.well-known`](https://github.com/danny-avila/LibreChat/blob/main/api/app/clients/tools/.well-known)
+  - Also, any listed under the ".well-known" directory `api/app/clients/tools/.well-known`
     - Use the `name_for_model` value
 
 ## includedTools
@@ -268,9 +361,9 @@ see: [CloudFront Object Structure](/docs/configuration/librechat_yaml/object_str
 - **Notes**:
   - If `includedTools` and `filteredTools` are both specified, only `includedTools` will be recognized.
   - Affects both `gptPlugins` and `assistants` endpoints
-  - You can find the names of the tools to filter in [`api/app/clients/tools/manifest.json`](https://github.com/danny-avila/LibreChat/blob/main/api/app/clients/tools/manifest.json)
+  - You can find the names of the tools to filter in [`api/app/clients/tools/manifest.json`](https://github.com/LibreChat-AI/LibreChat/blob/main/api/app/clients/tools/manifest.json)
     - Use the `pluginKey` value
-  - Also, any listed under the ".well-known" directory [`api/app/clients/tools/.well-known`](https://github.com/danny-avila/LibreChat/blob/main/api/app/clients/tools/.well-known)
+  - Also, any listed under the ".well-known" directory `api/app/clients/tools/.well-known`
     - Use the `name_for_model` value
 
 ## secureImageLinks
@@ -280,11 +373,15 @@ see: [CloudFront Object Structure](/docs/configuration/librechat_yaml/object_str
     [
       'secureImageLinks',
       'Boolean',
-      'Whether or not to secure access to image links that are hosted locally by the app. Default: false.',
+      'Requires authorization for image links hosted locally by the app. Default: true.',
       'secureImageLinks: true',
     ],
   ]}
 />
+
+Local images are protected when this field is omitted. Private conversation images require an active session and owner access. Stored user avatars require an authenticated viewer in the same tenant. Agent avatars follow the Agent's view ACL, including public visibility, while Assistant avatars require the same tenant plus the effective endpoint sharing or Assistant-management policy. Authorization and configuration lookup failures fail closed.
+
+Set `secureImageLinks: false` only as a compatibility opt-out for deployments that intentionally expose local image URLs without authentication. Role and user configuration overrides are resolved from the image owner's effective configuration.
 
 ## imageOutputType
 
@@ -330,6 +427,12 @@ see: [CloudFront Object Structure](/docs/configuration/librechat_yaml/object_str
       '',
     ],
     ['mistralModel', 'String', 'The Mistral model to use for OCR processing.', ''],
+    [
+      'allowedAddresses',
+      'Array of Strings',
+      'Trusted private host:port exemptions for OCR connect-time SSRF checks. Public destinations remain available.',
+      '',
+    ],
   ]}
 />
 
@@ -445,6 +548,12 @@ see: [OCR Config Object Structure](/docs/configuration/librechat_yaml/object_str
       'Safe search filtering level. 0 = OFF, 1 = MODERATE (default), 2 = STRICT.',
       '',
     ],
+    [
+      'allowedAddresses',
+      'Array of Strings',
+      'Trusted private host:port exemptions for web search, scrape, and rerank connect-time SSRF checks. Public destinations remain available.',
+      '',
+    ],
   ]}
 />
 
@@ -492,6 +601,12 @@ see: [Web Search Object Structure](/docs/configuration/librechat_yaml/object_str
     ['text', 'Object', 'Settings for direct text file parsing.', ''],
     ['stt', 'Object', 'Settings for Speech-to-Text (STT) audio file processing.', ''],
     [
+      'skills',
+      'Object',
+      'Settings for Skill imports, such as the maximum upload size for `.md`, `.zip`, and `.skill` files.',
+      '',
+    ],
+    [
       'fileTokenLimit',
       'Number',
       'Maximum number of tokens from text files to include in prompts before truncation.',
@@ -522,67 +637,63 @@ see: [Web Search Object Structure](/docs/configuration/librechat_yaml/object_str
     [
       'enabled',
       'Boolean',
-      'Enables or disables client-side image resizing functionality. Default: false.',
+      'When explicitly set, forces client-side resizing on or off for every user and locks the Settings toggle. Omit it to let each user choose in Settings > Chat; the user preference defaults to off.',
       'enabled: true',
     ],
     [
       'maxWidth',
       'Number',
-      'Maximum width in pixels for resized images. Images wider than this will be resized. Default: 1920.',
-      'maxWidth: 1024',
+      'Maximum width in pixels for resized images. Must be at least 1. Default: 1900.',
+      'maxWidth: 1900',
     ],
     [
       'maxHeight',
       'Number',
-      'Maximum height in pixels for resized images. Images taller than this will be resized. Default: 1080.',
-      'maxHeight: 768',
+      'Maximum height in pixels for resized images. Must be at least 1. Default: 1900.',
+      'maxHeight: 1900',
     ],
     [
       'quality',
       'Number',
-      'JPEG compression quality (0.1 to 1.0). Higher values mean better quality but larger file sizes. Default: 0.8.',
-      'quality: 0.9',
-    ],
-    [
-      'compressFormat',
-      'String',
-      'Output format for compressed images. Options: "jpeg", "webp". Default: "jpeg".',
-      'compressFormat: "webp"',
+      'Browser encoder quality from 0 to 1. Higher values usually preserve more detail and produce larger files. Default: 0.92.',
+      'quality: 0.92',
     ],
   ]}
 />
 
 **Description:**
 
-The `clientImageResize` configuration enables automatic client-side image resizing before upload. This feature helps:
+The `clientImageResize` configuration controls client-side downscaling before upload. This feature helps:
 
 - **Prevent upload failures** due to large image files exceeding server limits
 - **Reduce bandwidth usage** by compressing images before transmission
 - **Improve upload performance** with smaller file sizes
 - **Maintain image quality** while optimizing file size
 
-When enabled, images that exceed the specified `maxWidth` or `maxHeight` dimensions are automatically resized on the client side before being uploaded to the server. The resizing maintains the original aspect ratio while ensuring the image fits within the specified bounds.
+When resizing is enabled, supported images that exceed `maxWidth` or `maxHeight` are downscaled in the browser before upload. LibreChat preserves the aspect ratio, never upscales smaller images, and keeps the original file when the encoded result would not be smaller.
+
+If `enabled` is omitted, users can turn **Resize images before upload** on or off under **Settings > Chat**. The preference is stored in that browser and defaults to off. Setting `enabled: true` or `enabled: false` in `librechat.yaml` overrides every user's preference and disables the toggle.
 
 **Example:**
 
 ```yaml filename="clientImageResize"
 fileConfig:
   clientImageResize:
-    enabled: true
-    maxWidth: 1920
-    maxHeight: 1080
-    quality: 0.8
-    compressFormat: 'jpeg'
+    # Omit enabled so each user can choose under Settings > Chat.
+    maxWidth: 1900
+    maxHeight: 1900
+    quality: 0.92
 ```
+
+To enforce one behavior for the deployment, add either `enabled: true` or `enabled: false` to the same block.
 
 **Notes:**
 
-- Only applies to image files (JPEG, PNG, WebP, etc.)
-- Resizing occurs automatically when images exceed the specified dimensions
-- Original aspect ratio is preserved during resizing
-- The feature works with all supported image upload endpoints
-- Quality setting only applies to JPEG and WebP formats
-- Setting quality too low (< 0.5) may result in noticeable image degradation
+- The resize pipeline supports JPEG, PNG, and WebP in browsers with the required Canvas APIs.
+- Animated PNG and WebP files are sent unchanged so resizing does not discard animation.
+- The output keeps the source format. There is no `compressFormat` setting.
+- Browser encoders may ignore `quality` for lossless formats such as PNG.
+- A resize failure falls back to the original file; normal server upload limits still apply.
 
 see: [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config)
 
@@ -615,6 +726,12 @@ see: [File Config Object Structure](/docs/configuration/librechat_yaml/object_st
       'conversationsImport',
       'Object',
       'Configures rate limits specifically for conversation import operations.',
+      '',
+    ],
+    [
+      'agentEvents',
+      'Object',
+      'Configures the API-key-principal admission limit for authenticated Agent event requests.',
       '',
     ],
     ['stt', 'Object', 'Configures rate limits specifically for speech-to-text (stt) requests', ''],
@@ -654,6 +771,27 @@ see: [File Config Object Structure](/docs/configuration/librechat_yaml/object_st
   ]}
 />
 
+**agentEvents Subkeys:**
+
+<OptionTable
+  options={[
+    [
+      'userMax',
+      'Number',
+      'Maximum authenticated Agent event admissions per Remote Agents API key principal in one window.',
+      '40',
+    ],
+    [
+      'userWindowInMinutes',
+      'Number',
+      'Length of the authenticated Agent event admission window in minutes.',
+      '1',
+    ],
+  ]}
+/>
+
+This admission bucket is separate from normal message execution limits. The durable worker consumes the normal message-user bucket when it executes a delivery, avoiding a double charge at admission time. Legacy `AGENT_EVENT_USER_MAX` and `AGENT_EVENT_USER_WINDOW` values remain fallbacks when the YAML fields are omitted; explicit YAML values take precedence.
+
 **tts Subkeys:**
 
 <OptionTable
@@ -689,6 +827,9 @@ see: [File Config Object Structure](/docs/configuration/librechat_yaml/object_st
     - **Example**:
     ```yaml filename="rateLimits"
     rateLimits:
+      agentEvents:
+        userMax: 40
+        userWindowInMinutes: 1
       fileUploads:
         ipMax: 100
         ipWindowInMinutes: 60
@@ -782,7 +923,12 @@ see also:
       'Specifies the number of recent messages to include in memory context.',
       '',
     ],
-    ['agent', 'Object | Union', 'Configures the agent responsible for memory processing.', ''],
+    [
+      'agent',
+      'Object | Union',
+      'Configures the optional automatic memory agent. Set `agent.enabled: true` to run it.',
+      '',
+    ],
   ]}
 />
 
@@ -839,6 +985,12 @@ see: [Memory Object Structure](/docs/configuration/librechat_yaml/object_structu
       'contextPruning',
       'Object',
       'Configures position-based tool result degradation for older messages.',
+      '',
+    ],
+    [
+      'retainRecent',
+      'Object',
+      'Preserves recent complete turns and/or tokens outside the generated summary.',
       '',
     ],
   ]}
@@ -975,6 +1127,12 @@ see also:
     ],
     ['fileCitations', 'Boolean', 'Globally enables or disables file citations for all users', ''],
     [
+      'feedback',
+      'Boolean',
+      'Shows or hides the thumbs up/thumbs down feedback buttons on responses',
+      '',
+    ],
+    [
       'peoplePicker',
       'Object',
       'Configures which principal types are available controls in the people picker interface',
@@ -1097,6 +1255,12 @@ see: [Model Specs Object Structure](/docs/configuration/librechat_yaml/object_st
       'allowedAddresses',
       'Array of Strings',
       'SSRF exemption list (private IP space only). Permits specific private host:port services without flipping `allowedDomains` into strict-whitelist mode.',
+      '',
+    ],
+    [
+      'catalogRecovery',
+      'Object',
+      'Bounds passive MCP discovery, OAuth recovery, and cross-replica authorization fencing. See the MCP Settings reference for fields and defaults.',
       '',
     ],
   ]}
@@ -1257,6 +1421,8 @@ see: [MCP Servers Object Structure](/docs/configuration/librechat_yaml/object_st
     ['speechTab', 'Object', 'Default UI settings for speech features.', ''],
   ]}
 />
+
+Both `speech.tts` and `speech.stt` accept an `allowedAddresses` array of trusted private host:port exemptions. Speech requests enforce the default private-address block at connect time. See the detailed [Speech reference](/docs/configuration/librechat_yaml/object_structure/speech#ssrf-protection) for entry rules, proxy behavior, and examples.
 
 see: [Speech Object Structure](/docs/configuration/librechat_yaml/object_structure/speech)
 

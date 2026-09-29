@@ -7,13 +7,18 @@ icon: FileCode
 
 The `fileConfig` object allows you to configure file handling settings for the application, including size limits and MIME type restrictions. This section provides a detailed breakdown of the `fileConfig` object structure.
 
-There are 9 main fields under `fileConfig`:
+There are 14 main fields under `fileConfig`:
 
   - `endpoints`
+  - `skills`
   - `serverFileSizeLimit`
   - `avatarSizeLimit`
   - `imageGeneration`
   - `fileTokenLimit`
+  - `fileContextSizeLimit`
+  - `fileContextCharLimit`
+  - `defaultLLMDeliveryPath`
+  - `legacyFileUploadUX`
   - `officePreview`
   - `ocr`
   - `text`
@@ -38,6 +43,7 @@ There are 9 main fields under `fileConfig`:
     - `YourCustomEndpointName`
 - You can omit values, in which case, the app will use the default values as defined per endpoint type listed below.
 - LibreChat counts 1 megabyte as follows: `1 x 1024 x 1024`
+- Long-running upload response streaming and server-side remote URL fetch limits are configured with the [`FILE_UPLOAD_SSE_ENABLED`, `REMOTE_FILE_FETCH_TIMEOUT_MS`, and `REMOTE_FILE_FETCH_MAX_BYTES` environment variables](/docs/configuration/dotenv#file-uploads).
 
 ## Example
 
@@ -55,6 +61,10 @@ fileConfig:
       disabled: true
     default:
       totalSizeLimit: 20
+      defaultLLMDeliveryPath:
+        fallback: text
+        overrides:
+          "image/*": provider
     YourCustomEndpointName:
       fileLimit: 5
       fileSizeLimit: 1000
@@ -63,6 +73,11 @@ fileConfig:
   serverFileSizeLimit: 1000
   avatarSizeLimit: 2
   fileTokenLimit: 100000
+  skills:
+    fileSizeLimit: 50
+  fileContextSizeLimit: 128
+  fileContextCharLimit: 1000000
+  legacyFileUploadUX: false
   officePreview:
     enabled: true
     fileSizeLimit: 25
@@ -73,7 +88,7 @@ fileConfig:
     supportedMimeTypes:
       - "^image/(jpeg|gif|png|webp|heic|heif)$"
       - "^application/pdf$"
-      - "^application/vnd\\.openxmlformats-officedocument\\.(wordprocessingml\\.document|presentationml\\.presentation|spreadsheetml\\.sheet)$"
+      - "^application/vnd\\.openxmlformats-officedocument\\.(wordprocessingml\\.document|presentationml\\.(presentation|template)|spreadsheetml\\.sheet)$"
       - "^application/vnd\\.ms-(word|powerpoint|excel)$"
       - "^application/epub\\+zip$"
   text:
@@ -83,6 +98,35 @@ fileConfig:
     supportedMimeTypes:
       - "^audio/(mp3|mpeg|mpeg3|wav|wave|x-wav|ogg|vorbis|mp4|x-m4a|flac|x-flac|webm)$"
 ```
+
+<Callout type="info" title="MIME pattern syntax">
+  LibreChat evaluates administrator-configured `supportedMimeTypes` patterns on the server with an RE2-compatible, linear-time regular expression engine. Backreferences and lookaround are not supported. Every pattern is compiled with the active engine during configuration validation; an unsupported pattern rejects the configuration instead of being silently skipped.
+</Callout>
+## skills
+
+<OptionTable
+  options={[
+    ['skills', 'Object', 'Settings for Skill imports, which are uploaded as `.md`, `.zip`, or `.skill` files.', 'Only applies to the Skills import endpoint, not to chat file uploads.'],
+  ]}
+/>
+
+`skills` supports two parameters:
+
+- `fileSizeLimit` (Integer)
+  - Maximum size of a single Skill upload, specified in megabytes (MB).
+  - **Default:** `50`
+- `importCleanupConcurrency` (Integer)
+  - Maximum concurrent cleanup operations after a failed Skill archive import. Use `1` for serial cleanup.
+  - **Default:** `8`
+
+```yaml filename="fileConfig / skills"
+fileConfig:
+  skills:
+    fileSizeLimit: 50
+    importCleanupConcurrency: 8
+```
+
+See [Skills](/docs/features/skills) for the rest of the import rules, such as the per-file and archive-entry limits.
 
 ## serverFileSizeLimit
 
@@ -156,6 +200,69 @@ fileConfig:
   fileTokenLimit: 100000
 ```
 
+## fileContextSizeLimit
+
+<OptionTable
+  options={[
+    ['fileContextSizeLimit', 'Number', 'Maximum aggregate size in megabytes of model-bound attachments admitted into one Agent turn.', '128'],
+  ]}
+/>
+
+**Default:** `128` MB. This is a per-turn prompt-safety ceiling, separate from upload storage limits. Embedded File Search resources, Code workspace references, and files that do not enter model context are excluded. A configured endpoint `totalSizeLimit` can impose a lower aggregate byte limit for that endpoint.
+
+```yaml filename="fileConfig / fileContextSizeLimit"
+fileConfig:
+  fileContextSizeLimit: 128
+```
+
+## fileContextCharLimit
+
+<OptionTable
+  options={[
+    ['fileContextCharLimit', 'Number', 'Maximum aggregate extracted-text characters admitted into one Agent turn.', '1000000'],
+  ]}
+/>
+
+**Default:** `1000000`. LibreChat applies this bound to extracted text entering the Agent prompt, including retained conversation attachments and Agent-scoped File Context. Repeated injections are counted for each Agent that receives them. Exceeding either context limit stops the turn with an attachment-limit error before the model is invoked.
+
+```yaml filename="fileConfig / fileContextCharLimit"
+fileConfig:
+  fileContextCharLimit: 1000000
+```
+
+## defaultLLMDeliveryPath
+
+Controls how an upload without an explicitly selected destination enters model context. Configure it globally under `fileConfig` or override it for a named entry under `fileConfig.endpoints`.
+
+- `provider` sends the original file through the model provider's native file or media path.
+- `text` extracts or transcribes supported content and adds the resulting text to context.
+- `none` stores the file without placing it directly in model context; selected tools can still provision it when needed.
+
+`fallback` handles unmatched MIME types. `overrides` accepts exact MIME types such as `application/pdf` or wildcards such as `image/*`. Resolution prefers endpoint overrides and fallback, then global values. Without explicit configuration, images, audio, video, and PDFs prefer native provider delivery; other recoverable content uses text. LibreChat downgrades unsupported native paths to text when extraction is possible, or to `none` otherwise.
+
+```yaml filename="fileConfig / defaultLLMDeliveryPath"
+fileConfig:
+  defaultLLMDeliveryPath:
+    fallback: text
+    overrides:
+      'image/*': provider
+      'video/*': none
+  endpoints:
+    openAI:
+      defaultLLMDeliveryPath:
+        overrides:
+          application/pdf: provider
+```
+
+## legacyFileUploadUX
+
+The default unified uploader chooses model delivery automatically and provisions File Search or Code resources only when selected tools need them. Set `legacyFileUploadUX: true` globally or for an endpoint to restore the destination chooser and eager, user-selected upload behavior.
+
+```yaml filename="fileConfig / legacyFileUploadUX"
+fileConfig:
+  legacyFileUploadUX: true
+```
+
 ## officePreview
 
 <OptionTable
@@ -214,7 +321,7 @@ fileConfig:
     supportedMimeTypes:
       - "^image/(jpeg|gif|png|webp|heic|heif)$"
       - "^application/pdf$"
-      - "^application/vnd\\.openxmlformats-officedocument\\.(wordprocessingml\\.document|presentationml\\.presentation|spreadsheetml\\.sheet)$"
+      - "^application/vnd\\.openxmlformats-officedocument\\.(wordprocessingml\\.document|presentationml\\.(presentation|template)|spreadsheetml\\.sheet)$"
       - "^application/vnd\\.ms-(word|powerpoint|excel)$"
       - "^application/epub\\+zip$"
 ```
@@ -239,7 +346,7 @@ fileConfig:
   ]}
 />
 
-**Default:** All text files and common programming languages
+**Default:** All text files, common programming languages, and `.eml` email files
 
 ```yaml filename="fileConfig / text / supportedMimeTypes"
 fileConfig:
@@ -412,7 +519,7 @@ assistants:
 **Key:**
 <OptionTable
   options={[
-    ['supportedMimeTypes', 'Array of Strings', 'A list of regular expressions defining the MIME types permitted for upload.', 'This allows for precise control over the types of files that can be uploaded. Invalid regex is ignored.'],
+    ['supportedMimeTypes', 'Array of Strings', 'A list of regular expressions defining the MIME types permitted for upload.', 'Each pattern must compile with the active server regex engine or configuration validation fails.'],
   ]}
 />
 
@@ -424,3 +531,5 @@ assistants:
       - "image/.*"
       - "application/pdf"
 ```
+
+LibreChat normalizes common MIME aliases before applying these patterns. In particular, `application/x-shellscript` (reported by Chrome on Linux) and `text/x-shellscript` (reported by libmagic) become `application/x-sh`. A custom allowlist that accepts shell scripts should therefore permit the canonical `application/x-sh` type. Rejected uploads return the reported unsupported type to the client instead of a generic server error.

@@ -11,6 +11,12 @@ When a conversation exceeds the model's context window, the summarization system
 
 After a summarization turn, the context usage gauge uses the persisted summary baseline plus post-summary turns instead of re-counting discarded pre-summary history. Cumulative usage and cost totals still include the full branch spend.
 
+## Manual Context Compaction
+
+When `summarization.enabled` is not set to `false`, Agent conversations expose **Compact context** from the conversation controls. It starts a summarize-only turn at the current branch leaf: LibreChat summarizes the eligible history, stores the new summary checkpoint, and ends without asking the primary Agent or any Subagent to produce an answer.
+
+Earlier messages remain visible in the transcript, but later model calls use the compacted summary plus content retained by [`retainRecent`](#retainrecent). The resulting marker identifies a user-initiated compaction, and token usage from the summarizer is recorded separately. Compaction is unavailable for a new conversation, an active generation, a branch that has nothing eligible to summarize, or a deployment where summarization is disabled. If the summarizer fails or produces no summary, LibreChat leaves the prior context unchanged and reports the reason.
+
 ## Example
 
 ```yaml filename="summarization"
@@ -22,6 +28,9 @@ summarization:
   trigger:
     type: 'token_ratio'
     value: 0.8
+  retainRecent:
+    turns: 2
+    tokens: 2000
   contextPruning:
     enabled: true
     keepLastAssistants: 3
@@ -188,6 +197,36 @@ summarization:
     value: 8000
 ```
 
+## retainRecent
+
+Controls how much of the newest conversation content remains verbatim outside the generated summary. This helps preserve recent instructions, tool results, and conversational continuity during compaction.
+
+<OptionTable
+  options={[
+    [
+      'turns',
+      'Number',
+      'Number of recent conversation turns to retain. Accepts values from 0 through 20.',
+      '',
+    ],
+    [
+      'tokens',
+      'Number',
+      'Positive token budget used when selecting recent content to retain.',
+      '',
+    ],
+  ]}
+/>
+
+```yaml filename="summarization / retainRecent"
+summarization:
+  retainRecent:
+    turns: 2
+    tokens: 2000
+```
+
+Both fields are optional. Omit `retainRecent` to use the Agents SDK's normal compaction behavior.
+
 ## contextPruning
 
 <OptionTable
@@ -207,6 +246,8 @@ Context pruning is an opt-in feature that operates independently of summarizatio
 2. **Hard clear** — Replaces the entire tool result with a short placeholder
 
 Both stages are position-based: messages closer to the beginning of the conversation (older) are pruned first.
+
+When Agent context pruning is enabled, LibreChat retains the compact adaptive fading tier chosen for each Agent and seeds it into later runs. This keeps the provider-only projection stable across turns, human-in-the-loop resumes, stops, branches, and replica handoffs, which improves Anthropic prompt-cache reuse. Stored conversation messages and tool results remain complete; the faded projection is not written back over canonical history.
 
 ### contextPruning Sub-keys
 
@@ -322,7 +363,7 @@ summarization:
 ## Complete Configuration Example
 
 ```yaml filename="librechat.yaml"
-version: 1.3.10
+version: 1.3.15
 cache: true
 
 summarization:
@@ -333,6 +374,9 @@ summarization:
   trigger:
     type: 'token_ratio'
     value: 0.8
+  retainRecent:
+    turns: 2
+    tokens: 2000
   contextPruning:
     enabled: true
     keepLastAssistants: 3
@@ -372,6 +416,7 @@ summarization:
 - Summarization is configured globally rather than per-endpoint
 - The `summarize` and `summaryModel` fields on custom endpoints and Azure OpenAI endpoints are no longer supported
 - When `provider` and `model` are omitted, the agent's own provider and model are used for summarization
+- `retainRecent` keeps a recent verbatim tail outside the summary; `turns` accepts `0-20` and `tokens` must be positive
 - Context pruning is disabled by default and must be explicitly enabled with `contextPruning.enabled: true`
 - Context pruning only affects tool call results that exceed `minPrunableToolChars` — smaller results are never pruned
 - The `keepLastAssistants` setting protects recent turns from pruning regardless of the trim/clear ratios

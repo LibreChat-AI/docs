@@ -18,12 +18,12 @@ For more info see:
   - **[Docker Override](/docs/configuration/docker_override)**
 
 - The official docker documentation:
-  - **[docker docs - understanding-multiple-compose-files](https://docs.docker.com/compose/multiple-compose-files/extends/#understanding-multiple-compose-files)**
-  - **[docker docs - merge-compose-files](https://docs.docker.com/compose/multiple-compose-files/merge/#merge-compose-files)**
+  - **[docker docs - understanding-multiple-compose-files](https://docs.docker.com/compose/how-tos/multiple-compose-files/extends/)**
+  - **[docker docs - merge-compose-files](https://docs.docker.com/compose/how-tos/multiple-compose-files/merge/)**
   - **[docker docs - specifying-multiple-compose-files](https://docs.docker.com/compose/reference/#specifying-multiple-compose-files)**
 
 - You can also view an example of an override file for LibreChat in your LibreChat folder and on GitHub:
-  - **[docker-compose.override.example](https://github.com/danny-avila/LibreChat/blob/main/docker-compose.override.yml.example)**
+  - **[docker-compose.override.example](https://github.com/LibreChat-AI/LibreChat/blob/main/docker-compose.override.yml.example)**
 
 ---
 
@@ -41,6 +41,41 @@ For more info see:
   ]}
 />
 
+### HTTP Server Timeouts
+
+These optional values configure the Node.js HTTP server. Leave them unset to retain Node's defaults. A value of `0` disables that timeout.
+
+<OptionTable
+  options={[
+    [
+      'HTTP_KEEP_ALIVE_TIMEOUT_MS',
+      'integer',
+      'Idle keep-alive timeout in milliseconds. Set this above the load balancer idle timeout to avoid reused connections racing server closure. Node default: 5000.',
+      '# HTTP_KEEP_ALIVE_TIMEOUT_MS=70000',
+    ],
+    [
+      'HTTP_KEEP_ALIVE_TIMEOUT_BUFFER_MS',
+      'integer',
+      'Additional socket timeout buffer in milliseconds. Node default: 1000.',
+      '# HTTP_KEEP_ALIVE_TIMEOUT_BUFFER_MS=5000',
+    ],
+    [
+      'HTTP_HEADERS_TIMEOUT_MS',
+      'integer',
+      'Time allowed to receive complete request headers. Node default: 60000.',
+      '# HTTP_HEADERS_TIMEOUT_MS=80000',
+    ],
+    [
+      'HTTP_REQUEST_TIMEOUT_MS',
+      'integer',
+      'Time allowed to receive the complete request. Node default: 300000.',
+      '# HTTP_REQUEST_TIMEOUT_MS=300000',
+    ],
+  ]}
+/>
+
+Values must be non-negative safe integers; invalid values are ignored. When both header and request timeouts are enabled, LibreChat clamps the header timeout to the request timeout if it is higher. Node checks header and request expiry on a 30-second connection sweep, so values below `30000` are not enforced at exact millisecond precision. Bun currently accepts these settings but does not enforce them; LibreChat logs a warning when the API server runs under Bun.
+
 ### Trust proxy
 
 Use the address that is at most n number of hops away from the Express application.
@@ -54,31 +89,71 @@ Refer to [Express.js - trust proxy](https://expressjs.com/en/guide/behind-proxie
   options={[['TRUST_PROXY', 'number', 'Specifies the number of hops.', 'TRUST_PROXY=1']]}
 />
 
+### Trusted Tenant Header
+
+`TRUST_TENANT_HEADER` controls whether LibreChat accepts `X-Tenant-Id` before authentication on the `/oauth`, `/api/auth`, and `/api/share` route trees. It is disabled by default; while disabled, those routes ignore the header.
+
+<OptionTable
+  options={[
+    [
+      'TRUST_TENANT_HEADER',
+      'boolean',
+      'Trust X-Tenant-Id on pre-authentication routes. Enable only behind a trusted proxy that replaces client-supplied values.',
+      'TRUST_TENANT_HEADER=false',
+    ],
+  ]}
+/>
+
+<Callout type="warning" title="Do not trust client-supplied tenant headers">
+  Enable this setting only when a trusted reverse proxy strips every incoming `X-Tenant-Id` value and sets the authoritative tenant ID itself. Otherwise, an untrusted client could choose the tenant context used before authentication. LibreChat logs a security warning when the setting is enabled.
+</Callout>
+
+When `TENANT_ISOLATION_STRICT` is enabled but `TRUST_TENANT_HEADER` is disabled, LibreChat warns at startup that pre-authentication tenant headers will be ignored.
+
 ### Credentials Configuration
 
-To securely store credentials, you need a fixed key and IV. You can set them here for prod and dev environments.
+LibreChat uses `CREDS_KEY` and `CREDS_IV` to encrypt supported credentials stored in the database. Configure fixed, unique values for production and share the same values across every replica.
 
 <OptionTable
   options={[
     [
       'CREDS_KEY',
       'string',
-      '32-byte key (64 characters in hex) for securely storing credentials. Required for app startup.',
-      'CREDS_KEY=f34be427ebb29de8d88c107a71546019685ed8b241d8f2ed00c3df97ad2566f0',
+      '32-byte key (64 hexadecimal characters) for securely storing credentials.',
+      'CREDS_KEY=',
     ],
     [
       'CREDS_IV',
       'string',
-      '16-byte IV (32 characters in hex) for securely storing credentials. Required for app startup.',
-      'CREDS_IV=e2341419ec3dd3d19b13a1a87fafcbfb',
+      '16-byte IV (32 hexadecimal characters) for securely storing credentials.',
+      'CREDS_IV=',
+    ],
+    [
+      'LIBRECHAT_TEMP_CREDENTIALS_PATH',
+      'string',
+      'Path used to persist automatically generated temporary credentials. Defaults to `.env.temp` in the process working directory.',
+      '# LIBRECHAT_TEMP_CREDENTIALS_PATH=/app/data/.env.temp',
     ],
   ]}
 />
 
-<Callout type="warning" title="Warning">
-  **Warning:** If you don't set `CREDS_KEY` and `CREDS_IV`, the app will crash on startup. - You can
-  use this [Key Generator](/toolkit/creds_generator) to generate them quickly.
+When any of `CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`, or `JWT_REFRESH_SECRET` is blank, LibreChat first reuses a valid value from the temporary credentials file. If none exists, it generates a cryptographically random value and writes the file with owner-only permissions. Explicit environment values always take precedence. LibreChat refuses to use `.env` or `.env.example` as the generated file path, preventing accidental replacement of either configuration file.
+
+LibreChat also refuses to start when `JWT_SECRET` or `JWT_REFRESH_SECRET` still uses one of the retired published defaults, whether the value comes from the environment or the temporary credentials file. Generate unique replacements rather than carrying old sample secrets into a deployment.
+
+The bundled Docker Compose files persist `/app/data/.env.temp` in the `librechat-data` volume, so a single Compose deployment can restart without changing these generated values. If the file cannot be persisted, the values are process-local and sessions or encrypted records may become inaccessible after restart.
+
+<Callout type="warning" title="Set permanent values for production">
+  Temporary generation is a bootstrap convenience, not a credential-rotation system. Before production use, generate permanent values with the [Credentials Generator](/toolkit/creds_generator), store them in your secret manager, and provide the same values to every replica. Changing an established key does not re-encrypt existing records. LibreChat records credential fingerprints in the database and warns when active values drift; do not overwrite that marker instead of performing a controlled migration.
 </Callout>
+
+### Security Headers and Content Security Policy
+
+LibreChat sends baseline HSTS, framing, content-type, opener, resource, and referrer headers by default. `SECURITY_HEADERS=false` disables all of them and is also the global CSP kill switch.
+
+Nonce-based CSP is separately opt-in with `CSP_ENABLED=true` and defaults to report-only mode. Start with `CSP_REPORT_ONLY=true`, inspect violations, and add only the origins your deployment requires before enforcing. When CSP is active, the SPA shell is always sent with `Cache-Control: no-store` so its per-response nonce cannot be reused from cache.
+
+See [HTTP Security Headers](/docs/configuration/security_headers) for every baseline and CSP variable, accepted values, defaults, source-list overrides, and rollout guidance.
 
 ### Static File Handling
 
@@ -219,26 +294,23 @@ If you are using an online database, the URI format is `mongodb+srv://<username>
     [
       'MONGO_AUTO_INDEX',
       'boolean',
-      'Set to false to disable automatic index creation for all models associated with this connection. When omitted, uses Mongoose default behavior.',
+      'Set to false to disable automatic index creation for all models associated with this connection. When omitted, empty, or whitespace-only, uses Mongoose default behavior.',
       '# MONGO_AUTO_INDEX=',
     ],
     [
       'MONGO_AUTO_CREATE',
       'boolean',
-      'Set to false to disable Mongoose automatically calling createCollection() on every model created on this connection. When omitted, uses Mongoose default behavior.',
+      'Set to false to disable Mongoose automatically calling createCollection() on every model created on this connection. When omitted, empty, or whitespace-only, uses Mongoose default behavior.',
       '# MONGO_AUTO_CREATE=',
     ],
   ]}
 />
 
-Alternatively you can use `documentDb` that emulates `mongoDb` but it:
+Amazon DocumentDB 5.0+ instance-based clusters are a supported target. DocumentDB requires `retryWrites=false` and TLS with the AWS CA bundle; elastic clusters are unsupported because they do not provide unique indexes. A typical URI has this form:
 
-- does not support `retryWrites` - use `retryWrites=false`
-- requires TLS connection, hence use parameters `tls=true` to enable TLS and `tlsCAFile=/path-to-ca/bundle.pem` to point to the AWS provided CA bundle file
+`mongodb://username:password@cluster:27017/librechat?tls=true&tlsCAFile=/path-to-ca/global-bundle.pem&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false`
 
-The URI for `documentDb` will look like:
-
-- `mongodb+srv://username:password@domain/dbname?retryWrites=false&tls=true&tlsCAFile=/path-to-ca/bundle.pem`
+DocumentDB 4.0 can run with reduced partial-unique-index enforcement. See [Amazon DocumentDB Compatibility](/docs/user_guides/mongodb#amazon-documentdb-compatibility) for the supported target and caveats.
 
 See also:
 
@@ -268,8 +340,20 @@ To configure LibreChat for local use or custom domain deployment, set the follow
     [
       'ADMIN_PANEL_URL',
       'string',
-      'External admin panel base URL used for admin OAuth/SSO redirects when the admin panel is hosted separately. Do not include a trailing slash.',
+      'External admin panel base URL used for admin OAuth/SSO redirects and the admin-only Settings > General link. Do not include a trailing slash.',
       'ADMIN_PANEL_URL=https://admin.example.com/admin',
+    ],
+    [
+      'ADMIN_PANEL_SESSION_SECRET',
+      'string',
+      'Required session encryption key for the bundled admin panel (min 32 characters). The docker-compose and deploy-compose admin-panel services read it as their SESSION_SECRET. Generate with `openssl rand -hex 32` before starting the stack.',
+      'ADMIN_PANEL_SESSION_SECRET=<your-32-char-random-string>',
+    ],
+    [
+      'ADMIN_PANEL_PORT',
+      'number',
+      'Host port for the bundled admin panel in the default docker-compose. In deploy-compose the panel is served at http://admin.localhost via nginx instead.',
+      'ADMIN_PANEL_PORT=3000',
     ],
   ]}
 />
@@ -302,7 +386,7 @@ LibreChat has built-in central logging, see [Logging System](/docs/configuration
 #### Log Files
 
 - Debug logging is enabled by default and crucial for development.
-- To report issues, reproduce the error and submit logs from `./api/logs/debug-%DATE%.log` at: **[LibreChat GitHub Issues](https://github.com/danny-avila/LibreChat/issues)**
+- To report issues, reproduce the error and submit logs from `./api/logs/debug-%DATE%.log` at: **[LibreChat GitHub Issues](https://github.com/LibreChat-AI/LibreChat/issues)**
 - Error logs are stored in the same location.
 
 #### Environment Variables
@@ -315,6 +399,12 @@ LibreChat has built-in central logging, see [Logging System](/docs/configuration
       'boolean',
       'Enable verbose console/stdout logs in the same format as file debug logs.',
       'DEBUG_CONSOLE=false',
+    ],
+    [
+      'CONSOLE_LOG_LEVEL',
+      'string',
+      'Set console verbosity to error, warn, info, http, verbose, debug, activity, silly, or silent. Defaults to info, or debug when DEBUG_CONSOLE=true; an explicit value takes precedence.',
+      '# CONSOLE_LOG_LEVEL=info',
     ],
     [
       'LOG_TO_FILE',
@@ -359,8 +449,9 @@ Note:
 
 - `DEBUG_LOGGING` can be used with either `DEBUG_CONSOLE` or `CONSOLE_JSON` but not both.
 - `DEBUG_CONSOLE` and `CONSOLE_JSON` are mutually exclusive.
+- `CONSOLE_LOG_LEVEL=silent` disables console output without disabling file logging. Invalid values fall back to the normal default and emit a warning.
 - `CONSOLE_JSON`: When handling console logs in cloud deployments (such as GCP or AWS), enabling this will dump the logs with a UTC timestamp and format them as JSON.
-  - See: [feat: Add CONSOLE_JSON](https://github.com/danny-avila/LibreChat/pull/2146)
+  - See: [feat: Add CONSOLE_JSON](https://github.com/LibreChat-AI/LibreChat/pull/2146)
 
 Note: `DEBUG_CONSOLE` is not recommended, as the outputs can be quite verbose, and so it's disabled by default.
 
@@ -375,9 +466,55 @@ Note: `DEBUG_CONSOLE` is not recommended, as the outputs can be quite verbose, a
   ]}
 />
 
-### OpenTelemetry Tracing
+### Langfuse Tracing and Tenant Fanout
 
-LibreChat can emit backend OpenTelemetry traces for general API, HTTP, MongoDB, Mongoose, Redis, and outbound request visibility. Redis command-level spans are opt-in so default traces stay high-level. Use Langfuse for GenAI-specific prompt/model observability.
+Use the standard Langfuse variables for one central observability project. The optional fanout deployment can additionally route tenant traces, media, and feedback scores to tenant-specific Langfuse projects. See [Langfuse Tracing](/docs/configuration/langfuse) for setup, in-app connection management, and architecture.
+
+<OptionTable
+  options={[
+    ['LANGFUSE_PUBLIC_KEY', 'string', 'Public key for the central Langfuse project.', '# LANGFUSE_PUBLIC_KEY='],
+    ['LANGFUSE_SECRET_KEY', 'string', 'Secret key for the central Langfuse project.', '# LANGFUSE_SECRET_KEY='],
+    ['LANGFUSE_BASE_URL', 'string', 'Base URL for central tracing and feedback scores.', '# LANGFUSE_BASE_URL=https://cloud.langfuse.com'],
+    ['LANGFUSE_PROJECT_ID', 'string', 'Stable central Langfuse project ID. When omitted, LibreChat discovers and caches it in the background for feedback routing.', '# LANGFUSE_PROJECT_ID='],
+    ['LANGFUSE_TRACING_ENABLED', 'boolean', 'Set to false to disable Langfuse traces and feedback scores. Default: true.', '# LANGFUSE_TRACING_ENABLED=true'],
+    ['LANGFUSE_SAMPLE_RATE', 'number', 'Deterministic trace-level sample rate from 0 to 1. Sampled-out traces do not receive feedback scores. Default: 1.', '# LANGFUSE_SAMPLE_RATE=1'],
+    ['LANGFUSE_FANOUT_ENABLED', 'boolean', 'Enable routing through the optional fanout gateway.', '# LANGFUSE_FANOUT_ENABLED=false'],
+    ['LANGFUSE_FANOUT_COLLECTOR_URL', 'string', 'Gateway URL used by the LibreChat API.', '# LANGFUSE_FANOUT_COLLECTOR_URL=http://langfuse-fanout-collector:4318'],
+    ['LANGFUSE_FANOUT_CENTRAL_MEDIA_UPLOAD_DISABLED', 'boolean', 'Prevent the LibreChat SDK from creating media uploads for central or fallback collector traces. Tenant-routed media uploads are unchanged.', '# LANGFUSE_FANOUT_CENTRAL_MEDIA_UPLOAD_DISABLED=false'],
+    ['LANGFUSE_FANOUT_LISTEN_ADDR', 'string', 'Gateway HTTP listen address. Default: :4318.', '# LANGFUSE_FANOUT_LISTEN_ADDR=:4318'],
+    ['LANGFUSE_FANOUT_TENANT_EXPORT_DISABLED', 'boolean', 'Emergency switch that disables tenant trace and score export while retaining central export.', '# LANGFUSE_FANOUT_TENANT_EXPORT_DISABLED=false'],
+    ['LANGFUSE_FANOUT_CENTRAL_BASE_URL', 'string', 'Central Langfuse base URL used by the gateway.', '# LANGFUSE_FANOUT_CENTRAL_BASE_URL=https://cloud.langfuse.com'],
+    ['LANGFUSE_FANOUT_CENTRAL_AUTH_HEADER', 'string', 'Full Basic authorization header for central trace and media export.', '# LANGFUSE_FANOUT_CENTRAL_AUTH_HEADER=Basic <base64-public-colon-secret>'],
+    ['LANGFUSE_FANOUT_CENTRAL_MEDIA_EXPORT_DISABLED', 'boolean', 'Disable central media fanout without disabling central traces.', '# LANGFUSE_FANOUT_CENTRAL_MEDIA_EXPORT_DISABLED=false'],
+    ['LANGFUSE_FANOUT_TENANT_DESTINATIONS', 'string', 'Comma-separated destination key and base URL mappings allowed at startup.', '# LANGFUSE_FANOUT_TENANT_DESTINATIONS=eu=https://cloud.langfuse.com,us=https://us.cloud.langfuse.com'],
+    ['LANGFUSE_FANOUT_TRACE_DESTINATION_KEYS', 'string', 'Destination keys supported by the collector routing configuration.', '# LANGFUSE_FANOUT_TRACE_DESTINATION_KEYS=eu,us,jp'],
+    ['LANGFUSE_FANOUT_PUBLIC_URL', 'string', 'Gateway base URL used to create one-time media upload URLs.', '# LANGFUSE_FANOUT_PUBLIC_URL=http://langfuse-fanout-collector:4318'],
+    ['LANGFUSE_FANOUT_TRACE_COLLECTOR_URL', 'string', 'Internal gateway-to-collector trace endpoint.', '# LANGFUSE_FANOUT_TRACE_COLLECTOR_URL=http://langfuse-fanout-otel:4319'],
+    ['LANGFUSE_FANOUT_REDIS_URI', 'string', 'Redis URI for one-time media upload plans.', '# LANGFUSE_FANOUT_REDIS_URI=redis://langfuse-fanout-redis:6379'],
+    ['LANGFUSE_FANOUT_REDIS_USERNAME', 'string', 'Optional Redis username for the fanout gateway.', '# LANGFUSE_FANOUT_REDIS_USERNAME='],
+    ['LANGFUSE_FANOUT_REDIS_PASSWORD', 'string', 'Optional Redis password for the fanout gateway.', '# LANGFUSE_FANOUT_REDIS_PASSWORD='],
+    ['LANGFUSE_FANOUT_REDIS_KEY_PREFIX', 'string', 'Redis key prefix for fanout media plans.', '# LANGFUSE_FANOUT_REDIS_KEY_PREFIX=langfuse-fanout'],
+    ['LANGFUSE_FANOUT_OTEL_RECEIVER_ENDPOINT', 'string', 'Internal collector receiver bind address.', '# LANGFUSE_FANOUT_OTEL_RECEIVER_ENDPOINT=0.0.0.0:4319'],
+    ['LANGFUSE_FANOUT_TENANT_EU_BASE_URL', 'string', 'Static EU destination URL for the included Compose collector.', '# LANGFUSE_FANOUT_TENANT_EU_BASE_URL=https://cloud.langfuse.com'],
+    ['LANGFUSE_FANOUT_TENANT_US_BASE_URL', 'string', 'Static US destination URL for the included Compose collector.', '# LANGFUSE_FANOUT_TENANT_US_BASE_URL=https://us.cloud.langfuse.com'],
+    ['LANGFUSE_FANOUT_TENANT_JP_BASE_URL', 'string', 'Static JP destination URL for the included Compose collector.', '# LANGFUSE_FANOUT_TENANT_JP_BASE_URL=https://jp.cloud.langfuse.com'],
+    ['LANGFUSE_FANOUT_UPSTREAM_TIMEOUT', 'duration', 'Timeout for gateway requests to Langfuse and media upload URLs.', '# LANGFUSE_FANOUT_UPSTREAM_TIMEOUT=30s'],
+    ['LANGFUSE_FANOUT_METRICS_SECRET', 'string', 'Bearer token required to scrape the gateway metrics endpoint.', '# LANGFUSE_FANOUT_METRICS_SECRET='],
+    ['LANGFUSE_FANOUT_MEMORY_LIMIT_MIB', 'number', 'Collector memory limit in MiB.', '# LANGFUSE_FANOUT_MEMORY_LIMIT_MIB=256'],
+    ['LANGFUSE_FANOUT_MEMORY_SPIKE_LIMIT_MIB', 'number', 'Collector memory spike allowance in MiB.', '# LANGFUSE_FANOUT_MEMORY_SPIKE_LIMIT_MIB=64'],
+    ['LANGFUSE_FANOUT_BATCH_TIMEOUT', 'duration', 'Collector batch flush timeout.', '# LANGFUSE_FANOUT_BATCH_TIMEOUT=1s'],
+    ['LANGFUSE_FANOUT_BATCH_SEND_SIZE', 'number', 'Collector batch send size.', '# LANGFUSE_FANOUT_BATCH_SEND_SIZE=128'],
+    ['LANGFUSE_FANOUT_METADATA_CARDINALITY_LIMIT', 'number', 'Collector metadata cardinality limit.', '# LANGFUSE_FANOUT_METADATA_CARDINALITY_LIMIT=1000'],
+  ]}
+/>
+
+In a single-tenant deployment without complete `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` environment credentials, an authorized administrator can configure one encrypted connection under **Settings → Langfuse**. Complete environment credentials take precedence and hide that setting. Fanout deployments use the same setting for the tenant connection when fanout and tenant export are enabled.
+
+`LANGFUSE_BASE_URL` is canonical. `LANGFUSE_HOST` and `LANGFUSE_BASEURL` remain compatibility aliases and are consulted in that order only when the canonical setting is absent.
+
+### OpenTelemetry Traces and Logs
+
+LibreChat can emit backend OpenTelemetry traces for general API, HTTP, MongoDB, Mongoose, Redis, and outbound request visibility, and can export its Winston application logs as correlated OpenTelemetry log records. Traces and logs are independently opt-in; enabling logs alone does not install tracing instrumentation. Use Langfuse for GenAI-specific prompt/model observability.
 
 <OptionTable
   options={[
@@ -386,6 +523,18 @@ LibreChat can emit backend OpenTelemetry traces for general API, HTTP, MongoDB, 
       'boolean',
       'Enable backend OpenTelemetry tracing. Tracing remains disabled when OTEL_SDK_DISABLED=true.',
       '# OTEL_TRACING_ENABLED=false',
+    ],
+    [
+      'OTEL_LOGS_ENABLED',
+      'boolean',
+      'Export application logs through OpenTelemetry. Logs can be enabled with or without tracing and remain disabled when OTEL_SDK_DISABLED=true.',
+      '# OTEL_LOGS_ENABLED=false',
+    ],
+    [
+      'OTEL_LOGS_LEVEL',
+      'string',
+      'Minimum Winston level exported as OpenTelemetry logs. Defaults to info; unknown levels warn and fall back to info.',
+      '# OTEL_LOGS_LEVEL=info',
     ],
     [
       'OTEL_SERVICE_NAME',
@@ -406,10 +555,22 @@ LibreChat can emit backend OpenTelemetry traces for general API, HTTP, MongoDB, 
       '# OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318',
     ],
     [
+      'OTEL_EXPORTER_OTLP_PROTOCOL',
+      'string',
+      'Default protocol for every OTLP signal: http/protobuf or grpc. Per-signal protocol variables override it.',
+      '# OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf',
+    ],
+    [
       'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT',
       'string',
       'Trace-specific OTLP endpoint. Overrides the base endpoint for traces when set.',
       '# OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=',
+    ],
+    [
+      'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT',
+      'string',
+      'Log-specific OTLP endpoint. Overrides the base endpoint for logs when set.',
+      '# OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=',
     ],
     [
       'OTEL_EXPORTER_OTLP_HEADERS',
@@ -418,6 +579,7 @@ LibreChat can emit backend OpenTelemetry traces for general API, HTTP, MongoDB, 
       '# OTEL_EXPORTER_OTLP_HEADERS=',
     ],
     ['OTEL_TRACES_EXPORTER', 'string', 'Trace exporter selection.', '# OTEL_TRACES_EXPORTER=otlp'],
+    ['OTEL_LOGS_EXPORTER', 'string', 'Log exporter selection.', '# OTEL_LOGS_EXPORTER=otlp'],
     [
       'OTEL_TRACES_SAMPLER',
       'string',
@@ -495,6 +657,12 @@ LibreChat can publish browser Real User Monitoring (RUM) telemetry to HyperDX-co
       '# RUM_PROXY_TARGET_URL=http://otel-collector:4318',
     ],
     [
+      'RUM_PROXY_AUTHORIZATION',
+      'string',
+      'Optional server-only Authorization header forwarded by authenticated proxy mode. Provide the complete header value expected by the collector.',
+      '# RUM_PROXY_AUTHORIZATION=',
+    ],
+    [
       'RUM_PROXY_TIMEOUT_MS',
       'number',
       'Proxy request timeout in milliseconds. Default: 10000.',
@@ -533,7 +701,9 @@ LibreChat can publish browser Real User Monitoring (RUM) telemetry to HyperDX-co
   ]}
 />
 
-In `publicToken` mode, the browser sends telemetry directly to `RUM_URL` with `RUM_PUBLIC_TOKEN`. In `proxy` mode, the browser sends telemetry through LibreChat; the backend validates the user session, strips app authentication headers, and forwards telemetry to `RUM_PROXY_TARGET_URL`. Invalid or expired sessions are dropped with a `204` response so browser telemetry failures do not surface normal API authentication errors. Proxy outcomes are counted in `rum_proxy_requests_total` with `endpoint` and `result` labels on the LibreChat API `/metrics` endpoint.
+In `publicToken` mode, the browser sends telemetry directly to `RUM_URL` with `RUM_PUBLIC_TOKEN`. In `proxy` mode, the browser sends telemetry through LibreChat; the backend validates the user session, strips app authentication headers, and forwards telemetry to `RUM_PROXY_TARGET_URL`. `RUM_PROXY_AUTHORIZATION` can add a server-only credential to those exports; configure the final collector URL because authenticated redirects are rejected. Invalid or expired sessions are dropped with a `204` response so browser telemetry failures do not surface normal API authentication errors. Proxy outcomes are counted in `rum_proxy_requests_total` with `endpoint` and `result` labels on the LibreChat API `/metrics` endpoint.
+
+For sampled page loads, LibreChat emits one `page-load-diagnostics` action when First Contentful Paint is observed. It includes navigation timing attribution such as time to first byte, first-byte-to-FCP time, service-worker timing, navigation type, and a normalized route instead of raw conversation IDs. RUM also records early page lifecycle, service-worker, stale-asset recovery, and single-page-app route-change events. Diagnostics are best-effort and never delay startup or trigger recovery behavior; early events are discarded when the page is not sampled.
 
 ### Configuration Path - `librechat.yaml`
 
@@ -548,7 +718,7 @@ You may specify an **absolute path**, a **relative path**, or a **URL**. The fil
       'CONFIG_PATH',
       'string',
       'An alternative location for the LibreChat configuration file.',
-      '# CONFIG_PATH=https://raw.githubusercontent.com/danny-avila/LibreChat/main/librechat.example.yaml',
+      '# CONFIG_PATH=https://raw.githubusercontent.com/LibreChat-AI/LibreChat/main/librechat.example.yaml',
     ],
   ]}
 />
@@ -569,6 +739,35 @@ Deployment Skills are loaded read-only at startup from the filesystem and expose
 />
 
 Restart LibreChat after changing this directory or any files inside it. Deployment-provided Skills take precedence over persisted Skills with the same name.
+
+### Agent Plugins (Experimental)
+
+LibreChat can load experimental Agent Plugins from immediate child directories at startup. A plugin can bundle deployment Skills, MCP servers, and optional command hooks.
+
+<OptionTable
+  options={[
+    [
+      'DEPLOYMENT_PLUGINS_DIR',
+      'string',
+      'Directory containing Agent Plugin packages. Defaults to `./plugin` at the project root.',
+      '# DEPLOYMENT_PLUGINS_DIR=./plugin',
+    ],
+    [
+      'DEPLOYMENT_PLUGIN_DATA_DIR',
+      'string',
+      'Persistent data root for Agent Plugins. Defaults to `./data/plugins` at the project root.',
+      '# DEPLOYMENT_PLUGIN_DATA_DIR=./data/plugins',
+    ],
+    [
+      'DEPLOYMENT_PLUGIN_HOOKS',
+      'boolean',
+      'Runs trusted `command` handlers declared in `ai.librechat/hooks/hooks.json`. Disabled by default. Commands execute as child processes on the API host.',
+      '# DEPLOYMENT_PLUGIN_HOOKS=true',
+    ],
+  ]}
+/>
+
+See [Agent Plugins](/docs/features/agent_plugins) for package layout, schema versions, supported components, precedence, and current limitations.
 
 ### Configuration Validation
 
@@ -688,7 +887,7 @@ For detailed configuration and customization options, see: [Web Search Configura
     [
       'SERPER_API_KEY',
       'string',
-      'API key for Serper search provider. Get your key from https://serper.dev/api-key',
+      'API key for Serper search provider. Get your key from https://serper.dev/api-keys',
       '# SERPER_API_KEY=',
     ],
     [
@@ -708,6 +907,24 @@ For detailed configuration and customization options, see: [Web Search Configura
       'string',
       'Custom Tavily Extract API URL (optional). Only needed for custom or proxy Tavily-compatible extract endpoints.',
       '# TAVILY_EXTRACT_URL=',
+    ],
+    [
+      'KEENABLE_API_KEY',
+      'string',
+      'Optional Keenable API key for search and page fetch. Public endpoints work keyless; a key raises their rate limits.',
+      '# KEENABLE_API_KEY=',
+    ],
+    [
+      'KEENABLE_API_URL',
+      'string',
+      'Optional custom Keenable search API URL.',
+      '# KEENABLE_API_URL=',
+    ],
+    [
+      'KEENABLE_FETCH_URL',
+      'string',
+      'Optional custom Keenable page-fetch API URL used when scraperProvider is keenable.',
+      '# KEENABLE_FETCH_URL=',
     ],
     [
       'FIRECRAWL_API_KEY',
@@ -743,7 +960,7 @@ For detailed configuration and customization options, see: [Web Search Configura
   ]}
 />
 
-**Note**: These variable names can be customized in your `librechat.yaml` configuration file. For example, you could use `CUSTOM_SERPER_KEY` instead of `SERPER_API_KEY` by configuring it in the web search settings. See the [Web Search Configuration](/docs/configuration/librechat_yaml/object_structure/web_search) documentation for details on customizing variable names.
+**Note**: Most variable names can be customized in your `librechat.yaml` configuration file. For example, you could use `CUSTOM_SERPER_KEY` instead of `SERPER_API_KEY` by configuring it in the web search settings. `KEENABLE_FETCH_URL` is environment-only. See the [Web Search Configuration](/docs/configuration/librechat_yaml/object_structure/web_search) documentation for details.
 
 ### Anthropic
 
@@ -767,7 +984,7 @@ see: [Anthropic Endpoint](/docs/configuration/pre_configured_ai/anthropic)
       'ANTHROPIC_MODELS',
       'string',
       'Comma-separated list of Anthropic models to use.',
-      '# ANTHROPIC_MODELS=claude-fable-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-4-6,claude-opus-4-6,claude-opus-4-20250514,claude-3-7-sonnet-20250219,claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022',
+      '# ANTHROPIC_MODELS=claude-fable-5-1,claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,claude-opus-4-6,claude-opus-4-20250514,claude-3-7-sonnet-20250219,claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022',
     ],
     [
       'ANTHROPIC_REVERSE_PROXY',
@@ -788,7 +1005,7 @@ see: [Anthropic Endpoint](/docs/configuration/pre_configured_ai/anthropic)
 
 > **Note:** Must be compatible with the Anthropic Endpoint. Also, Claude 2 and Claude 3 models perform best at this task, with `claude-3-haiku` models being the cheapest.
 
-Claude Fable 5 is included in the default Anthropic model list. Fable/Mythos-class
+Claude Fable 5.1 and Fable 5 are included in the default Anthropic model list. Fable/Mythos-class
 models use the modern Anthropic behavior in LibreChat: 1M context, adaptive thinking
 support, prompt caching support, and `thinkingDisplay` handling for summarized or
 omitted reasoning output.
@@ -808,8 +1025,8 @@ You can also use Anthropic Claude models through Google Cloud Vertex AI. For det
     [
       'ANTHROPIC_VERTEX_REGION',
       'string',
-      'The Google Cloud region for Vertex AI. Default: us-east5.',
-      'ANTHROPIC_VERTEX_REGION=us-east5',
+      'The Google Cloud location for Vertex AI. Default: us-east5. Use global, us, or eu for Opus 4.7+, Opus 5, Sonnet 5, and Fable/Mythos 5.',
+      'ANTHROPIC_VERTEX_REGION=global',
     ],
   ]}
 />
@@ -862,7 +1079,7 @@ See: [AWS Bedrock Setup](/docs/configuration/pre_configured_ai/bedrock)
       'BEDROCK_AWS_MODELS',
       'string',
       'Comma-separated list of Bedrock model IDs. If omitted, all known supported models are included.',
-      '# BEDROCK_AWS_MODELS=anthropic.claude-fable-5,anthropic.claude-opus-4-8,anthropic.claude-opus-4-7,anthropic.claude-sonnet-4-6,meta.llama3-1-8b-instruct-v1:0',
+      '# BEDROCK_AWS_MODELS=global.anthropic.claude-fable-5-1,global.anthropic.claude-fable-5,global.anthropic.claude-opus-5,global.anthropic.claude-opus-4-8,global.anthropic.claude-opus-4-7,global.anthropic.claude-sonnet-5,global.anthropic.claude-sonnet-4-6,meta.llama3-1-8b-instruct-v1:0',
     ],
   ]}
 />
@@ -870,7 +1087,7 @@ See: [AWS Bedrock Setup](/docs/configuration/pre_configured_ai/bedrock)
 > **Note:** You can omit the access keys to use the default AWS credentials chain (environment variables, SSO credentials, shared credentials files, or EC2/ECS Instance Metadata Service). See [AWS Bedrock Setup](/docs/configuration/pre_configured_ai/bedrock) for more details.
 
 Claude Fable/Mythos-class models on Bedrock are inference-profile only. Use a profile
-ID such as `us.anthropic.claude-fable-5`, and enable the required Anthropic data
+ID such as `global.anthropic.claude-fable-5-1`, and enable the required Anthropic data
 sharing setting in the Bedrock console or Data Retention API before invoking them.
 
 ### BingAI
@@ -925,13 +1142,13 @@ Follow these instructions to setup the [Google Endpoint](/docs/configuration/pre
       'GOOGLE_MODELS',
       'string',
       'Available Gemini API Google models, separated by commas.',
-      'GOOGLE_MODELS=gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-2.0-flash-lite',
+      'GOOGLE_MODELS=gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-2.0-flash-lite',
     ],
     [
       'GOOGLE_MODELS',
       'string',
       'Available Vertex AI Google models, separated by commas.',
-      'GOOGLE_MODELS=gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash-001,gemini-2.0-flash-lite-001',
+      'GOOGLE_MODELS=gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash-001,gemini-2.0-flash-lite-001',
     ],
     [
       'GOOGLE_TITLE_MODEL',
@@ -1170,6 +1387,35 @@ See detailed instructions here: **[OpenWeather](/docs/configuration/tools/openwe
   ]}
 />
 
+## File Uploads
+
+<OptionTable
+  options={[
+    [
+      'FILE_UPLOAD_SSE_ENABLED',
+      'boolean',
+      'Stream upload responses with heartbeat events during long-running file processing. Default: false.',
+      '# FILE_UPLOAD_SSE_ENABLED=false',
+    ],
+    [
+      'REMOTE_FILE_FETCH_TIMEOUT_MS',
+      'number',
+      'Timeout in milliseconds for server-side remote file downloads. Default: 15000.',
+      '# REMOTE_FILE_FETCH_TIMEOUT_MS=15000',
+    ],
+    [
+      'REMOTE_FILE_FETCH_MAX_BYTES',
+      'number',
+      'Maximum size in bytes for server-side remote file downloads. Default: 536870912 (512 MiB).',
+      '# REMOTE_FILE_FETCH_MAX_BYTES=536870912',
+    ],
+  ]}
+/>
+
+With `FILE_UPLOAD_SSE_ENABLED=true`, clients that request `text/event-stream` receive one-second heartbeat events while upload processing is still running, followed by a `data` or `error` event and a final `close` event. Clients that do not request SSE continue to receive the normal JSON response. This is useful when a reverse proxy would otherwise close an idle connection during long OCR, parsing, or RAG work.
+
+The remote fetch controls apply when LibreChat ingests an HTTP or HTTPS file URL into local, Firebase, Azure, or S3/CloudFront storage. LibreChat checks both a declared `Content-Length` and the bytes actually streamed, so the limit still applies when the remote server omits or misstates its length. These controls are independent of the per-upload limits in [`fileConfig`](/docs/configuration/librechat_yaml/object_structure/file_config).
+
 ## Code Interpreter
 
 The Code Interpreter API provides a secure environment for executing code and managing files. See: [Code Interpreter API](/docs/features/code_interpreter)
@@ -1183,13 +1429,158 @@ The Code Interpreter API provides a secure environment for executing code and ma
       'LIBRECHAT_CODE_API_KEY=your-api-key',
     ],
     [
+      'CODE_ENVIRONMENT_DECISION_VERSION',
+      'number',
+      'Advertises immutable, conversation-owned Code-environment decisions. Enable protocol version 1 only after every API replica supports it.',
+      '# CODE_ENVIRONMENT_DECISION_VERSION=1',
+    ],
+    [
       'LIBRECHAT_CODE_BASEURL',
       'string',
-      'Custom base URL for the Code Interpreter API (Enterprise plans only).',
+      'Base URL for the normal stateless Code Interpreter service.',
       '# LIBRECHAT_CODE_BASEURL=https://your-custom-domain.com',
+    ],
+    [
+      'LIBRECHAT_CODE_BASEURL_STATEFUL',
+      'string',
+      'Default Code Interpreter base URL for highly experimental stateful Agent sessions when no named statefulCodeSessions environment is selected. The service must advertise the stateful profile.',
+      '# LIBRECHAT_CODE_BASEURL_STATEFUL=https://your-stateful-code-domain.com',
+    ],
+    [
+      'CODE_SANDBOX_PREWARM',
+      'boolean',
+      'Prewarm selected stateful sandboxes in parallel with model generation. Set to false to disable. Default: true.',
+      '# CODE_SANDBOX_PREWARM=true',
+    ],
+    [
+      'CODE_SANDBOX_COLD_AFTER_MS',
+      'number',
+      'Time in milliseconds before LibreChat treats a tracked sandbox as cold. Default: 2100000 (35 minutes).',
+      '# CODE_SANDBOX_COLD_AFTER_MS=2100000',
+    ],
+    [
+      'LIBRECHAT_CODE_SANDBOX_OUTPUT_MAX_SIZE',
+      'number',
+      "Sandbox stdout budget in bytes used to derive image-read window sizes. Match the runner's SANDBOX_OUTPUT_MAX_SIZE to minimize execution round trips. Default: 65536.",
+      '# LIBRECHAT_CODE_SANDBOX_OUTPUT_MAX_SIZE=65536',
+    ],
+    [
+      'LIBRECHAT_CODE_IMAGE_CHUNK_BYTES',
+      'number',
+      'Exact bytes read per sandbox image window. Overrides the size derived from LIBRECHAT_CODE_SANDBOX_OUTPUT_MAX_SIZE; leave unset unless an exact override is required.',
+      '# LIBRECHAT_CODE_IMAGE_CHUNK_BYTES=',
+    ],
+    [
+      'CODE_ENVIRONMENT_PAIRING_USER_MAX',
+      'number',
+      'Maximum self-service code-worker pairing requests per user during one rate-limit window. Default: 5.',
+      '# CODE_ENVIRONMENT_PAIRING_USER_MAX=5',
+    ],
+    [
+      'CODE_ENVIRONMENT_PAIRING_USER_WINDOW',
+      'number',
+      'Self-service code-worker pairing rate-limit window in minutes. Default: 60.',
+      '# CODE_ENVIRONMENT_PAIRING_USER_WINDOW=60',
     ],
   ]}
 />
+
+If a worker has a smaller stdout cap than configured, LibreChat narrows and remembers the image window for that Code Interpreter base URL after a failed read. Matching the two budgets avoids that discarded discovery request and reduces pressure on the Code Interpreter execution rate limit.
+
+### Code Interpreter JWT Authentication
+
+The current self-hosted [ClickHouse/code-interpreter](https://github.com/ClickHouse/code-interpreter) service verifies short-lived LibreChat bearer tokens outside local mode. Set `CODEAPI_AUTH_PROVIDER=librechat-jwt` to enable token minting, then give Code Interpreter the public key that matches LibreChat's private signer. See [Self-hosted JWT authentication](/docs/features/code_interpreter#self-hosted-jwt-authentication) for the paired service configuration and key-generation helper.
+
+<OptionTable
+  options={[
+    [
+      'CODEAPI_AUTH_PROVIDER',
+      'string',
+      'Set to librechat-jwt to mint per-user Code Interpreter bearer tokens. The compatibility value both also enables minting, but ClickHouse/code-interpreter expects librechat-jwt.',
+      '# CODEAPI_AUTH_PROVIDER=librechat-jwt',
+    ],
+    [
+      'CODEAPI_JWT_ENABLED',
+      'boolean',
+      'Explicitly enables Code Interpreter JWT minting when CODEAPI_AUTH_PROVIDER is not librechat-jwt or both. Default: false.',
+      '# CODEAPI_JWT_ENABLED=true',
+    ],
+    [
+      'CODEAPI_JWT_PRIVATE_KEY',
+      'string',
+      'Ed25519 or RSA private signing key in PEM format. Escaped \\n sequences are converted to newlines.',
+      '# CODEAPI_JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n..."',
+    ],
+    [
+      'CODEAPI_JWT_PRIVATE_KEY_BASE64',
+      'string',
+      'Base64-encoded PEM private key. Used when CODEAPI_JWT_PRIVATE_KEY is unset.',
+      '# CODEAPI_JWT_PRIVATE_KEY_BASE64=',
+    ],
+    [
+      'CODEAPI_JWT_PRIVATE_JWK_JSON',
+      'string',
+      'Private signing key as JWK JSON. Used when both PEM settings are unset.',
+      '# CODEAPI_JWT_PRIVATE_JWK_JSON={"kty":"OKP",...}',
+    ],
+    [
+      'CODEAPI_JWT_ALGORITHM',
+      'string',
+      'Signing algorithm: EdDSA or RS256. Default: EdDSA.',
+      '# CODEAPI_JWT_ALGORITHM=EdDSA',
+    ],
+    [
+      'CODEAPI_JWT_KID',
+      'string',
+      'Signing-key ID included in the token header. Must identify the matching Code Interpreter verifier key. Default: lc-codeapi-2026-05.',
+      '# CODEAPI_JWT_KID=lc-codeapi-2026-05',
+    ],
+    [
+      'CODEAPI_JWT_ISSUER',
+      'string',
+      'Token issuer; must match Code Interpreter. Default: librechat.',
+      '# CODEAPI_JWT_ISSUER=librechat',
+    ],
+    [
+      'CODEAPI_JWT_AUDIENCE',
+      'string',
+      'Token audience; must match Code Interpreter. Default: codeapi.',
+      '# CODEAPI_JWT_AUDIENCE=codeapi',
+    ],
+    [
+      'CODEAPI_JWT_TTL_SECONDS',
+      'number',
+      'Bearer-token lifetime in seconds. Invalid or larger values resolve to the 300-second default and maximum.',
+      '# CODEAPI_JWT_TTL_SECONDS=300',
+    ],
+    [
+      'CODEAPI_JWT_MINT_CACHE_SECONDS',
+      'number',
+      'How long LibreChat can reuse a token for the same authenticated context. Default and maximum: 30 seconds.',
+      '# CODEAPI_JWT_MINT_CACHE_SECONDS=30',
+    ],
+    [
+      'CODEAPI_JWT_SINGLE_TENANT_ID',
+      'string',
+      'Fallback tenant ID when strict tenant isolation is disabled and no tenant context is available. Must match Code Interpreter. Default: legacy.',
+      '# CODEAPI_JWT_SINGLE_TENANT_ID=legacy',
+    ],
+  ]}
+/>
+
+At least one private-key source is required when JWT minting is enabled. If more than one is set, LibreChat checks `CODEAPI_JWT_PRIVATE_KEY`, then `CODEAPI_JWT_PRIVATE_KEY_BASE64`, then `CODEAPI_JWT_PRIVATE_JWK_JSON`. `CODEAPI_JWT_KEY_ID` remains a compatibility alias for `CODEAPI_JWT_KID`.
+
+For a multi-tenant deployment, enable `TENANT_ISOLATION_STRICT=true` in LibreChat and `CODEAPI_TENANT_ISOLATION_STRICT=true` in Code Interpreter. Requests without authenticated tenant context then fail instead of using `CODEAPI_JWT_SINGLE_TENANT_ID`.
+
+### Stateful Code Interpreter Endpoint
+
+[`stateful_code_sessions`](/docs/configuration/librechat_yaml/object_structure/agents#capabilities) is highly experimental and requires a separate Code Interpreter route. Configure the default route with `LIBRECHAT_CODE_BASEURL_STATEFUL`, or define named managed or attached backends under [`endpoints.agents.statefulCodeSessions.environments`](/docs/configuration/librechat_yaml/object_structure/agents#statefulcodesessions). The selected service must run the `stateful` profile; LibreChat sends `X-CodeAPI-Expected-Profile: stateful` with stateful requests.
+
+Stateful requests never fall back to `LIBRECHAT_CODE_BASEURL`. If the selected named environment is unavailable, or neither a named default nor `LIBRECHAT_CODE_BASEURL_STATEFUL` is configured, LibreChat stops the Agent run with a configuration error. Stateless agents continue using `LIBRECHAT_CODE_BASEURL`, and the two execution profiles do not share a live workspace.
+
+Each Agent can scope its stateful workspace to the signed-in user, the user and Agent together, or the user and conversation. See [Stateful Code Sessions](/docs/features/code_interpreter#stateful-code-sessions) for setup and persistence limitations.
+
+Named attached environments can also expose a self-service pairing control plane with `pairing.allowPrincipalWorkers: true`. Authorized users manage those owner-bound workers under **Settings > Code environments**; pairing-only entries do not replace `LIBRECHAT_CODE_BASEURL_STATEFUL` and cannot serve as the deployment default.
 
 ## Artifacts
 
@@ -1212,10 +1603,10 @@ For more info, including pre-made container images for self-hosting with metric 
 
 ## Search (Meilisearch)
 
-Enables search in messages and conversations:
+Search is disabled by default. Enable it only after configuring Meilisearch with a unique master key:
 
 <OptionTable
-  options={[['SEARCH', 'boolean', 'Enables search in messages and conversations.', 'SEARCH=true']]}
+  options={[['SEARCH', 'boolean', 'Enables search in messages and conversations. Default: false.', 'SEARCH=true']]}
 />
 
 > Note: If you're not using docker, it requires the installation of the free self-hosted Meilisearch or a paid remote plan
@@ -1246,7 +1637,7 @@ For the API server to connect to the search server. Replace '0.0.0.0' with 'meil
   ]}
 />
 
-This master key must be at least 16 bytes, composed of valid UTF-8 characters. MeiliSearch will throw an error and refuse to launch if no master key is provided or if it is under 16 bytes. MeiliSearch will suggest a secure autogenerated master key. This is a ready-made secure key for docker-compose, you can replace it with your own.
+This master key must be at least 16 bytes of valid UTF-8. Generate a unique value and give the same key to LibreChat and the Meilisearch service. Search requires both `SEARCH=true` and a configured `MEILI_MASTER_KEY`.
 
 <OptionTable
   options={[
@@ -1254,7 +1645,7 @@ This master key must be at least 16 bytes, composed of valid UTF-8 characters. M
       'MEILI_MASTER_KEY',
       'string',
       'The master key for MeiliSearch.',
-      'MEILI_MASTER_KEY=DrhYf7zENyR6AlUCKmnz0eYASOQdl6zxH7s7MKFSfFCt',
+      'MEILI_MASTER_KEY=',
     ],
   ]}
 />
@@ -1360,10 +1751,79 @@ Configure shared conversation links functionality.
       'Allow shared links to be publicly accessible without authentication. Default: false.',
       'ALLOW_SHARED_LINKS_PUBLIC=false',
     ],
+    [
+      'SHARED_LINKS_SNAPSHOT_FILES',
+      'boolean',
+      'Snapshot files referenced by a shared chat so viewers can preview or download them through the shared link. Overrides interface.sharedLinks.snapshotFiles when set.',
+      'SHARED_LINKS_SNAPSHOT_FILES=true',
+    ],
+    ['SHARE_IP_MAX', 'number', 'Maximum shared-link retrievals per IP during the IP window. Default: 100.', '# SHARE_IP_MAX=100'],
+    ['SHARE_IP_WINDOW', 'number', 'Shared-link IP rate-limit window in minutes. Default: 1.', '# SHARE_IP_WINDOW=1'],
+    ['SHARE_USER_MAX', 'number', 'Maximum shared-link retrievals per authenticated user during the user window. Default: 60.', '# SHARE_USER_MAX=60'],
+    ['SHARE_USER_WINDOW', 'number', 'Shared-link user rate-limit window in minutes. Default: 1.', '# SHARE_USER_WINDOW=1'],
+    ['SHARE_VIOLATION_SCORE', 'number', 'Violation score added when a shared-link retrieval limit is exceeded. Default: 0.', '# SHARE_VIOLATION_SCORE=0'],
   ]}
 />
 
-`ALLOW_SHARED_LINKS` is the feature-wide switch. Role permissions now control who can create shared links, share them with authenticated users, or make them visible to everyone; see [`interface.sharedLinks`](/docs/configuration/librechat_yaml/object_structure/interface#sharedlinks). `ALLOW_SHARED_LINKS_PUBLIC` only controls whether publicly shared links can be viewed without authentication.
+`ALLOW_SHARED_LINKS` is the feature-wide switch. Role permissions now control who can create shared links, share them with authenticated users, or make them visible to everyone; see [`interface.sharedLinks`](/docs/configuration/librechat_yaml/object_structure/interface#sharedlinks). `ALLOW_SHARED_LINKS_PUBLIC` only controls whether publicly shared links can be viewed without authentication. `SHARED_LINKS_SNAPSHOT_FILES` is a global override for shared-link file snapshots and can disable snapshot serving for every link when set to `false`.
+
+Every shared-link read uses the IP bucket because public links are reachable without authentication. Signed-in viewers also use the user bucket. Exceeding either limit returns HTTP 429; a nonzero `SHARE_VIOLATION_SCORE` records the event in the existing violation system.
+
+## Scheduled Chats
+
+<OptionTable
+  options={[
+    [
+      'SCHEDULES_SINGLE_PROCESS',
+      'boolean',
+      'Allows Scheduled Chats without Redis only when exactly one LibreChat process is running. Never enable this for multiple processes or replicas.',
+      'SCHEDULES_SINGLE_PROCESS=true',
+    ],
+    [
+      'SCHEDULES_DISABLED',
+      'boolean',
+      'Emergency global stop for automatic Scheduled Chat occurrences and Run now. Definitions remain stored. Default: false.',
+      'SCHEDULES_DISABLED=true',
+    ],
+  ]}
+/>
+
+Scheduled Chats are experimental and disabled until [`interface.schedules`](/docs/configuration/librechat_yaml/object_structure/interface#schedules) is configured. Multi-replica deployments require `USE_REDIS_STREAMS=true`; a deployment without shared Redis streams fails schedule writes closed unless it explicitly declares a truly single-process topology with `SCHEDULES_SINGLE_PROCESS=true`. A scheduled Agent that can pause for Ask User or tool approval always requires `USE_REDIS_STREAMS=true` plus a durable shared checkpointer; the built-in default is MongoDB. See [Scheduled Chats](/docs/features/scheduled_chats) for setup and runtime behavior.
+
+## Agent Event Runtime
+
+<OptionTable
+  options={[
+    [
+      'AGENT_TRIGGERS_SELF_URL',
+      'string',
+      'Compatibility fallback for endpoints.agents.eventDriven.selfUrl. Base URL used by the Agent event host to re-enter fire, continue, and steer admission.',
+      '# AGENT_TRIGGERS_SELF_URL=http://127.0.0.1:3080',
+    ],
+    [
+      'AGENT_EVENT_USER_MAX',
+      'number',
+      'Compatibility fallback for rateLimits.agentEvents.userMax. Maximum Agent Event requests per API-key principal in the configured window. Default: 40.',
+      'AGENT_EVENT_USER_MAX=40',
+    ],
+    [
+      'AGENT_EVENT_USER_WINDOW',
+      'number',
+      'Compatibility fallback for rateLimits.agentEvents.userWindowInMinutes. Agent Event rate-limit window in minutes. Default: 1.',
+      'AGENT_EVENT_USER_WINDOW=1',
+    ],
+  ]}
+/>
+
+Prefer [`endpoints.agents.eventDriven.selfUrl`](/docs/configuration/librechat_yaml/object_structure/agents#eventdriven) and [`rateLimits.agentEvents`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) in `librechat.yaml`. `AGENT_TRIGGERS_SELF_URL` and the rate-limit variables remain compatibility fallbacks; an explicitly configured YAML value takes precedence.
+
+Bound child continuations, detached Subagent parent continuations, and Event Actor detached Action completion are automatic. The retired `ENABLE_AGENT_EVENT_CHILD_TURNS`, `ENABLE_SUBAGENT_COMPLETION_WAKEUPS`, and `AGENT_TRIGGERS_DETACHED_ACTIONS_PRODUCER_ENABLED` variables are no longer read.
+
+The in-memory generation store supports process-local Event Actor detached completion while the process remains alive. Redis generation streams add durable restart recovery and replica handoff. See [Generation Protocol Compatibility](/docs/configuration/redis#generation-protocol-compatibility) before a mixed-version deployment.
+
+Leave `AGENT_TRIGGERS_SELF_URL` unset for the normal bound-listener path. Set it only when internal event admission must traverse another HTTP origin, such as a TLS front door. The value must be an HTTP or HTTPS URL without embedded credentials.
+
+LibreChat exposes an authenticated Agent Events API; it does not expose an unauthenticated webhook. API-key identity, Remote Agents permissions, target access, idempotency, and the dedicated Agent Event rate limit protect ingress. MongoDB-backed ordering lanes, actor mailboxes, receipts, leases, retries, and dead letters support workers across replicas. See [Agent Event Delivery](/docs/features/agents#agent-event-delivery) and [Agents API - Agent Events](/docs/features/agents_api#agent-events) for behavior and examples.
 
 ## User System
 
@@ -1372,7 +1832,35 @@ This section contains the configuration for:
 - [Automated Moderation](#moderation)
 - [Balance/Token Usage](#balance)
 - [Registration and Social Logins](#registration-and-login)
-- [Email Password Reset](#email-password-reset)
+- [Email Password Reset](#password-reset)
+
+### Admin Insights
+
+<OptionTable
+  options={[
+    [
+      'ENABLE_INSIGHTS',
+      'boolean',
+      'Enables the MongoDB-backed Insights dashboard for administrators with the required capabilities. Default: false.',
+      'ENABLE_INSIGHTS=false',
+    ],
+  ]}
+/>
+
+When enabled, Insights remains restricted to accounts with the `ADMIN` role plus `access:admin` and `read:insights`. Queries are tenant-scoped and expose persisted activity metrics and recent conversation metadata. See [Admin Insights](/docs/features/insights) for metric definitions and access details.
+
+### Agent Conversation Controls
+
+<OptionTable
+  options={[
+    [
+      'STEER_MAX_LENGTH',
+      'number',
+      'Maximum characters allowed in one mid-run Agent steering message. Default: 16000.',
+      '# STEER_MAX_LENGTH=16000',
+    ],
+  ]}
+/>
 
 ### Moderation
 
@@ -1422,6 +1910,12 @@ see: **[Automated Moderation](/docs/configuration/mod_system)**
       'The user will be banned every time their score reaches/crosses over the interval threshold.',
       'BAN_INTERVAL=20',
     ],
+    [
+      'VIOLATION_SCORE_TTL',
+      'integer',
+      'How long a violation score lives without new violations (in milliseconds). Each new violation restarts the countdown, so scores decay after a quiet period instead of accumulating forever. Set to 0 to never expire scores (legacy behavior).',
+      'VIOLATION_SCORE_TTL=1000 * 60 * 60',
+    ],
   ]}
 />
 
@@ -1454,6 +1948,65 @@ Prevents brute force attacks and spam registrations by limiting login attempts a
       'integer',
       'In minutes, determines the window of time for REGISTER_MAX registrations.',
       'REGISTER_WINDOW=60',
+    ],
+  ]}
+/>
+
+The login-attempt budget is shared by the local login API and top-level social or federated OAuth navigations from the same IP. A rejected API login receives the existing JSON `429` response. A rate-limited or banned `/oauth/*` browser navigation returns to `/login?redirect=false` with a localized error code instead of rendering a JSON document; `redirect=false` prevents an automatic OpenID redirect from immediately entering the limiter again.
+
+#### Password reset and email verification rate limiting
+
+LibreChat applies separate IP-based limits to requesting an email and submitting the token from that email. This prevents repeated token guesses without forcing deployments to use the same limit for email delivery and token validation.
+
+<OptionTable
+  options={[
+    [
+      'RESET_PASSWORD_MAX',
+      'integer',
+      'Maximum password-reset email requests per IP in RESET_PASSWORD_WINDOW. Default: 2.',
+      '# RESET_PASSWORD_MAX=2',
+    ],
+    [
+      'RESET_PASSWORD_WINDOW',
+      'integer',
+      'Password-reset email request window in minutes. Default: 2.',
+      '# RESET_PASSWORD_WINDOW=2',
+    ],
+    [
+      'RESET_PASSWORD_SUBMISSION_MAX',
+      'integer',
+      'Maximum password-reset token submissions per IP. Defaults to RESET_PASSWORD_MAX, then 2.',
+      '# RESET_PASSWORD_SUBMISSION_MAX=2',
+    ],
+    [
+      'RESET_PASSWORD_SUBMISSION_WINDOW',
+      'integer',
+      'Password-reset token submission window in minutes. Defaults to RESET_PASSWORD_WINDOW, then 2.',
+      '# RESET_PASSWORD_SUBMISSION_WINDOW=2',
+    ],
+    [
+      'VERIFY_EMAIL_MAX',
+      'integer',
+      'Maximum verification-email resend requests per IP in VERIFY_EMAIL_WINDOW. Default: 2.',
+      '# VERIFY_EMAIL_MAX=2',
+    ],
+    [
+      'VERIFY_EMAIL_WINDOW',
+      'integer',
+      'Verification-email resend window in minutes. Default: 2.',
+      '# VERIFY_EMAIL_WINDOW=2',
+    ],
+    [
+      'VERIFY_EMAIL_SUBMISSION_MAX',
+      'integer',
+      'Maximum email-verification token submissions per IP. Defaults to VERIFY_EMAIL_MAX, then 2.',
+      '# VERIFY_EMAIL_SUBMISSION_MAX=2',
+    ],
+    [
+      'VERIFY_EMAIL_SUBMISSION_WINDOW',
+      'integer',
+      'Email-verification token submission window in minutes. Defaults to VERIFY_EMAIL_WINDOW, then 2.',
+      '# VERIFY_EMAIL_SUBMISSION_WINDOW=2',
     ],
   ]}
 />
@@ -1526,14 +2079,26 @@ Prevents brute force attacks and spam registrations by limiting login attempts a
     [
       'RESET_PASSWORD_VIOLATION_SCORE',
       'integer',
-      'Score for password reset violations.',
-      'RESET_PASSWORD_VIOLATION_SCORE=0',
+      'Score for password-reset email request violations. Default: 1.',
+      '# RESET_PASSWORD_VIOLATION_SCORE=1',
     ],
     [
       'VERIFY_EMAIL_VIOLATION_SCORE',
       'integer',
-      'Score for email verification violations.',
-      'VERIFY_EMAIL_VIOLATION_SCORE=0',
+      'Score for verification-email resend violations. Default: 1.',
+      '# VERIFY_EMAIL_VIOLATION_SCORE=1',
+    ],
+    [
+      'RESET_PASSWORD_SUBMISSION_VIOLATION_SCORE',
+      'integer',
+      'Score for password-reset token submission violations. Default: 1.',
+      '# RESET_PASSWORD_SUBMISSION_VIOLATION_SCORE=1',
+    ],
+    [
+      'VERIFY_EMAIL_SUBMISSION_VIOLATION_SCORE',
+      'integer',
+      'Score for email-verification token submission violations. Default: 1.',
+      '# VERIFY_EMAIL_SUBMISSION_VIOLATION_SCORE=1',
     ],
     [
       'TOOL_CALL_VIOLATION_SCORE',
@@ -1621,6 +2186,29 @@ Prevents brute force attacks and spam registrations by limiting login attempts a
       'integer',
       'In minutes, determines the window of time for `MESSAGE_USER_MAX` messages.',
       'MESSAGE_USER_WINDOW=1',
+    ],
+  ]}
+/>
+
+Confirmed idempotent Agent-generation retries bypass ordinary per-user message admission so recovery can proceed, but they still pass through the shared IP limiter when `LIMIT_MESSAGE_IP` is enabled. Trusted Agent-trigger deliveries remain exempt from that browser-facing IP boundary.
+
+##### Queued Attachment TTL Limiter:
+
+The `/files/usage` endpoint renews a bounded TTL hold for attachments waiting in queued Agent messages. It has a separate per-user limiter so metadata renewals do not consume the upload quota.
+
+<OptionTable
+  options={[
+    [
+      'FILE_USAGE_USER_MAX',
+      'integer',
+      'Maximum queued-attachment TTL renewal requests per user and window. Default: 120.',
+      '# FILE_USAGE_USER_MAX=120',
+    ],
+    [
+      'FILE_USAGE_USER_WINDOW',
+      'integer',
+      'Window in minutes for FILE_USAGE_USER_MAX. Default: 15.',
+      '# FILE_USAGE_USER_WINDOW=15',
     ],
   ]}
 />
@@ -1905,15 +2493,11 @@ see: **[Token Usage](/docs/configuration/token_usage)**
 
 see: **[Authentication System](/docs/configuration/authentication)**
 
-<div style={{display: "flex", justifyContent: "center", alignItems: "center", flexDirection: "column"}}>
-  <div className="image-light-theme">
-    <img src="https://github.com/danny-avila/LibreChat/assets/32828263/4c51dc25-31d3-4c51-8c2a-0cdfb5a25033" style={{ width: "75%", height: "75%" }} alt="Image for Light Theme" />
-  </div>
-
-  <div className="image-dark-theme">
-    <img src="https://github.com/danny-avila/LibreChat/assets/32828263/3bc5371d-e51d-4e91-ac68-56db6e85bb2c" style={{ width: "75%", height: "75%" }} alt="Image for Dark Theme" />
-  </div>
-</div>
+<ThemeImage
+  light="https://github.com/danny-avila/LibreChat/assets/32828263/4c51dc25-31d3-4c51-8c2a-0cdfb5a25033"
+  dark="https://github.com/danny-avila/LibreChat/assets/32828263/3bc5371d-e51d-4e91-ac68-56db6e85bb2c"
+  alt="User registration screen"
+/>
 
 <Callout type="info" title="Configuration File Clarification">
   All authentication settings in this section should be configured in your `.env` file, not in the
@@ -1931,6 +2515,12 @@ see: **[Authentication System](/docs/configuration/authentication)**
       'boolean',
       'Enable or disable ONLY email login.',
       'ALLOW_EMAIL_LOGIN=true',
+    ],
+    [
+      'ALLOW_EMAIL_LOGIN_OVERRIDE',
+      'boolean',
+      'Permit direct API email login while ALLOW_EMAIL_LOGIN=false. Each use is logged. Default: false.',
+      '# ALLOW_EMAIL_LOGIN_OVERRIDE=false',
     ],
     [
       'ALLOW_REGISTRATION',
@@ -2005,12 +2595,11 @@ see: **[Authentication System](/docs/configuration/authentication)**
   ]}
 />
 
-- For more information: **[Refresh Token](https://github.com/danny-avila/LibreChat/pull/927)**
+- For more information: **[Refresh Token](https://github.com/LibreChat-AI/LibreChat/pull/927)**
 
 - JWT Settings:
 
-You should use new secure values. The examples given are 32-byte keys (64 characters in hex).
-Use this replit to generate some quickly: **[JWT Keys](/toolkit/creds_generator)**
+Use unique values of at least 32 bytes. Generate permanent values for production with the [Credentials Generator](/toolkit/creds_generator).
 
 <OptionTable
   options={[
@@ -2018,16 +2607,18 @@ Use this replit to generate some quickly: **[JWT Keys](/toolkit/creds_generator)
       'JWT_SECRET',
       'string (hex)',
       'JWT secret key.',
-      'JWT_SECRET=16f8c0ef4a5d391b26034086c628469d3f9f497f08163ab9b40137092f2909ef',
+      'JWT_SECRET=',
     ],
     [
       'JWT_REFRESH_SECRET',
       'string (hex)',
       'JWT refresh secret key.',
-      'JWT_REFRESH_SECRET=eaa5191f2914e30b9387fd84e254e4ba6fc51b4654968a9b0803b456a54b8418',
+      'JWT_REFRESH_SECRET=',
     ],
   ]}
 />
+
+Blank JWT secrets use the same temporary-credential bootstrap described under [Credentials Configuration](#credentials-configuration). In production and horizontally scaled deployments, set permanent values and share them across replicas so issued sessions remain valid.
 
 ### Social Logins
 
@@ -2249,7 +2840,7 @@ For more information:
     [
       'OPENID_ROLE_SYNC_FALLBACK_ROLE',
       'string',
-      'LibreChat role assigned when no priority role matches. The fallback is authoritative when configured.',
+      'LibreChat role assigned when no priority role matches. The fallback is authoritative when configured. Remote Agents API authentication treats an unresolved Entra group-overage list as empty, so this fallback applies there as well.',
       'OPENID_ROLE_SYNC_FALLBACK_ROLE=USER',
     ],
     [
@@ -2269,6 +2860,12 @@ For more information:
       'string',
       'Whether to use the Issuer End Session Endpoint as a Logout Redirect',
       'OPENID_USE_END_SESSION_ENDPOINT=TRUE',
+    ],
+    [
+      'OPENID_MAX_LOGOUT_URL_LENGTH',
+      'number',
+      'Maximum logout URL length before using logout_hint instead of id_token_hint. Default: 2000.',
+      '# OPENID_MAX_LOGOUT_URL_LENGTH=2000',
     ],
     [
       'OPENID_AUTO_REDIRECT',
@@ -2364,6 +2961,12 @@ LibreChat supports reusing access and refresh tokens issued by your OpenID Conne
       'OPENID_REUSE_MAX_SESSION_AGE_MS=900000',
     ],
     [
+      'OPENID_REFRESH_BRIDGE_GRACE_MS',
+      'number',
+      'Short recovery window for a rotated refresh token while LibreChat publishes the refreshed OpenID session. Default: 60000 ms / 1 minute.',
+      'OPENID_REFRESH_BRIDGE_GRACE_MS=60000',
+    ],
+    [
       'OPENID_JWKS_URL_CACHE_ENABLED',
       'boolean',
       'Enable caching of signing key verification results.',
@@ -2393,10 +2996,16 @@ LibreChat supports reusing access and refresh tokens issued by your OpenID Conne
       'Enable use of the end session endpoint for logout.',
       'OPENID_USE_END_SESSION_ENDPOINT=true',
     ],
+    [
+      'OPENID_MAX_LOGOUT_URL_LENGTH',
+      'number',
+      'Maximum logout URL length in characters before switching to logout_hint. Useful to prevent URI too long errors when id_token_hint exceeds server limits. Default: 2000.',
+      'OPENID_MAX_LOGOUT_URL_LENGTH=2000',
+    ],
   ]}
 />
 
-`OPENID_REUSE_MAX_SESSION_AGE_MS` accepts arithmetic expressions like `SESSION_EXPIRY`. Increase it toward the IdP access-token lifetime when your provider revokes the previous access token on refresh, so downstream consumers such as MCP servers can finish using a still-valid bearer token.
+`OPENID_REUSE_MAX_SESSION_AGE_MS` and `OPENID_REFRESH_BRIDGE_GRACE_MS` accept arithmetic expressions like `SESSION_EXPIRY`. Increase the session age toward the IdP access-token lifetime when your provider revokes the previous access token on refresh, so downstream consumers such as MCP servers can finish using a still-valid bearer token. Increase the bridge grace period only when slow session persistence or cross-replica publication needs more than the default minute to publish a rotated token.
 
 <Callout type="note" title="Note">
   For detailed configuration steps and prerequisites, see [Re-use OpenID Tokens for Login
@@ -2427,8 +3036,16 @@ When using Azure Entra ID (formerly Azure AD) as your OpenID provider, you can e
       'Microsoft Graph API scopes needed for people/group search. Default scopes provide access to user profiles and group memberships.',
       'OPENID_GRAPH_SCOPES=User.Read,People.Read,GroupMember.Read.All,User.ReadBasic.All',
     ],
+    [
+      'GRAPH_API_SCOPES',
+      'string',
+      'Space-separated Microsoft Graph scopes requested by the OBO exchange for {{LIBRECHAT_GRAPH_ACCESS_TOKEN}} placeholders in YAML-defined MCP servers. Default: https://graph.microsoft.com/.default.',
+      '# GRAPH_API_SCOPES=https://graph.microsoft.com/.default',
+    ],
   ]}
 />
+
+`GRAPH_API_SCOPES` is separate from `OPENID_GRAPH_SCOPES`: the former controls Graph tokens resolved into MCP configuration, while the latter controls Entra ID people and group search.
 
 <Callout type="warning" title="Important Prerequisites">
   - You must have Azure Entra ID configured as your OpenID provider - **OpenID token reuse MUST be
@@ -2529,6 +3146,18 @@ Only one authentication method can be active at a time.
       'string',
       'The secret for SAML session storage.',
       'SAML_SESSION_SECRET=',
+    ],
+    [
+      'SAML_NAME_ID_FORMAT',
+      'string',
+      'Stable NameID format requested from the IdP. Persistent identifiers are recommended; transient identifiers are rejected.',
+      '# SAML_NAME_ID_FORMAT=urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+    ],
+    [
+      'SAML_IDP_ISSUER',
+      'string',
+      'Expected IdP entity ID. When set, assertions with a missing or different issuer are rejected.',
+      'SAML_IDP_ISSUER=',
     ],
     [
       'SAML_EMAIL_CLAIM',
@@ -2703,7 +3332,7 @@ If Mailgun is not configured, LibreChat will fall back to SMTP settings.
 > **Warning**: If using `EMAIL_SERVICE`, **do NOT** set the extended connection parameters:
 > HOST, PORT, ENCRYPTION, ENCRYPTION_HOSTNAME, ALLOW_SELFSIGNED.
 
-See: **[nodemailer well-known-services](https://community.nodemailer.com/2-0-0-beta/setup-smtp/well-known-services/)**
+See: **[nodemailer well-known-services](https://nodemailer.com/smtp/well-known-services)**
 
 <OptionTable
   options={[
@@ -2961,6 +3590,21 @@ Configure limits for conversation file imports to prevent memory issues.
   ]}
 />
 
+#### Inline File Previews
+
+Control how large generated files can be before LibreChat skips inline preview extraction and leaves them download-only.
+
+<OptionTable
+  options={[
+    [
+      'FILE_PREVIEW_MAX_EXTRACT_BYTES',
+      'number',
+      'Maximum source file size in bytes for code-execution artifact inline previews, including DOCX, XLSX, CSV, PPTX, POTX, text, and PDF-like files. Default: 2097152 (2 MiB). Rendered HTML previews are still capped separately, so very rich files may skip preview even below this value.',
+      '# FILE_PREVIEW_MAX_EXTRACT_BYTES=2097152',
+    ],
+  ]}
+/>
+
 ### MCP (Model Context Protocol)
 
 Configure Model Context Protocol settings for enhanced server management and OAuth support.
@@ -2998,6 +3642,12 @@ Configure Model Context Protocol settings for enhanced server management and OAu
       'number',
       'Cache connection status checks for this many milliseconds to avoid expensive verification.',
       'MCP_CONNECTION_CHECK_TTL=30000',
+    ],
+    [
+      'MCP_TOOLS_LIST_MAX_PAGES',
+      'number',
+      'Maximum number of tools/list pages to request when an MCP server paginates its tool list (cursor pagination). Bounds the pagination loop so a misbehaving server cannot stall tool discovery. Clamped to a minimum of 1. Default: 50.',
+      'MCP_TOOLS_LIST_MAX_PAGES=50',
     ],
     [
       'MCP_SKIP_CODE_CHALLENGE_CHECK',
@@ -3047,9 +3697,15 @@ For detailed configuration and examples, see: **[Redis Configuration Guide](/doc
       '# USE_REDIS_STREAMS=true',
     ],
     [
+      'STREAM_DELTA_COALESCE_MS',
+      'integer',
+      'Batch Redis stream delta publications within this many milliseconds. Unset or 0 disables batching; 25 is recommended and values are capped at 1000.',
+      '# STREAM_DELTA_COALESCE_MS=25',
+    ],
+    [
       'REDIS_URI',
       'string',
-      'Redis connection URI. For single instance: redis://host:port. For cluster: comma-separated URIs.',
+      'Redis connection URI. For single instance: `redis://host:port`. For cluster: comma-separated URIs.',
       'REDIS_URI=redis://127.0.0.1:6379',
     ],
     [
@@ -3101,16 +3757,64 @@ For detailed configuration and examples, see: **[Redis Configuration Guide](/doc
       '# REDIS_MAX_LISTENERS=40',
     ],
     [
+      'REDIS_READONLY_RECOVERY_INTERVAL',
+      'number',
+      'Minimum milliseconds between forced Keyv reconnect attempts after READONLY replies during standalone or Sentinel failover. Default: 5000.',
+      '# REDIS_READONLY_RECOVERY_INTERVAL=5000',
+    ],
+    [
       'REDIS_PING_INTERVAL',
       'number',
       'Ping interval in seconds to maintain connections. Default: 0 (disabled). Only set if experiencing timeouts.',
       '# REDIS_PING_INTERVAL=300',
     ],
     [
+      'REDIS_PING_TIMEOUT',
+      'number',
+      'Milliseconds an enabled heartbeat PING may remain unanswered before LibreChat reconnects the socket. Default: 5000.',
+      '# REDIS_PING_TIMEOUT=5000',
+    ],
+    [
+      'REDIS_SUBSCRIBER_PING_INTERVAL',
+      'number',
+      'Heartbeat interval in seconds for dedicated pub/sub subscriber connections. Default: 15; set to 0 to disable.',
+      '# REDIS_SUBSCRIBER_PING_INTERVAL=15',
+    ],
+    [
+      'REDIS_KEEP_ALIVE',
+      'number',
+      'TCP keepalive idle delay in milliseconds for ioredis sockets. Default: 10000; set to 0 for the kernel default.',
+      '# REDIS_KEEP_ALIVE=10000',
+    ],
+    [
       'FORCED_IN_MEMORY_CACHE_NAMESPACES',
       'string',
       'Comma-separated cache keys to force in-memory storage even when Redis is enabled.',
       '# FORCED_IN_MEMORY_CACHE_NAMESPACES=ROLES,MESSAGES',
+    ],
+    [
+      'AUTH_USER_CACHE_MODE',
+      'string',
+      'Set exactly to `on` to cache authenticated user documents during request bursts. Requires Redis and a Redis-backed AUTH_USER_DOC namespace. Default: off.',
+      '# AUTH_USER_CACHE_MODE=off',
+    ],
+    [
+      'USER_PRINCIPALS_CACHE_TTL_MS',
+      'number',
+      'TTL in milliseconds for cached group memberships used in ACL checks. Set to 0 to disable. Default: 300000.',
+      '# USER_PRINCIPALS_CACHE_TTL_MS=300000',
+    ],
+    [
+      'USER_PRINCIPALS_LOCK_TTL_MS',
+      'number',
+      'Redis lock TTL in milliseconds for cross-container principal-cache builds. Set to 0 to disable build locking. Default: 5000.',
+      '# USER_PRINCIPALS_LOCK_TTL_MS=5000',
+    ],
+    [
+      'USER_PRINCIPALS_LOCK_WAIT_MS',
+      'number',
+      'Maximum time to wait for another container to fill the principal cache before reading the database directly. Defaults to USER_PRINCIPALS_LOCK_TTL_MS.',
+      '# USER_PRINCIPALS_LOCK_WAIT_MS=5000',
     ],
     [
       'REDIS_USE_ALTERNATIVE_DNS_LOOKUP',
@@ -3124,8 +3828,12 @@ For detailed configuration and examples, see: **[Redis Configuration Guide](/doc
 Notes:
 
 - When `USE_REDIS=true`, you must provide `REDIS_URI` or the application will throw an error.
+- Current LibreChat clients negotiate generation protocol v2 automatically. The retired `GENERATION_PROTOCOL_VERSION` variable is no longer read. See [Generation Protocol Compatibility](/docs/configuration/redis#generation-protocol-compatibility) before mixing release versions or rolling back.
+- Enable `STREAM_DELTA_COALESCE_MS` only after every replica supports batch frames. Older subscribers drop coalesced frames. See [Stream Delta Coalescing](/docs/configuration/redis#stream-delta-coalescing).
 - For Redis Cluster mode, provide multiple URIs: `redis://node1:7001,redis://node2:7002,redis://node3:7003` (cluster mode is auto-detected).
 - For single-endpoint managed Redis services that shard keys internally, keep `USE_REDIS_CLUSTER=false` and set `REDIS_CLUSTER_SAFE_DELETE=true` if cache clears fail with `CROSSSLOT` errors.
+- `REDIS_READONLY_RECOVERY_INTERVAL` debounces Keyv reconnect attempts after a failover leaves an open socket attached to a demoted read-only replica. Redis Cluster clients use their native topology handling instead.
+- `REDIS_PING_INTERVAL` controls the optional heartbeat on the main ioredis client; dedicated pub/sub subscribers use `REDIS_SUBSCRIBER_PING_INTERVAL` so an otherwise idle dead socket is detected. Both use `REDIS_PING_TIMEOUT` as the response deadline and reconnect when it expires.
 - Use `rediss://` protocol for TLS connections and set `REDIS_CA` if your CA is not publicly trusted.
 - `REDIS_KEY_PREFIX_VAR` and `REDIS_KEY_PREFIX` are mutually exclusive.
 - **AWS Elasticache with TLS**: Elasticache may need to use an alternate dnsLookup for TLS connections. Set `REDIS_USE_ALTERNATIVE_DNS_LOOKUP=true` if using Elasticache with TLS. See [ioredis documentation](https://www.npmjs.com/package/ioredis) for more details.

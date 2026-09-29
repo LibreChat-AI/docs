@@ -1,12 +1,12 @@
 ---
 title: Upload Files as Text
 icon: Upload
-description: Drop any file into your chat and let LibreChat read it — no setup needed.
+description: Attach supported files and let LibreChat route or extract their content automatically.
 ---
 
 # Upload Files as Text
 
-Ever wanted to hand a PDF, a code file, or a spreadsheet to the AI and just say _"read this"_? That's exactly what **Upload as Text** does.
+Ever wanted to hand a PDF, a code file, or a spreadsheet to the AI and just say _"read this"_? LibreChat's unified uploader routes the file to the provider or extracts its text automatically based on its type and the selected endpoint.
 
 You attach a file, LibreChat extracts the text from it, and the full content gets pasted straight into your conversation. The AI can then read every word of it — no plugins, no vector databases, no extra services to configure. It works out of the box.
 
@@ -25,21 +25,23 @@ You attach a file, LibreChat extracts the text from it, and the full content get
     In the chat input bar, click the **paperclip** (📎) icon.
   </Step>
   <Step>
-    ### Pick "Upload as Text"
+    ### Choose a source
 
-    From the dropdown menu, select **Upload as Text**. This tells LibreChat to read the file contents rather than pass it as a raw attachment.
+    Select your local machine or SharePoint when it is configured. The default uploader no longer asks you to choose a model or tool destination.
   </Step>
   <Step>
     ### Choose your file
 
-    Select the file from your device. LibreChat will extract the text and embed it directly into your message.
+    Select the file. LibreChat chooses native provider delivery, text extraction, or tool-only storage from the file type and endpoint capabilities.
   </Step>
   <Step>
     ### Ask your question
 
-    Type your prompt as usual. The AI now has the full text of your file in context and can reference any part of it.
+    Type your prompt as usual. Selected File Search and Code tools receive the file only when they need it.
   </Step>
 </Steps>
+
+When you select several files, LibreChat skips individual duplicates and files over the per-file size limit, names the skipped files in a notice, and continues uploading the valid files. The file-count and total-batch-size limits still apply to the files that remain; if the surviving batch exceeds either limit, the batch is rejected together. Single-file behavior is unchanged.
 
 <Callout type="warn" title="Don't see the option?">
   If "Upload as Text" doesn't appear, the `context` capability may have been disabled by your admin. It's on by default — but if the capabilities list was customized, `context` needs to be explicitly included. See the [configuration section](#the-context-capability) below.
@@ -47,9 +49,19 @@ You attach a file, LibreChat extracts the text from it, and the full content get
 
 ---
 
+## Paste long text as a file
+
+In the normal message composer, LibreChat can turn a paste longer than 2,500 characters into an Upload as Text attachment. This keeps a large paste out of the input while still providing its contents to the model through the conversation context. The first attachment is named `pasted-text.txt`; additional pasted-text attachments receive numbered names.
+
+The browser-local **Paste long text as a file** setting is enabled by default under **Settings > Chat > Sending**. Shorter pastes and text pasted while answering an Agent's **Ask User** form remain inline. If context uploads are unavailable, the text also remains inline. If an attachment upload fails, LibreChat restores the text to the composer when it can do so without overwriting a newer draft.
+
+Pasted-text attachments follow the same file-size, token, and [`fileTokenLimit`](#token-limits-and-truncation) rules as other Upload as Text files.
+
+---
+
 ## What happens under the hood
 
-When you upload a file this way, LibreChat doesn't just dump raw bytes into the prompt. It runs through a processing pipeline to extract clean, readable text:
+When an upload is routed to text, LibreChat doesn't dump raw bytes into the prompt. It runs through a processing pipeline to extract clean, readable text:
 
 1. **MIME type detection** — LibreChat checks what kind of file you uploaded (PDF, image, audio, source code, etc.) by inspecting its MIME type.
 2. **Method selection** — Based on the file type and what services are available, it picks the best extraction method using this priority:
@@ -84,6 +96,8 @@ When you upload a file this way, LibreChat doesn't just dump raw bytes into the 
 3. **Token truncation** — The extracted text is trimmed to the `fileTokenLimit` (default: 100,000 tokens) so it doesn't blow past the model's context window.
 4. **Prompt injection** — The text gets included in the conversation context, right alongside your message.
 
+When you preview or download an Upload as Text attachment, LibreChat serves the extracted text stored with the file record. Downloads use a `.txt` filename even when OCR or another parser produced the stored text and there is no original backing file to stream.
+
 ---
 
 ## Which files are supported
@@ -102,7 +116,7 @@ When you upload a file this way, LibreChat doesn't just dump raw bytes into the 
 
     - **PDF** — digital and scanned (scanned PDFs benefit from OCR)
     - **Word** — `.docx`, `.doc`
-    - **PowerPoint** — `.pptx`, `.ppt`
+    - **PowerPoint** — `.pptx`, `.potx`, `.ppt`
     - **Excel** — `.xlsx`, `.xls`
     - **EPUB** books
   </Tabs.Tab>
@@ -122,34 +136,37 @@ When you upload a file this way, LibreChat doesn't just dump raw bytes into the 
   </Tabs.Tab>
 </Tabs>
 
+LibreChat normalizes shell-script MIME variants reported by Chrome on Linux (`application/x-shellscript`) and libmagic (`text/x-shellscript`) to the canonical `application/x-sh` before checking the endpoint allowlist. Custom [`supportedMimeTypes`](/docs/configuration/librechat_yaml/object_structure/file_config#supportedmimetypes-3) rules must still permit `application/x-sh`.
+
 ---
 
-## Upload as Text vs. other upload options
+## Unified uploads and tool provisioning
 
-LibreChat has three ways to upload files. Each one works differently and suits different situations:
+By default, one attachment action replaces the old destination chooser. LibreChat decides how the file reaches the model, while tools are provisioned lazily:
 
 <Cards>
-  <Card title="Upload as Text" href="#how-to-use-it">
-    Extracts the full file content and drops it into the conversation. Best for smaller files where you want the AI to read everything — contracts, code files, articles. Works with all models, no extra services needed.
+  <Card title="Model context" href="#what-happens-under-the-hood">
+    Supported files reach the model through native provider delivery or extracted text, according to MIME type, endpoint capability, and deployment configuration.
   </Card>
   <Card title="Upload for File Search (RAG)" href="/docs/features/rag_api">
-    Indexes the file in a vector database and retrieves only the relevant chunks when you ask a question. Better for large files or collections of files where dumping everything into context would waste tokens. Requires the RAG API.
+    When File Search is selected, LibreChat indexes eligible attachments only when the run needs the tool.
   </Card>
   <Card title="Standard Upload" href="/docs/features/agents">
-    Passes the file directly to the model — used for vision models analyzing images, or code interpreter running scripts. No text extraction happens.
+    When Code is selected, LibreChat makes eligible attachments available to the Code environment only when the run needs them.
   </Card>
 </Cards>
 
-**Quick decision guide:**
+Operators can restore the earlier destination chooser with [`fileConfig.legacyFileUploadUX`](/docs/configuration/librechat_yaml/object_structure/file_config#legacyfileuploadux), or control automatic routing with [`defaultLLMDeliveryPath`](/docs/configuration/librechat_yaml/object_structure/file_config#defaultllmdeliverypath).
+
+**Typical routing:**
 
 | Situation | Best option |
 |-----------|-------------|
-| _"Read this 5-page contract and summarize it"_ | **Upload as Text** |
-| _"I have 50 PDFs, find what mentions pricing"_ | **File Search (RAG)** |
-| _"What's in this screenshot?"_ (vision model) | **Standard Upload** |
-| _"Run this Python script"_ (code interpreter) | **Standard Upload** |
-| _"Review this code file for bugs"_ | **Upload as Text** |
-| _"Search through our company docs"_ | **File Search (RAG)** |
+| _"Read this 5-page contract and summarize it"_ | Native PDF delivery or extracted text |
+| _"I have 50 PDFs, find what mentions pricing"_ | Lazy File Search provisioning |
+| _"What's in this screenshot?"_ | Native image delivery |
+| _"Run this Python script"_ | Lazy Code provisioning |
+| _"Review this code file for bugs"_ | Extracted text |
 
 ---
 
@@ -282,6 +299,9 @@ This section is for admins who want to control which file types get processed by
     - **Audio files** — These need STT. There's no text fallback for audio.
     - **Corrupted files** — Try opening the file locally to make sure it's not damaged.
     - **Unsupported format** — If the MIME type doesn't match any configured pattern, LibreChat attempts a text parse fallback, which may not work for binary formats.
+  </Accordion>
+  <Accordion title="Upload is rejected as an unsupported file type">
+    LibreChat returns the rejected MIME type in the upload error. Check the active endpoint's [`fileConfig.endpoints.<endpoint>.supportedMimeTypes`](/docs/configuration/librechat_yaml/object_structure/file_config#supportedmimetypes-3) patterns and allow the canonical type you intend to accept. For shell scripts, use `application/x-sh`; LibreChat normalizes the common `application/x-shellscript` and `text/x-shellscript` variants before matching.
   </Accordion>
   <Accordion title="The AI seems to be missing part of my file">
     Your file probably exceeded the `fileTokenLimit`. The text was truncated.

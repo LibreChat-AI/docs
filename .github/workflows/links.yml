@@ -1,0 +1,107 @@
+name: Links
+
+# Monitors documentation for broken links. Runs weekly, on pushes to main that
+# touch docs, and on demand. External link flakiness (403/429 from bots, rate
+# limits) makes per-PR gating noisy, so instead of failing a run this opens or
+# updates a tracking issue with the report.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * 1' # Mondays 08:00 UTC
+  push:
+    branches: [main]
+    paths:
+      - 'content/**'
+      - 'README.md'
+      - '.github/workflows/links.yml'
+      - '.lycheeignore'
+
+permissions:
+  contents: read
+  issues: write
+
+# Serialize runs so overlapping triggers (frequent main pushes + schedule)
+# can't each open a separate issue before the other's exists.
+concurrency:
+  group: link-checker
+  cancel-in-progress: false
+
+jobs:
+  link-checker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Root-relative links (/docs, /images, ...) are app routes/assets that do
+      # not map to local files (content lives under content/ and routes are
+      # extensionless). --root-dir lets lychee resolve them to
+      # $GITHUB_WORKSPACE/<seg> instead of erroring with "provide a root dir";
+      # we then exclude them, since they can't be checked on disk. The exclude
+      # is anchored at the regex-escaped workspace so it does NOT also skip
+      # file-relative links (./LICENSE, ../../features/foo.md), which
+      # legitimately resolve under $GITHUB_WORKSPACE/content/ and stay checked.
+      - name: Build internal-route exclude pattern
+        id: routes
+        env:
+          WS: ${{ github.workspace }}
+        run: |
+          esc=$(printf '%s' "$WS" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
+          echo "pattern=^file://${esc}/(docs|blog|changelog|images|videos|assets|toolkit)(/|\$)" >> "$GITHUB_OUTPUT"
+
+      # scripts/translate.ts generates content/docs/**/*.<xx>.mdx from the English
+      # source. Each translated copy's in-page anchors still point at the English
+      # heading slugs, so a translated heading text breaks them (e.g. #legacy-setup),
+      # and every external link in a copy just duplicates one already checked in the
+      # English source. Checking the 800+ copies therefore adds only noise, not
+      # coverage, so scan the English source of truth only. The locale match handles
+      # both two-letter and regional tags, matching translate_docs.yml.
+      - name: Collect English docs (skip generated translations)
+        id: inputs
+        run: |
+          files=$(find content -type f \( -name '*.mdx' -o -name '*.md' \) \
+            | grep -vE '\.[a-z]{2}(-[A-Z]{2})?\.(mdx|md)$' | sort | tr '\n' ' ')
+          echo "files=$files README.md" >> "$GITHUB_OUTPUT"
+
+      - name: Check links
+        id: lychee
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --no-progress
+            --include-fragments
+            --root-dir ${{ github.workspace }}
+            --exclude '${{ steps.routes.outputs.pattern }}'
+            --accept 200,403,429
+            ${{ steps.inputs.outputs.files }}
+          fail: false
+
+      - name: Find existing broken links issue
+        id: existing-issue
+        if: steps.lychee.outputs.exit_code != 0
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'Broken links found in documentation'
+            // No space after the comma: the GitHub API treats the label list
+            // literally, so 'documentation, automated' would look for a label
+            // named ' automated' (leading space) and match nothing.
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'documentation,automated',
+              per_page: 100,
+            })
+            const existing = issues.find((issue) => !issue.pull_request && issue.title === title)
+            if (existing) {
+              core.setOutput('issue-number', String(existing.number))
+            }
+
+      - name: Open or update issue on broken links
+        if: steps.lychee.outputs.exit_code != 0
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          issue-number: ${{ steps.existing-issue.outputs.issue-number }}
+          title: Broken links found in documentation
+          content-filepath: ./lychee/out.md
+          labels: documentation, automated

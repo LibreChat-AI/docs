@@ -2,7 +2,10 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { streamText, tool, stepCountIs, convertToModelMessages } from 'ai'
 import { z } from 'zod'
 import { docsSource } from '@/lib/source'
+import { i18n } from '@/lib/i18n'
 import { checkRateLimit } from '@/lib/ratelimit'
+import { OPENROUTER_APP_HEADERS } from '@/lib/openrouter-attribution'
+import { webBotAuthFetch } from '@/lib/web-bot-auth'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -30,11 +33,14 @@ async function getSearchIndex(): Promise<SearchDoc[]> {
     return searchIndex
   }
 
-  const pages = docsSource.getPages()
+  // Default language only. getPages() already defaults to i18n.defaultLanguage,
+  // but pass it explicitly so generated *.<locale>.mdx translations are never
+  // ingested into the English search index or its context.
+  const pages = docsSource.getPages(i18n.defaultLanguage)
   const results = await Promise.all(
     pages.map(async (page): Promise<SearchDoc | null> => {
       try {
-        const filePath = join(process.cwd(), 'content/docs', page.file.path)
+        const filePath = join(process.cwd(), 'content/docs', page.path)
         const raw = await readFile(filePath, 'utf-8')
         const content = raw.replace(/^---[\s\S]*?---\n*/, '').slice(0, 3000)
         const { title } = page.data
@@ -69,7 +75,7 @@ const pageContentCache = new Map<string, string | null>()
 let pagesByUrl: Map<string, ReturnType<typeof docsSource.getPages>[number]> | null = null
 
 function getPageByUrl(url: string) {
-  pagesByUrl ||= new Map(docsSource.getPages().map((p) => [p.url, p]))
+  pagesByUrl ||= new Map(docsSource.getPages(i18n.defaultLanguage).map((p) => [p.url, p]))
   return pagesByUrl.get(url) ?? null
 }
 
@@ -83,7 +89,7 @@ async function getPageContent(url: string): Promise<string | null> {
       return null
     }
 
-    const filePath = join(process.cwd(), 'content/docs', page.file.path)
+    const filePath = join(process.cwd(), 'content/docs', page.path)
     const raw = await readFile(filePath, 'utf-8')
     const content = raw.replace(/^---[\s\S]*?---\n*/, '').slice(0, 8000)
 
@@ -131,6 +137,8 @@ function searchDocs(docs: SearchDoc[], query: string, limit: number): SearchDoc[
 
 const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY,
+  headers: OPENROUTER_APP_HEADERS,
+  fetch: webBotAuthFetch,
 })
 
 const systemPrompt = `You are the LibreChat docs assistant. You help users find answers in the LibreChat documentation.
@@ -140,7 +148,7 @@ Rules:
 - Be concise: 2-4 sentences max, then link to the relevant page.
 - Respond in the same language the user writes in.
 - Format answers in markdown. Use \`inline code\` for config keys, commands, filenames.
-- When referencing a doc page, link to it as: [Page Title](/docs/path) — always use the url from search results.
+- When referencing a doc page, link to it as: [Page Title](/docs/path). Always use the URL from search results.
 - If a search result has a specific section heading relevant to the question, link to the anchor: [Section Name](/docs/path#section-name) where section-name is the heading lowercased with spaces replaced by hyphens.
 - If you cannot find the answer, say so honestly and suggest the user check the docs or ask on Discord.
 - Never invent features, config options, or CLI flags that don't appear in search results.
@@ -220,11 +228,18 @@ export async function POST(req: Request) {
     })
   }
 
+  if (!process.env.WEB_BOT_AUTH_PRIVATE_JWK) {
+    return new Response(JSON.stringify({ error: 'WEB_BOT_AUTH_PRIVATE_JWK is not configured' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
   const modelMessages = await convertToModelMessages(
     messages as Parameters<typeof convertToModelMessages>[0],
   )
 
-  // "This page" mode — no tools, page content as context
+  // "This page" mode: no tools, page content as context
   if (mode === 'page' && pageUrl) {
     const content = await getPageContent(pageUrl)
     const pageSystem = content

@@ -24,6 +24,13 @@
 import { readFile, writeFile, readdir } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import { createHash } from 'node:crypto'
+import { TARGET_LOCALES } from '../lib/i18n/config'
+import { OPENROUTER_APP_HEADERS } from '../lib/openrouter-attribution'
+
+// Skip machine-generated translations (foo.<locale>.mdx); only English sources
+// are starter inputs. Derived from the i18n config so adding a locale stays a
+// single edit.
+const LOCALE_MDX_RE = new RegExp(`\\.(${TARGET_LOCALES.join('|')})\\.mdx$`)
 
 const DOCS_DIR = join(process.cwd(), 'content/docs')
 const STARTERS_PATH = join(process.cwd(), 'public/starters.json')
@@ -56,7 +63,7 @@ async function getMdxFiles(dir: string): Promise<string[]> {
   for (const entry of entries) {
     const full = join(dir, entry.name)
     if (entry.isDirectory()) files.push(...(await getMdxFiles(full)))
-    else if (entry.name.endsWith('.mdx')) files.push(full)
+    else if (entry.name.endsWith('.mdx') && !LOCALE_MDX_RE.test(entry.name)) files.push(full)
   }
   return files
 }
@@ -172,6 +179,7 @@ Respond with ONLY valid JSON. No markdown fences, no explanation.
     headers: {
       Authorization: `Bearer ${API_KEY}`,
       'Content-Type': 'application/json',
+      ...OPENROUTER_APP_HEADERS,
     },
     body: JSON.stringify({
       model: MODEL,

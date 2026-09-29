@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { InlineTOC } from 'fumadocs-ui/components/inline-toc'
 import { mdxComponents } from '@/lib/mdx-components'
 import { blog } from '@/lib/source'
+import { getAuthorById } from '@/lib/authors'
 import { JsonLd } from '@/components/JsonLd'
 import { articleSchema, breadcrumbSchema } from '@/lib/structured-data'
 import { ogImageUrl } from '@/lib/og'
@@ -18,7 +19,7 @@ function getSlug(path: string): string {
 }
 
 function findPost(slug: string) {
-  return blog.find((post) => getSlug(post._file.path) === slug)
+  return blog.find((post) => getSlug(post.info.path) === slug)
 }
 
 export default async function BlogPostPage(props: PageProps) {
@@ -27,6 +28,8 @@ export default async function BlogPostPage(props: PageProps) {
   if (!post) notFound()
 
   const MDX = post.body
+  const author = post.author ? getAuthorById(post.author) : undefined
+  const authorName = author?.name ?? post.author
   const date =
     typeof post.date === 'string' ? post.date : new Date(post.date).toISOString().split('T')[0]
 
@@ -42,7 +45,7 @@ export default async function BlogPostPage(props: PageProps) {
             image:
               post.ogMetaImage ?? post.ogImage ?? ogImageUrl({ title: post.title, type: 'blog' }),
             datePublished: new Date(date).toISOString(),
-            authorName: (post as any).author,
+            authorName,
           }),
           breadcrumbSchema([
             { name: 'Blog', url: '/blog' },
@@ -63,23 +66,51 @@ export default async function BlogPostPage(props: PageProps) {
         {post.description && (
           <p className="mt-4 text-lg text-muted-foreground">{post.description}</p>
         )}
-        <div className="mt-4 flex items-center gap-4 text-sm text-muted-foreground">
-          <time dateTime={date}>
+        <div className="mt-5 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+          <time
+            dateTime={date}
+            className="inline-flex min-h-10 items-center rounded-full bg-muted/70 px-3.5 text-sm font-medium text-muted-foreground"
+          >
             {new Date(date).toLocaleDateString('en-US', {
               year: 'numeric',
               month: 'long',
               day: 'numeric',
             })}
           </time>
-          {(post as any).author && <span>by {(post as any).author}</span>}
+          {author ? (
+            <Link
+              href={`/authors/${author.id}`}
+              className="group/author inline-flex min-h-12 items-center gap-3 rounded-full bg-card/85 py-1.5 pl-1.5 pr-4 text-muted-foreground shadow-[0_0_0_1px_hsl(var(--border)/0.9),0_14px_34px_-28px_rgb(0_0_0/0.55)] backdrop-blur-xl transition-[transform,box-shadow,background-color,color] duration-300 ease-out hover:-translate-y-0.5 hover:bg-card hover:text-foreground hover:shadow-[0_0_0_1px_hsl(var(--border)),0_22px_48px_-30px_rgb(0_0_0/0.7)] active:scale-[0.96] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              <Image
+                src={author.avatar}
+                alt=""
+                width={36}
+                height={36}
+                className="size-9 rounded-full object-cover outline outline-1 -outline-offset-1 outline-black/10 transition-transform duration-300 ease-out group-hover/author:scale-105 dark:outline-white/10"
+              />
+              <span className="leading-tight">
+                <span className="block text-[11px] font-medium uppercase text-muted-foreground">
+                  Written by
+                </span>
+                <span className="block font-semibold text-foreground">{author.name}</span>
+              </span>
+            </Link>
+          ) : (
+            authorName && (
+              <span className="inline-flex min-h-10 items-center rounded-full bg-muted/70 px-3.5 text-sm font-medium text-muted-foreground">
+                Written by {authorName}
+              </span>
+            )
+          )}
         </div>
         {post.ogImage && (
           <Image
             src={post.ogImage}
             alt={post.title}
-            width={1200}
-            height={630}
-            className="mt-6 border rounded-2xl"
+            width={post.ogImageWidth ?? 1200}
+            height={post.ogImageHeight ?? 630}
+            className="mt-6 h-auto w-full rounded-2xl border"
             unoptimized={post.ogImage.endsWith('.gif')}
           />
         )}
@@ -98,9 +129,18 @@ export default async function BlogPostPage(props: PageProps) {
   )
 }
 
+/**
+ * Posts are prerendered from generateStaticParams below, but some embed server
+ * components that read live data at request time (see SiteStats). Without a
+ * revalidate window those pages would be baked once at build and never rebuilt,
+ * so a data source configured after the build would never show up. An hour
+ * matches the cache window the widgets themselves use.
+ */
+export const revalidate = 3600
+
 export function generateStaticParams(): { slug: string }[] {
   return blog.map((post) => ({
-    slug: getSlug(post._file.path),
+    slug: getSlug(post.info.path),
   }))
 }
 
@@ -109,6 +149,8 @@ export async function generateMetadata(props: PageProps): Promise<Metadata> {
   const post = findPost(params.slug)
   if (!post) notFound()
 
+  const author = post.author ? getAuthorById(post.author) : undefined
+  const authorName = author?.name ?? post.author
   const ogImage =
     post.ogMetaImage ?? post.ogImage ?? ogImageUrl({ title: post.title, type: 'blog' })
   const publishedTime =
@@ -124,7 +166,7 @@ export async function generateMetadata(props: PageProps): Promise<Metadata> {
       type: 'article',
       url: `/blog/${params.slug}`,
       publishedTime,
-      authors: (post as any).author ? [(post as any).author] : undefined,
+      authors: authorName ? [authorName] : undefined,
       images: [ogImage],
     },
   }

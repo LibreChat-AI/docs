@@ -1,0 +1,564 @@
+name: Cloudflare Cache Purge
+
+# Invalidates Cloudflare after each production promotion so docs changes are
+# visible immediately instead of waiting out the 24h edge TTL
+# (`SHARED_CDN_CACHE` in next.config.mjs). Automatic promotions purge the full
+# zone; manual recovery can target prefixes and assets. Nothing here changes a
+# TTL.
+#
+# WHY MANUAL RECOVERY USES PREFIXES, NOT URLS
+# The App Router serves the HTML document and the RSC flight payload at the same
+# path; the flight request carries a `?_rsc=<hash>` query that Next generates
+# client-side from router headers. Cloudflare keeps the query string in the
+# cache key, so those variants are separate entries whose keys cannot be
+# enumerated from CI. Measured against production:
+#   purge by URL  /docs/local/docker            -> HTML variant only
+#   purge by URL  /docs/local/docker?_rsc=x     -> that one RSC variant
+#   purge by prefix www.librechat.ai/docs/local/docker -> HTML *and* RSC
+# Prefix is therefore the only usable unit. Note the format: `hostname/path`,
+# no scheme, no query string.
+#
+# WHY AUTOMATIC PROMOTIONS PURGE THE FULL ZONE
+# Vercel can promote deployments without repository Git metadata, and dispatch
+# delivery order is not guaranteed to match production alias order. No Git diff
+# or workflow ledger can then prove which URLs were previously live. Automatic
+# promotions use full-zone invalidation; manual recovery remains prefix-based.
+#
+# KNOWN, ACCEPTED BEHAVIOURS
+# 1. Prefix matching is a plain string match, so `/docs/features/agents` also
+#    purges `/docs/features/agents-anything`. That is over-purging: it costs one
+#    origin fetch, it is never stale. Acceptable.
+# 2. Deletions are included in the diff, so removing a page purges its prefix
+#    and the stale entry goes. Renames need `--no-renames` to show up as one:
+#    git's rename detection would otherwise report only the destination.
+
+on:
+  # The purge MUST happen after Vercel has finished deploying. Running it when
+  # the commit lands (`on: push`) is worse than not purging at all: Cloudflare
+  # would immediately refill every purged entry from the old origin build and
+  # re-pin it for another 24h.
+  #
+  # Vercel's enriched `deployment.promoted` event fires after a deployment
+  # starts serving production traffic and carries the exact project and Vercel
+  # deployment id. Git metadata is present for normal connected deployments but
+  # is not required for CLI, fork, or deleted-branch promotions.
+  #
+  # Repository-dispatch workflows only run from the file on the default branch,
+  # so this trigger cannot be exercised until it is merged to main. The manual
+  # dry run below is the pre-merge verification path.
+  repository_dispatch:
+    types: ['vercel.deployment.promoted']
+
+  # Manual escape hatch: purge the four top-level prefixes (and the rest of the
+  # broad set) without needing a deploy. Use it after a Cloudflare rule change,
+  # a failed run, or any deploy that produced no deployment event.
+  workflow_dispatch:
+    inputs:
+      broad_pages:
+        description: 'Purge every cached page prefix, not just the ones a diff points at'
+        type: boolean
+        default: true
+      dry_run:
+        description: 'Log the computed prefixes without calling the Cloudflare API'
+        type: boolean
+        default: false
+      range:
+        description: 'Commit range, e.g. abc1234..def5678. Required unless broad_pages is set; supply it WITH broad_pages to also purge changed asset URLs and removed locales.'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+# Keyed per Vercel deployment, NOT a single shared group. GitHub keeps at most
+# one pending run per concurrency group: "any existing pending job or workflow
+# in the same concurrency group will be canceled and the new queued job or
+# workflow will take its place", even with `cancel-in-progress: false`.
+# https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency
+#
+# With one shared group and three deploys in quick succession (B running, C
+# pending, D arriving), C is dropped. Purges are idempotent and each call handles
+# its own rate limiting, so letting runs overlap is strictly safer than
+# serialising them and losing one.
+concurrency:
+  group: cache-purge-${{ github.event.client_payload.id || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  # Cloudflare documents "Maximum 30 prefixes per API call" for purge by prefix.
+  # The general limits table allows 100 operations per request (500 on
+  # Enterprise), so 30 is the tighter of the two documented numbers and is what
+  # we chunk on. Sources:
+  #   https://developers.cloudflare.com/cache/how-to/purge-cache/purge_by_prefix/
+  #   https://developers.cloudflare.com/cache/how-to/purge-cache/#availability-and-limits
+  MAX_ITEMS_PER_CALL: 30
+  # Request rate is limited per account, and the floor across plans is 5
+  # requests per minute (Free); Pro is 5/s, Business 10/s, Enterprise 50/s. One
+  # second between calls keeps us under every per-second bucket, and 429s are
+  # retried with backoff below, which is what makes the floor safe too.
+  SLEEP_BETWEEN_CALLS: 1
+  # How far back a blind recovery reaches when it has no baseline to work from.
+  # Only ever an approximation of where to start, so it is paired with the broad
+  # page set; its job is to surface deletions, which a range-less run cannot see.
+  FALLBACK_WINDOW: '30 days ago'
+  # Bound every Cloudflare call. Without these, a peer that accepts the
+  # connection and then stops responding never returns, so the retry loop never
+  # sees a failure and the job sits until the platform timeout — and since runs
+  # deliberately overlap, several can pile up that way. With them, a stall
+  # becomes an ordinary retryable failure.
+  CURL_CONNECT_TIMEOUT: 10
+  CURL_MAX_TIME: 60
+
+jobs:
+  purge:
+    name: Purge production cache
+    # Vercel emits this event for previews too. Reject non-production events
+    # before a runner is allocated, then validate all routing fields before
+    # Cloudflare secrets become reachable.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.client_payload.environment == 'production' &&
+       github.event.client_payload.project.id == 'prj_BM0YCOihInl5lqPJidAzwixJPdtj')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: deployed-source
+    steps:
+      # Trusted workflow code always comes from the default-branch revision.
+      # Automatic purges need no deployed checkout; the full-zone operation is
+      # deliberately independent of Git metadata and repository reachability.
+      - name: Check out workflow source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          path: workflow-source
+          ref: ${{ github.sha }}
+
+      - name: Validate promoted deployment
+        if: github.event_name == 'repository_dispatch'
+        id: event
+        env:
+          CLIENT_PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+        working-directory: workflow-source
+        run: node scripts/cache-purge-event.mjs
+
+      - name: Prepare automatic purge workspace
+        if: github.event_name == 'repository_dispatch'
+        working-directory: .
+        run: mkdir -p deployed-source
+
+      # Manual recovery still uses diffs, current public assets, and trusted
+      # workflow scripts. It needs the full default-branch history.
+      - name: Check out manual source
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: deployed-source
+          ref: ${{ github.sha }}
+
+      # Automatic promotions are stateless full-zone invalidations. Manual
+      # dispatch keeps the precise broad/range mapper for operator recovery.
+      - name: Resolve diff range
+        id: range
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_BROAD: ${{ inputs.broad_pages }}
+          INPUT_RANGE: ${{ inputs.range }}
+        run: |
+          set -euo pipefail
+
+          emit() { echo "$1=$2" >> "$GITHUB_OUTPUT"; }
+
+          if [ "$EVENT" = "repository_dispatch" ]; then
+            echo "::notice::Automatic production promotion; purging the full zone."
+            emit mode full
+            exit 0
+          fi
+
+          # Last resort before giving up on a manual range entirely.
+          #
+          # A range-less purge is blind to deletions: every target is enumerated
+          # from the checkout, so a file removed in the meantime has no entry
+          # anywhere and its old URL survives at the edge. A time-boxed range is
+          # approximate about where to start, but it is a real diff, so removals
+          # inside it come through as `D` and get purged like any other change.
+          fallback_range() {
+            local since ref
+            ref="${1:-}"
+            [ -n "$ref" ] || ref=$(git rev-parse HEAD)
+            since=$(git rev-list -1 --before="$FALLBACK_WINDOW" "$ref" 2>/dev/null || true)
+            if [ -n "$since" ] && [ "$since" != "$ref" ]; then
+              echo "::warning::No usable baseline; falling back to the last $FALLBACK_WINDOW ($since..$ref)."
+              emit mode broad
+              emit base "$since"
+              emit head "$ref"
+              return 0
+            fi
+            return 1
+          }
+
+          if [ "$INPUT_BROAD" = "true" ] && [ -z "${INPUT_RANGE:-}" ]; then
+            # Pages only. Cannot reach changed asset URLs or a locale that was
+            # removed, because both are discovered from a diff. Supply a range
+            # as well to recover those.
+            echo "Manual dispatch: broad page purge, no range given."
+            fallback_range && exit 0
+            echo "::warning::No range and no fallback window; deletions in the meantime cannot be discovered."
+            emit mode broad
+            exit 0
+          fi
+          if [ -z "${INPUT_RANGE:-}" ]; then
+            echo "::error::broad_pages=false requires a 'range' input (e.g. abc1234..def5678)."
+            exit 1
+          fi
+          # Constrain the shape before it reaches git, so a value like
+          # `--upload-pack=...` cannot be read as an option.
+          if ! printf '%s' "$INPUT_RANGE" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]*\.\.[A-Za-z0-9][A-Za-z0-9._/-]*$'; then
+            echo "::error::Invalid range '$INPUT_RANGE'. Expected <base>..<head>."
+            exit 1
+          fi
+          base="${INPUT_RANGE%%..*}"
+          head="${INPUT_RANGE##*..}"
+
+          if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin main || true
+          fi
+          if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "Base commit $base is not reachable in this checkout."
+            fallback_range "$head" && exit 0
+            echo "::warning::No fallback window either; purging broadly."
+            emit mode broad
+            exit 0
+          fi
+          if ! git cat-file -e "${head}^{commit}" 2>/dev/null; then
+            echo "::warning::Head commit $head is not reachable; purging broadly."
+            emit mode broad
+            exit 0
+          fi
+
+          if [ "$INPUT_BROAD" = "true" ]; then
+            emit mode broad
+          else
+            emit mode diff
+          fi
+          emit base "$base"
+          emit head "$head"
+
+      # Map changed files -> prefixes. The diff reports added, modified *and*
+      # deleted paths (no --diff-filter, so D is included); a deleted page still
+      # needs its prefix purged or the stale entry survives.
+      - name: Compute prefixes
+        id: compute
+        env:
+          MODE: ${{ steps.range.outputs.mode }}
+          BASE: ${{ steps.range.outputs.base }}
+          HEAD: ${{ steps.range.outputs.head }}
+          FALLBACK_I18N_FILE: ../workflow-source/lib/i18n.ts
+        run: |
+          set -euo pipefail
+
+          # Automatic promotions use Cloudflare's explicit full-zone operation
+          # and never need a deployed tree. Manual runs continue through the
+          # prefix mapper below.
+          if [ "$MODE" = "full" ]; then
+            jq -n '{prefixes: [], files: [], broad: true, collapsed: false}' > purge.json
+          # No range to work from: a manual run without one or an unreachable
+          # input. --assets covers public/ wholesale because a range-less mapper
+          # cannot tell which asset changed.
+          elif [ "$MODE" = "broad" ] && [ -z "${BASE:-}" ]; then
+            node ../workflow-source/scripts/cache-purge-prefixes.mjs --broad --assets --json > purge.json
+          else
+            # Broad *with* a range still walks the diff, so the broad page set
+            # is topped up with changed asset URLs and locales removed in the
+            # range. --assets rides along for the same reason it applies to a
+            # range-less run: broad means the diff is not trusted to be
+            # complete, and the window may not reach back far enough. A manual
+            # run escalated from a trusted diff does not get it. There we know
+            # exactly which assets changed, and evicting every image on any
+            # shared-file change would defeat precise manual recovery.
+            broad_flag=""
+            [ "$MODE" = "broad" ] && broad_flag="--broad --assets"
+            # --no-renames is load-bearing. Git's rename detection is on by
+            # default, and it reports a moved file as its destination alone, so
+            # a page moved without edits would never have its old URL purged and
+            # Cloudflare would keep serving it. With the flag, a rename arrives
+            # as a delete plus an add, which is what it is for the cache.
+            #
+            # --name-status because add/delete are not equivalent to modify here:
+            # they reshape the page tree and the locale map that every docs page
+            # renders, so the mapper widens the purge for them.
+            # -z, not the default text format. Git prints pathnames verbatim
+            # under it, so there is no C-quoting to decode and no whitespace to
+            # tell apart from a delimiter. Those two issues silently mismapped
+            # `café.png` and `logo.png ` before. NUL cannot occur in a filename,
+            # so the framing is unambiguous by construction.
+            #
+            # --no-renames keeps a move reported as delete + add: git's rename
+            # detection would otherwise name only the destination and the old URL
+            # would never be purged. --name-status because add/delete reshape the
+            # page tree and locale map that every docs page renders.
+            git diff --name-status -z --no-renames "$BASE" "$HEAD" > changed.z
+
+            # Frontmatter title/icon populate the page-tree node the sidebar
+            # draws on every docs page, so editing one is structural even though
+            # git calls it M. -G selects files whose patch touches such a line.
+            # It also matches a `title:` opening a line inside a fenced code
+            # block, which over-purges to the docs root: safe.
+            #
+            # The mapper pairs this with the diff. Doing it there rather than in
+            # awk is not a preference: ubuntu-latest's awk is mawk, which does
+            # not handle a NUL record separator.
+            git diff --name-only -z --no-renames -G'^(title|icon):' \
+              "$BASE" "$HEAD" -- content/docs > tree-edits.z || : > tree-edits.z
+
+            echo "Changed files ($BASE..$HEAD):"
+            tr '\0' '\n' < changed.z | paste - - | sed 's/^/  /'
+
+            # A locale removed in this deploy is absent from the deployed
+            # lib/i18n.ts, so the mapper would never emit its prefixes. Give it
+            # the file as it was at the base to union against.
+            git show "$BASE:lib/i18n.ts" > base-i18n.ts 2>/dev/null || rm -f base-i18n.ts
+            [ -s base-i18n.ts ] && export BASE_I18N_FILE=base-i18n.ts
+
+            # shellcheck disable=SC2086 # broad_flag is intentionally unquoted: empty means no flag.
+            TREE_EDITS_FILE=tree-edits.z \
+              node ../workflow-source/scripts/cache-purge-prefixes.mjs - --json --explain $broad_flag < changed.z > purge.json
+          fi
+
+          jq -r '.prefixes[]' purge.json > prefixes.txt
+          jq -r '.files[]?' purge.json > files.txt
+          broad=$(jq -r '.broad' purge.json)
+          collapsed=$(jq -r '.collapsed' purge.json)
+
+          if [ "$MODE" = "full" ]; then
+            echo "mode=full" >> "$GITHUB_OUTPUT"
+            echo "full=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=$([ "$broad" = "true" ] && echo broad || echo selective)" >> "$GITHUB_OUTPUT"
+            echo "full=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "collapsed=$collapsed" >> "$GITHUB_OUTPUT"
+
+      # Automatic promotions already have a complete full-zone plan and make no
+      # cache-busted Vercel page requests. Manual recovery keeps live discovery:
+      # an operator may be clearing poisoned entries created before the no-store
+      # rule existed.
+      - name: Finalize purge plan
+        id: assets
+        env:
+          CACHE_PROBE_TOKEN: ${{ github.run_id }}-${{ github.run_attempt }}
+          EVENT: ${{ github.event_name }}
+          FULL: ${{ steps.compute.outputs.full }}
+        run: |
+          set -euo pipefail
+
+          degraded=false
+          : > build-assets.txt
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            probe_log=$(mktemp)
+            if node ../workflow-source/scripts/cache-build-assets.mjs > build-assets.txt 2> "$probe_log"; then
+              cat "$probe_log" >&2
+            else
+              # Escalate the selective plan to every page prefix and current public
+              # asset while retaining deleted URLs found by the original diff.
+              sed 's/^::error::/::warning::/' "$probe_log" >&2
+              echo "::warning::Build-asset discovery failed; purging the recovery targets without the current build assets."
+              node ../workflow-source/scripts/cache-purge-prefixes.mjs --broad --assets --json > recovery.json
+              jq -r '.prefixes[]' recovery.json >> prefixes.txt
+              jq -r '.files[]?' recovery.json >> files.txt
+              sort -u prefixes.txt -o prefixes.txt
+              sort -u files.txt -o files.txt
+              : > build-assets.txt
+              degraded=true
+            fi
+            rm -f "$probe_log"
+          fi
+          echo "degraded=$degraded" >> "$GITHUB_OUTPUT"
+
+          cat build-assets.txt >> files.txt
+          sort -u files.txt -o files.txt
+
+          prefix_count=$(wc -l < prefixes.txt)
+          file_count=$(wc -l < files.txt)
+          total=$((prefix_count + file_count))
+          [ "$FULL" = "true" ] && total=1
+          echo "count=$total" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Cloudflare purge plan"
+            echo
+            echo "- mode: \`${{ steps.compute.outputs.mode }}\`"
+            if [ "${{ steps.compute.outputs.collapsed }}" = "true" ]; then
+              echo "- **collapsed to broad**: the diff produced more prefixes than the cap"
+            fi
+            echo "- prefixes: $prefix_count"
+            echo "- exact URLs: $file_count"
+            echo "- recovery build assets: $(wc -l < build-assets.txt)"
+            if [ "$degraded" = "true" ]; then
+              echo "- **degraded**: live discovery failed, no purge marker recorded"
+            fi
+            echo
+            echo '```'
+            cat prefixes.txt files.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # A promoted commit that changes no cache-relevant path is a real no-op.
+      # Keep it explicit rather than touching Vercel or Cloudflare.
+      - name: Nothing to purge
+        if: steps.assets.outputs.count == '0'
+        run: echo "::notice::No cached route or build asset needs purging."
+
+      - name: Dry run
+        if: inputs.dry_run && steps.assets.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.compute.outputs.full }}" = "true" ]; then
+            echo "DRY RUN: the Cloudflare API would purge the full zone."
+          else
+            echo "DRY RUN: the Cloudflare API is not called. Prefixes:"
+            cat prefixes.txt
+            if [ -s files.txt ]; then
+              echo "Exact URLs:"
+              cat files.txt
+            fi
+          fi
+
+      # Fail loudly on missing configuration. A purge that quietly skips is the
+      # exact failure this workflow exists to prevent.
+      - name: Check credentials
+        if: ${{ !inputs.dry_run && steps.assets.outputs.count != '0' }}
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${CF_API_TOKEN:-}" ] || missing="$missing CLOUDFLARE_API_TOKEN"
+          [ -n "${CF_ZONE_ID:-}" ] || missing="$missing CLOUDFLARE_ZONE_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing. Add them (API token needs" \
+                 "the Zone > Cache Purge permission on the librechat.ai zone) and re-run." >&2
+            exit 1
+          fi
+
+      - name: Purge
+        if: ${{ !inputs.dry_run && steps.assets.outputs.count != '0' }}
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          PURGE_MODE: ${{ steps.compute.outputs.mode }}
+        run: |
+          set -euo pipefail
+
+          endpoint="https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache"
+
+          # One purge call. Fails the job on a non-200 or on `success: false`
+          # in the body. Cloudflare returns 200 with success:false for failures
+          # such as an unauthorised prefix, and treating that as a win silently
+          # leaves stale cache entries. Never `|| true`.
+          purge_call() {
+            local field="$1" payload_file="$2" attempt=1 max_attempts=5 delay=5
+            local body http
+
+            # `files`, `prefixes`, and `purge_everything` are mutually exclusive.
+            local payload
+            if [ "$field" = "purge_everything" ]; then
+              payload='{"purge_everything":true}'
+            else
+              payload=$(jq -Rs --arg field "$field" \
+                'split("\n") | map(select(length > 0)) | {($field): .}' < "$payload_file")
+            fi
+
+            local headers
+            while :; do
+              body=$(mktemp)
+              headers=$(mktemp)
+              http=$(curl -sS -o "$body" -D "$headers" -w '%{http_code}' -X POST "$endpoint" \
+                --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" \
+                -H "Authorization: Bearer ${CF_API_TOKEN}" \
+                -H 'Content-Type: application/json' \
+                --data "$payload") || http=000
+
+              if [ "$http" = "200" ] && [ "$(jq -r '.success' "$body")" = "true" ]; then
+                if [ "$field" = "purge_everything" ]; then
+                  echo "  purged the full zone (id $(jq -r '.result.id // "n/a"' "$body"))"
+                else
+                  echo "  purged $(jq -r --arg f "$field" '.[$f] | length' <<< "$payload") $field (id $(jq -r '.result.id // "n/a"' "$body"))"
+                fi
+                rm -f "$body" "$headers"
+                return 0
+              fi
+
+              # 429 (rate limited) and 5xx are worth retrying; anything else is a
+              # real error (bad token, wrong zone, malformed prefix) and retrying
+              # only delays the failure.
+              if { [ "$http" = "429" ] || [ "$http" -ge 500 ] 2>/dev/null || [ "$http" = "000" ]; } \
+                 && [ "$attempt" -lt "$max_attempts" ]; then
+                # Purge runs deliberately overlap (see the concurrency note), and
+                # the rate limit is per account, so several can be throttled at
+                # once. With a fixed backoff they would retry in lockstep, keep
+                # colliding, and give up together. Honour Retry-After when the
+                # server sends it, and jitter every wait so the herd spreads out.
+                #
+                # awk, not `grep | ...`: under `set -euo pipefail` a grep with no
+                # match exits 1, the pipeline inherits it, and the assignment
+                # aborts the whole step. Since 5xx and connection failures
+                # normally carry no Retry-After, the two most common retryable
+                # cases would have died on the first attempt instead of backing
+                # off. awk exits 0 whether or not it matched.
+                local wait retry_after
+                wait="$delay"
+                retry_after=$(awk 'tolower($0) ~ /^retry-after:/ { gsub(/\r/, "", $2); print $2; exit }' "$headers")
+                case "${retry_after:-}" in
+                  '' | *[!0-9]*) ;;
+                  *) [ "$retry_after" -gt "$wait" ] && wait="$retry_after" ;;
+                esac
+                wait=$((wait + RANDOM % 5))
+                echo "::warning::Purge attempt $attempt failed (HTTP $http); retrying in ${wait}s."
+                sleep "$wait"
+                attempt=$((attempt + 1))
+                delay=$((delay * 2))
+                rm -f "$body" "$headers"
+                continue
+              fi
+
+              echo "::error::Cloudflare purge failed (HTTP $http)." >&2
+              echo "Request: $payload" >&2
+              echo "Response:" >&2
+              cat "$body" >&2
+              rm -f "$body" "$headers"
+              return 1
+            done
+          }
+
+          # Chunk to MAX_ITEMS_PER_CALL and pace the calls.
+          purge_all() {
+            local field="$1" source="$2"
+            [ -s "$source" ] || return 0
+            local total chunkdir
+            total=$(wc -l < "$source")
+            chunkdir=$(mktemp -d)
+            split -l "$MAX_ITEMS_PER_CALL" "$source" "$chunkdir/chunk."
+            echo "Purging $total $field in $(ls "$chunkdir" | wc -l) call(s)..."
+            local first=1
+            for chunk in "$chunkdir"/chunk.*; do
+              [ "$first" = "1" ] || sleep "$SLEEP_BETWEEN_CALLS"
+              first=0
+              purge_call "$field" "$chunk"
+            done
+            rm -rf "$chunkdir"
+          }
+
+          if [ "$PURGE_MODE" = "full" ]; then
+            purge_call purge_everything /dev/null
+          else
+            purge_all prefixes prefixes.txt
+            # The homepage has no usable prefix. `www.librechat.ai/` prefixes the
+            # whole zone, static assets included, so purge it by exact URL.
+            purge_all files files.txt
+          fi
+
+          echo "::notice::Cloudflare purge complete."

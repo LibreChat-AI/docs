@@ -24,6 +24,12 @@ There are 3 main fields under `modelSpecs`:
   - `presets`
 - If you would like to enable these interface elements along with model specs, you can set them to `true` in the `interface` object.
 
+<Callout type="info" title="Managing user-provided API keys with Model Specs">
+  When Model Specs disable `modelSelect`, the endpoints dropdown — and the gear icon that opens the **Set API Key** dialog — is hidden. Users can still set or rotate keys for any endpoint configured with `apiKey: "user_provided"` from **Settings → Data controls → API keys**.
+
+  That list is scoped to the endpoints a user can actually reach: the endpoints referenced by your model specs, plus any [`addedEndpoints`](#addedendpoints). When the `agents` endpoint is reachable, it also includes the agent [`allowedProviders`](/docs/configuration/librechat_yaml/object_structure/agents#allowedproviders) (or every configured provider when `allowedProviders` is left unset).
+</Callout>
+
 ## Example
 
 ```yaml filename="modelSpecs"
@@ -143,7 +149,7 @@ modelSpecs:
 
 **Note:** Must be one of the following:
 
-- `openAI, azureOpenAI, google, anthropic, assistants, azureAssistants, bedrock`
+- `openAI, azureOpenAI, google, anthropic, assistants, azureAssistants, bedrock, agents`
 
 **Example:**
 
@@ -246,6 +252,8 @@ Specifies a first-run default without overriding a user's later selections. Use 
 
 Viewing an older conversation that used a soft-default spec does not re-arm that spec as the user's default after they have made another selection.
 
+If the user's stored selection points to an Agent that no longer resolves, LibreChat re-arms the soft default so a new chat still has a usable selection. A temporary failure to load the Agent list does not clear the stored choice or trigger that fallback.
+
 **Example:**
 
 ```yaml filename="modelSpecs / softDefault"
@@ -254,6 +262,34 @@ modelSpecs:
     - name: 'general-assistant'
       label: 'General Assistant'
       softDefault: true
+      preset:
+        endpoint: 'openAI'
+        model: 'gpt-4o-mini'
+```
+
+---
+
+### showInMenu
+
+<OptionTable
+  options={[
+    [
+      'showInMenu',
+      'Boolean',
+      'Controls whether the complete model spec appears in the model selector and client startup configuration.',
+      'true',
+    ],
+  ]}
+/>
+
+Set `showInMenu: false` to hide a spec from interactive selection while keeping it available for trusted server-side callers that explicitly send its `name` in the `spec` field. This differs from `showIconInMenu`, which hides only the icon.
+
+```yaml filename="modelSpecs / showInMenu"
+modelSpecs:
+  list:
+    - name: 'api-only-assistant'
+      label: 'API-only Assistant'
+      showInMenu: false
       preset:
         endpoint: 'openAI'
         model: 'gpt-4o-mini'
@@ -636,6 +672,126 @@ modelSpecs:
 
 ---
 
+### memory
+
+<OptionTable
+  options={[
+    [
+      'memory',
+      'Boolean',
+      'Equips the model spec\'s ephemeral agent with memory tools.',
+      'false',
+    ],
+  ]}
+/>
+
+Requires configured [User Memory](/docs/features/memory), the endpoint-level `memory` capability, and user memory permissions. When enabled, the model can save or delete structured memories when the user explicitly requests it.
+
+```yaml filename="modelSpecs / memory"
+modelSpecs:
+  list:
+    - name: 'memory-assistant'
+      memory: true
+      preset:
+        endpoint: 'openAI'
+        model: 'gpt-4o-mini'
+```
+
+---
+
+### askUserQuestion
+
+<OptionTable
+  options={[
+    [
+      'askUserQuestion',
+      'Boolean',
+      'Lets the model spec pause to ask up to four related questions and resume with the answers.',
+      'false',
+    ],
+  ]}
+/>
+
+Requires the endpoint-level `ask_user_question` capability. This is supported in Agent chat runs that provide LibreChat's durable pause/resume flow.
+
+```yaml filename="modelSpecs / askUserQuestion"
+modelSpecs:
+  list:
+    - name: 'interactive-assistant'
+      askUserQuestion: true
+      preset:
+        endpoint: 'openAI'
+        model: 'gpt-4o-mini'
+```
+
+---
+
+### runInBackground
+
+<OptionTable
+  options={[
+    [
+      'runInBackground',
+      'Boolean or Array of Strings',
+      'Controls which eligible tools attached to the model spec may run as background tasks.',
+      'Unset (background-native code defaults apply)',
+    ],
+  ]}
+/>
+
+Requires the opt-in endpoint-level `run_in_background` capability. With that capability and `executeCode: true`, Code Interpreter execution and shell calls are background-eligible by default. Set `runInBackground: false` or `[]` to opt them out, `true` to enable every eligible tool attached to the spec, or an array of resolved tool IDs to enable only those tools. Selecting `execute_code` or `bash_tool` selects both native code tools; a list that omits them opts them out. Unsupported or misspelled selections are logged.
+
+The model can start an eligible tool and continue working. For saved Agents, supported content-only completions are delivered automatically by default; `check_background_task` remains available for status, control, live artifacts, and recovery. Completed code output and generated files are attached to the original code call. Ordinary execution is process-local and does not survive the loss of its worker process, but a persisted terminal result may be delivered from another replica. Administrators can restore poll-only behavior with [`endpoints.agents.backgroundTasks.completionWakeups: false`](/docs/configuration/librechat_yaml/object_structure/agents#backgroundtasks).
+
+```yaml filename="modelSpecs / runInBackground"
+modelSpecs:
+  list:
+    - name: 'operations-assistant'
+      mcpServers: ['operations']
+      executeCode: true
+      runInBackground:
+        - 'execute_code'
+        - 'slow_report_mcp_operations'
+      preset:
+        endpoint: 'openAI'
+        model: 'gpt-4o-mini'
+```
+
+---
+
+### describeIntent
+
+<OptionTable
+  options={[
+    [
+      'describeIntent',
+      'Boolean or Array of Strings',
+      'Controls which eligible tools stream a model-written intent as their live tool-call label.',
+      'Unset (native intent defaults apply)',
+    ],
+  ]}
+/>
+
+Requires the opt-in endpoint-level `tool_intents` capability. Native tools such as web search, file authoring, memory, and supported Code Interpreter tools use intent labels by default while the capability is enabled. Set `describeIntent: true` to enable every eligible tool, or provide resolved tool IDs to enable only those tools and disable labels for everything else. An empty array disables all intent labels for the spec. Omitting the field or setting it to `false` adds no broader selection, so native defaults still apply.
+
+Intent labels are included in tool schemas and therefore add schema tokens to model requests. LibreChat logs selections that are misspelled, unavailable to the spec, or ineligible.
+
+```yaml filename="modelSpecs / describeIntent"
+modelSpecs:
+  list:
+    - name: 'research-assistant'
+      webSearch: true
+      mcpServers: ['research']
+      describeIntent:
+        - 'web_search'
+        - 'search_mcp_research'
+      preset:
+        endpoint: 'openAI'
+        model: 'gpt-4o-mini'
+```
+
+---
+
 ### mcpServers
 
 <OptionTable
@@ -739,7 +895,7 @@ Controls Subagents for ephemeral agents created from this model spec. Use this w
 
 - `enabled`: adds the subagent spawn tool for this model spec.
 - `allowSelf`: lets the ephemeral agent spawn a fresh isolated copy of itself.
-- `agent_ids`: allows specific persisted agents as additional subagents. This list is capped by `MAX_SUBAGENTS` and remains server-side; startup config sent to clients only includes public `enabled` and `allowSelf` flags.
+- `agent_ids`: allows specific persisted agents as additional subagents. This list is capped by the effective subagents limit, which defaults to 10 and is configurable with [`endpoints.agents.maxSubagents`](/docs/configuration/librechat_yaml/object_structure/agents#maxsubagents). The list remains server-side; startup config sent to clients only includes public `enabled` and `allowSelf` flags.
 
 When model specs are enforced, the model spec's `subagents` settings are authoritative over request payload values.
 
@@ -960,6 +1116,8 @@ preset:
 
 **Default:** `true`
 
+Google model settings now expose this control in the shared schema, so administrators can explicitly choose whether files are resent on later turns for Google and Vertex AI model specs.
+
 **Example:**
 
 ```yaml filename="modelSpecs / list / {spec_item} / preset / resendFiles"
@@ -1012,6 +1170,8 @@ preset:
   ]}
 />
 
+For Google model settings, the Agent Builder accepts values from `10` to `2,000,000` and uses increments of `1,000`.
+
 **Example:**
 
 ```yaml filename="modelSpecs / list / {spec_item} / preset / maxContextTokens"
@@ -1029,6 +1189,8 @@ You should exclude any model options and defer to the agent's configuration as d
 
 <Callout type="info" title="Agent Access Filtering (v0.8.0+)">
 As of v0.8.0, LibreChat uses an ACL (Access Control List) based permissions system for agents. When model specs are configured to use agents, any agents that the user doesn't have access to will be automatically filtered out, even if they are configured in the model spec. This ensures users only see and can use agents they have proper permissions for.
+
+The server also resolves the effective model spec and authorizes its persistent `agent_id` before loading or running that Agent. A caller cannot use request fields or a preset mismatch to substitute a different Agent after this access check.
 
 For more information about the ACL permissions system, see the [Agents documentation](/docs/features/agents#migration-required-v080-rc3).
 
@@ -1124,8 +1286,8 @@ preset:
 
 > **Note:** Each parameter below includes a note on which endpoints support it.  
 > **OpenAI / AzureOpenAI / Custom** typically support `temperature`, `presence_penalty`, `frequency_penalty`, `stop`, `top_p`, `max_tokens`.  
-> **Google / Anthropic** typically support `topP`, `topK`, `maxOutputTokens`.  
-> **Anthropic / Bedrock (Anthropic and Nova models)** support `promptCache`.  
+> **Google / Anthropic** typically support `topP`, `topK`, `maxOutputTokens`; Google also supports `url_context` on supported Gemini text models.
+> **Anthropic / OpenRouter / Bedrock (Anthropic and Nova models)** support `promptCache` and `promptCacheTtl`.
 > **Bedrock** supports `region`, `maxTokens`, and a few others.
 
 #### model
@@ -1361,12 +1523,12 @@ preset:
 
 #### promptCache
 
-> **Supported by:** `anthropic`, `bedrock` (Anthropic and Nova models)  
-> (Toggle Anthropic’s “prompt-caching” feature)
+> **Supported by:** `anthropic`, OpenRouter custom endpoints, `bedrock` (Anthropic and Nova models)
+> (Toggle provider prompt caching)
 
 <OptionTable
   options={[
-    ['promptCache', 'Boolean', 'Enables or disables Anthropic’s built-in prompt caching.', ''],
+    ['promptCache', 'Boolean', 'Enables or disables provider prompt caching.', ''],
   ]}
 />
 
@@ -1383,6 +1545,39 @@ preset:
 
 ---
 
+#### promptCacheTtl
+
+> **Supported by:** `anthropic`, OpenRouter custom endpoints, `bedrock` (Anthropic and Nova models)
+> (Sets the prompt-cache lifetime when prompt caching is enabled)
+
+<OptionTable
+  options={[
+    [
+      'promptCacheTtl',
+      'Enum',
+      'Sets the prompt-cache lifetime. Supported values are `5m` and `1h`.',
+      'Provider or SDK default',
+    ],
+  ]}
+/>
+
+**Accepted Values:**
+
+- `5m`
+- `1h`
+
+**Example:**
+
+```yaml
+preset:
+  promptCache: true
+  promptCacheTtl: '1h'
+```
+
+**Note:** `promptCacheTtl` is ignored when prompt caching is disabled. When omitted, the provider integration uses its default prompt-cache lifetime.
+
+---
+
 #### reasoning_effort
 
 **Accepted Values:**
@@ -1394,6 +1589,7 @@ preset:
 - `"medium"`
 - `"high"`
 - `"xhigh"` (extra high)
+- `"max"` (maximum)
 
 > **Supported by:** `openAI`, `azureOpenAI`, custom (OpenAI-like), `bedrock` (ZAI, MoonshotAI models)
 
@@ -1402,7 +1598,7 @@ preset:
     [
       'reasoning_effort',
       'String',
-      'Controls the reasoning effort level for the model. Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning. The `xhigh` option provides maximum reasoning capability for complex problems. For Bedrock, accepted values are `low`, `medium`, `high`.',
+      'Controls the reasoning effort level for the model. Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning. Supported OpenAI models may expose `xhigh` and `max`; for Bedrock, accepted values are `low`, `medium`, `high`.',
       '',
     ],
   ]}
@@ -1444,6 +1640,62 @@ preset:
 preset:
   reasoning_summary: 'detailed'
 ```
+
+---
+
+#### reasoning_mode
+
+**Accepted Values:**
+
+- `""` (empty string - unset)
+- `"standard"`
+- `"pro"`
+
+> **Supported by:** OpenAI Responses API models that expose reasoning mode, including GPT-5.6
+
+<OptionTable
+  options={[
+    ['reasoning_mode', 'String', 'Sets the OpenAI Responses API reasoning mode.', ''],
+  ]}
+/>
+
+```yaml
+preset:
+  reasoning_effort: 'high'
+  reasoning_mode: 'pro'
+```
+
+---
+
+#### reasoning_context
+
+**Accepted Values:**
+
+- `""` (empty string - unset)
+- `"auto"`
+- `"current_turn"`
+- `"all_turns"`
+
+> **Supported by:** OpenAI Responses API models that expose reasoning context, including GPT-5.6
+
+<OptionTable
+  options={[
+    [
+      'reasoning_context',
+      'String',
+      'Controls how much conversational context is available to model reasoning.',
+      '',
+    ],
+  ]}
+/>
+
+```yaml
+preset:
+  reasoning_effort: 'high'
+  reasoning_context: 'all_turns'
+```
+
+For GPT-5.6, LibreChat defaults reasoning requests to the Responses API unless `useResponsesApi: false` is set explicitly.
 
 ---
 
@@ -1517,6 +1769,32 @@ preset:
 
 ---
 
+#### url_context
+
+> **Supported by:** `google` on supported Gemini text models, including Gemini 2.5+ and Gemini 3.x
+
+<OptionTable
+  options={[
+    [
+      'url_context',
+      'Boolean',
+      'Enables Google URL Context so the model can read URLs included in the user message. YouTube links are converted to native video-understanding inputs when possible.',
+      '',
+    ],
+  ]}
+/>
+
+**Default:** `false`
+
+**Example:**
+
+```yaml
+preset:
+  url_context: true
+```
+
+---
+
 #### disableStreaming
 
 > **Supported by:** `openAI`, `azureOpenAI`, custom (OpenAI-like)
@@ -1552,6 +1830,8 @@ preset:
 />
 
 **Default:** `"Auto (-1)"` (Google), `2000` (Anthropic, Bedrock (Anthropic models))
+
+For Gemini 2.5 models, the Google setting is model-aware: Pro accepts `128`-`32768`, Flash accepts `0`-`24576`, and Flash-Lite accepts `512`-`24576`. `-1` remains the automatic setting. Gemini 3+ models use [`thinkingLevel`](#thinkinglevel) instead of a numeric budget.
 
 **Example:**
 
