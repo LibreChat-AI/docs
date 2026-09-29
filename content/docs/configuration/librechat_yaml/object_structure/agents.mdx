@@ -401,10 +401,18 @@ Configures the sharing scopes and optional execution backends for highly experim
       'Optional deployment ceiling for personal worker enrollment. `enabled` defaults to true and `maxPerUser` defaults to 5.',
       '{ enabled: true, maxPerUser: 5 }',
     ],
+    [
+      'conversationMoves',
+      'Object',
+      'Opt-in owner-authorized workspace transitions for saved conversations. `allowAttachDetach` additionally permits attaching or leaving an attached workspace.',
+      'Disabled',
+    ],
   ]}
 />
 
 Attached Bash environments also accept `userConfig.bash.maxQueueWaitMs`, which controls how long a request may wait for workspace capacity. The default and maximum are `300000` milliseconds (5 minutes). Set it to `0` to disable client retries after the initial admission attempt; it does not cancel work that is already admitted or running.
+
+`userConfig.bash.maxRequestTimeoutMs` optionally bounds the **total HTTP time for one workspace tool call**, including admission, execution, settlement, and delivery. It accepts `1` through `610000` ms. Without it, admission still has a 30-second budget per attempt; `maxQueueWaitMs` remains a separate retry horizon. **Do not enable longer admission** until every LibreChat API replica understands this field, the Code API route honors per-request queue allowances, and the shortest timeout across the live proxy/ingress path has been measured. An expired mutation may have completed on the worker, so LibreChat does not retry an ambiguous timeout.
 
 ```yaml filename="endpoints / agents / statefulCodeSessions"
 statefulCodeSessions:
@@ -451,6 +459,16 @@ statefulCodeSessions:
 
 `allowedEnvironments` is required whenever the block is present and must include at least one workspace scope. Omit the entire block to allow all three scopes and continue routing stateful work through [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint). The personal default and Agent Builder only permit allowed values. If an administrator tightens the policy, a saved personal default remains visible but disabled, and new Agents use the first allowed scope. Existing enabled Agents retain their saved scope, but a now-disallowed scope fails closed at runtime until the Agent is reconfigured.
 
+`conversationMoves.enabled: true` lets the conversation owner explicitly move a sealed attached workspace to a compatible environment and recover a missing workspace without replacing chat history or restoring old workspace files. To additionally allow a saved chat to **attach** a workspace or **leave** one for normal chat, set `conversationMoves.allowAttachDetach: true`. Both switches are off by default; enabling moves alone retains move-only behavior. Upgrade **all** API replicas, then enable [`CODE_ENVIRONMENT_DECISION_VERSION=1`](/docs/configuration/dotenv#code-interpreter) before opting in. Ownership, target access, active work, and current policy are rechecked at the transition; a running generation cannot be moved.
+
+```yaml filename="endpoints / agents / statefulCodeSessions / conversationMoves"
+statefulCodeSessions:
+  allowedEnvironments: ['user', 'agent-user', 'conversation']
+  conversationMoves:
+    enabled: true
+    allowAttachDetach: true
+```
+
 `principalWorkers` controls self-service enrollment for personal attached workers. Omitted values resolve to `enabled: true` and `maxPerUser: 5`; set `enabled: false` or `maxPerUser: 0` to stop new enrollment. The limit counts every registered personal environment for that user across configured control planes, including offline workers. Lowering the limit or disabling enrollment does not revoke existing environments.
 
 Deployment YAML is the hard ceiling. A role, group, or user configuration override may disable enrollment or lower `maxPerUser`, but cannot raise the deployment value. A user sees pairing-enabled control planes only when the effective limit is greater than zero, [`pairing.allowPrincipalWorkers`](#statefulcodesessions) is enabled on that control plane, principal authentication is available, and the user has Code Environment management permission.
@@ -485,6 +503,12 @@ Configures the trusted internal origin used by Agent event delivery. Most deploy
       'Overrides the current process bound listener for trusted internal trigger admission. Use only when delivery must traverse another trusted HTTP origin.',
       '',
     ],
+    [
+      'idlePolling',
+      'Object',
+      'Caps idle MongoDB recovery scans and waiting completion rechecks. Local events can wake a scan sooner.',
+      'See defaults below',
+    ],
   ]}
 />
 
@@ -498,6 +522,17 @@ endpoints:
 Bound child continuations are automatic. Older `childTurns`, `completionWakeups`, `coalescing`, `actorMailbox`, `checkpointForks`, and `durableReceipts` fields under `eventDriven` are no longer configuration switches and should be removed. The runtime now applies those delivery guarantees directly. The separate [`backgroundTasks.completionWakeups`](#backgroundtasks) field controls conversational delivery for completed background tools and detached Subagents.
 
 Leave `selfUrl` unset for the normal bound-listener path. Set it only when trusted internal trigger admission must traverse another HTTP(S) origin, such as a TLS front door. `AGENT_TRIGGERS_SELF_URL` remains a compatibility fallback when this field is omitted. See [Agents API events](/docs/features/agents_api#agent-events) and [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation).
+
+`eventDriven.idlePolling` caps per-replica recovery polling when nothing is ready: `deliveryMaxIntervalMs` defaults to `15000` (valid `1000`–`300000`), `queuedTurnMaxIntervalMs` and `maintenanceMaxIntervalMs` each default to `120000` (valid `30000`–`300000`), and `completionWaitMaxIntervalMs` defaults to `60000` (valid `5000`–`300000`). The latter bounds rechecks while a background or Subagent result is pending or its parent turn is busy. Readiness events expedite delivery; these caps retain cross-replica and crash-recovery fallbacks rather than defining normal completion latency.
+
+```yaml filename="endpoints / agents / eventDriven / idlePolling"
+eventDriven:
+  idlePolling:
+    deliveryMaxIntervalMs: 15000
+    queuedTurnMaxIntervalMs: 120000
+    maintenanceMaxIntervalMs: 120000
+    completionWaitMaxIntervalMs: 60000
+```
 
 Event Actor detached Action completion is selected automatically from the built-in generation store. In-memory execution is process-local; Redis generation streams add durable restart recovery and replica handoff. No `librechat.yaml` switch or environment feature flag is required. See [Agent Event Runtime](/docs/configuration/dotenv#agent-event-runtime).
 
@@ -531,6 +566,12 @@ Controls whether supported completed background tools and detached Subagents aut
       'Maximum completed background results delivered in one continuation batch. Valid values are 1 through 16.',
       '8',
     ],
+    [
+      'shutdownInterruptGraceMs',
+      'Integer',
+      'Graceful-shutdown wait after interrupting a still-running background tool before recording an interrupted result. Valid values are 0 through 60000 ms.',
+      '5000',
+    ],
   ]}
 />
 
@@ -540,13 +581,14 @@ backgroundTasks:
   ordinaryToolCancellation: false
   completionResultMaxChars: 24576
   completionResultBatchSize: 8
+  shutdownInterruptGraceMs: 5000
 ```
 
 Automatic completion delivery is enabled even when this block is omitted. Set `completionWakeups: false` to require the Agent to collect every result through `check_background_task`.
 
 Set `ordinaryToolCancellation: true` to expose owner-scoped cancellation for ordinary background tools. Cancellation is cooperative, remains process-local, and keeps the task active and capacity reserved until the invocation settles. It does not cancel detached Subagents.
 
-Ordinary background tool execution remains process-local and does not survive the loss of its worker process. Once a content-only terminal result is persisted, its delivery is durable and may continue on another replica. Tasks with live artifacts still require polling on the owning run. Detached Subagents keep their separate durable transcript and terminal-result path. Manual polling remains available for status, controls, and recovery in either mode. See [Background Tool Calls](/docs/features/agents#background-tool-calls) and [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation).
+Ordinary background tool execution remains process-local. During a graceful shutdown, LibreChat waits within the shutdown budget for tasks to settle, then interrupts unfinished work and records a result; a sudden worker loss still cannot preserve the running task. Once a content-only terminal result is persisted, its delivery is durable and may continue on another replica. Tasks with live artifacts still require polling on the owning run. Detached Subagents keep their separate durable transcript and terminal-result path. Manual polling remains available for status, controls, and recovery in either mode. See [Background Tool Calls](/docs/features/agents#background-tool-calls) and [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation).
 
 ## toolApproval
 
