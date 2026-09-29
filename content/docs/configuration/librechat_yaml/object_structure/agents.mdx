@@ -410,9 +410,11 @@ Configures the sharing scopes and optional execution backends for highly experim
   ]}
 />
 
-Attached Bash environments also accept `userConfig.bash.maxQueueWaitMs`, which controls how long a request may wait for workspace capacity. The default and maximum are `300000` milliseconds (5 minutes). Set it to `0` to disable client retries after the initial admission attempt; it does not cancel work that is already admitted or running.
+Attached environments accept `environments[].configSchema.limits.maxQueueWaitMs`, which controls how long a request may retry waiting for workspace capacity. The default and maximum are `300000` milliseconds (5 minutes). Set it to `0` to disable client retries after the initial admission attempt; it does not cancel work that is already admitted or running. These fields belong under `configSchema.limits`, **not** `userConfig.bash`.
 
-`userConfig.bash.maxRequestTimeoutMs` optionally bounds the **total HTTP time for one workspace tool call**, including admission, execution, settlement, and delivery. It accepts `1` through `610000` ms. Without it, admission still has a 30-second budget per attempt; `maxQueueWaitMs` remains a separate retry horizon. **Do not enable longer admission** until every LibreChat API replica understands this field, the Code API route honors per-request queue allowances, and the shortest timeout across the live proxy/ingress path has been measured. An expired mutation may have completed on the worker, so LibreChat does not retry an ambiguous timeout.
+`environments[].configSchema.limits.maxRequestTimeoutMs` optionally bounds the **total HTTP time for one workspace tool call**, including admission, execution, settlement, and delivery. It accepts `1` through `610000` ms, but the config rejects budgets too small to leave any command execution time after admission and the 10-second settlement/delivery reserve. Without it, admission still has a 30-second budget per attempt; `maxQueueWaitMs` remains a separate retry horizon. **Do not enable longer admission** until every LibreChat API replica understands this field, the Code API route honors per-request queue allowances, and the shortest timeout across the live proxy/ingress path has been measured. An expired mutation may have completed on the worker, so LibreChat does not retry an ambiguous timeout.
+
+With a total request budget, `environments[].configSchema.limits.minCommandAdmissionMs` reserves time for a command to enter the worker before execution starts. The default is `10000` ms; set `1000`–`300000` ms. The request budget must **exceed** this allowance plus 10000 ms of settlement/delivery grace; without a total budget, the setting has no effect. The Bash execution limit advertised to an Agent is the smaller of its configured or upstream ceiling and the time left after those reserves. For example, a 90000 ms request budget with an 80000 ms command ceiling and the default reserve advertises at most a 70000 ms command.
 
 ```yaml filename="endpoints / agents / statefulCodeSessions"
 statefulCodeSessions:
@@ -445,6 +447,13 @@ statefulCodeSessions:
       configSchema:
         limits:
           maxCommandTimeoutMs: 120000
+          # Before enabling, verify Code API queue allowances and the live proxy deadline.
+          # maxRequestTimeoutMs: 160000
+          # minCommandAdmissionMs: 10000
+          # maxQueueWaitMs: 300000
+        # After upgrading Code API and opting in the worker with --linked-worktree-lanes:
+        # workspaces:
+        #   linkedWorktrees: true
         permissions:
           fileWrite:
             allowed: [allow, ask, deny]
@@ -482,7 +491,8 @@ When `environments` is non-empty, every entry requires a unique `id`, a display 
 - `pairing` is optional and valid only for deployment-owned `attached` entries. `pairing.workerId` identifies an operator-managed worker to enroll, while `pairing.allowPrincipalWorkers: true` lets authorized users enroll owner-bound workers against that control plane. At least one of those fields is required when `pairing` is present.
 - `pairing.tokenEnv` names the environment variable containing the bridge administrator token; it never contains the token itself. Pairing requires HTTPS except for loopback development.
 - `configSchema.permissions` optionally lets authorized owners choose `fileWrite` and `commandExecution` policy for personal environments under **Settings > Code environments**. Each field requires a non-empty `allowed` list containing `allow`, `ask`, and/or `deny`; `default` is `ask` when omitted and must appear in `allowed`. LibreChat rejects stored values outside the administrator's list.
-- `configSchema.limits.maxCommandTimeoutMs` sets the largest Bash timeout the model may request for that environment. It accepts `1` through `300000` ms; omission preserves the 30-second default. This is a deployment ceiling and is not user-configurable.
+- `configSchema.limits.maxCommandTimeoutMs` sets the largest Bash timeout the model may request for that environment. It accepts `1` through `300000` ms; omission preserves the 30-second default. With a total request budget, the advertised command timeout also fits the remaining time after command admission, settlement, and delivery. This is a deployment ceiling and is not user-configurable.
+- `configSchema.workspaces.linkedWorktrees: true` enables per-worktree scheduling only for attached workspaces advertising `git_linked_worktree`; omission keeps all requests in the checkout's root lane. Upgrade LibreChat **before** a worker advertises this scope, deploy a Code API supporting linked-worktree lanes, then start the worker with `--linked-worktree-lanes` before enabling the YAML setting. File operations and Bash commands with a `cwd` inside `.worktrees/<name>` use that lane and return checkout-relative paths. Commands that `cd` inside their command text, checkout-root operations, conversation workspace instances, and environment actions stay root-scoped.
 - Do not configure `settings` in deployment YAML. LibreChat supplies that request-scoped field from the authenticated owner's server-validated preferences.
 - Only file-write and command-execution policy is user-configurable. Isolation, networking, mounts, privileged execution, ingress, egress, and secrets remain administrator-controlled.
 - If both top-level `workerId` and `pairing.workerId` are present, they must match. An entry with `allowPrincipalWorkers: true` and neither worker ID is pairing-only: it is omitted from execution selectors and cannot set `default: true`.
