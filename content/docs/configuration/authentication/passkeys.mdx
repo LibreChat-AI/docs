@@ -1,0 +1,142 @@
+---
+title: Passkeys
+icon: KeyRound
+description: Let users sign in without a password using a device screen lock or a security key (WebAuthn). Covers enabling passkeys, the relying party settings, enrollment limits, and how passkeys interact with two-factor authentication.
+---
+
+Passkeys let users with a local (email and password) account sign in with their device screen lock, a password manager, or a hardware security key instead of typing a password. LibreChat implements them with WebAuthn. They are off by default.
+
+<Callout type="info" title="Availability">
+  Newer than **v0.8.8**. Available now on LibreChat's `dev` and `canary` branches, and in the next release.
+</Callout>
+
+Use passkeys when you want a phishing-resistant, passwordless sign-in for local accounts. Accounts that sign in through OAuth, OpenID Connect, SAML, or LDAP keep using their provider and cannot add passkeys.
+
+## Enable passkeys
+
+<Steps>
+<Step>
+
+**Serve LibreChat over HTTPS.** Browsers only allow WebAuthn in a secure context. `http://localhost` is exempt, so local testing works without TLS.
+
+</Step>
+<Step>
+
+**Turn the feature on in `.env`.** For a standard deployment, this is the only required setting. The relying party ID and allowed origins are derived from `DOMAIN_CLIENT` and `DOMAIN_SERVER`.
+
+```bash filename=".env"
+ALLOW_PASSKEY_LOGIN=true
+```
+
+</Step>
+<Step>
+
+**Pin the relying party ID (recommended).** Each passkey is permanently bound to the RP ID it was created under. If `DOMAIN_CLIENT` might ever change, set `PASSKEY_RP_ID` now so existing passkeys keep working.
+
+```bash filename=".env"
+PASSKEY_RP_ID=chat.example.com
+```
+
+</Step>
+<Step>
+
+**Restart LibreChat.** The login page shows **Sign in with a passkey**, and **Settings > Account** shows a **Passkeys** section.
+
+</Step>
+</Steps>
+
+## Configuration reference
+
+<OptionTable
+  options={[
+    [
+      'ALLOW_PASSKEY_LOGIN',
+      'boolean',
+      'Enables passkey sign-in and the Passkeys section in account settings. Default: false.',
+      'ALLOW_PASSKEY_LOGIN=true',
+    ],
+    [
+      'PASSKEY_RP_ID',
+      'string',
+      'Relying party ID: the domain passkeys are bound to. Must be a domain name (not an IP address) equal to, or a parent domain of, the host users visit. Defaults to the hostname of DOMAIN_CLIENT, or localhost.',
+      '# PASSKEY_RP_ID=chat.example.com',
+    ],
+    [
+      'PASSKEY_RP_NAME',
+      'string',
+      'Name the authenticator shows when creating or using a passkey. Defaults to APP_TITLE, then LibreChat.',
+      '# PASSKEY_RP_NAME=LibreChat',
+    ],
+    [
+      'PASSKEY_ORIGINS',
+      'string',
+      'Comma-separated list of origins allowed to run passkey ceremonies. Defaults to DOMAIN_CLIENT and DOMAIN_SERVER.',
+      '# PASSKEY_ORIGINS=https://chat.example.com',
+    ],
+    [
+      'MAX_PASSKEYS_PER_USER',
+      'integer',
+      'Passkeys each account may enroll, from 1 to 100. Overridden by passkeys.perUserMax in librechat.yaml. Default: 20.',
+      '# MAX_PASSKEYS_PER_USER=20',
+    ],
+    [
+      'PASSKEY_STEPUP_MAX',
+      'integer',
+      'Password-confirmed passkey add or remove attempts allowed per user in PASSKEY_STEPUP_WINDOW. Default: 20.',
+      'PASSKEY_STEPUP_MAX=20',
+    ],
+    [
+      'PASSKEY_STEPUP_WINDOW',
+      'integer',
+      'Window in minutes for PASSKEY_STEPUP_MAX. Default: 15.',
+      'PASSKEY_STEPUP_WINDOW=15',
+    ],
+    [
+      'PASSKEY_MAX',
+      'integer',
+      'Passkey sign-in requests allowed per IP in PASSKEY_WINDOW. One sign-in uses two requests. Requests over the limit get HTTP 429; they are not scored as violations because no user is signed in yet. Default: 20.',
+      '# PASSKEY_MAX=20',
+    ],
+    [
+      'PASSKEY_WINDOW',
+      'integer',
+      'Window in minutes for PASSKEY_MAX. Default: 5.',
+      '# PASSKEY_WINDOW=5',
+    ],
+  ]}
+/>
+
+### Per-user limit in `librechat.yaml`
+
+You can also set the enrollment cap in `librechat.yaml`:
+
+```yaml filename="librechat.yaml"
+passkeys:
+  perUserMax: 10
+```
+
+The cap resolves in this order: `passkeys.perUserMax` in `librechat.yaml`, then `MAX_PASSKEYS_PER_USER`, then the default of `20`. Values outside `1` to `100` are ignored and the next source is used. When a user reaches the cap, **Settings > Account** shows "You have reached the maximum number of passkeys". See [`passkeys`](/docs/configuration/librechat_yaml/object_structure/config#passkeys) in the config reference.
+
+## What users see
+
+**Adding a passkey**
+
+1. Open **Settings > Account**, find **Passkeys**, and select **Manage**.
+2. Select **Add passkey**.
+3. Enter the account password in the **Confirm your password** dialog. A passkey is a complete sign-in on its own, so LibreChat asks for the password before creating one.
+4. Complete the browser or device prompt. The new passkey appears in the list with a default name such as **This device**, **Phone or tablet**, or **Security key**.
+
+Each entry shows when it was added and last used, and a **Synced** badge when the authenticator reports that the passkey is backed up (for example, by a password manager). Users can rename a passkey, and removing one (**Remove passkey**) also asks for the account password.
+
+**Signing in**
+
+On the login page, users select **Sign in with a passkey** and approve the device prompt. If the account has two-factor authentication enabled, LibreChat still asks for the 2FA code afterward, exactly as it does after a password sign-in.
+
+## Behavior and caveats
+
+- **Local accounts only.** Passkey enrollment and sign-in are limited to local accounts. Accounts created through an identity provider or LDAP must keep authenticating through that provider.
+- **Works with email login disabled.** The **Sign in with a passkey** button and its routes depend only on `ALLOW_PASSKEY_LOGIN`. With `ALLOW_EMAIL_LOGIN=false`, existing local users can still sign in with passkeys they enrolled earlier.
+- **Two-factor authentication.** Passkey sign-in goes through the same 2FA gate as password sign-in. With [`ENFORCE_TWO_FACTOR_AUTHENTICATION=true`](/docs/configuration/authentication#required-two-factor-authentication), a user who has not enrolled in 2FA is sent to the setup flow after signing in with a passkey.
+- **Changing the RP ID orphans passkeys.** Passkeys created under one RP ID never work under another. Changing `PASSKEY_RP_ID`, or changing `DOMAIN_CLIENT` while `PASSKEY_RP_ID` is unset, leaves every existing passkey unusable; users must sign in another way and enroll again.
+- **Origins must match.** If users reach LibreChat on an origin not covered by `PASSKEY_ORIGINS` (or the derived defaults), the browser shows "Passkeys are not available on this domain". Add every public origin to `PASSKEY_ORIGINS` when you serve LibreChat on more than one.
+- **Password reset removes passkeys.** A completed password reset signs the account out everywhere and deletes all of its passkeys, so a passkey enrolled before the reset can no longer be used to get in. Users enroll again afterward.
