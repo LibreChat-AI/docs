@@ -10,13 +10,13 @@ You are updating the librechat.ai documentation so it covers changes that recent
 
 Useful app paths:
 
-| What | Where |
-| --- | --- |
-| `librechat.yaml` schema, defaults, ranges | `packages/data-provider/src/config.ts` |
-| Example config with comments | `librechat.example.yaml` |
-| Environment variables | `.env.example` |
-| English UI strings (exact labels) | `client/src/locales/en/translation.json` |
-| Settings dialog entries | `client/src/components/Nav/Settings/registry.tsx` |
+| What                                      | Where                                             |
+| ----------------------------------------- | ------------------------------------------------- |
+| `librechat.yaml` schema, defaults, ranges | `packages/data-provider/src/config.ts`            |
+| Example config with comments              | `librechat.example.yaml`                          |
+| Environment variables                     | `.env.example`                                    |
+| English UI strings (exact labels)         | `client/src/locales/en/translation.json`          |
+| Settings dialog entries                   | `client/src/components/Nav/Settings/registry.tsx` |
 
 ## Step 1: triage
 
@@ -41,7 +41,7 @@ For each candidate, search the English docs for the keys, labels and concepts in
 - Match the page you are editing: its heading levels, tone and MDX components (`Callout`, `Steps`, `Tabs`, `OptionTable`). `OptionTable` cells render as plain text, so do not put backticks, bold or links inside them; put links in the surrounding prose.
 - Lead with what the feature does and when to use it, then a minimal working example, then reference details, then caveats. Use exact UI labels in bold. Be complete but tight.
 - The live docs follow `dev`. Do not add "available since" or "newer than vX" notes; released versions are served from `content/docs-archive/`, which you must never edit.
-- Never use an em dash or an en dash as punctuation, and never use ` -- ` as a substitute. Use commas, colons, semicolons, parentheses or separate sentences. No emojis.
+- Never use an em dash or an en dash as punctuation, and never use `--` as a substitute. Use commas, colons, semicolons, parentheses or separate sentences. No emojis.
 - Do not add or replace images. If a change makes an existing screenshot outdated, list it in the report instead.
 - Do not touch files outside `content/docs/`, except `.sync/report.md`.
 
