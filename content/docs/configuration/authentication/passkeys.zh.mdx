@@ -1,0 +1,138 @@
+---
+title: 通行密钥
+icon: KeyRound
+description: 允许用户使用设备屏幕锁定或安全密钥 (WebAuthn) 进行无密码登录。涵盖启用通行密钥、信赖方设置、注册限制以及通行密钥与双重身份验证的交互方式。
+---
+
+Passkeys 允许拥有本地（电子邮件和密码）账户的用户使用其设备屏幕锁定、密码管理器或硬件安全密钥登录，而无需输入密码。LibreChat 通过 WebAuthn 实现了此功能。该功能默认处于关闭状态。
+
+当您希望为本地账户提供防钓鱼、无密码的登录方式时，请使用 passkeys。通过 OAuth、OpenID Connect、SAML 或 LDAP 登录的账户将继续使用其身份提供商，且无法添加 passkeys。
+
+## 启用 passkeys [#enable-passkeys]
+
+<Steps>
+<Step>
+
+**通过 HTTPS 提供 LibreChat 服务。** 浏览器仅允许在安全上下文中运行 WebAuthn。`http://localhost` 是豁免的，因此本地测试无需 TLS 即可运行。
+
+</Step>
+<Step>
+
+**在 `.env` 中开启此功能。** 对于标准部署，这是唯一必需的设置。依赖方 ID (relying party ID) 和允许的来源 (allowed origins) 将根据 `DOMAIN_CLIENT` 和 `DOMAIN_SERVER` 自动推导得出。
+
+```bash filename=".env"
+ALLOW_PASSKEY_LOGIN=true
+```
+
+</Step>
+<Step>
+
+**固定依赖方 ID (推荐)。** 每个通行密钥 (passkey) 都永久绑定到其创建时所用的 RP ID。如果 `DOMAIN_CLIENT` 未来可能会发生变更，请立即设置 `PASSKEY_RP_ID`，以确保现有的通行密钥能够继续使用。
+
+```bash filename=".env"
+PASSKEY_RP_ID=chat.example.com
+```
+
+</Step>
+<Step>
+
+**重启 LibreChat。** 登录页面会显示 **Sign in with a passkey**，并且 **Settings > Account** 中会显示 **Passkeys** 部分。
+
+</Step>
+</Steps>
+
+## 配置参考 [#configuration-reference]
+
+<OptionTable
+  options={[
+    [
+      'ALLOW_PASSKEY_LOGIN',
+      'boolean',
+      '启用通行密钥登录以及账户设置中的“通行密钥”部分。默认值：false。',
+      'ALLOW_PASSKEY_LOGIN=true',
+    ],
+    [
+      'PASSKEY_RP_ID',
+      'string',
+      '依赖方 ID：通行密钥所绑定的域名。必须是用户访问的主机名相同或其父域的域名（不能是 IP 地址）。默认为 DOMAIN_CLIENT 的主机名或 localhost。',
+      '# PASSKEY_RP_ID=chat.example.com',
+    ],
+    [
+      'PASSKEY_RP_NAME',
+      'string',
+      '创建或使用通行密钥时验证器显示的名称。默认为 APP_TITLE，其次为 LibreChat。',
+      '# PASSKEY_RP_NAME=LibreChat',
+    ],
+    [
+      'PASSKEY_ORIGINS',
+      'string',
+      '允许运行通行密钥（passkey）验证的来源列表，以逗号分隔。默认为 DOMAIN_CLIENT 和 DOMAIN_SERVER。',
+      '# PASSKEY_ORIGINS=https://chat.example.com',
+    ],
+    [
+      'MAX_PASSKEYS_PER_USER',
+      'integer',
+      '每个账户可注册的 Passkeys 数量，范围为 1 到 100。会被 librechat.yaml 中的 passkeys.perUserMax 覆盖。默认值：20。',
+      '# MAX_PASSKEYS_PER_USER=20',
+    ],
+    [
+      'PASSKEY_STEPUP_MAX',
+      'integer',
+      '在 PASSKEY_STEPUP_WINDOW 时间窗口内，每个用户允许尝试添加或移除密码确认的通行密钥（passkey）次数。默认值：20。',
+      'PASSKEY_STEPUP_MAX=20',
+    ],
+    [
+      'PASSKEY_STEPUP_WINDOW',
+      'integer',
+      'PASSKEY_STEPUP_MAX 的窗口时间（以分钟为单位）。默认值：15。',
+      'PASSKEY_STEPUP_WINDOW=15',
+    ],
+    [
+      'PASSKEY_MAX',
+      'integer',
+      '在 PASSKEY_WINDOW 时间窗口内每个 IP 允许的 Passkey 登录请求数。一次登录占用两个请求。超过限制的请求将返回 HTTP 429；由于尚未登录任何用户，这些请求不会被计为违规。默认值：20。',
+      '# PASSKEY_MAX=20',
+    ],
+    [
+      'PASSKEY_WINDOW',
+      'integer',
+      'PASSKEY_MAX 的窗口时间（以分钟为单位）。默认值：5。',
+      '# PASSKEY_WINDOW=5',
+    ],
+  ]}
+/>
+
+### `librechat.yaml` 中的用户级限制 [#per-user-limit-in-librechatyaml]
+
+您也可以在 `librechat.yaml` 中设置注册上限：
+
+```yaml filename="librechat.yaml"
+passkeys:
+  perUserMax: 10
+```
+
+该上限按以下顺序解析：`librechat.yaml` 中的 `passkeys.perUserMax`，然后是 `MAX_PASSKEYS_PER_USER`，最后是默认值 `20`。超出 `1` 到 `100` 范围的值将被忽略，并使用下一个来源。当用户达到上限时，**设置 > 账户** (Settings > Account) 会显示“您已达到通行密钥的最大数量”。请参阅配置参考中的 [`passkeys`](/docs/configuration/librechat_yaml/object_structure/config#passkeys)。
+
+## 用户所见 [#what-users-see]
+
+**添加通行密钥 (passkey)**
+
+1. 打开 **Settings > Account**，找到 **Passkeys**，然后选择 **Manage**。
+2. 选择 **Add passkey**。
+3. 在 **Confirm your password** 对话框中输入账户密码。通行密钥（passkey）本身即可完成登录，因此 LibreChat 在创建通行密钥前会要求输入密码。
+4. 完成浏览器或设备的提示。新的通行密钥将出现在列表中，并带有默认名称，例如 **This device**、**Phone or tablet** 或 **Security key**。
+
+每个条目都会显示其添加时间和最后使用时间，当身份验证器报告通行密钥已备份（例如通过密码管理器）时，会显示一个 **Synced** 徽章。用户可以重命名通行密钥，删除通行密钥（**Remove passkey**）时也需要输入账户密码。
+
+**登录**
+
+在登录页面上，用户选择 **Sign in with a passkey** 并批准设备提示。如果账户启用了双重身份验证 (2FA)，LibreChat 之后仍会要求输入 2FA 代码，这与密码登录后的流程完全一致。
+
+## 行为与注意事项 [#behavior-and-caveats]
+
+- **仅限本地账户。** 密钥 (Passkey) 注册和登录仅限于本地账户。通过身份提供商或 LDAP 创建的账户必须继续通过该提供商进行身份验证。
+- **即使禁用电子邮件登录也能正常工作。** **使用通行密钥登录 (Sign in with a passkey)** 按钮及其路由仅依赖于 `ALLOW_PASSKEY_LOGIN`。当 `ALLOW_EMAIL_LOGIN=false` 时，现有的本地用户仍然可以使用他们之前注册的通行密钥进行登录。
+- **双重身份验证。** Passkey 登录与密码登录通过相同的 2FA 网关。当设置 [`ENFORCE_TWO_FACTOR_AUTHENTICATION=true`](/docs/configuration/authentication#required-two-factor-authentication) 时，尚未启用 2FA 的用户在使用 Passkey 登录后将被引导至设置流程。
+- **更改 RP ID 会导致通行密钥失效。** 在一个 RP ID 下创建的通行密钥永远无法在另一个 RP ID 下使用。更改 `PASSKEY_RP_ID`，或者在未设置 `PASSKEY_RP_ID` 时更改 `DOMAIN_CLIENT`，会导致所有现有的通行密钥无法使用；用户必须通过其他方式登录并重新注册。
+- **源必须匹配。** 如果用户通过 `PASSKEY_ORIGINS`（或派生的默认值）未涵盖的源访问 LibreChat，浏览器会显示“Passkeys are not available on this domain”。当您在多个源上提供 LibreChat 服务时，请将每个公共源添加到 `PASSKEY_ORIGINS` 中。
+- **重置密码会移除通行密钥 (passkeys)。** 完成密码重置后，账户将在所有设备上登出并删除其所有通行密钥，因此重置前注册的通行密钥将无法再用于登录。用户需在重置后重新注册。

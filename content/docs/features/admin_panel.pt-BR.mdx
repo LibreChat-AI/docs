@@ -203,6 +203,14 @@ O painel renderiza a configuração do LibreChat como um formulário dinâmico o
 - **Compatível com versões futuras**: quando o LibreChat lança um novo campo de configuração, o painel o detecta automaticamente a partir do esquema. Nenhuma atualização ou reimplantação do painel de administração é necessária.
 - **Substituições em camadas**: a configuração base (do `librechat.yaml`) pode ser ocultada por substituições por principal, com escopo definido para uma função ou grupo. Quando um usuário faz login, as substituições são resolvidas em ordem de prioridade e mescladas sobre a base para produzir a configuração efetiva que o usuário vê.
 
+<Callout type="warning" title="Servidores MCP baseados em processo permanecem no YAML">
+  Servidores MCP que usam `type: stdio` ou campos de processo como `command`, `args`, `env`, `cwd` ou `stderr` são de propriedade do operador. Configure-os apenas no `librechat.yaml`; a API de administrador rejeita tentativas de criá-los ou modificá-los, e substituições (overrides) não podem substituí-los ou removê-los. A configuração de servidores MCP remotos permanece disponível através do sistema de substituição normal.
+</Callout>
+
+<Callout type="warning" title="Cabeçalhos do gateway Langfuse permanecem no YAML">
+  O `langfuse.headers` em nível de implantação pode conter credenciais de proxy e não é uma superfície de configuração baseada em Mongo. Configure-os no `librechat.yaml`; a API de administrador rejeita todo o mapa e caminhos de cabeçalho individuais. Veja [Authenticated Proxies and Gateways](/docs/configuration/langfuse#authenticated-proxies-and-gateways).
+</Callout>
+
 Esta é a superfície por trás do [sistema de substituição de configuração por principal baseado em banco de dados](https://github.com/LibreChat-AI/LibreChat/pull/12354) do LibreChat. Casos de uso típicos:
 
 - Dê a um grupo "Research" um `recursionLimit` maior e endpoints adicionais
@@ -210,6 +218,28 @@ Esta é a superfície por trás do [sistema de substituição de configuração 
 - Limitar permissões de `interface` mais rigorosas a grupos de contratados externos
 
 Os administradores também podem usar o painel de [Admin Insights](/docs/features/insights) (opcional) para revisar a atividade do MongoDB no escopo do tenant. Defina `ENABLE_INSIGHTS=true` e, em seguida, conceda `access:admin` e `read:insights` a uma conta com a função `ADMIN`.
+
+### Substituir Validação [#override-validation]
+
+As gravações de substituição (`PUT /api/admin/config/:principalType/:principalId` e `PATCH .../fields`) são validadas em relação ao mesmo esquema do `librechat.yaml`, aplicadas sobre a configuração base da implantação. Uma gravação que produziria uma configuração inválida é rejeitada com HTTP 400 e nada é salvo:
+
+```json
+{
+  "error": "Invalid config override",
+  "code": "CONFIG_OVERRIDE_INVALID",
+  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
+}
+```
+
+Cada problema carrega apenas o caminho de pontos (dot-path) e um código estável (um código de problema de esquema como `invalid_type`, ou `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key` ou `invalid_document`), nunca o valor enviado. Um patch de campo só é rejeitado por problemas que ele toca ou introduz, portanto, um valor inválido mais antigo em outro lugar na mesma substituição (override) não o bloqueia.
+
+Substituições armazenadas que se tornaram inválidas, por exemplo, após uma atualização que restringe o esquema, não são fatais. Quando a configuração é resolvida, os campos inválidos são descartados, o valor abaixo deles (geralmente o valor base do `librechat.yaml`) é aplicado e o servidor registra um aviso por campo:
+
+```text
+[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
+```
+
+Verifique os logs em busca destas linhas após a atualização e, em seguida, corrija ou remova os campos listados no painel. Um tema de substituição que não segue as [regras de tema](/docs/configuration/librechat_yaml/object_structure/theme#validation) retorna ao tema base da mesma forma.
 
 ### Delegação com Escopo de Seção [#section-scoped-delegation]
 

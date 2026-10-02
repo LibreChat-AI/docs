@@ -65,7 +65,7 @@ Powierzchnia API administratora udostępniana przez LibreChat to:
 
 ### Dołączone do LibreChat (zalecane) [#bundled-with-librechat-recommended]
 
-Jeśli uruchamiasz LibreChat przy użyciu oficjalnego pliku [`docker-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/docker-compose.yml) lub [`deploy-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/deploy-compose.yml), panel administratora jest dostarczany jako usługa i uruchamia się automatycznie wraz z LibreChat -- nie jest wymagane oddzielne wdrażanie.
+Jeśli uruchamiasz LibreChat przy użyciu oficjalnego [`docker-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/docker-compose.yml) lub [`deploy-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/deploy-compose.yml), panel administratora jest dostarczany jako usługa i uruchamia się automatycznie wraz z LibreChat -- nie jest wymagane oddzielne wdrażanie.
 
 | Plik Compose                   | URL panelu administratora | Sposób serwowania                                                 |
 | ------------------------------ | ------------------------ | ----------------------------------------------------------------- |
@@ -203,13 +203,43 @@ Panel renderuje konfigurację LibreChat jako dynamiczny formularz sterowany sche
 - **Zgodność z przyszłymi wersjami**: gdy LibreChat wprowadza nowe pole konfiguracyjne, panel automatycznie pobiera je ze schematu. Nie jest wymagana aktualizacja panelu administratora ani ponowne wdrażanie.
 - **Warstwowe nadpisania**: konfiguracja podstawowa (z `librechat.yaml`) może być przesłonięta przez nadpisania dla poszczególnych podmiotów, przypisane do roli lub grupy. Gdy użytkownik się loguje, nadpisania są rozstrzygane w kolejności priorytetów i scalane z konfiguracją podstawową, tworząc efektywną konfigurację widoczną dla danego użytkownika.
 
-To jest interfejs stojący za [opartym na bazie danych systemem nadpisywania konfiguracji dla poszczególnych podmiotów](https://github.com/LibreChat-AI/LibreChat/pull/12354) w LibreChat. Typowe przypadki użycia:
+<Callout type="warning" title="Serwery MCP oparte na procesach pozostają w YAML">
+  Serwery MCP, które używają `type: stdio` lub pól procesowych, takich jak `command`, `args`, `env`, `cwd` lub `stderr`, są własnością operatora. Należy je konfigurować wyłącznie w `librechat.yaml`; API administratora odrzuca próby ich tworzenia lub modyfikacji, a zastąpienia (overrides) nie mogą ich zastąpić ani usunąć. Zdalna konfiguracja serwera MCP pozostaje dostępna poprzez standardowy system zastąpień.
+</Callout>
+
+<Callout type="warning" title="Nagłówki bramki Langfuse pozostają w YAML">
+  `langfuse.headers` na poziomie wdrożenia mogą zawierać poświadczenia proxy i nie są powierzchnią konfiguracyjną wspieraną przez Mongo. Skonfiguruj je w `librechat.yaml`; API administratora odrzuca całą mapę oraz ścieżki poszczególnych nagłówków. Zobacz [Authenticated Proxies and Gateways](/docs/configuration/langfuse#authenticated-proxies-and-gateways).
+</Callout>
+
+To jest powierzchnia stojąca za [opartym na bazie danych systemem zastępowania konfiguracji dla poszczególnych podmiotów](https://github.com/LibreChat-AI/LibreChat/pull/12354) w LibreChat. Typowe przypadki użycia:
 
 - Nadaj grupie "Research" wyższy `recursionLimit` oraz dodatkowe endpointy
 - Pozwól roli "FinanceAdmins" zarządzać zdalnymi serwerami MCP, podczas gdy zwykli użytkownicy mogą ich tylko używać
 - Ogranicz bardziej rygorystyczne uprawnienia `interface` do grup zewnętrznych wykonawców
 
 Administratorzy mogą również korzystać z opcjonalnego pulpitu nawigacyjnego [Admin Insights](/docs/features/insights), aby przeglądać aktywność w bazie danych MongoDB w zakresie dzierżawy (tenant-scoped). Ustaw `ENABLE_INSIGHTS=true`, a następnie przyznaj uprawnienia `access:admin` oraz `read:insights` kontu z rolą `ADMIN`.
+
+### Zastępowanie walidacji [#override-validation]
+
+Zapisy nadpisujące (`PUT /api/admin/config/:principalType/:principalId` oraz `PATCH .../fields`) są weryfikowane zgodnie z tym samym schematem co `librechat.yaml` i stosowane na wierzchu bazowej konfiguracji wdrożenia. Zapis, który skutkowałby nieprawidłową konfiguracją, jest odrzucany z kodem HTTP 400 i nic nie jest zapisywane:
+
+```json
+{
+  "error": "Invalid config override",
+  "code": "CONFIG_OVERRIDE_INVALID",
+  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
+}
+```
+
+Każdy problem zawiera tylko ścieżkę kropkową (dot-path) oraz stabilny kod (kod problemu schematu, taki jak `invalid_type`, `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key` lub `invalid_document`), nigdy przesłaną wartość. Poprawka pola jest odrzucana tylko w przypadku problemów, których dotyczy lub które wprowadza, więc starsza nieprawidłowa wartość w innym miejscu tego samego nadpisania (override) nie blokuje jej.
+
+Przechowywane nadpisania, które stały się nieprawidłowe, na przykład po aktualizacji zaostrzającej schemat, nie są krytyczne. Gdy konfiguracja jest rozwiązywana, nieprawidłowe pola są odrzucane, stosowana jest wartość znajdująca się pod nimi (zazwyczaj podstawowa wartość z `librechat.yaml`), a serwer rejestruje jedno ostrzeżenie na pole:
+
+```text
+[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
+```
+
+Sprawdź logi pod kątem tych linii po aktualizacji, a następnie popraw lub usuń wymienione pola w panelu. Motyw zastępczy (override theme), który nie spełnia [zasad dotyczących motywów](/docs/configuration/librechat_yaml/object_structure/theme#validation), powraca do motywu bazowego w ten sam sposób.
 
 ### Delegowanie w zakresie sekcji [#section-scoped-delegation]
 

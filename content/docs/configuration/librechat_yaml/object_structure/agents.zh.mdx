@@ -399,10 +399,20 @@ capabilities:
       '个人工作者注册的可选部署上限。`enabled` 默认为 true，`maxPerUser` 默认为 5。',
       '{ enabled: true, maxPerUser: 5 }',
     ],
+    [
+      'conversationMoves',
+      'Object',
+      '针对已保存对话，启用所有者授权的工作区转换。`allowAttachDetach` 额外允许附加或离开已附加的工作区。',
+      'Disabled',
+    ],
   ]}
 />
 
-附加的 Bash 环境也接受 `userConfig.bash.maxQueueWaitMs`，它用于控制请求等待工作区容量的时长。默认值和最大值均为 `300000` 毫秒（5 分钟）。将其设置为 `0` 可在初始准入尝试后禁用客户端重试；这不会取消已经准入或正在运行的任务。
+附加环境接受 `environments[].configSchema.limits.maxQueueWaitMs`，它控制请求在等待工作区容量时可以重试的时长。默认值和最大值均为 `300000` 毫秒（5 分钟）。将其设置为 `0` 可禁用初始准入尝试后的客户端重试；它不会取消已经准入或正在运行的任务。这些字段属于 `configSchema.limits`，**而非** `userConfig.bash`。
+
+`environments[].configSchema.limits.maxRequestTimeoutMs` 可选地限制了**单个工作区工具调用的总 HTTP 时间**，包括准入、执行、结算和交付。它接受 `1` 到 `610000` 毫秒之间的值，但如果配置的预算过小，导致在准入和 10 秒的结算/交付预留时间后没有剩余的命令执行时间，则会被拒绝。如果不设置此项，准入过程每次尝试仍有 30 秒的预算；`maxQueueWaitMs` 仍然是一个独立的重试期限。**在确保每个 LibreChat API 副本都能识别此字段、Code API 路由遵循每个请求的队列配额，并且已测量实时代理/入口路径上的最短超时时间之前，请勿启用更长的准入时间**。过期的变更可能已在工作节点上完成，因此 LibreChat 不会重试模糊的超时请求。
+
+在设置总请求预算的情况下，`environments[].configSchema.limits.minCommandAdmissionMs` 会预留时间，以便命令在执行开始前进入 worker。默认值为 `10000` 毫秒；可设置为 `1000` 至 `300000` 毫秒。请求预算必须**超过**此预留时间加上 10000 毫秒的结算/交付宽限期；如果没有设置总预算，此设置将无效。向 Agent 通告的 Bash 执行限制取以下两者中的较小值：其配置的上限或上游上限，以及扣除上述预留时间后剩余的时间。例如，若请求预算为 90000 毫秒，命令上限为 80000 毫秒，并使用默认预留时间，则通告的命令执行时间最多为 70000 毫秒。
 
 ```yaml filename="endpoints / agents / statefulCodeSessions"
 statefulCodeSessions:
@@ -435,6 +445,16 @@ statefulCodeSessions:
       configSchema:
         limits:
           maxCommandTimeoutMs: 120000
+          # Before enabling, verify Code API queue allowances and the live proxy deadline.
+          # maxRequestTimeoutMs: 160000
+          # minCommandAdmissionMs: 10000
+          # maxQueueWaitMs: 300000
+        # After upgrading Code API and opting in the worker with --linked-worktree-lanes:
+        # workspaces:
+        #   linkedWorktrees: true
+        # Optional: require exact matching even on workers supporting tolerant edits.
+        # edits:
+        #   tolerantMatching: false
         permissions:
           fileWrite:
             allowed: [allow, ask, deny]
@@ -449,6 +469,16 @@ statefulCodeSessions:
 
 当该代码块存在时，`allowedEnvironments` 是必需的，且必须至少包含一个工作区范围。省略整个代码块即表示允许所有三个范围，并继续通过 [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint) 路由有状态工作。个人默认设置和 Agent Builder 仅允许使用已授权的值。如果管理员收紧了策略，已保存的个人默认设置将保持可见但处于禁用状态，且新的 Agent 将使用第一个允许的范围。现有的已启用 Agent 将保留其已保存的范围，但如果某个范围现在被禁止，则在运行时会失败并关闭，直到重新配置该 Agent 为止。
 
+`conversationMoves.enabled: true` 允许对话所有者显式地将已密封的附加工作区移动到兼容的环境，并在不替换聊天记录或恢复旧工作区文件的情况下恢复丢失的工作区。若要额外允许已保存的聊天**附加**工作区或**离开**工作区以进行正常聊天，请设置 `conversationMoves.allowAttachDetach: true`。这两个开关默认均为关闭状态；仅启用移动功能将保留“仅移动”行为。请升级**所有** API 副本，然后在选择加入之前启用 [`CODE_ENVIRONMENT_DECISION_VERSION=1`](/docs/configuration/dotenv#code-interpreter)。在转换时会重新检查所有权、目标访问权限、活动工作和当前策略；正在进行的生成无法被移动。
+
+```yaml filename="endpoints / agents / statefulCodeSessions / conversationMoves"
+statefulCodeSessions:
+  allowedEnvironments: ['user', 'agent-user', 'conversation']
+  conversationMoves:
+    enabled: true
+    allowAttachDetach: true
+```
+
 `principalWorkers` 控制个人附属 worker 的自助注册。省略的值将解析为 `enabled: true` 和 `maxPerUser: 5`；设置 `enabled: false` 或 `maxPerUser: 0` 可停止新注册。该限制会统计该用户在所有已配置控制平面中注册的每个个人环境，包括离线 worker。降低限制或禁用注册不会撤销现有的环境。
 
 Deployment YAML 是硬性上限。角色、组或用户配置覆盖可能会禁用注册或降低 `maxPerUser`，但无法提高部署设置的值。只有当有效限制大于零、该控制平面上启用了 [`pairing.allowPrincipalWorkers`](#statefulcodesessions)、主体身份验证可用，且用户拥有 Code Environment 管理权限时，用户才能看到启用了配对的控制平面。
@@ -462,7 +492,9 @@ Deployment YAML 是硬性上限。角色、组或用户配置覆盖可能会禁�
 - `pairing` 是可选的，且仅对部署拥有的 `attached` 条目有效。`pairing.workerId` 用于标识要注册的由操作员管理的 worker，而 `pairing.allowPrincipalWorkers: true` 则允许授权用户将绑定所有者的 worker 注册到该控制平面。当存在 `pairing` 时，必须至少提供其中一个字段。
 - `pairing.tokenEnv` 指定了包含网桥管理员令牌的环境变量名称；它本身不包含令牌。除本地回环开发外，配对需要 HTTPS。
 - `configSchema.permissions` 允许授权所有者为个人环境选择 `fileWrite` 和 `commandExecution` 策略，具体设置位于 **Settings > Code environments**。每个字段都需要一个非空的 `allowed` 列表，其中包含 `allow`、`ask` 和/或 `deny`；如果省略 `default`，则默认为 `ask`，且该值必须出现在 `allowed` 中。LibreChat 会拒绝管理员列表之外的存储值。
-- `configSchema.limits.maxCommandTimeoutMs` 设置了模型在该环境中可请求的最大 Bash 超时时间。它接受 `1` 到 `300000` 毫秒之间的值；省略该项则保留 30 秒的默认值。这是部署层面的上限，用户无法进行配置。
+- `configSchema.limits.maxCommandTimeoutMs` 设置了模型可为该环境请求的最大 Bash 超时时间。它接受 `1` 到 `300000` 毫秒之间的值；省略该项则保留 30 秒的默认值。在总请求预算内，声明的命令超时时间也会适应命令准入、结算和交付后的剩余时间。这是一个部署上限，用户无法配置。
+- `configSchema.workspaces.linkedWorktrees: true` 仅为通告了 `git_linked_worktree` 的附加工作区启用基于工作树（per-worktree）的调度；省略此项则会将所有请求保留在检出（checkout）的根通道中。请在 worker 通告此范围**之前**升级 LibreChat，部署支持链接工作树通道的 Code API，然后在启用 YAML 设置之前使用 `--linked-worktree-lanes` 启动 worker。针对 `.worktrees/<name>` 内部路径的文件操作以及在此处设置 `cwd` 的 Bash 命令将使用该通道并返回相对于检出目录的路径。在命令文本中执行 `cd` 的命令、检出根目录操作、对话工作区实例以及环境操作仍将保持在根作用域内。
+- `configSchema.edits.tolerantMatching` 默认允许在声明了 `tolerant_match` 的附加 worker 上进行容错空格的后备匹配；将其设置为 `false` 则要求精确匹配，包括受保护的编辑预览。匹配必须保持唯一，除非编辑明确设置了 `replace_all`。旧版 worker 不会接收新的匹配字段；在分发前，如果 worker 未声明 `replace_all`，则会拒绝该操作。这些功能需要兼容的 Code API 以及实现了 [Code Interpreter #271](https://github.com/LibreChat-AI/code-interpreter/pull/271) 的 worker 构建版本。
 - 不要在部署的 YAML 中配置 `settings`。LibreChat 会从经过服务器验证的已认证所有者的偏好设置中提供该请求范围内的字段。
 - 只有文件写入和命令执行策略是用户可配置的。隔离、网络、挂载、特权执行、入站、出站和密钥仍由管理员控制。
 - 如果同时存在顶层的 `workerId` 和 `pairing.workerId`，它们必须匹配。如果一个条目设置了 `allowPrincipalWorkers: true` 且两个 worker ID 均非仅配对（pairing-only）模式：它将从执行选择器中被忽略，且不能设置 `default: true`。
@@ -483,6 +515,12 @@ Deployment YAML 是硬性上限。角色、组或用户配置覆盖可能会禁�
       '覆盖当前进程绑定的受信任内部触发准入监听器。仅在交付必须经过另一个受信任的 HTTP 源时使用。',
       '',
     ],
+    [
+      'idlePolling',
+      'Object',
+      '限制空闲 MongoDB 恢复扫描和等待完成重试的次数。本地事件可以更快地唤醒扫描。',
+      'See defaults below',
+    ],
   ]}
 />
 
@@ -496,6 +534,17 @@ endpoints:
 绑定的子延续（child continuations）是自动执行的。`eventDriven` 下较旧的 `childTurns`、`completionWakeups`、`coalescing`、`actorMailbox`、`checkpointForks` 和 `durableReceipts` 字段不再是配置开关，应予以移除。运行时现在直接应用这些交付保证。独立的 [`backgroundTasks.completionWakeups`](#backgroundtasks) 字段控制已完成的后台工具和分离的 Subagents 的对话交付。
 
 对于正常的绑定监听器路径，请将 `selfUrl` 留空。仅当受信任的内部触发准入必须经过另一个 HTTP(S) 源（例如 TLS 前端）时才进行设置。当省略此字段时，`AGENT_TRIGGERS_SELF_URL` 将作为兼容性回退方案。请参阅 [Agents API events](/docs/features/agents_api#agent-events) 和 [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation)。
+
+`eventDriven.idlePolling` 在没有任何就绪任务时限制每个副本的恢复轮询：`deliveryMaxIntervalMs` 默认为 `15000`（有效范围 `1000`–`300000`），`queuedTurnMaxIntervalMs` 和 `maintenanceMaxIntervalMs` 各自默认为 `120000`（有效范围 `30000`–`300000`），`completionWaitMaxIntervalMs` 默认为 `60000`（有效范围 `5000`–`300000`）。后者在后台任务或 Subagent 结果挂起，或者其父轮次繁忙时限制重新检查的频率。就绪事件会加快交付速度；这些上限保留了跨副本和崩溃恢复的后备机制，而不是定义正常的完成延迟。
+
+```yaml filename="endpoints / agents / eventDriven / idlePolling"
+eventDriven:
+  idlePolling:
+    deliveryMaxIntervalMs: 15000
+    queuedTurnMaxIntervalMs: 120000
+    maintenanceMaxIntervalMs: 120000
+    completionWaitMaxIntervalMs: 60000
+```
 
 Event Actor detached Action completion 会自动从内置生成存储中选择。内存中执行是进程局部的；Redis 生成流增加了持久化重启恢复和副本切换功能。无需 `librechat.yaml` 开关或环境变量功能标志。请参阅 [Agent Event Runtime](/docs/configuration/dotenv#agent-event-runtime)。
 
@@ -529,6 +578,12 @@ Event Actor detached Action completion 会自动从内置生成存储中选择�
       '单次连续批处理中交付的最大已完成后台结果数。有效值为 1 到 16。',
       '8',
     ],
+    [
+      'shutdownInterruptGraceMs',
+      'Integer',
+      '在中断仍在运行的后台工具后，记录中断结果前等待的优雅关闭时间。有效值为 0 到 60000 毫秒。',
+      '5000',
+    ],
   ]}
 />
 
@@ -538,13 +593,14 @@ backgroundTasks:
   ordinaryToolCancellation: false
   completionResultMaxChars: 24576
   completionResultBatchSize: 8
+  shutdownInterruptGraceMs: 5000
 ```
 
 即使省略此代码块，自动补全交付功能也会启用。设置 `completionWakeups: false` 以要求 Agent 通过 `check_background_task` 收集每一个结果。
 
 设置 `ordinaryToolCancellation: true` 以针对普通后台工具公开所有者范围内的取消功能。取消操作是协作式的，保持在进程本地，并保持任务处于活动状态且保留容量，直到调用结束。它不会取消分离的 Subagents。
 
-普通的后台工具执行仍保持在进程本地，且无法在工作进程丢失后存活。一旦仅包含内容的终端结果被持久化，其交付就是持久的，并可能在另一个副本上继续。带有实时工件的任务仍需要在所属运行中进行轮询。分离的子代理（Subagents）保留其独立的持久化记录和终端结果路径。在两种模式下，手动轮询仍可用于状态、控制和恢复。请参阅 [Background Tool Calls](/docs/features/agents#background-tool-calls) 和 [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation)。
+普通的后台工具执行仍保持在进程本地。在优雅关闭期间，LibreChat 会在关闭预算时间内等待任务完成，然后中断未完成的工作并记录结果；突然的 worker 丢失仍然无法保留正在运行的任务。一旦仅包含内容的终端结果被持久化，其交付就是持久的，并可能在另一个副本上继续。具有实时工件的任务仍然需要在所属的运行中进行轮询。分离的子代理（Detached Subagents）保留其独立的持久化记录和终端结果路径。手动轮询在两种模式下均可用于状态查询、控制和恢复。请参阅 [后台工具调用](/docs/features/agents#background-tool-calls) 和 [自动父级延续](/docs/features/subagents#automatic-parent-continuation)。
 
 ## toolApproval
 

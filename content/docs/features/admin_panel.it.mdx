@@ -203,6 +203,14 @@ Il pannello renderizza la configurazione di LibreChat come un modulo dinamico gu
 - **Compatibile con le versioni future**: quando LibreChat rilascia un nuovo campo di configurazione, il pannello lo rileva automaticamente dallo schema. Non è richiesto alcun aggiornamento o ridistribuzione del pannello di amministrazione.
 - **Layered overrides**: la configurazione di base (da `librechat.yaml`) può essere sovrascritta da override per-principal limitati a un ruolo o a un gruppo. Quando un utente effettua l'accesso, gli override vengono risolti in ordine di priorità e uniti alla base per produrre la configurazione effettiva visualizzata dall'utente.
 
+<Callout type="warning" title="I server MCP basati su processo rimangono nel file YAML">
+  I server MCP che utilizzano `type: stdio` o campi di processo come `command`, `args`, `env`, `cwd` o `stderr` sono di proprietà dell'operatore. Configurali solo in `librechat.yaml`; l'API di amministrazione rifiuta i tentativi di crearli o modificarli e gli override non possono sostituirli o rimuoverli. La configurazione dei server MCP remoti rimane disponibile tramite il normale sistema di override.
+</Callout>
+
+<Callout type="warning" title="Gli header del gateway Langfuse rimangono nello YAML">
+  I `langfuse.headers` a livello di deployment possono contenere credenziali proxy e non sono una superficie di configurazione supportata da Mongo. Configurali in `librechat.yaml`; l'API di amministrazione rifiuta l'intera mappa e i percorsi dei singoli header. Vedi [Authenticated Proxies and Gateways](/docs/configuration/langfuse#authenticated-proxies-and-gateways).
+</Callout>
+
 Questa è l'interfaccia dietro il [sistema di override della configurazione per-principal basato su DB](https://github.com/LibreChat-AI/LibreChat/pull/12354) di LibreChat. Casi d'uso tipici:
 
 - Assegna a un gruppo "Research" un `recursionLimit` più elevato ed endpoint aggiuntivi
@@ -210,6 +218,28 @@ Questa è l'interfaccia dietro il [sistema di override della configurazione per-
 - Limitare le autorizzazioni `interface` più rigorose ai gruppi di appaltatori esterni
 
 Gli amministratori possono anche utilizzare la dashboard [Admin Insights](/docs/features/insights) (opzionale) per esaminare l'attività di MongoDB nell'ambito del tenant. Imposta `ENABLE_INSIGHTS=true`, quindi concedi sia `access:admin` che `read:insights` a un account con il ruolo `ADMIN`.
+
+### Override Validation [#override-validation]
+
+Le scritture di override (`PUT /api/admin/config/:principalType/:principalId` e `PATCH .../fields`) vengono convalidate rispetto allo stesso schema di `librechat.yaml`, applicato sopra la configurazione di base del deployment. Una scrittura che produrrebbe una configurazione non valida viene rifiutata con un HTTP 400 e non viene salvato nulla:
+
+```json
+{
+  "error": "Invalid config override",
+  "code": "CONFIG_OVERRIDE_INVALID",
+  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
+}
+```
+
+Ogni problema riporta solo il dot-path e un codice stabile (un codice di problema dello schema come `invalid_type`, o `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key` o `invalid_document`), mai il valore inviato. Una patch di campo viene rifiutata solo per i problemi che tocca o introduce, quindi un valore non valido precedente altrove nello stesso override non la blocca.
+
+Gli override memorizzati che sono diventati non validi, ad esempio dopo un aggiornamento che rende più rigoroso lo schema, non sono fatali. Quando la configurazione viene risolta, i campi non validi vengono eliminati, viene applicato il valore sottostante (solitamente il valore base di `librechat.yaml`) e il server registra un avviso per ogni campo:
+
+```text
+[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
+```
+
+Controlla i log per queste righe dopo l'aggiornamento, quindi correggi o rimuovi i campi elencati nel pannello. Un tema di override che non rispetta le [regole del tema](/docs/configuration/librechat_yaml/object_structure/theme#validation) ricade sul tema di base nello stesso modo.
 
 ### Delegazione con ambito di sezione [#section-scoped-delegation]
 

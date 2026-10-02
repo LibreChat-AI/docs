@@ -203,13 +203,43 @@ Le panneau affiche la configuration de LibreChat sous forme de formulaire dynami
 - **Compatible avec les versions futures** : lorsqu'une nouvelle configuration est ajoutée à LibreChat, le panneau la détecte automatiquement à partir du schéma. Aucune mise à jour ou redéploiement du panneau d'administration n'est nécessaire.
 - **Remplacements en couches** : la configuration de base (issue de `librechat.yaml`) peut être masquée par des remplacements par mandant (principal) limités à un rôle ou à un groupe. Lorsqu'un utilisateur se connecte, les remplacements sont résolus par ordre de priorité et fusionnés sur la base pour produire la configuration effective que l'utilisateur voit.
 
-Ceci est l'interface derrière le [système de remplacement de configuration par principal basé sur une base de données](https://github.com/LibreChat-AI/LibreChat/pull/12354) de LibreChat. Cas d'utilisation typiques :
+<Callout type="warning" title="Les serveurs MCP basés sur des processus restent dans le YAML">
+  Les serveurs MCP qui utilisent `type: stdio` ou des champs de processus tels que `command`, `args`, `env`, `cwd` ou `stderr` sont gérés par l'opérateur. Configurez-les uniquement dans `librechat.yaml` ; l'API d'administration rejette les tentatives de création ou de modification de ces derniers, et les remplacements (overrides) ne peuvent ni les remplacer ni les supprimer. La configuration des serveurs MCP distants reste disponible via le système de remplacement habituel.
+</Callout>
+
+<Callout type="warning" title="Les en-têtes de passerelle Langfuse restent dans YAML">
+  Les `langfuse.headers` au niveau du déploiement peuvent contenir des identifiants de proxy et ne constituent pas une surface de configuration prise en charge par Mongo. Configurez-les dans `librechat.yaml` ; l'API d'administration rejette l'ensemble du mappage ainsi que les chemins d'en-tête individuels. Voir [Authenticated Proxies and Gateways](/docs/configuration/langfuse#authenticated-proxies-and-gateways).
+</Callout>
+
+Ceci est la surface derrière le [système de remplacement de configuration par mandant basé sur une base de données](https://github.com/LibreChat-AI/LibreChat/pull/12354) de LibreChat. Cas d'utilisation typiques :
 
 - Donner à un groupe "Research" une valeur `recursionLimit` plus élevée et des endpoints supplémentaires
 - Permettre à un rôle "FinanceAdmins" de gérer les serveurs MCP distants tandis que les utilisateurs réguliers peuvent uniquement les utiliser
 - Restreindre les permissions d' `interface` aux groupes de contractants externes
 
 Les administrateurs peuvent également utiliser le tableau de bord [Admin Insights](/docs/features/insights) (optionnel) pour examiner l'activité MongoDB au niveau du tenant. Définissez `ENABLE_INSIGHTS=true`, puis accordez à la fois `access:admin` et `read:insights` à un compte possédant le rôle `ADMIN`.
+
+### Remplacement de la validation [#override-validation]
+
+Les écritures de remplacement (`PUT /api/admin/config/:principalType/:principalId` et `PATCH .../fields`) sont validées par rapport au même schéma que `librechat.yaml`, et appliquées par-dessus la configuration de base du déploiement. Une écriture qui produirait une configuration invalide est rejetée avec une erreur HTTP 400 et rien n'est enregistré :
+
+```json
+{
+  "error": "Invalid config override",
+  "code": "CONFIG_OVERRIDE_INVALID",
+  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
+}
+```
+
+Chaque problème ne comporte que le chemin par points et un code stable (un code de problème de schéma tel que `invalid_type`, ou `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key` ou `invalid_document`), jamais la valeur soumise. Un correctif de champ n'est rejeté que pour les problèmes qu'il touche ou introduit ; ainsi, une ancienne valeur invalide ailleurs dans la même substitution ne le bloque pas.
+
+Les remplacements stockés qui sont devenus invalides, par exemple après une mise à jour qui renforce le schéma, ne sont pas fatals. Lorsque la configuration est résolue, les champs invalides sont supprimés, la valeur sous-jacente (généralement la valeur de base `librechat.yaml`) s'applique, et le serveur enregistre un avertissement par champ :
+
+```text
+[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
+```
+
+Vérifiez les logs pour ces lignes après la mise à jour, puis corrigez ou supprimez les champs listés dans le panneau. Un thème de remplacement qui ne respecte pas les [règles de thème](/docs/configuration/librechat_yaml/object_structure/theme#validation) revient au thème de base de la même manière.
 
 ### Délégation par section [#section-scoped-delegation]
 

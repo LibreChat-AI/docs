@@ -399,10 +399,20 @@ Cấu hình phạm vi chia sẻ và các backend thực thi tùy chọn cho các
       'Giới hạn triển khai tùy chọn cho việc đăng ký worker cá nhân. `enabled` mặc định là true và `maxPerUser` mặc định là 5.',
       '{ enabled: true, maxPerUser: 5 }',
     ],
+    [
+      'conversationMoves',
+      'Object',
+      'Cho phép chuyển đổi không gian làm việc được chủ sở hữu ủy quyền cho các cuộc trò chuyện đã lưu. `allowAttachDetach` cho phép đính kèm hoặc rời khỏi không gian làm việc đã đính kèm.',
+      'Disabled',
+    ],
   ]}
 />
 
-Các môi trường Bash đính kèm cũng chấp nhận `userConfig.bash.maxQueueWaitMs`, tham số này kiểm soát thời gian một yêu cầu có thể chờ đợi dung lượng không gian làm việc. Giá trị mặc định và tối đa là `300000` mili giây (5 phút). Hãy đặt thành `0` để tắt tính năng thử lại của máy khách sau lần thử tiếp nhận ban đầu; tham số này không hủy bỏ công việc đã được tiếp nhận hoặc đang chạy.
+Các môi trường đính kèm chấp nhận `environments[].configSchema.limits.maxQueueWaitMs`, tham số này kiểm soát thời gian một yêu cầu có thể thử lại trong khi chờ dung lượng không gian làm việc. Giá trị mặc định và tối đa là `300000` mili giây (5 phút). Đặt thành `0` để tắt tính năng thử lại của máy khách sau lần thử tiếp nhận ban đầu; thao tác này không hủy công việc đã được tiếp nhận hoặc đang chạy. Các trường này thuộc về `configSchema.limits`, **không phải** `userConfig.bash`.
+
+`environments[].configSchema.limits.maxRequestTimeoutMs` tùy chọn giới hạn **tổng thời gian HTTP cho một lệnh gọi công cụ trong không gian làm việc**, bao gồm tiếp nhận, thực thi, giải quyết và phân phối. Nó chấp nhận giá trị từ `1` đến `610000` ms, nhưng cấu hình sẽ từ chối các ngân sách quá nhỏ, không để lại thời gian thực thi lệnh sau khi tiếp nhận và khoản dự phòng 10 giây cho việc giải quyết/phân phối. Nếu không có tham số này, việc tiếp nhận vẫn có ngân sách 30 giây cho mỗi lần thử; `maxQueueWaitMs` vẫn là một khoảng thời gian thử lại riêng biệt. **Đừng bật thời gian tiếp nhận dài hơn** cho đến khi mọi bản sao LibreChat API hiểu được trường này, tuyến đường Code API tuân thủ các hạn mức hàng đợi trên mỗi yêu cầu và thời gian chờ ngắn nhất trên đường dẫn proxy/ingress trực tiếp đã được đo lường. Một thay đổi (mutation) đã hết hạn có thể đã hoàn tất trên worker, vì vậy LibreChat không thử lại đối với một lỗi timeout không xác định.
+
+Với tổng ngân sách yêu cầu, `environments[].configSchema.limits.minCommandAdmissionMs` dành riêng thời gian để một lệnh đi vào worker trước khi quá trình thực thi bắt đầu. Giá trị mặc định là `10000` ms; hãy đặt trong khoảng `1000`–`300000` ms. Tổng ngân sách yêu cầu phải **vượt quá** mức cho phép này cộng với 10000 ms thời gian chờ xử lý/phân phối; nếu không có tổng ngân sách, cài đặt này sẽ không có hiệu lực. Giới hạn thực thi Bash được thông báo cho một Agent là giá trị nhỏ hơn giữa mức trần đã cấu hình hoặc mức trần từ upstream và thời gian còn lại sau khi trừ đi các khoản dự phòng đó. Ví dụ, với ngân sách yêu cầu 90000 ms, mức trần lệnh 80000 ms và mức dự phòng mặc định, thời gian lệnh tối đa được thông báo là 70000 ms.
 
 ```yaml filename="endpoints / agents / statefulCodeSessions"
 statefulCodeSessions:
@@ -435,6 +445,16 @@ statefulCodeSessions:
       configSchema:
         limits:
           maxCommandTimeoutMs: 120000
+          # Before enabling, verify Code API queue allowances and the live proxy deadline.
+          # maxRequestTimeoutMs: 160000
+          # minCommandAdmissionMs: 10000
+          # maxQueueWaitMs: 300000
+        # After upgrading Code API and opting in the worker with --linked-worktree-lanes:
+        # workspaces:
+        #   linkedWorktrees: true
+        # Optional: require exact matching even on workers supporting tolerant edits.
+        # edits:
+        #   tolerantMatching: false
         permissions:
           fileWrite:
             allowed: [allow, ask, deny]
@@ -449,6 +469,16 @@ statefulCodeSessions:
 
 `allowedEnvironments` là bắt buộc bất cứ khi nào khối này xuất hiện và phải bao gồm ít nhất một phạm vi workspace. Hãy bỏ qua toàn bộ khối này để cho phép cả ba phạm vi và tiếp tục định tuyến công việc có trạng thái thông qua [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint). Mặc định cá nhân và Agent Builder chỉ cho phép các giá trị được cho phép. Nếu quản trị viên thắt chặt chính sách, mặc định cá nhân đã lưu vẫn hiển thị nhưng bị vô hiệu hóa, và các Agent mới sẽ sử dụng phạm vi được cho phép đầu tiên. Các Agent đã được kích hoạt hiện có vẫn giữ nguyên phạm vi đã lưu của chúng, nhưng một phạm vi không còn được cho phép sẽ bị chặn tại thời điểm chạy cho đến khi Agent được cấu hình lại.
 
+`conversationMoves.enabled: true` cho phép chủ sở hữu cuộc trò chuyện di chuyển một workspace đã đính kèm bị khóa sang một môi trường tương thích và khôi phục workspace bị thiếu mà không cần thay thế lịch sử trò chuyện hoặc khôi phục các tệp workspace cũ. Để cho phép thêm một cuộc trò chuyện đã lưu **đính kèm** (attach) một workspace hoặc **rời khỏi** (leave) một workspace cho trò chuyện bình thường, hãy đặt `conversationMoves.allowAttachDetach: true`. Cả hai tùy chọn này đều bị tắt theo mặc định; việc chỉ bật tính năng di chuyển sẽ giữ nguyên hành vi chỉ di chuyển. Hãy nâng cấp **tất cả** các bản sao API, sau đó bật [`CODE_ENVIRONMENT_DECISION_VERSION=1`](/docs/configuration/dotenv#code-interpreter) trước khi chọn tham gia. Quyền sở hữu, quyền truy cập mục tiêu, công việc đang hoạt động và chính sách hiện tại sẽ được kiểm tra lại tại thời điểm chuyển đổi; một quá trình tạo nội dung đang chạy không thể bị di chuyển.
+
+```yaml filename="endpoints / agents / statefulCodeSessions / conversationMoves"
+statefulCodeSessions:
+  allowedEnvironments: ['user', 'agent-user', 'conversation']
+  conversationMoves:
+    enabled: true
+    allowAttachDetach: true
+```
+
 `principalWorkers` kiểm soát việc tự đăng ký cho các worker cá nhân được đính kèm. Các giá trị bị bỏ qua sẽ mặc định là `enabled: true` và `maxPerUser: 5`; hãy đặt `enabled: false` hoặc `maxPerUser: 0` để dừng việc đăng ký mới. Giới hạn này tính trên mọi môi trường cá nhân đã đăng ký của người dùng đó trên các control plane đã cấu hình, bao gồm cả các worker ngoại tuyến. Việc giảm giới hạn hoặc vô hiệu hóa đăng ký sẽ không thu hồi các môi trường hiện có.
 
 Deployment YAML là giới hạn tối đa cứng. Cấu hình ghi đè cho vai trò, nhóm hoặc người dùng có thể vô hiệu hóa việc đăng ký hoặc giảm `maxPerUser`, nhưng không thể tăng giá trị triển khai. Người dùng chỉ nhìn thấy các control plane đã bật tính năng ghép nối khi giới hạn hiệu dụng lớn hơn không, [`pairing.allowPrincipalWorkers`](#statefulcodesessions) được bật trên control plane đó, xác thực chính (principal authentication) khả dụng và người dùng có quyền quản lý Code Environment.
@@ -462,7 +492,9 @@ Khi `environments` không trống, mỗi mục nhập yêu cầu một `id` duy 
 - `pairing` là tùy chọn và chỉ hợp lệ cho các mục `attached` thuộc quyền sở hữu của quá trình triển khai. `pairing.workerId` xác định một worker do người vận hành quản lý để đăng ký, trong khi `pairing.allowPrincipalWorkers: true` cho phép người dùng được ủy quyền đăng ký các worker bị ràng buộc với chủ sở hữu vào control plane đó. Ít nhất một trong các trường này là bắt buộc khi `pairing` xuất hiện.
 - `pairing.tokenEnv` đặt tên cho biến môi trường chứa mã thông báo quản trị viên bridge; nó không bao giờ chứa chính mã thông báo đó. Việc ghép nối yêu cầu HTTPS ngoại trừ đối với quá trình phát triển loopback.
 - `configSchema.permissions` cho phép tùy chọn các chủ sở hữu được ủy quyền chọn chính sách `fileWrite` và `commandExecution` cho các môi trường cá nhân trong **Settings > Code environments**. Mỗi trường yêu cầu một danh sách `allowed` không trống chứa `allow`, `ask` và/hoặc `deny`; `default` sẽ là `ask` khi bị bỏ qua và phải xuất hiện trong `allowed`. LibreChat sẽ từ chối các giá trị được lưu trữ nằm ngoài danh sách của quản trị viên.
-- `configSchema.limits.maxCommandTimeoutMs` thiết lập thời gian chờ Bash tối đa mà model có thể yêu cầu cho môi trường đó. Tham số này chấp nhận giá trị từ `1` đến `300000` ms; nếu bỏ qua sẽ giữ nguyên giá trị mặc định là 30 giây. Đây là giới hạn triển khai và người dùng không thể tự cấu hình.
+- `configSchema.limits.maxCommandTimeoutMs` thiết lập thời gian chờ Bash tối đa mà model có thể yêu cầu cho môi trường đó. Nó chấp nhận giá trị từ `1` đến `300000` ms; nếu bỏ qua, hệ thống sẽ giữ nguyên giá trị mặc định là 30 giây. Với tổng ngân sách yêu cầu, thời gian chờ lệnh được quảng cáo cũng sẽ khớp với thời gian còn lại sau khi tiếp nhận, xử lý và gửi lệnh. Đây là giới hạn triển khai và người dùng không thể tự cấu hình.
+- `configSchema.workspaces.linkedWorktrees: true` cho phép lập lịch theo từng worktree chỉ đối với các workspace được đính kèm có quảng bá `git_linked_worktree`; việc bỏ qua thiết lập này sẽ giữ tất cả các yêu cầu trong lane gốc của checkout. Hãy nâng cấp LibreChat **trước khi** worker quảng bá phạm vi này, triển khai Code API hỗ trợ các lane linked-worktree, sau đó khởi chạy worker với `--linked-worktree-lanes` trước khi kích hoạt thiết lập YAML. Các thao tác tệp nhắm mục tiêu vào một đường dẫn bên trong `.worktrees/<name>` và các lệnh Bash có `cwd` tại đó sẽ sử dụng lane đó và trả về các đường dẫn tương đối với checkout. Các lệnh thực hiện `cd` bên trong văn bản lệnh, các thao tác tại gốc checkout, các instance workspace của cuộc hội thoại và các hành động môi trường vẫn giữ phạm vi gốc.
+- `configSchema.edits.tolerantMatching` cho phép dự phòng linh hoạt với khoảng trắng theo mặc định trên các worker được đính kèm có quảng bá `tolerant_match`; hãy đặt nó thành `false` để yêu cầu khớp chính xác, bao gồm cả các bản xem trước chỉnh sửa được bảo vệ. Việc khớp phải duy nhất trừ khi chỉnh sửa đặt rõ ràng `replace_all`. Các worker cũ hơn sẽ không nhận được các trường khớp mới; `replace_all` được đính kèm sẽ bị từ chối trước khi gửi trừ khi worker quảng bá tính năng đó. Các khả năng này yêu cầu Code API tương thích và các bản dựng worker triển khai [Code Interpreter #271](https://github.com/LibreChat-AI/code-interpreter/pull/271).
 - Không cấu hình `settings` trong YAML triển khai. LibreChat cung cấp trường có phạm vi yêu cầu đó từ các tùy chọn ưu tiên đã được máy chủ xác thực của chủ sở hữu.
 - Chỉ có chính sách ghi tệp và thực thi lệnh là người dùng có thể cấu hình. Các thiết lập về cô lập, mạng, mount, thực thi đặc quyền, ingress, egress và secrets vẫn do quản trị viên kiểm soát.
 - Nếu cả `workerId` cấp cao nhất và `pairing.workerId` đều hiện diện, chúng phải khớp nhau. Một mục có `allowPrincipalWorkers: true` và không có worker ID nào là chỉ dành cho ghép nối (pairing-only): nó sẽ bị loại khỏi các bộ chọn thực thi và không thể đặt `default: true`.
@@ -483,6 +515,12 @@ Cấu hình nguồn gốc nội bộ đáng tin cậy được sử dụng bởi
       'Ghi đè trình lắng nghe bị ràng buộc với tiến trình hiện tại cho việc chấp nhận kích hoạt nội bộ đáng tin cậy. Chỉ sử dụng khi việc phân phối phải đi qua một nguồn gốc HTTP đáng tin cậy khác.',
       '',
     ],
+    [
+      'idlePolling',
+      'Object',
+      'Giới hạn các lần quét khôi phục MongoDB nhàn rỗi và kiểm tra lại khi chờ hoàn tất. Các sự kiện cục bộ có thể kích hoạt quét sớm hơn.',
+      'See defaults below',
+    ],
   ]}
 />
 
@@ -496,6 +534,17 @@ endpoints:
 Các phần tiếp nối con (child continuations) được liên kết là tự động. Các trường cũ `childTurns`, `completionWakeups`, `coalescing`, `actorMailbox`, `checkpointForks` và `durableReceipts` trong `eventDriven` không còn là các tùy chọn cấu hình và nên được loại bỏ. Runtime hiện áp dụng trực tiếp các đảm bảo phân phối đó. Trường riêng biệt [`backgroundTasks.completionWakeups`](#backgroundtasks) kiểm soát việc phân phối hội thoại cho các công cụ nền đã hoàn thành và các Subagent tách rời.
 
 Để `selfUrl` ở trạng thái không thiết lập cho đường dẫn bound-listener thông thường. Chỉ thiết lập nó khi việc tiếp nhận trigger nội bộ đáng tin cậy phải đi qua một origin HTTP(S) khác, chẳng hạn như TLS front door. `AGENT_TRIGGERS_SELF_URL` vẫn là phương án dự phòng tương thích khi trường này bị bỏ qua. Xem [Agents API events](/docs/features/agents_api#agent-events) và [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation).
+
+`eventDriven.idlePolling` giới hạn việc thăm dò khôi phục trên mỗi bản sao (replica) khi không có gì sẵn sàng: `deliveryMaxIntervalMs` có giá trị mặc định là `15000` (hợp lệ từ `1000`–`300000`), `queuedTurnMaxIntervalMs` và `maintenanceMaxIntervalMs` mỗi giá trị có mặc định là `120000` (hợp lệ từ `30000`–`300000`), và `completionWaitMaxIntervalMs` có giá trị mặc định là `60000` (hợp lệ từ `5000`–`300000`). Giá trị sau cùng giới hạn việc kiểm tra lại trong khi kết quả của tác vụ nền hoặc Subagent đang chờ xử lý hoặc lượt (turn) cha của nó đang bận. Các sự kiện sẵn sàng sẽ đẩy nhanh quá trình phân phối; các giới hạn này duy trì cơ chế dự phòng giữa các bản sao và khôi phục sau sự cố thay vì xác định độ trễ hoàn thành thông thường.
+
+```yaml filename="endpoints / agents / eventDriven / idlePolling"
+eventDriven:
+  idlePolling:
+    deliveryMaxIntervalMs: 15000
+    queuedTurnMaxIntervalMs: 120000
+    maintenanceMaxIntervalMs: 120000
+    completionWaitMaxIntervalMs: 60000
+```
 
 Event Actor detached Action completion được chọn tự động từ kho lưu trữ generation tích hợp sẵn. Việc thực thi trong bộ nhớ (in-memory) là cục bộ theo tiến trình; các luồng generation của Redis bổ sung khả năng khôi phục sau khi khởi động lại và chuyển giao bản sao một cách bền vững. Không cần chuyển đổi `librechat.yaml` hoặc cờ tính năng môi trường. Xem [Agent Event Runtime](/docs/configuration/dotenv#agent-event-runtime).
 
@@ -529,6 +578,12 @@ Kiểm soát việc liệu các công cụ nền đã hoàn thành được hỗ
       'Số lượng kết quả nền tối đa được hoàn thành trong một đợt tiếp tục. Các giá trị hợp lệ là từ 1 đến 16.',
       '8',
     ],
+    [
+      'shutdownInterruptGraceMs',
+      'Integer',
+      'Thời gian chờ tắt máy an toàn sau khi ngắt một công cụ nền đang chạy trước khi ghi lại kết quả bị gián đoạn. Các giá trị hợp lệ từ 0 đến 60000 ms.',
+      '5000',
+    ],
   ]}
 />
 
@@ -538,13 +593,14 @@ backgroundTasks:
   ordinaryToolCancellation: false
   completionResultMaxChars: 24576
   completionResultBatchSize: 8
+  shutdownInterruptGraceMs: 5000
 ```
 
 Tính năng phân phối hoàn tất tự động được bật ngay cả khi khối này bị bỏ qua. Hãy đặt `completionWakeups: false` để yêu cầu Agent thu thập mọi kết quả thông qua `check_background_task`.
 
 Đặt `ordinaryToolCancellation: true` để hiển thị tính năng hủy theo phạm vi chủ sở hữu cho các công cụ nền thông thường. Việc hủy mang tính hợp tác, vẫn nằm trong phạm vi tiến trình cục bộ và giữ cho tác vụ hoạt động cũng như duy trì dung lượng đã đặt trước cho đến khi quá trình gọi hoàn tất. Tính năng này không hủy các Subagents đã tách rời.
 
-Việc thực thi công cụ nền thông thường vẫn nằm trong phạm vi tiến trình cục bộ và sẽ không tồn tại sau khi tiến trình worker bị mất. Khi một kết quả terminal chỉ chứa nội dung đã được lưu trữ, việc phân phối kết quả đó sẽ bền vững và có thể tiếp tục trên một bản sao khác. Các tác vụ có artifact trực tiếp vẫn yêu cầu thăm dò (polling) trên run sở hữu. Các Subagent tách rời (Detached Subagents) giữ lại bản ghi bền vững và đường dẫn kết quả terminal riêng biệt của chúng. Việc thăm dò thủ công vẫn khả dụng cho trạng thái, điều khiển và khôi phục ở cả hai chế độ. Xem [Background Tool Calls](/docs/features/agents#background-tool-calls) và [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation).
+Việc thực thi công cụ nền thông thường vẫn ở trạng thái cục bộ theo tiến trình. Trong quá trình tắt máy an toàn, LibreChat sẽ đợi trong phạm vi ngân sách tắt máy để các tác vụ ổn định, sau đó ngắt các công việc chưa hoàn thành và ghi lại kết quả; việc mất worker đột ngột vẫn không thể bảo toàn tác vụ đang chạy. Khi kết quả cuối cùng chỉ chứa nội dung đã được lưu trữ, việc phân phối kết quả đó sẽ bền vững và có thể tiếp tục trên một bản sao (replica) khác. Các tác vụ có artifact trực tiếp vẫn yêu cầu thăm dò (polling) trên lượt chạy sở hữu. Các Subagent tách rời (Detached Subagents) giữ bản ghi bền vững và đường dẫn kết quả cuối cùng riêng biệt của chúng. Việc thăm dò thủ công vẫn khả dụng cho trạng thái, điều khiển và khôi phục ở cả hai chế độ. Xem [Background Tool Calls](/docs/features/agents#background-tool-calls) và [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation).
 
 ## toolApproval
 

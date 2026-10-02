@@ -1,0 +1,140 @@
+---
+title: パスキー
+icon: KeyRound
+description: >-
+  デバイスの画面ロックやセキュリティキー（WebAuthn）を使用して、パスワードなしでユーザーがサインインできるようにします。パスキーの有効化、Relying
+  Partyの設定、登録制限、およびパスキーと二要素認証の連携方法について解説します。
+---
+
+Passkeysを使用すると、ローカル（メールアドレスとパスワード）アカウントを持つユーザーは、パスワードを入力する代わりに、デバイスの画面ロック、パスワードマネージャー、またはハードウェアセキュリティキーを使用してサインインできるようになります。LibreChatはWebAuthnを使用してこれらを実装しています。デフォルトではオフになっています。
+
+ローカルアカウントに対して、フィッシング耐性のあるパスワードレスなサインインを行いたい場合は、パスキーを使用してください。OAuth、OpenID Connect、SAML、またはLDAPを通じてサインインするアカウントは、引き続きそれぞれのプロバイダーを使用するため、パスキーを追加することはできません。
+
+## Passkeyを有効にする [#enable-passkeys]
+
+<Steps>
+<Step>
+
+**LibreChatをHTTPS経由で提供します。** ブラウザはセキュアなコンテキストでのみWebAuthnを許可します。`http://localhost` は例外であるため、ローカルでのテストはTLSなしでも動作します。
+
+</Step>
+<Step>
+
+**Turn the feature on in `.env`.** For a standard deployment, this is the only required setting. The relying party ID and allowed origins are derived from `DOMAIN_CLIENT` and `DOMAIN_SERVER`.
+
+```bash filename=".env"
+ALLOW_PASSKEY_LOGIN=true
+```
+
+</Step>
+<Step>
+
+**Relying party IDを固定する（推奨）。** 各パスキーは、作成時に使用されたRP IDに永続的に紐付けられます。将来的に `DOMAIN_CLIENT` が変更される可能性がある場合は、既存のパスキーが引き続き機能するように、今すぐ `PASSKEY_RP_ID` を設定してください。
+
+```bash filename=".env"
+PASSKEY_RP_ID=chat.example.com
+```
+
+</Step>
+<Step>
+
+**LibreChatを再起動します。** ログインページに**Sign in with a passkey**が表示され、**Settings > Account**に**Passkeys**セクションが表示されます。
+
+</Step>
+</Steps>
+
+## 設定リファレンス [#configuration-reference]
+
+<OptionTable
+  options={[
+    [
+      'ALLOW_PASSKEY_LOGIN',
+      'boolean',
+      'パスキーによるサインインとアカウント設定内の「パスキー」セクションを有効にします。デフォルト: false。',
+      'ALLOW_PASSKEY_LOGIN=true',
+    ],
+    [
+      'PASSKEY_RP_ID',
+      'string',
+      'Relying party ID: パスキーが紐付けられるドメイン。ユーザーがアクセスするホストと同一、またはその親ドメインであるドメイン名（IPアドレスは不可）である必要があります。デフォルトは DOMAIN_CLIENT のホスト名、または localhost です。',
+      '# PASSKEY_RP_ID=chat.example.com',
+    ],
+    [
+      'PASSKEY_RP_NAME',
+      'string',
+      'パスキーの作成時や使用時に認証器に表示される名前。デフォルトは APP_TITLE、次に LibreChat となります。',
+      '# PASSKEY_RP_NAME=LibreChat',
+    ],
+    [
+      'PASSKEY_ORIGINS',
+      'string',
+      'パスキー認証の実行を許可するオリジンのカンマ区切りリスト。デフォルトは DOMAIN_CLIENT および DOMAIN_SERVER です。',
+      '# PASSKEY_ORIGINS=https://chat.example.com',
+    ],
+    [
+      'MAX_PASSKEYS_PER_USER',
+      'integer',
+      '各アカウントが登録可能なPasskeyの数（1〜100）。librechat.yamlのpasskeys.perUserMaxによって上書きされます。デフォルト：20。',
+      '# MAX_PASSKEYS_PER_USER=20',
+    ],
+    [
+      'PASSKEY_STEPUP_MAX',
+      'integer',
+      'PASSKEY_STEPUP_WINDOW 内でユーザーごとに許可される、パスワード確認済みパスキーの追加または削除の試行回数。デフォルト: 20。',
+      'PASSKEY_STEPUP_MAX=20',
+    ],
+    [
+      'PASSKEY_STEPUP_WINDOW',
+      'integer',
+      'PASSKEY_STEPUP_MAXの有効時間（分）。デフォルト: 15。',
+      'PASSKEY_STEPUP_WINDOW=15',
+    ],
+    [
+      'PASSKEY_MAX',
+      'integer',
+      'PASSKEY_WINDOW 内で IP ごとに許可されるパスキーサインインリクエスト数。1回のサインインに2回のリクエストを使用します。制限を超えたリクエストは HTTP 429 を返しますが、ユーザーがまだサインインしていないため、違反としては記録されません。デフォルト: 20。',
+      '# PASSKEY_MAX=20',
+    ],
+    [
+      'PASSKEY_WINDOW',
+      'integer',
+      'PASSKEY_MAXのウィンドウ（分単位）。デフォルト: 5。',
+      '# PASSKEY_WINDOW=5',
+    ],
+  ]}
+/>
+
+### `librechat.yaml` におけるユーザーごとの制限 [#per-user-limit-in-librechatyaml]
+
+`librechat.yaml` で登録上限を設定することもできます：
+
+```yaml filename="librechat.yaml"
+passkeys:
+  perUserMax: 10
+```
+
+上限は、`librechat.yaml` の `passkeys.perUserMax`、次に `MAX_PASSKEYS_PER_USER`、最後にデフォルト値の `20` という順序で解決されます。`1` から `100` 以外の値は無視され、次のソースが使用されます。ユーザーが上限に達すると、**設定 > アカウント** に「パスキーの最大数に達しました」と表示されます。設定リファレンスの [`passkeys`](/docs/configuration/librechat_yaml/object_structure/config#passkeys) を参照してください。
+
+## ユーザーの表示画面 [#what-users-see]
+
+**パスキーの追加**
+
+1. **Settings > Account** を開き、**Passkeys** を見つけて **Manage** を選択します。
+2. **Add passkey** を選択します。
+3. **Confirm your password** ダイアログにアカウントのパスワードを入力します。パスキーはそれ自体で完全なサインイン手段となるため、LibreChatでは作成前にパスワードの入力を求めます。
+4. ブラウザまたはデバイスのプロンプトを完了します。新しいパスキーが、**このデバイス**、**スマートフォンまたはタブレット**、**セキュリティキー**などのデフォルト名でリストに表示されます。
+
+各エントリには追加日時と最終使用日時が表示され、認証システムがパスキーのバックアップ（パスワードマネージャーなどによるもの）を報告している場合は**Synced**バッジが表示されます。ユーザーはパスキーの名前を変更でき、削除（**Remove passkey**）を行う際にはアカウントパスワードの入力が求められます。
+
+**サインイン**
+
+ログインページで、ユーザーは **Sign in with a passkey** を選択し、デバイスのプロンプトを承認します。アカウントで二要素認証（2FA）が有効になっている場合、LibreChatはパスワードによるサインイン後と同様に、その後も2FAコードの入力を求めます。
+
+## 動作と注意点 [#behavior-and-caveats]
+
+- **ローカルアカウントのみ。** パスキーの登録とサインインはローカルアカウントに限定されています。IDプロバイダーまたはLDAPを通じて作成されたアカウントは、引き続きそのプロバイダーを通じて認証を行う必要があります。
+- **メールログインが無効な場合でも動作します。** **Sign in with a passkey** ボタンとそのルートは `ALLOW_PASSKEY_LOGIN` のみに依存します。`ALLOW_EMAIL_LOGIN=false` の場合でも、既存のローカルユーザーは以前に登録したパスキーを使用してサインインできます。
+- **二要素認証。** パスキーによるサインインは、パスワードによるサインインと同じ2FAゲートを経由します。[`ENFORCE_TWO_FACTOR_AUTHENTICATION=true`](/docs/configuration/authentication#required-two-factor-authentication) が設定されている場合、2FAに登録していないユーザーは、パスキーでサインインした後にセットアップフローへ転送されます。
+- **RP IDを変更するとパスキーは無効になります。** あるRP IDの下で作成されたパスキーは、別のRP IDの下では機能しません。`PASSKEY_RP_ID`を変更したり、`PASSKEY_RP_ID`が設定されていない状態で`DOMAIN_CLIENT`を変更したりすると、既存のすべてのパスキーが使用できなくなります。ユーザーは別の方法でサインインし、再度登録を行う必要があります。
+- **オリジンは一致している必要があります。** ユーザーが `PASSKEY_ORIGINS`（または派生したデフォルト値）でカバーされていないオリジンで LibreChat にアクセスした場合、ブラウザには「Passkeys are not available on this domain」と表示されます。LibreChat を複数のオリジンで提供する場合は、すべてのパブリックオリジンを `PASSKEY_ORIGINS` に追加してください。
+- **パスワードリセットを行うとパスキーは削除されます。** パスワードリセットが完了すると、すべての場所からアカウントがサインアウトされ、そのアカウントのすべてのパスキーが削除されます。そのため、リセット前に登録されたパスキーを使用してログインすることはできなくなります。ユーザーはリセット後に再度登録を行う必要があります。

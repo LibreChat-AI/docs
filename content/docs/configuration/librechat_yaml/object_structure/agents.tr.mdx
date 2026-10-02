@@ -399,10 +399,20 @@ Son derece deneysel durum bilgili (stateful) Code Interpreter çalışma alanlar
       'Kişisel çalışan kaydı için isteğe bağlı dağıtım sınırı. `enabled` varsayılan olarak true, `maxPerUser` ise varsayılan olarak 5 değerini alır.',
       '{ enabled: true, maxPerUser: 5 }',
     ],
+    [
+      'conversationMoves',
+      'Object',
+      'Kaydedilen sohbetler için çalışma alanı geçişlerine sahip tarafından yetkilendirilmiş katılım. `allowAttachDetach` ayrıca bir çalışma alanına eklenmeye veya ekli bir çalışma alanından ayrılmaya izin verir.',
+      'Disabled',
+    ],
   ]}
 />
 
-Ekli Bash ortamları, bir isteğin çalışma alanı kapasitesi için ne kadar bekleyebileceğini kontrol eden `userConfig.bash.maxQueueWaitMs` değerini de kabul eder. Varsayılan ve maksimum değer `300000` milisaniyedir (5 dakika). İlk kabul denemesinden sonra istemci yeniden denemelerini devre dışı bırakmak için bunu `0` olarak ayarlayın; bu, halihazırda kabul edilmiş veya çalışmakta olan işleri iptal etmez.
+Ekli ortamlar, bir isteğin çalışma alanı kapasitesi için beklerken ne kadar süreyle yeniden deneme yapabileceğini kontrol eden `environments[].configSchema.limits.maxQueueWaitMs` değerini kabul eder. Varsayılan ve maksimum değer `300000` milisaniyedir (5 dakika). İlk kabul denemesinden sonra istemci yeniden denemelerini devre dışı bırakmak için bunu `0` olarak ayarlayın; bu işlem, halihazırda kabul edilmiş veya çalışmakta olan işleri iptal etmez. Bu alanlar `userConfig.bash` altında değil, `configSchema.limits` altında yer almalıdır.
+
+`environments[].configSchema.limits.maxRequestTimeoutMs`, **bir çalışma alanı araç çağrısı için toplam HTTP süresini**; kabul, yürütme, mutabakat ve teslimat dahil olmak üzere isteğe bağlı olarak sınırlar. `1` ile `610000` ms arasındaki değerleri kabul eder, ancak yapılandırma; kabul işleminden ve 10 saniyelik mutabakat/teslimat rezervinden sonra herhangi bir komut yürütme süresi bırakmayacak kadar küçük bütçeleri reddeder. Bu ayar olmadan, kabul işleminin deneme başına hala 30 saniyelik bir bütçesi vardır; `maxQueueWaitMs` ayrı bir yeniden deneme ufku olarak kalmaya devam eder. Her LibreChat API kopyası bu alanı anlayana, Code API rotası istek başına kuyruk izinlerini dikkate alana ve canlı proxy/ingress yolu üzerindeki en kısa zaman aşımı ölçülene kadar **daha uzun bir kabul süresini etkinleştirmeyin**. Süresi dolmuş bir mutasyon çalışan üzerinde tamamlanmış olabilir, bu nedenle LibreChat belirsiz bir zaman aşımını yeniden denemez.
+
+Toplam istek bütçesi ile `environments[].configSchema.limits.minCommandAdmissionMs`, bir komutun yürütme başlamadan önce çalışana girmesi için süre ayırır. Varsayılan değer `10000` ms'dir; `1000`–`300000` ms arasında ayarlanabilir. İstek bütçesi, bu ödenek artı 10000 ms'lik yerleşme/teslimat süresini **aşmalıdır**; toplam bütçe olmadan bu ayarın hiçbir etkisi yoktur. Bir Agent'a bildirilen Bash yürütme sınırı, yapılandırılmış veya üst sınır ile bu rezervlerden sonra kalan sürenin daha küçük olanıdır. Örneğin, 80000 ms komut tavanı ve varsayılan rezerv ile 90000 ms'lik bir istek bütçesi, en fazla 70000 ms'lik bir komut bildirir.
 
 ```yaml filename="endpoints / agents / statefulCodeSessions"
 statefulCodeSessions:
@@ -435,6 +445,16 @@ statefulCodeSessions:
       configSchema:
         limits:
           maxCommandTimeoutMs: 120000
+          # Before enabling, verify Code API queue allowances and the live proxy deadline.
+          # maxRequestTimeoutMs: 160000
+          # minCommandAdmissionMs: 10000
+          # maxQueueWaitMs: 300000
+        # After upgrading Code API and opting in the worker with --linked-worktree-lanes:
+        # workspaces:
+        #   linkedWorktrees: true
+        # Optional: require exact matching even on workers supporting tolerant edits.
+        # edits:
+        #   tolerantMatching: false
         permissions:
           fileWrite:
             allowed: [allow, ask, deny]
@@ -449,6 +469,16 @@ statefulCodeSessions:
 
 `allowedEnvironments`, blok mevcut olduğunda gereklidir ve en az bir çalışma alanı kapsamı (workspace scope) içermelidir. Üç kapsamın tamamına izin vermek ve durum bilgisi olan (stateful) işleri [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint) üzerinden yönlendirmeye devam etmek için bloğun tamamını atlayın. Kişisel varsayılan ve Agent Builder yalnızca izin verilen değerlere izin verir. Bir yönetici politikayı sıkılaştırırsa, kaydedilmiş bir kişisel varsayılan görünür kalır ancak devre dışı bırakılır ve yeni Agent'lar izin verilen ilk kapsamı kullanır. Mevcut etkinleştirilmiş Agent'lar kaydedilmiş kapsamlarını korurlar, ancak artık izin verilmeyen bir kapsam, Agent yeniden yapılandırılana kadar çalışma zamanında başarısız olur.
 
+`conversationMoves.enabled: true` ifadesi, sohbet sahibinin mühürlü bir ekli çalışma alanını uyumlu bir ortama açıkça taşımasına ve sohbet geçmişini değiştirmeden veya eski çalışma alanı dosyalarını geri yüklemeden eksik bir çalışma alanını kurtarmasına olanak tanır. Kaydedilmiş bir sohbetin bir çalışma alanını **eklemesine** veya normal sohbet için bir çalışma alanından **ayrılmasına** ek olarak izin vermek için `conversationMoves.allowAttachDetach: true` olarak ayarlayın. Her iki anahtar da varsayılan olarak kapalıdır; yalnızca taşıma özelliğini etkinleştirmek, sadece taşıma davranışını korur. **Tüm** API kopyalarını yükseltin, ardından bu özelliği kullanmadan önce [`CODE_ENVIRONMENT_DECISION_VERSION=1`](/docs/configuration/dotenv#code-interpreter) değerini etkinleştirin. Sahiplik, hedef erişimi, aktif çalışma ve mevcut politika geçiş sırasında yeniden kontrol edilir; devam eden bir üretim süreci taşınamaz.
+
+```yaml filename="endpoints / agents / statefulCodeSessions / conversationMoves"
+statefulCodeSessions:
+  allowedEnvironments: ['user', 'agent-user', 'conversation']
+  conversationMoves:
+    enabled: true
+    allowAttachDetach: true
+```
+
 `principalWorkers`, kişisel bağlı çalışanlar için self-servis kaydını kontrol eder. Belirtilmeyen değerler `enabled: true` ve `maxPerUser: 5` olarak varsayılır; yeni kayıtları durdurmak için `enabled: false` veya `maxPerUser: 0` olarak ayarlayın. Limit, çevrimdışı çalışanlar da dahil olmak üzere, yapılandırılmış kontrol düzlemleri genelinde o kullanıcı için kayıtlı her kişisel ortamı sayar. Limiti düşürmek veya kaydı devre dışı bırakmak, mevcut ortamları iptal etmez.
 
 Deployment YAML kesin sınırdır. Bir rol, grup veya kullanıcı yapılandırması geçersiz kılma işlemi kaydı devre dışı bırakabilir veya `maxPerUser` değerini düşürebilir, ancak dağıtım değerini yükseltemez. Bir kullanıcı, eşleştirme özellikli kontrol düzlemlerini yalnızca geçerli limit sıfırdan büyük olduğunda, o kontrol düzleminde [`pairing.allowPrincipalWorkers`](#statefulcodesessions) etkinleştirildiğinde, temel kimlik doğrulama mevcut olduğunda ve kullanıcının Kod Ortamı yönetimi izni olduğunda görür.
@@ -462,7 +492,9 @@ Deployment YAML kesin sınırdır. Bir rol, grup veya kullanıcı yapılandırma
 - `pairing` isteğe bağlıdır ve yalnızca dağıtımın sahip olduğu `attached` girdileri için geçerlidir. `pairing.workerId`, kaydedilecek operatör yönetimindeki bir çalışanı tanımlarken, `pairing.allowPrincipalWorkers: true` yetkili kullanıcıların sahip tabanlı çalışanları bu kontrol düzlemine kaydetmesine olanak tanır. `pairing` mevcut olduğunda bu alanlardan en az birinin girilmesi zorunludur.
 - `pairing.tokenEnv`, köprü yöneticisi belirtecini içeren ortam değişkenini adlandırır; asla belirtecin kendisini içermez. Eşleştirme, loopback geliştirme haricinde HTTPS gerektirir.
 - `configSchema.permissions`, yetkili sahiplerin **Ayarlar > Kod ortamları** altında kişisel ortamlar için `fileWrite` ve `commandExecution` politikasını isteğe bağlı olarak seçmelerine olanak tanır. Her alan, `allow`, `ask` ve/veya `deny` içeren boş olmayan bir `allowed` listesi gerektirir; `default` değeri atlandığında `ask` olarak kabul edilir ve `allowed` listesinde yer almalıdır. LibreChat, yönetici listesinin dışındaki kayıtlı değerleri reddeder.
-- `configSchema.limits.maxCommandTimeoutMs`, modelin o ortam için talep edebileceği en büyük Bash zaman aşımını belirler. `1` ile `300000` ms arasındaki değerleri kabul eder; belirtilmediği takdirde 30 saniyelik varsayılan değer korunur. Bu bir dağıtım üst sınırıdır ve kullanıcı tarafından yapılandırılamaz.
+- `configSchema.limits.maxCommandTimeoutMs`, modelin ilgili ortam için talep edebileceği en büyük Bash zaman aşımı süresini belirler. `1` ile `300000` ms arasında değer kabul eder; belirtilmediği takdirde 30 saniyelik varsayılan değer korunur. Toplam istek bütçesi ile birlikte, bildirilen komut zaman aşımı süresi; komut kabulü, yerleşimi ve teslimatından sonra kalan süreye de uyum sağlar. Bu bir dağıtım üst sınırıdır ve kullanıcı tarafından yapılandırılamaz.
+- `configSchema.workspaces.linkedWorktrees: true` ayarı, yalnızca `git_linked_worktree` bildiren ekli çalışma alanları için çalışma ağacı bazlı zamanlamayı etkinleştirir; bu ayarın atlanması, tüm istekleri checkout kök yolunda tutar. Bir worker bu kapsamı bildirmeden **önce** LibreChat'i yükseltin, linked-worktree yollarını destekleyen bir Code API dağıtın ve ardından YAML ayarını etkinleştirmeden önce worker'ı `--linked-worktree-lanes` ile başlatın. `.worktrees/<name>` içindeki bir yolu hedefleyen dosya işlemleri ve orada bir `cwd` ile çalışan Bash komutları bu yolu kullanır ve checkout'a göreli yollar döndürür. Komut metni içinde `cd` komutunu kullanan komutlar, checkout-root işlemleri, konuşma çalışma alanı örnekleri ve ortam eylemleri kök kapsamlı kalır.
+- `configSchema.edits.tolerantMatching`, `tolerant_match` reklamı yapan bağlı çalışanlarda varsayılan olarak boşluk duyarsız geri dönüşe izin verir; tam eşleşme gerektirmek (korumalı düzenleme önizlemeleri dahil) için bunu `false` olarak ayarlayın. Düzenleme açıkça `replace_all` olarak ayarlanmadığı sürece eşleşme benzersiz kalmalıdır. Eski çalışanlar yeni eşleşme alanlarını almaz; `replace_all`, çalışan bunu reklam etmediği sürece gönderimden önce reddedilir. Bu yetenekler, uyumlu Code API ve [Code Interpreter #271](https://github.com/LibreChat-AI/code-interpreter/pull/271) uygulayan çalışan sürümleri gerektirir.
 - `settings` kısmını deployment YAML dosyasında yapılandırmayın. LibreChat, bu istek kapsamlı alanı, kimliği doğrulanmış sahibin sunucu tarafından doğrulanmış tercihlerinden sağlar.
 - Yalnızca dosya yazma ve komut yürütme ilkesi kullanıcı tarafından yapılandırılabilir. İzolasyon, ağ oluşturma, bağlamalar (mounts), ayrıcalıklı yürütme, giriş (ingress), çıkış (egress) ve gizli anahtarlar (secrets) yönetici kontrolünde kalmaya devam eder.
 - Hem üst düzey `workerId` hem de `pairing.workerId` mevcutsa, bunların birbiriyle eşleşmesi gerekir. `allowPrincipalWorkers: true` değerine sahip ve her iki worker ID'si de yalnızca eşleştirme (pairing-only) olmayan bir girdi: yürütme seçicilerinden çıkarılır ve `default: true` olarak ayarlanamaz.
@@ -483,6 +515,12 @@ Ajan olay iletimi tarafından kullanılan güvenilir dahili kaynağı yapıland�
       'Güvenilir dahili tetikleyici kabulü için mevcut işleme bağlı dinleyiciyi geçersiz kılar. Yalnızca teslimatın başka bir güvenilir HTTP kaynağından geçmesi gerektiğinde kullanın.',
       '',
     ],
+    [
+      'idlePolling',
+      'Object',
+      'Boşta kalan MongoDB kurtarma taramalarını ve tamamlanma bekleme kontrollerini sınırlandırır. Yerel olaylar bir taramayı daha erken uyandırabilir.',
+      'See defaults below',
+    ],
   ]}
 />
 
@@ -496,6 +534,17 @@ endpoints:
 Bağlı alt devamlılıklar (bound child continuations) otomatiktir. `eventDriven` altındaki eski `childTurns`, `completionWakeups`, `coalescing`, `actorMailbox`, `checkpointForks` ve `durableReceipts` alanları artık yapılandırma anahtarları değildir ve kaldırılmalıdır. Çalışma zamanı (runtime) artık bu teslimat garantilerini doğrudan uygulamaktadır. Ayrı olan [`backgroundTasks.completionWakeups`](#backgroundtasks) alanı, tamamlanmış arka plan araçları ve ayrılmış Subagent'lar için konuşma teslimatını kontrol eder.
 
 Normal bağlı dinleyici yolu için `selfUrl` değerini boş bırakın. Bunu yalnızca güvenilir dahili tetikleyici kabulünün, bir TLS ön kapısı gibi başka bir HTTP(S) kaynağından geçmesi gerektiğinde ayarlayın. `AGENT_TRIGGERS_SELF_URL`, bu alanın belirtilmediği durumlarda bir uyumluluk yedeği olarak kalmaya devam eder. Bkz. [Agents API events](/docs/features/agents_api#agent-events) ve [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation).
+
+`eventDriven.idlePolling`, hiçbir şey hazır olmadığında kopya başına kurtarma yoklamasını sınırlar: `deliveryMaxIntervalMs` varsayılan olarak `15000` (geçerli aralık `1000`–`300000`), `queuedTurnMaxIntervalMs` ve `maintenanceMaxIntervalMs` varsayılan olarak `120000` (geçerli aralık `30000`–`300000`) ve `completionWaitMaxIntervalMs` varsayılan olarak `60000` (geçerli aralık `5000`–`300000`) değerindedir. İkincisi, bir arka plan veya Subagent sonucu beklemedeyken ya da üst turu meşgulken yeniden denetimleri sınırlandırır. Hazır olma olayları teslimatı hızlandırır; bu sınırlar normal tamamlama gecikmesini tanımlamak yerine kopyalar arası ve çökme sonrası kurtarma yedeklerini korur.
+
+```yaml filename="endpoints / agents / eventDriven / idlePolling"
+eventDriven:
+  idlePolling:
+    deliveryMaxIntervalMs: 15000
+    queuedTurnMaxIntervalMs: 120000
+    maintenanceMaxIntervalMs: 120000
+    completionWaitMaxIntervalMs: 60000
+```
 
 Event Actor detached Action tamamlanması, yerleşik üretim deposundan otomatik olarak seçilir. Bellek içi yürütme işlem yerelidir; Redis üretim akışları, dayanıklı yeniden başlatma kurtarma ve kopya devri ekler. Herhangi bir `librechat.yaml` anahtarı veya ortam özellik bayrağı gerekmez. Bkz. [Agent Event Runtime](/docs/configuration/dotenv#agent-event-runtime).
 
@@ -529,6 +578,12 @@ Desteklenen tamamlanmış arka plan araçlarının ve ayrılmış Subagent'ları
       'Bir devam grubunda teslim edilen maksimum tamamlanmış arka plan sonucu. Geçerli değerler 1 ile 16 arasındadır.',
       '8',
     ],
+    [
+      'shutdownInterruptGraceMs',
+      'Integer',
+      'Hâlâ çalışan bir arka plan aracını kesintiye uğrattıktan sonra, kesintiye uğramış bir sonucu kaydetmeden önce beklenecek zarif kapatma (graceful-shutdown) süresi. Geçerli değerler 0 ile 60000 ms arasındadır.',
+      '5000',
+    ],
   ]}
 />
 
@@ -538,13 +593,14 @@ backgroundTasks:
   ordinaryToolCancellation: false
   completionResultMaxChars: 24576
   completionResultBatchSize: 8
+  shutdownInterruptGraceMs: 5000
 ```
 
 Bu blok atlandığında bile otomatik tamamlama teslimi etkindir. Ajanın her sonucu `check_background_task` aracılığıyla toplaması için `completionWakeups: false` olarak ayarlayın.
 
 Sıradan arka plan araçları için sahip kapsamlı iptali açığa çıkarmak üzere `ordinaryToolCancellation: true` olarak ayarlayın. İptal işlemi iş birlikçidir, süreç yerelinde kalır ve çağrı sonuçlanana kadar görevi aktif tutarak kapasiteyi rezerve eder. Ayrılmış Subagent'ları iptal etmez.
 
-Sıradan arka plan aracı yürütme işlemi, süreç yerelinde kalır ve çalışan sürecinin kaybından sağ çıkamaz. Yalnızca içerik içeren bir terminal sonucu kalıcı hale getirildiğinde, teslimatı dayanıklıdır ve başka bir replikada devam edebilir. Canlı yapay nesnelere sahip görevler, hala sahip olunan çalıştırma üzerinde yoklama (polling) gerektirir. Ayrılmış Alt Temsilciler (Detached Subagents), kendi ayrı dayanıklı transkriptlerini ve terminal sonucu yollarını korurlar. Durum, kontroller ve kurtarma için manuel yoklama her iki modda da kullanılabilir durumdadır. Bkz. [Arka Plan Aracı Çağrıları](/docs/features/agents#background-tool-calls) ve [Otomatik Üst Devamlılığı](/docs/features/subagents#automatic-parent-continuation).
+Sıradan arka plan aracı yürütme işlemi, süreç yerelinde kalmaya devam eder. Kademeli bir kapatma sırasında LibreChat, görevlerin tamamlanması için kapatma bütçesi dahilinde bekler, ardından tamamlanmamış işleri kesintiye uğratır ve bir sonuç kaydeder; ani bir çalışan kaybı, çalışan görevi yine de koruyamaz. Yalnızca içerik içeren bir terminal sonucu kalıcı hale getirildiğinde, teslimatı dayanıklıdır ve başka bir replikada devam edebilir. Canlı yapay nesnelere sahip görevler, hala sahip olunan çalıştırma üzerinde yoklama (polling) gerektirir. Ayrılmış Alt Temsilciler (Detached Subagents), kendi ayrı dayanıklı transkriptlerini ve terminal sonucu yollarını korurlar. Durum, kontroller ve kurtarma için her iki modda da manuel yoklama kullanılabilir durumdadır. Bkz. [Background Tool Calls](/docs/features/agents#background-tool-calls) ve [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation).
 
 ## toolApproval
 

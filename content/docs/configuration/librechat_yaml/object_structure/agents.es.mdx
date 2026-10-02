@@ -399,10 +399,20 @@ Configura los alcances de uso compartido y los backends de ejecución opcionales
       'Límite de despliegue opcional para la inscripción de trabajadores personales. `enabled` tiene como valor predeterminado true y `maxPerUser` tiene como valor predeterminado 5.',
       '{ enabled: true, maxPerUser: 5 }',
     ],
+    [
+      'conversationMoves',
+      'Object',
+      'Transiciones de espacio de trabajo autorizadas por el propietario con opción de participación para conversaciones guardadas. `allowAttachDetach` permite adicionalmente adjuntar o abandonar un espacio de trabajo adjunto.',
+      'Disabled',
+    ],
   ]}
 />
 
-Los entornos Bash adjuntos también aceptan `userConfig.bash.maxQueueWaitMs`, que controla cuánto tiempo puede esperar una solicitud para obtener capacidad en el espacio de trabajo. El valor predeterminado y máximo es `300000` milisegundos (5 minutos). Establézcalo en `0` para deshabilitar los reintentos del cliente después del intento de admisión inicial; esto no cancela el trabajo que ya ha sido admitido o que se está ejecutando.
+Los entornos adjuntos aceptan `environments[].configSchema.limits.maxQueueWaitMs`, lo cual controla cuánto tiempo puede una solicitud reintentar la espera por capacidad en el espacio de trabajo. El valor predeterminado y máximo es `300000` milisegundos (5 minutos). Establézcalo en `0` para deshabilitar los reintentos del cliente después del intento de admisión inicial; esto no cancela el trabajo que ya ha sido admitido o que se está ejecutando. Estos campos pertenecen a `configSchema.limits`, **no** a `userConfig.bash`.
+
+`environments[].configSchema.limits.maxRequestTimeoutMs` limita opcionalmente el **tiempo HTTP total para una llamada de herramienta de espacio de trabajo**, incluyendo la admisión, ejecución, liquidación y entrega. Acepta de `1` a `610000` ms, pero la configuración rechaza presupuestos demasiado pequeños que no dejen tiempo de ejecución de comandos después de la admisión y la reserva de 10 segundos para liquidación/entrega. Sin esto, la admisión sigue teniendo un presupuesto de 30 segundos por intento; `maxQueueWaitMs` sigue siendo un horizonte de reintento independiente. **No habilite una admisión más larga** hasta que cada réplica de la API de LibreChat entienda este campo, la ruta de la API de código respete las asignaciones de cola por solicitud y se haya medido el tiempo de espera más corto a través de la ruta de proxy/ingress en vivo. Una mutación expirada puede haberse completado en el trabajador, por lo que LibreChat no reintenta un tiempo de espera ambiguo.
+
+Con un presupuesto total de solicitud, `environments[].configSchema.limits.minCommandAdmissionMs` reserva tiempo para que un comando entre al trabajador antes de que comience la ejecución. El valor predeterminado es `10000` ms; establezca un valor entre `1000` y `300000` ms. El presupuesto de solicitud debe **exceder** esta asignación más 10000 ms de margen de liquidación/entrega; sin un presupuesto total, la configuración no tiene efecto. El límite de ejecución de Bash anunciado a un Agente es el menor entre su límite configurado o el límite superior ascendente y el tiempo restante después de esas reservas. Por ejemplo, un presupuesto de solicitud de 90000 ms con un límite de comando de 80000 ms y la reserva predeterminada anuncia como máximo un comando de 70000 ms.
 
 ```yaml filename="endpoints / agents / statefulCodeSessions"
 statefulCodeSessions:
@@ -435,6 +445,16 @@ statefulCodeSessions:
       configSchema:
         limits:
           maxCommandTimeoutMs: 120000
+          # Before enabling, verify Code API queue allowances and the live proxy deadline.
+          # maxRequestTimeoutMs: 160000
+          # minCommandAdmissionMs: 10000
+          # maxQueueWaitMs: 300000
+        # After upgrading Code API and opting in the worker with --linked-worktree-lanes:
+        # workspaces:
+        #   linkedWorktrees: true
+        # Optional: require exact matching even on workers supporting tolerant edits.
+        # edits:
+        #   tolerantMatching: false
         permissions:
           fileWrite:
             allowed: [allow, ask, deny]
@@ -449,6 +469,16 @@ statefulCodeSessions:
 
 `allowedEnvironments` es obligatorio siempre que el bloque esté presente y debe incluir al menos un ámbito de espacio de trabajo (workspace scope). Omita el bloque completo para permitir los tres ámbitos y continuar enrutando el trabajo con estado a través de [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint). El valor predeterminado personal y el Agent Builder solo permiten valores autorizados. Si un administrador endurece la política, un valor predeterminado personal guardado permanece visible pero deshabilitado, y los nuevos Agents utilizan el primer ámbito permitido. Los Agents habilitados existentes conservan su ámbito guardado, pero un ámbito ahora no permitido fallará de forma segura (fails closed) en tiempo de ejecución hasta que el Agent sea reconfigurado.
 
+`conversationMoves.enabled: true` permite que el propietario de la conversación mueva explícitamente un espacio de trabajo adjunto sellado a un entorno compatible y recupere un espacio de trabajo faltante sin reemplazar el historial del chat ni restaurar archivos antiguos del espacio de trabajo. Para permitir adicionalmente que un chat guardado **adjunte** un espacio de trabajo o **abandone** uno para un chat normal, establezca `conversationMoves.allowAttachDetach: true`. Ambos interruptores están desactivados de forma predeterminada; habilitar solo los movimientos mantiene el comportamiento de solo movimiento. Actualice **todas** las réplicas de la API y luego habilite [`CODE_ENVIRONMENT_DECISION_VERSION=1`](/docs/configuration/dotenv#code-interpreter) antes de optar por participar. La propiedad, el acceso al destino, el trabajo activo y la política actual se vuelven a verificar en la transición; una generación en ejecución no puede ser movida.
+
+```yaml filename="endpoints / agents / statefulCodeSessions / conversationMoves"
+statefulCodeSessions:
+  allowedEnvironments: ['user', 'agent-user', 'conversation']
+  conversationMoves:
+    enabled: true
+    allowAttachDetach: true
+```
+
 `principalWorkers` controla la inscripción de autoservicio para trabajadores personales adjuntos. Los valores omitidos se resuelven como `enabled: true` y `maxPerUser: 5`; establezca `enabled: false` o `maxPerUser: 0` para detener nuevas inscripciones. El límite cuenta cada entorno personal registrado para ese usuario en todos los planos de control configurados, incluidos los trabajadores fuera de línea. Reducir el límite o deshabilitar la inscripción no revoca los entornos existentes.
 
 El YAML de despliegue es el límite máximo absoluto. Una anulación de configuración de rol, grupo o usuario puede deshabilitar la inscripción o reducir `maxPerUser`, pero no puede aumentar el valor del despliegue. Un usuario ve los planos de control con emparejamiento habilitado solo cuando el límite efectivo es mayor que cero, [`pairing.allowPrincipalWorkers`](#statefulcodesessions) está habilitado en ese plano de control, la autenticación principal está disponible y el usuario tiene permiso de gestión de Code Environment.
@@ -462,7 +492,9 @@ Cuando `environments` no está vacío, cada entrada requiere un `id` único, un 
 - `pairing` es opcional y solo es válido para entradas `attached` propiedad de la implementación. `pairing.workerId` identifica a un trabajador gestionado por el operador para inscribirse, mientras que `pairing.allowPrincipalWorkers: true` permite a los usuarios autorizados inscribir trabajadores vinculados al propietario en ese plano de control. Al menos uno de esos campos es obligatorio cuando `pairing` está presente.
 - `pairing.tokenEnv` nombra la variable de entorno que contiene el token del administrador del puente; nunca contiene el token en sí. El emparejamiento requiere HTTPS, excepto para el desarrollo en loopback.
 - `configSchema.permissions` permite opcionalmente a los propietarios autorizados elegir la política de `fileWrite` y `commandExecution` para entornos personales en **Settings > Code environments**. Cada campo requiere una lista `allowed` no vacía que contenga `allow`, `ask` y/o `deny`; `default` es `ask` cuando se omite y debe aparecer en `allowed`. LibreChat rechaza los valores almacenados que estén fuera de la lista del administrador.
-- `configSchema.limits.maxCommandTimeoutMs` establece el tiempo de espera máximo de Bash que el modelo puede solicitar para ese entorno. Acepta valores de `1` a `300000` ms; su omisión mantiene el valor predeterminado de 30 segundos. Este es un límite de despliegue y no es configurable por el usuario.
+- `configSchema.limits.maxCommandTimeoutMs` establece el tiempo de espera máximo de Bash que el modelo puede solicitar para ese entorno. Acepta valores de `1` a `300000` ms; la omisión conserva el valor predeterminado de 30 segundos. Con un presupuesto total de solicitud, el tiempo de espera de comando anunciado también se ajusta al tiempo restante después de la admisión, resolución y entrega del comando. Este es un límite de despliegue y no es configurable por el usuario.
+- `configSchema.workspaces.linkedWorktrees: true` habilita la programación por worktree solo para espacios de trabajo adjuntos que anuncien `git_linked_worktree`; la omisión mantiene todas las solicitudes en el carril raíz del checkout. Actualice LibreChat **antes** de que un worker anuncie este ámbito, implemente una API de código que admita carriles de linked-worktree y, a continuación, inicie el worker con `--linked-worktree-lanes` antes de habilitar la configuración YAML. Las operaciones de archivo dirigidas a una ruta dentro de `.worktrees/<name>` y los comandos Bash con un `cwd` allí utilizan ese carril y devuelven rutas relativas al checkout. Los comandos que hacen `cd` dentro de su texto de comando, las operaciones en la raíz del checkout, las instancias de espacio de trabajo de conversación y las acciones de entorno permanecen con ámbito en la raíz.
+- `configSchema.edits.tolerantMatching` permite por defecto una alternativa tolerante a espacios en blanco en los workers adjuntos que anuncien `tolerant_match`; establézcalo en `false` para requerir una coincidencia exacta, incluyendo las vistas previas de edición protegidas. La coincidencia debe seguir siendo única a menos que la edición establezca explícitamente `replace_all`. Los workers más antiguos no reciben nuevos campos de coincidencia; los `replace_all` adjuntos se rechazan antes del envío a menos que el worker los anuncie. Estas capacidades requieren una API de código y compilaciones de worker compatibles que implementen [Code Interpreter #271](https://github.com/LibreChat-AI/code-interpreter/pull/271).
 - No configure `settings` en el YAML de despliegue. LibreChat suministra ese campo de ámbito de solicitud a partir de las preferencias validadas por el servidor del propietario autenticado.
 - Solo la política de escritura de archivos y ejecución de comandos es configurable por el usuario. El aislamiento, las redes, los montajes, la ejecución privilegiada, el ingreso, el egreso y los secretos permanecen bajo el control del administrador.
 - Si tanto el `workerId` de nivel superior como `pairing.workerId` están presentes, deben coincidir. Una entrada con `allowPrincipalWorkers: true` y sin ninguno de los dos ID de trabajador es solo de emparejamiento: se omite de los selectores de ejecución y no puede establecer `default: true`.
@@ -483,6 +515,12 @@ Configura el origen interno de confianza utilizado para la entrega de eventos de
       'Anula el oyente vinculado al proceso actual para la admisión de activadores internos de confianza. Úselo solo cuando la entrega deba atravesar otro origen HTTP de confianza.',
       '',
     ],
+    [
+      'idlePolling',
+      'Object',
+      'Limita los escaneos de recuperación de MongoDB en espera y las verificaciones de finalización de espera. Los eventos locales pueden activar un escaneo antes.',
+      'See defaults below',
+    ],
   ]}
 />
 
@@ -496,6 +534,17 @@ endpoints:
 Las continuaciones de hijos vinculados son automáticas. Los campos antiguos `childTurns`, `completionWakeups`, `coalescing`, `actorMailbox`, `checkpointForks` y `durableReceipts` bajo `eventDriven` ya no son interruptores de configuración y deben eliminarse. El tiempo de ejecución ahora aplica esas garantías de entrega directamente. El campo separado [`backgroundTasks.completionWakeups`](#backgroundtasks) controla la entrega conversacional para herramientas en segundo plano completadas y Subagents separados.
 
 Deje `selfUrl` sin configurar para la ruta normal de escucha vinculada. Configúrelo solo cuando la admisión de disparadores internos de confianza deba atravesar otro origen HTTP(S), como una puerta de enlace TLS. `AGENT_TRIGGERS_SELF_URL` permanece como una alternativa de compatibilidad cuando se omite este campo. Consulte [Eventos de la API de agentes](/docs/features/agents_api#agent-events) y [Continuación automática de padres](/docs/features/subagents#automatic-parent-continuation).
+
+`eventDriven.idlePolling` limita el sondeo de recuperación por réplica cuando no hay nada listo: `deliveryMaxIntervalMs` tiene un valor predeterminado de `15000` (válido de `1000` a `300000`), `queuedTurnMaxIntervalMs` y `maintenanceMaxIntervalMs` tienen cada uno un valor predeterminado de `120000` (válido de `30000` a `300000`), y `completionWaitMaxIntervalMs` tiene un valor predeterminado de `60000` (válido de `5000` a `300000`). Este último limita las verificaciones cuando un resultado en segundo plano o de un Subagente está pendiente o su turno principal está ocupado. Los eventos de preparación aceleran la entrega; estos límites mantienen alternativas entre réplicas y de recuperación ante fallos en lugar de definir la latencia de finalización normal.
+
+```yaml filename="endpoints / agents / eventDriven / idlePolling"
+eventDriven:
+  idlePolling:
+    deliveryMaxIntervalMs: 15000
+    queuedTurnMaxIntervalMs: 120000
+    maintenanceMaxIntervalMs: 120000
+    completionWaitMaxIntervalMs: 60000
+```
 
 La finalización de la Action del Event Actor detached se selecciona automáticamente desde el almacén de generación integrado. La ejecución en memoria es local al proceso; los flujos de generación de Redis añaden recuperación de reinicio duradera y transferencia de réplicas. No se requiere ningún interruptor en `librechat.yaml` ni flag de característica en el entorno. Consulte [Agent Event Runtime](/docs/configuration/dotenv#agent-event-runtime).
 
@@ -529,6 +578,12 @@ Controla si las herramientas en segundo plano completadas y los Subagentes separ
       'Máximo de resultados en segundo plano completados entregados en un lote de continuación. Los valores válidos son del 1 al 16.',
       '8',
     ],
+    [
+      'shutdownInterruptGraceMs',
+      'Integer',
+      'Espera de apagado elegante tras interrumpir una herramienta en segundo plano que aún se está ejecutando antes de registrar un resultado interrumpido. Los valores válidos son de 0 a 60000 ms.',
+      '5000',
+    ],
   ]}
 />
 
@@ -538,13 +593,14 @@ backgroundTasks:
   ordinaryToolCancellation: false
   completionResultMaxChars: 24576
   completionResultBatchSize: 8
+  shutdownInterruptGraceMs: 5000
 ```
 
 La entrega de finalización automática está habilitada incluso cuando se omite este bloque. Establezca `completionWakeups: false` para requerir que el Agente recopile cada resultado a través de `check_background_task`.
 
 Establezca `ordinaryToolCancellation: true` para exponer la cancelación con ámbito de propietario para herramientas de fondo ordinarias. La cancelación es cooperativa, permanece local al proceso y mantiene la tarea activa y la capacidad reservada hasta que la invocación se estabiliza. No cancela Subagents separados.
 
-La ejecución de herramientas en segundo plano ordinarias permanece local al proceso y no sobrevive a la pérdida de su proceso de trabajo. Una vez que un resultado de terminal de solo contenido se persiste, su entrega es duradera y puede continuar en otra réplica. Las tareas con artefactos activos aún requieren sondeo (polling) en la ejecución propietaria. Los Subagents separados mantienen su propia transcripción duradera y ruta de resultado de terminal. El sondeo manual sigue estando disponible para el estado, los controles y la recuperación en cualquiera de los modos. Consulta [Background Tool Calls](/docs/features/agents#background-tool-calls) y [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation).
+La ejecución de herramientas en segundo plano ordinarias permanece local al proceso. Durante un apagado ordenado, LibreChat espera dentro del presupuesto de apagado a que las tareas se estabilicen, luego interrumpe el trabajo inacabado y registra un resultado; una pérdida repentina del trabajador aún no puede preservar la tarea en ejecución. Una vez que se persiste un resultado terminal de solo contenido, su entrega es duradera y puede continuar en otra réplica. Las tareas con artefactos activos aún requieren sondeo (polling) en la ejecución propietaria. Los Subagentes separados (Detached Subagents) mantienen su propia transcripción duradera y ruta de resultado terminal. El sondeo manual sigue estando disponible para el estado, los controles y la recuperación en cualquiera de los modos. Consulte [Background Tool Calls](/docs/features/agents#background-tool-calls) y [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation).
 
 ## toolApproval
 

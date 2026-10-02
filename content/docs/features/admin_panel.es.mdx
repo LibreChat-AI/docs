@@ -203,6 +203,14 @@ El panel renderiza la configuración de LibreChat como un formulario dinámico b
 - **Compatible con versiones futuras**: cuando LibreChat lanza un nuevo campo de configuración, el panel lo detecta automáticamente a partir del esquema. No se requiere ninguna actualización ni redistribución del panel de administración.
 - **Anulaciones en capas**: la configuración base (desde `librechat.yaml`) puede ser ensombrecida por anulaciones por principal delimitadas a un rol o grupo. Cuando un usuario inicia sesión, las anulaciones se resuelven en orden de prioridad y se fusionan sobre la base para producir la configuración efectiva que el usuario ve.
 
+<Callout type="warning" title="Los servidores MCP respaldados por procesos permanecen en YAML">
+  Los servidores MCP que utilizan `type: stdio` o campos de proceso como `command`, `args`, `env`, `cwd` o `stderr` son propiedad del operador. Configúrelos únicamente en `librechat.yaml`; la API de administración rechaza los intentos de crearlos o modificarlos, y las anulaciones (overrides) no pueden reemplazarlos ni eliminarlos. La configuración de servidores MCP remotos sigue estando disponible a través del sistema de anulación normal.
+</Callout>
+
+<Callout type="warning" title="Los encabezados de gateway de Langfuse permanecen en YAML">
+  Los `langfuse.headers` a nivel de despliegue pueden contener credenciales de proxy y no son una superficie de configuración respaldada por Mongo. Configúrelos en `librechat.yaml`; la API de administración rechaza todo el mapa y las rutas de encabezado individuales. Consulte [Authenticated Proxies and Gateways](/docs/configuration/langfuse#authenticated-proxies-and-gateways).
+</Callout>
+
 Esta es la superficie detrás del [sistema de anulación de configuración por principal respaldado por BD](https://github.com/LibreChat-AI/LibreChat/pull/12354) de LibreChat. Casos de uso típicos:
 
 - Asignar a un grupo "Research" un `recursionLimit` más alto y endpoints adicionales
@@ -210,6 +218,28 @@ Esta es la superficie detrás del [sistema de anulación de configuración por p
 - Limitar los permisos de `interface` más estrictos a los grupos de contratistas externos
 
 Los administradores también pueden utilizar el panel de [Admin Insights](/docs/features/insights) de activación voluntaria para revisar la actividad de MongoDB a nivel de inquilino. Establezca `ENABLE_INSIGHTS=true` y, a continuación, conceda tanto `access:admin` como `read:insights` a una cuenta con el rol `ADMIN`.
+
+### Invalidación de validación [#override-validation]
+
+Las escrituras de anulación (`PUT /api/admin/config/:principalType/:principalId` y `PATCH .../fields`) se validan contra el mismo esquema que `librechat.yaml`, aplicándose sobre la configuración base del despliegue. Una escritura que produciría una configuración no válida es rechazada con un HTTP 400 y no se guarda nada:
+
+```json
+{
+  "error": "Invalid config override",
+  "code": "CONFIG_OVERRIDE_INVALID",
+  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
+}
+```
+
+Cada problema solo contiene la ruta de puntos (dot-path) y un código estable (un código de problema de esquema como `invalid_type`, `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key` o `invalid_document`), nunca el valor enviado. Un parche de campo solo se rechaza por problemas que afecta o introduce, por lo que un valor no válido anterior en otra parte de la misma anulación no lo bloquea.
+
+Las anulaciones almacenadas que se han vuelto inválidas, por ejemplo después de una actualización que restringe el esquema, no son fatales. Cuando se resuelve la configuración, los campos inválidos se descartan, se aplica el valor subyacente (generalmente el valor base de `librechat.yaml`) y el servidor registra una advertencia por campo:
+
+```text
+[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
+```
+
+Compruebe los registros en busca de estas líneas después de actualizar, luego corrija o elimine los campos enumerados en el panel. Un tema de anulación que no cumpla con las [reglas de temas](/docs/configuration/librechat_yaml/object_structure/theme#validation) volverá al tema base de la misma manera.
 
 ### Delegación con alcance de sección [#section-scoped-delegation]
 

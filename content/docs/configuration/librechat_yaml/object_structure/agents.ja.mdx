@@ -399,10 +399,20 @@ capabilities:
       '個人ワーカー登録のオプションのデプロイ上限。`enabled` はデフォルトで true、`maxPerUser` はデフォルトで 5 に設定されます。',
       '{ enabled: true, maxPerUser: 5 }',
     ],
+    [
+      'conversationMoves',
+      'Object',
+      '保存された会話のワークスペース移行をオーナーが許可するオプトイン設定です。`allowAttachDetach` は、ワークスペースへの参加や離脱も追加で許可します。',
+      'Disabled',
+    ],
   ]}
 />
 
-アタッチされたBash環境は `userConfig.bash.maxQueueWaitMs` も受け付けます。これは、ワークスペースの容量が空くのをリクエストが待機できる時間を制御するものです。デフォルト値および最大値は `300000` ミリ秒（5分）です。これを `0` に設定すると、最初の受け入れ試行後のクライアントによる再試行が無効になります。なお、すでに受け入れ済みまたは実行中の作業はキャンセルされません。
+Attached environments は `environments[].configSchema.limits.maxQueueWaitMs` を受け付けます。これは、リクエストがワークスペースの容量を待機して再試行できる時間を制御します。デフォルト値および最大値は `300000` ミリ秒（5分）です。`0` に設定すると、最初の承認試行後のクライアントによる再試行が無効になります。ただし、すでに承認済みまたは実行中の作業はキャンセルされません。これらのフィールドは `userConfig.bash` ではなく、`configSchema.limits` の下に配置する必要があります。
+
+`environments[].configSchema.limits.maxRequestTimeoutMs` は、**1つのワークスペースツール呼び出しにかかるHTTP合計時間**（受付、実行、決済、配信を含む）を任意で制限します。`1` から `610000` ms の範囲で指定可能ですが、受付後のコマンド実行時間と10秒間の決済/配信の予備時間を確保できないほど小さい予算値は、設定によって拒否されます。この設定がない場合、受付には試行ごとに30秒の予算が割り当てられます。`maxQueueWaitMs` は引き続き個別のリトライ期間として扱われます。すべての LibreChat API レプリカがこのフィールドを認識し、Code API ルートがリクエストごとのキュー許容量を尊重し、ライブプロキシ/イングレスパス全体で最短のタイムアウトが測定されるまで、**受付時間を長く設定しないでください**。期限切れのミューテーションがワーカー上で完了している可能性があるため、LibreChat は曖昧なタイムアウトに対してリトライを行いません。
+
+合計リクエスト予算において、`environments[].configSchema.limits.minCommandAdmissionMs` は、コマンドが実行を開始する前にワーカーに入るための時間を確保します。デフォルトは `10000` ms です。`1000` ～ `300000` ms の間で設定してください。リクエスト予算は、この許容時間に 10000 ms の決済/配信猶予時間を加えた値を超えている必要があります。合計予算がない場合、この設定は無効です。エージェントに通知される Bash 実行制限は、設定された上限またはアップストリームの上限のいずれか小さい方から、これらの確保時間を差し引いた残り時間となります。例えば、90000 ms のリクエスト予算、80000 ms のコマンド上限、およびデフォルトの確保時間の場合、通知されるコマンド制限は最大で 70000 ms となります。
 
 ```yaml filename="endpoints / agents / statefulCodeSessions"
 statefulCodeSessions:
@@ -435,6 +445,16 @@ statefulCodeSessions:
       configSchema:
         limits:
           maxCommandTimeoutMs: 120000
+          # Before enabling, verify Code API queue allowances and the live proxy deadline.
+          # maxRequestTimeoutMs: 160000
+          # minCommandAdmissionMs: 10000
+          # maxQueueWaitMs: 300000
+        # After upgrading Code API and opting in the worker with --linked-worktree-lanes:
+        # workspaces:
+        #   linkedWorktrees: true
+        # Optional: require exact matching even on workers supporting tolerant edits.
+        # edits:
+        #   tolerantMatching: false
         permissions:
           fileWrite:
             allowed: [allow, ask, deny]
@@ -449,6 +469,16 @@ statefulCodeSessions:
 
 `allowedEnvironments` は、ブロックが存在する場合は必須であり、少なくとも1つのワークスペーススコープを含める必要があります。ブロック全体を省略すると、3つすべてのスコープが許可され、ステートフルな作業は引き続き [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint) を通じてルーティングされます。個人のデフォルト設定およびAgent Builderでは、許可された値のみが使用可能です。管理者がポリシーを厳格化した場合、保存済みの個人のデフォルト設定は表示されたままとなりますが無効化され、新しいAgentは許可された最初のスコープを使用します。既存の有効なAgentは保存されたスコープを保持しますが、許可されなくなったスコープは実行時に失敗（フェイルクローズ）するため、Agentの再設定が必要となります。
 
+`conversationMoves.enabled: true` を設定すると、会話の所有者は、シールされた添付ワークスペースを互換性のある環境へ明示的に移動したり、チャット履歴を置き換えたり古いワークスペースファイルを復元したりすることなく、欠落したワークスペースを回復したりできるようになります。保存されたチャットに対して、ワークスペースの**添付**や、通常のチャットへの**離脱**を許可するには、`conversationMoves.allowAttachDetach: true` を設定します。両方のスイッチはデフォルトでオフになっています。移動のみを有効にすると、移動専用の動作が維持されます。**すべて**の API レプリカをアップグレードしてから、[`CODE_ENVIRONMENT_DECISION_VERSION=1`](/docs/configuration/dotenv#code-interpreter) を有効にしてオプトインしてください。所有権、ターゲットへのアクセス権、アクティブな作業、および現在のポリシーは移行時に再チェックされます。生成中のプロセスを移動することはできません。
+
+```yaml filename="endpoints / agents / statefulCodeSessions / conversationMoves"
+statefulCodeSessions:
+  allowedEnvironments: ['user', 'agent-user', 'conversation']
+  conversationMoves:
+    enabled: true
+    allowAttachDetach: true
+```
+
 `principalWorkers` は、個人用アタッチ済みワーカーのセルフサービス登録を制御します。値を省略した場合、`enabled: true` および `maxPerUser: 5` として解決されます。新しい登録を停止するには、`enabled: false` または `maxPerUser: 0` に設定してください。この制限は、オフラインのワーカーを含め、構成されたすべてのコントロールプレーン全体で、そのユーザーに対して登録されたすべての個人用環境をカウントします。制限を引き下げたり登録を無効にしたりしても、既存の環境は取り消されません。
 
 Deployment YAMLは上限を決定する絶対的な基準です。ロール、グループ、またはユーザー設定のオーバーライドによって登録を無効化したり`maxPerUser`を引き下げたりすることは可能ですが、Deployment YAMLで設定された値を引き上げることはできません。ユーザーがペアリング有効なコントロールプレーンを確認できるのは、有効な制限が0より大きく、そのコントロールプレーンで[`pairing.allowPrincipalWorkers`](#statefulcodesessions)が有効であり、プリンシパル認証が利用可能で、かつユーザーがCode Environmentの管理権限を持っている場合のみです。
@@ -462,7 +492,9 @@ Deployment YAMLは上限を決定する絶対的な基準です。ロール、�
 - `pairing` はオプションであり、デプロイメント所有の `attached` エントリに対してのみ有効です。`pairing.workerId` は登録するオペレーター管理のワーカーを識別し、`pairing.allowPrincipalWorkers: true` は権限を持つユーザーが所有者バインドされたワーカーをそのコントロールプレーンに対して登録できるようにします。`pairing` が存在する場合、これらのフィールドのうち少なくとも1つが必須となります。
 - `pairing.tokenEnv` は、ブリッジ管理者トークンを含む環境変数の名前を指定します。これ自体にトークンが含まれることはありません。ペアリングには、ループバック開発を除き、HTTPSが必要です。
 - `configSchema.permissions` は、権限を持つオーナーが **Settings > Code environments** で個人環境向けの `fileWrite` および `commandExecution` ポリシーを任意で選択できるようにします。各フィールドには、`allow`、`ask`、および `deny` を含む空ではない `allowed` リストが必要です。`default` は省略された場合は `ask` となり、`allowed` 内に含まれている必要があります。LibreChat は、管理者が設定したリスト外の保存された値を拒否します。
-- `configSchema.limits.maxCommandTimeoutMs` は、その環境に対してモデルが要求できる最大のBashタイムアウト時間を設定します。`1` から `300000` ms の値を受け付けます。省略した場合はデフォルトの30秒が維持されます。これはデプロイメントの上限であり、ユーザーが設定することはできません。
+- `configSchema.limits.maxCommandTimeoutMs` は、その環境に対してモデルが要求できる最大のBashタイムアウトを設定します。`1` から `300000` ms の値を受け付けます。省略した場合は、デフォルトの30秒が維持されます。合計リクエスト予算がある場合、通知されるコマンドタイムアウトは、コマンドの承認、確定、配信後の残り時間にも適合します。これはデプロイメント上の上限であり、ユーザーが設定することはできません。
+- `configSchema.workspaces.linkedWorktrees: true` は、`git_linked_worktree` をアドバタイズする接続済みワークスペースに対してのみ、ワークツリーごとのスケジューリングを有効にします。省略した場合、すべてのリクエストはチェックアウトのルートレーンに保持されます。ワーカーがこのスコープをアドバタイズする**前**に LibreChat をアップグレードし、リンクされたワークツリーレーンをサポートする Code API をデプロイしてから、YAML 設定を有効にする前に `--linked-worktree-lanes` を指定してワーカーを起動してください。`.worktrees/<name>` 内のパスを対象とするファイル操作や、そこで `cwd` を指定した Bash コマンドは、そのレーンを使用し、チェックアウト相対パスを返します。コマンドテキスト内で `cd` を実行するコマンド、チェックアウトルート操作、会話ワークスペースインスタンス、および環境アクションは、ルートスコープのままとなります。
+- `configSchema.edits.tolerantMatching` は、`tolerant_match` をアドバタイズする接続済みワーカーにおいて、デフォルトで空白文字を許容するフォールバックを許可します。これを `false` に設定すると、保護された編集プレビューを含め、完全一致が必須となります。編集で明示的に `replace_all` が設定されていない限り、マッチングは一意である必要があります。古いワーカーは新しいマッチングフィールドを受け取りません。また、ワーカーが `replace_all` をアドバタイズしていない場合、ディスパッチ前にその要求は拒否されます。これらの機能には、[Code Interpreter #271](https://github.com/LibreChat-AI/code-interpreter/pull/271) を実装した互換性のある Code API およびワーカービルドが必要です。
 - デプロイメントのYAMLで `settings` を設定しないでください。LibreChatは、認証された所有者のサーバーで検証済みの設定から、そのリクエストスコープのフィールドを提供します。
 - ユーザーが設定可能なのは、ファイル書き込みおよびコマンド実行ポリシーのみです。分離、ネットワーク、マウント、特権実行、イングレス、エグレス、およびシークレットは、引き続き管理者が制御します。
 - トップレベルの `workerId` と `pairing.workerId` の両方が存在する場合、それらは一致している必要があります。`allowPrincipalWorkers: true` が設定されており、どちらの worker ID もペアリング専用ではないエントリは、実行セレクターから除外され、`default: true` を設定することはできません。
@@ -483,6 +515,12 @@ Agentイベント配信に使用される信頼された内部オリジンを設
       '信頼された内部トリガーアドミッションのために、現在プロセスにバインドされているリスナーをオーバーライドします。配信が別の信頼されたHTTPオリジンを経由しなければならない場合にのみ使用してください。',
       '',
     ],
+    [
+      'idlePolling',
+      'Object',
+      'アイドル状態のMongoDBリカバリースキャンおよび完了待ち再チェックの上限を設定します。ローカルイベントにより、スキャンが早期に開始される場合があります。',
+      'See defaults below',
+    ],
   ]}
 />
 
@@ -496,6 +534,17 @@ endpoints:
 バインドされた子コンティニュエーションは自動的に行われます。`eventDriven` 配下の古い `childTurns`、`completionWakeups`、`coalescing`、`actorMailbox`、`checkpointForks`、および `durableReceipts` フィールドは、設定スイッチではなくなったため削除してください。ランタイムは現在、これらの配信保証を直接適用します。個別の [`backgroundTasks.completionWakeups`](#backgroundtasks) フィールドは、完了したバックグラウンドツールおよびデタッチされた Subagent の会話配信を制御します。
 
 通常のバインドリスナーパスを使用する場合は、`selfUrl` を設定しないでください。TLSフロントドアなど、信頼された内部トリガーの承認が別の HTTP(S) オリジンを経由する必要がある場合にのみ設定してください。このフィールドが省略された場合、`AGENT_TRIGGERS_SELF_URL` が互換性のためのフォールバックとして機能します。[Agents API events](/docs/features/agents_api#agent-events) および [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation) を参照してください。
+
+`eventDriven.idlePolling` は、準備が整っていない場合のレプリカごとのリカバリポーリングに上限を設けます。`deliveryMaxIntervalMs` のデフォルトは `15000`（有効範囲 `1000`–`300000`）、`queuedTurnMaxIntervalMs` および `maintenanceMaxIntervalMs` はそれぞれデフォルトで `120000`（有効範囲 `30000`–`300000`）、そして `completionWaitMaxIntervalMs` のデフォルトは `60000`（有効範囲 `5000`–`300000`）です。後者は、バックグラウンド処理やサブエージェントの結果が保留中であるか、その親ターンがビジー状態である間の再チェックを制限します。準備完了イベントは配信を迅速化しますが、これらの上限は通常の完了レイテンシを定義するものではなく、レプリカ間およびクラッシュリカバリのフォールバックを維持するためのものです。
+
+```yaml filename="endpoints / agents / eventDriven / idlePolling"
+eventDriven:
+  idlePolling:
+    deliveryMaxIntervalMs: 15000
+    queuedTurnMaxIntervalMs: 120000
+    maintenanceMaxIntervalMs: 120000
+    completionWaitMaxIntervalMs: 60000
+```
 
 Event Actor detached Action completion は、組み込みの生成ストアから自動的に選択されます。インメモリ実行はプロセスローカルですが、Redis 生成ストリームを追加することで、永続的な再起動リカバリとレプリカへのハンドオフが可能になります。`librechat.yaml` のスイッチや環境変数の機能フラグは必要ありません。[Agent Event Runtime](/docs/configuration/dotenv#agent-event-runtime) を参照してください。
 
@@ -529,6 +578,12 @@ Event Actor detached Action completion は、組み込みの生成ストアか�
       '1回の継続バッチで配信されるバックグラウンド完了結果の最大数。有効な値は1から16です。',
       '8',
     ],
+    [
+      'shutdownInterruptGraceMs',
+      'Integer',
+      '実行中のバックグラウンドツールを中断してから中断結果を記録するまでのグレースフルシャットダウン待機時間。有効な値は0から60000 msです。',
+      '5000',
+    ],
   ]}
 />
 
@@ -538,13 +593,14 @@ backgroundTasks:
   ordinaryToolCancellation: false
   completionResultMaxChars: 24576
   completionResultBatchSize: 8
+  shutdownInterruptGraceMs: 5000
 ```
 
 このブロックを省略した場合でも、自動補完配信は有効になります。エージェントが `check_background_task` を通じてすべての結果を収集するようにするには、`completionWakeups: false` を設定してください。
 
 `ordinaryToolCancellation: true` を設定すると、通常のバックグラウンドツールに対してオーナー権限によるキャンセルを公開できます。キャンセルは協調的であり、プロセスローカルに留まり、呼び出しが完了するまでタスクをアクティブに保ち、容量を確保します。これは、切り離された（detached）Subagents をキャンセルするものではありません。
 
-通常のバックグラウンドツール実行はプロセスローカルのままであり、ワーカープロセスの喪失後も存続することはありません。コンテンツのみのターミナル結果が永続化されると、その配信は永続的なものとなり、別のレプリカで継続される可能性があります。ライブアーティファクトを持つタスクは、引き続き所有する実行環境でのポーリングを必要とします。デタッチされたSubagentsは、個別の永続的なトランスクリプトとターミナル結果パスを保持します。ステータス、制御、および復旧のための手動ポーリングは、どちらのモードでも利用可能です。[Background Tool Calls](/docs/features/agents#background-tool-calls) および [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation) を参照してください。
+通常のバックグラウンドツール実行は、プロセスローカルのままです。正常なシャットダウンの間、LibreChatはシャットダウンの猶予期間内にタスクが完了するのを待ち、その後未完了の作業を中断して結果を記録します。突然のワーカーの喪失では、実行中のタスクを保持することはできません。コンテンツのみのターミナル結果が永続化されると、その配信は永続的となり、別のレプリカで継続される可能性があります。ライブアーティファクトを持つタスクは、引き続き所有する実行環境でのポーリングを必要とします。デタッチされたSubagentsは、個別の永続的なトランスクリプトとターミナル結果のパスを保持します。ステータス、制御、および復旧のための手動ポーリングは、どちらのモードでも引き続き利用可能です。[Background Tool Calls](/docs/features/agents#background-tool-calls) および [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation) を参照してください。
 
 ## toolApproval
 

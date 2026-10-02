@@ -65,7 +65,7 @@ Die von LibreChat bereitgestellte Admin-API-Oberfläche ist:
 
 ### Gebündelt mit LibreChat (empfohlen) [#bundled-with-librechat-recommended]
 
-Wenn Sie LibreChat mit der offiziellen [`docker-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/docker-compose.yml) oder [`deploy-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/deploy-compose.yml) ausführen, wird das Admin-Panel als Dienst mitgeliefert und startet automatisch zusammen mit LibreChat -- es ist keine separate Bereitstellung erforderlich.
+Wenn Sie LibreChat mit der offiziellen [`docker-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/docker-compose.yml) oder [`deploy-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/deploy-compose.yml) ausführen, wird das Admin-Panel als Dienst mitgeliefert und startet automatisch zusammen mit LibreChat – es ist keine separate Bereitstellung erforderlich.
 
 | Compose-Datei                  | Admin-Panel-URL          | Bereitstellungsart                                                |
 | ------------------------------ | ------------------------ | ----------------------------------------------------------------- |
@@ -203,6 +203,14 @@ Das Panel rendert die LibreChat-Konfiguration als dynamisches Formular, das durc
 - **Vorwärtskompatibel**: Wenn LibreChat ein neues Konfigurationsfeld einführt, übernimmt das Panel dieses automatisch aus dem Schema. Ein Upgrade oder eine erneute Bereitstellung des Admin-Panels ist nicht erforderlich.
 - **Layered overrides**: Die Basiskonfiguration (aus `librechat.yaml`) kann durch prinzipalspezifische Overrides überschrieben werden, die auf eine Rolle oder Gruppe beschränkt sind. Wenn sich ein Benutzer anmeldet, werden die Overrides in der Prioritätsreihenfolge aufgelöst und mit der Basis zusammengeführt, um die effektive Konfiguration zu erstellen, die der Benutzer sieht.
 
+<Callout type="warning" title="Prozessbasierte MCP-Server bleiben in YAML">
+  MCP-Server, die `type: stdio` oder Prozessfelder wie `command`, `args`, `env`, `cwd` oder `stderr` verwenden, befinden sich im Besitz des Betreibers. Konfigurieren Sie diese ausschließlich in `librechat.yaml`; die Admin-API lehnt Versuche ab, diese zu erstellen oder zu ändern, und Überschreibungen können sie weder ersetzen noch entfernen. Die Konfiguration von Remote-MCP-Servern bleibt über das normale Überschreibungssystem verfügbar.
+</Callout>
+
+<Callout type="warning" title="Langfuse Gateway-Header bleiben in YAML">
+  Deployment-level `langfuse.headers` können Proxy-Anmeldedaten enthalten und sind keine Mongo-gestützte Konfigurationsoberfläche. Konfigurieren Sie diese in `librechat.yaml`; die Admin-API lehnt die gesamte Map sowie einzelne Header-Pfade ab. Siehe [Authenticated Proxies and Gateways](/docs/configuration/langfuse#authenticated-proxies-and-gateways).
+</Callout>
+
 Dies ist die Oberfläche hinter dem [DB-gestützten Konfigurations-Override-System pro Principal](https://github.com/LibreChat-AI/LibreChat/pull/12354) von LibreChat. Typische Anwendungsfälle:
 
 - Geben Sie einer "Research"-Gruppe ein höheres `recursionLimit` und zusätzliche endpoints
@@ -210,6 +218,28 @@ Dies ist die Oberfläche hinter dem [DB-gestützten Konfigurations-Override-Syst
 - Beschränken Sie strengere `interface`-Berechtigungen auf externe Auftragnehmergruppen
 
 Administratoren können auch das optionale [Admin Insights](/docs/features/insights)-Dashboard verwenden, um die MongoDB-Aktivitäten auf Mandantenebene zu überprüfen. Setzen Sie `ENABLE_INSIGHTS=true` und gewähren Sie dann einem Konto mit der Rolle `ADMIN` sowohl `access:admin` als auch `read:insights`.
+
+### Validierung überschreiben [#override-validation]
+
+Override-Schreibvorgänge (`PUT /api/admin/config/:principalType/:principalId` und `PATCH .../fields`) werden anhand desselben Schemas wie `librechat.yaml` validiert und auf die Basiskonfiguration der Bereitstellung angewendet. Ein Schreibvorgang, der eine ungültige Konfiguration erzeugen würde, wird mit HTTP 400 abgelehnt und es wird nichts gespeichert:
+
+```json
+{
+  "error": "Invalid config override",
+  "code": "CONFIG_OVERRIDE_INVALID",
+  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
+}
+```
+
+Jedes Problem enthält nur den Punkt-Pfad und einen stabilen Code (einen Schema-Problemcode wie `invalid_type`, `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key` oder `invalid_document`), niemals den übermittelten Wert. Ein Feld-Patch wird nur bei Problemen abgelehnt, die er betrifft oder einführt; ein älterer ungültiger Wert an einer anderen Stelle im selben Override blockiert ihn daher nicht.
+
+Gespeicherte Überschreibungen, die ungültig geworden sind, zum Beispiel nachdem ein Upgrade das Schema verschärft hat, sind nicht fatal. Wenn die Konfiguration aufgelöst wird, werden die ungültigen Felder verworfen, der Wert darunter (in der Regel der Basiswert aus der `librechat.yaml`) wird angewendet und der Server protokolliert eine Warnung pro Feld:
+
+```text
+[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
+```
+
+Überprüfen Sie nach dem Upgrade die Protokolle auf diese Zeilen und korrigieren oder entfernen Sie dann die aufgelisteten Felder im Panel. Ein Override-Theme, das die [Theme-Regeln](/docs/configuration/librechat_yaml/object_structure/theme#validation) nicht erfüllt, greift auf die gleiche Weise auf das Basis-Theme zurück.
 
 ### Bereichsbezogene Delegation [#section-scoped-delegation]
 

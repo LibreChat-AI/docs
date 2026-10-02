@@ -399,10 +399,20 @@ Mengonfigurasi cakupan berbagi dan backend eksekusi opsional untuk ruang kerja C
       'Batas penerapan opsional untuk pendaftaran pekerja pribadi. `enabled` secara default bernilai true dan `maxPerUser` secara default bernilai 5.',
       '{ enabled: true, maxPerUser: 5 }',
     ],
+    [
+      'conversationMoves',
+      'Object',
+      'Transisi ruang kerja yang diotorisasi pemilik untuk percakapan tersimpan dengan keikutsertaan (opt-in). `allowAttachDetach` juga mengizinkan pelampiran atau keluar dari ruang kerja yang terlampir.',
+      'Disabled',
+    ],
   ]}
 />
 
-Lingkungan Bash yang dilampirkan juga menerima `userConfig.bash.maxQueueWaitMs`, yang mengontrol berapa lama permintaan dapat menunggu kapasitas ruang kerja. Nilai default dan maksimumnya adalah `300000` milidetik (5 menit). Atur ke `0` untuk menonaktifkan percobaan ulang klien setelah upaya penerimaan awal; ini tidak membatalkan pekerjaan yang sudah diterima atau sedang berjalan.
+Lingkungan yang dilampirkan menerima `environments[].configSchema.limits.maxQueueWaitMs`, yang mengontrol berapa lama permintaan boleh mencoba kembali menunggu kapasitas ruang kerja. Nilai default dan maksimumnya adalah `300000` milidetik (5 menit). Atur ke `0` untuk menonaktifkan percobaan ulang klien setelah upaya penerimaan awal; ini tidak membatalkan pekerjaan yang sudah diterima atau sedang berjalan. Bidang-bidang ini termasuk di bawah `configSchema.limits`, **bukan** `userConfig.bash`.
+
+`environments[].configSchema.limits.maxRequestTimeoutMs` secara opsional membatasi **total waktu HTTP untuk satu panggilan alat ruang kerja**, termasuk admisi, eksekusi, penyelesaian, dan pengiriman. Nilai ini menerima `1` hingga `610000` ms, namun konfigurasi akan menolak anggaran yang terlalu kecil untuk menyisakan waktu eksekusi perintah setelah admisi dan cadangan penyelesaian/pengiriman selama 10 detik. Tanpanya, admisi tetap memiliki anggaran 30 detik per percobaan; `maxQueueWaitMs` tetap menjadi cakrawala percobaan ulang yang terpisah. **Jangan aktifkan admisi yang lebih lama** sampai setiap replika API LibreChat memahami kolom ini, rute API Kode menghormati alokasi antrean per permintaan, dan batas waktu terpendek di seluruh jalur proksi/ingress yang aktif telah diukur. Mutasi yang kedaluwarsa mungkin telah selesai di pekerja, jadi LibreChat tidak melakukan percobaan ulang untuk batas waktu yang ambigu.
+
+Dengan total anggaran permintaan, `environments[].configSchema.limits.minCommandAdmissionMs` mencadangkan waktu bagi perintah untuk masuk ke worker sebelum eksekusi dimulai. Nilai defaultnya adalah `10000` ms; atur antara `1000`–`300000` ms. Anggaran permintaan harus **melebihi** alokasi ini ditambah 10000 ms masa tenggang penyelesaian/pengiriman; tanpa total anggaran, pengaturan ini tidak akan berpengaruh. Batas eksekusi Bash yang diiklankan ke Agen adalah nilai yang lebih kecil antara batas atas yang dikonfigurasi atau batas atas upstream dan waktu yang tersisa setelah cadangan tersebut. Sebagai contoh, anggaran permintaan 90000 ms dengan batas atas perintah 80000 ms dan cadangan default akan mengiklankan perintah maksimal 70000 ms.
 
 ```yaml filename="endpoints / agents / statefulCodeSessions"
 statefulCodeSessions:
@@ -435,6 +445,16 @@ statefulCodeSessions:
       configSchema:
         limits:
           maxCommandTimeoutMs: 120000
+          # Before enabling, verify Code API queue allowances and the live proxy deadline.
+          # maxRequestTimeoutMs: 160000
+          # minCommandAdmissionMs: 10000
+          # maxQueueWaitMs: 300000
+        # After upgrading Code API and opting in the worker with --linked-worktree-lanes:
+        # workspaces:
+        #   linkedWorktrees: true
+        # Optional: require exact matching even on workers supporting tolerant edits.
+        # edits:
+        #   tolerantMatching: false
         permissions:
           fileWrite:
             allowed: [allow, ask, deny]
@@ -449,6 +469,16 @@ statefulCodeSessions:
 
 `allowedEnvironments` wajib ada kapan pun blok tersebut disertakan dan harus mencakup setidaknya satu cakupan ruang kerja (workspace scope). Hilangkan seluruh blok untuk mengizinkan ketiga cakupan tersebut dan terus merutekan pekerjaan stateful melalui [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint). Default pribadi dan Agent Builder hanya mengizinkan nilai yang diperbolehkan. Jika administrator memperketat kebijakan, default pribadi yang tersimpan akan tetap terlihat namun dinonaktifkan, dan Agen baru akan menggunakan cakupan pertama yang diperbolehkan. Agen yang sudah diaktifkan akan tetap mempertahankan cakupan yang tersimpan, namun cakupan yang kini tidak diperbolehkan akan gagal secara tertutup (fails closed) saat runtime hingga Agen dikonfigurasi ulang.
 
+`conversationMoves.enabled: true` memungkinkan pemilik percakapan untuk secara eksplisit memindahkan workspace terlampir yang terkunci ke lingkungan yang kompatibel dan memulihkan workspace yang hilang tanpa mengganti riwayat obrolan atau memulihkan file workspace lama. Untuk mengizinkan obrolan yang disimpan agar dapat **melampirkan** (attach) workspace atau **meninggalkan** (leave) workspace untuk obrolan normal, atur `conversationMoves.allowAttachDetach: true`. Kedua tombol ini mati secara default; mengaktifkan pemindahan saja akan mempertahankan perilaku khusus pemindahan. Tingkatkan **semua** replika API, lalu aktifkan [`CODE_ENVIRONMENT_DECISION_VERSION=1`](/docs/configuration/dotenv#code-interpreter) sebelum memilih untuk menggunakannya. Kepemilikan, akses target, pekerjaan aktif, dan kebijakan saat ini diperiksa ulang pada saat transisi; generasi yang sedang berjalan tidak dapat dipindahkan.
+
+```yaml filename="endpoints / agents / statefulCodeSessions / conversationMoves"
+statefulCodeSessions:
+  allowedEnvironments: ['user', 'agent-user', 'conversation']
+  conversationMoves:
+    enabled: true
+    allowAttachDetach: true
+```
+
 `principalWorkers` mengontrol pendaftaran mandiri untuk pekerja (worker) pribadi yang terlampir. Nilai yang dihilangkan akan dianggap sebagai `enabled: true` dan `maxPerUser: 5`; atur `enabled: false` atau `maxPerUser: 0` untuk menghentikan pendaftaran baru. Batas tersebut menghitung setiap lingkungan pribadi yang terdaftar untuk pengguna tersebut di seluruh control plane yang dikonfigurasi, termasuk pekerja yang sedang offline. Menurunkan batas atau menonaktifkan pendaftaran tidak akan mencabut lingkungan yang sudah ada.
 
 Deployment YAML adalah batas maksimal yang mutlak. Penggantian konfigurasi peran, grup, atau pengguna dapat menonaktifkan pendaftaran atau menurunkan `maxPerUser`, tetapi tidak dapat menaikkan nilai deployment. Pengguna hanya akan melihat control plane yang mengaktifkan pairing jika batas efektif lebih besar dari nol, [`pairing.allowPrincipalWorkers`](#statefulcodesessions) diaktifkan pada control plane tersebut, autentikasi utama tersedia, dan pengguna memiliki izin pengelolaan Code Environment.
@@ -462,7 +492,9 @@ Ketika `environments` tidak kosong, setiap entri memerlukan `id` yang unik, `nam
 - `pairing` bersifat opsional dan hanya valid untuk entri `attached` yang dimiliki oleh deployment. `pairing.workerId` mengidentifikasi worker yang dikelola operator untuk didaftarkan, sementara `pairing.allowPrincipalWorkers: true` memungkinkan pengguna yang berwenang untuk mendaftarkan worker yang terikat dengan pemilik ke control plane tersebut. Setidaknya salah satu dari kolom tersebut wajib diisi jika `pairing` disertakan.
 - `pairing.tokenEnv` menamai variabel lingkungan yang berisi token administrator bridge; variabel ini tidak pernah berisi token itu sendiri. Pairing memerlukan HTTPS kecuali untuk pengembangan loopback.
 - `configSchema.permissions` secara opsional memungkinkan pemilik yang berwenang untuk memilih kebijakan `fileWrite` dan `commandExecution` untuk lingkungan pribadi di bawah **Settings > Code environments**. Setiap kolom memerlukan daftar `allowed` yang tidak kosong yang berisi `allow`, `ask`, dan/atau `deny`; `default` adalah `ask` jika dihilangkan dan harus muncul di dalam `allowed`. LibreChat akan menolak nilai tersimpan yang berada di luar daftar administrator.
-- `configSchema.limits.maxCommandTimeoutMs` menetapkan batas waktu Bash maksimum yang boleh diminta oleh model untuk lingkungan tersebut. Nilai ini menerima `1` hingga `300000` ms; jika dihilangkan, maka nilai default 30 detik akan tetap digunakan. Ini adalah batas atas deployment dan tidak dapat dikonfigurasi oleh pengguna.
+- `configSchema.limits.maxCommandTimeoutMs` menetapkan batas waktu Bash terbesar yang boleh diminta oleh model untuk lingkungan tersebut. Nilai ini menerima `1` hingga `300000` ms; jika dihilangkan, maka akan menggunakan nilai default 30 detik. Dengan total anggaran permintaan, batas waktu perintah yang diiklankan juga menyesuaikan dengan sisa waktu setelah penerimaan, penyelesaian, dan pengiriman perintah. Ini adalah batas atas penerapan dan tidak dapat dikonfigurasi oleh pengguna.
+- `configSchema.workspaces.linkedWorktrees: true` mengaktifkan penjadwalan per-worktree hanya untuk workspace terlampir yang mengiklankan `git_linked_worktree`; jika dihilangkan, semua permintaan akan tetap berada di jalur root checkout. Tingkatkan LibreChat **sebelum** worker mengiklankan cakupan ini, deploy Code API yang mendukung lane linked-worktree, lalu jalankan worker dengan `--linked-worktree-lanes` sebelum mengaktifkan pengaturan YAML tersebut. Operasi file yang menargetkan path di dalam `.worktrees/<name>` dan perintah Bash dengan `cwd` di sana akan menggunakan lane tersebut dan mengembalikan path yang relatif terhadap checkout. Perintah yang melakukan `cd` di dalam teks perintahnya, operasi root checkout, instance workspace percakapan, dan tindakan lingkungan akan tetap berada dalam cakupan root.
+- `configSchema.edits.tolerantMatching` mengizinkan fallback yang toleran terhadap spasi secara default pada worker terlampir yang mengiklankan `tolerant_match`; atur ke `false` untuk mewajibkan pencocokan yang tepat, termasuk pratinjau edit yang dilindungi. Pencocokan harus tetap unik kecuali jika edit secara eksplisit mengatur `replace_all`. Worker yang lebih lama tidak menerima bidang pencocokan baru; `replace_all` yang terlampir akan ditolak sebelum pengiriman kecuali worker mengiklankannya. Kemampuan ini memerlukan Code API yang kompatibel dan build worker yang mengimplementasikan [Code Interpreter #271](https://github.com/LibreChat-AI/code-interpreter/pull/271).
 - Jangan konfigurasikan `settings` di dalam deployment YAML. LibreChat menyediakan field dengan cakupan permintaan (request-scoped) tersebut dari preferensi pemilik yang terautentikasi dan tervalidasi oleh server.
 - Hanya kebijakan penulisan file dan eksekusi perintah yang dapat dikonfigurasi oleh pengguna. Isolasi, jaringan, pemasangan (mounts), eksekusi istimewa (privileged execution), ingress, egress, dan rahasia (secrets) tetap dikendalikan oleh administrator.
 - Jika `workerId` tingkat atas dan `pairing.workerId` keduanya ada, keduanya harus cocok. Entri dengan `allowPrincipalWorkers: true` dan tidak ada ID pekerja yang bersifat khusus-pasangan (pairing-only): entri tersebut dihilangkan dari pemilih eksekusi dan tidak dapat menetapkan `default: true`.
@@ -483,6 +515,12 @@ Mengonfigurasi origin internal tepercaya yang digunakan oleh pengiriman event Ag
       'Mengganti listener terikat proses saat ini untuk penerimaan pemicu internal tepercaya. Gunakan hanya jika pengiriman harus melewati origin HTTP tepercaya lainnya.',
       '',
     ],
+    [
+      'idlePolling',
+      'Object',
+      'Membatasi pemindaian pemulihan MongoDB saat idle dan pemeriksaan ulang penyelesaian yang menunggu. Peristiwa lokal dapat mempercepat pemindaian.',
+      'See defaults below',
+    ],
   ]}
 />
 
@@ -496,6 +534,17 @@ endpoints:
 Kelanjutan turunan terikat bersifat otomatis. Bidang `childTurns`, `completionWakeups`, `coalescing`, `actorMailbox`, `checkpointForks`, dan `durableReceipts` yang lebih lama di bawah `eventDriven` bukan lagi merupakan sakelar konfigurasi dan harus dihapus. Runtime sekarang menerapkan jaminan pengiriman tersebut secara langsung. Bidang terpisah [`backgroundTasks.completionWakeups`](#backgroundtasks) mengontrol pengiriman percakapan untuk alat latar belakang yang telah selesai dan Subagent yang terlepas.
 
 Biarkan `selfUrl` tidak disetel untuk jalur pendengar terikat (bound-listener) normal. Setel hanya jika penerimaan pemicu internal tepercaya harus melintasi origin HTTP(S) lain, seperti pintu depan TLS. `AGENT_TRIGGERS_SELF_URL` tetap menjadi cadangan kompatibilitas saat kolom ini dihilangkan. Lihat [Peristiwa API Agen](/docs/features/agents_api#agent-events) dan [Kelanjutan Induk Otomatis](/docs/features/subagents#automatic-parent-continuation).
+
+`eventDriven.idlePolling` membatasi polling pemulihan per-replika saat tidak ada yang siap: `deliveryMaxIntervalMs` memiliki nilai default `15000` (valid `1000`–`300000`), `queuedTurnMaxIntervalMs` dan `maintenanceMaxIntervalMs` masing-masing memiliki nilai default `120000` (valid `30000`–`300000`), dan `completionWaitMaxIntervalMs` memiliki nilai default `60000` (valid `5000`–`300000`). Nilai terakhir membatasi pemeriksaan ulang saat hasil latar belakang atau Subagent tertunda atau giliran induknya sedang sibuk. Peristiwa kesiapan mempercepat pengiriman; batasan ini mempertahankan fallback lintas-replika dan pemulihan kerusakan alih-alih menentukan latensi penyelesaian normal.
+
+```yaml filename="endpoints / agents / eventDriven / idlePolling"
+eventDriven:
+  idlePolling:
+    deliveryMaxIntervalMs: 15000
+    queuedTurnMaxIntervalMs: 120000
+    maintenanceMaxIntervalMs: 120000
+    completionWaitMaxIntervalMs: 60000
+```
 
 Penyelesaian Action yang terlepas (detached) dari Event Actor dipilih secara otomatis dari penyimpanan generasi bawaan. Eksekusi dalam memori bersifat lokal terhadap proses; stream generasi Redis menambahkan pemulihan restart yang tahan lama dan serah terima replika. Tidak diperlukan switch `librechat.yaml` atau flag fitur environment. Lihat [Agent Event Runtime](/docs/configuration/dotenv#agent-event-runtime).
 
@@ -529,6 +578,12 @@ Mengontrol apakah alat latar belakang yang telah selesai dan Subagent yang terle
       'Hasil latar belakang selesai maksimum yang dikirimkan dalam satu batch kelanjutan. Nilai yang valid adalah 1 sampai 16.',
       '8',
     ],
+    [
+      'shutdownInterruptGraceMs',
+      'Integer',
+      'Waktu tunggu graceful-shutdown setelah menginterupsi alat latar belakang yang masih berjalan sebelum merekam hasil yang terinterupsi. Nilai yang valid adalah 0 hingga 60000 ms.',
+      '5000',
+    ],
   ]}
 />
 
@@ -538,13 +593,14 @@ backgroundTasks:
   ordinaryToolCancellation: false
   completionResultMaxChars: 24576
   completionResultBatchSize: 8
+  shutdownInterruptGraceMs: 5000
 ```
 
 Pengiriman penyelesaian otomatis diaktifkan bahkan ketika blok ini dihilangkan. Tetapkan `completionWakeups: false` untuk mengharuskan Agen mengumpulkan setiap hasil melalui `check_background_task`.
 
 Atur `ordinaryToolCancellation: true` untuk mengekspos pembatalan dengan cakupan pemilik (owner-scoped) untuk alat latar belakang biasa. Pembatalan bersifat kooperatif, tetap bersifat lokal pada proses, dan menjaga tugas tetap aktif serta kapasitas tetap dicadangkan hingga pemanggilan selesai. Ini tidak membatalkan Subagents yang terlepas (detached).
 
-Eksekusi alat latar belakang biasa tetap bersifat lokal terhadap proses dan tidak bertahan jika proses pekerja tersebut hilang. Setelah hasil terminal yang hanya berisi konten disimpan, pengirimannya bersifat permanen dan dapat berlanjut di replika lain. Tugas dengan artefak langsung masih memerlukan polling pada proses yang memilikinya. Subagent yang terlepas (Detached Subagents) tetap mempertahankan transkrip permanen dan jalur hasil terminal mereka sendiri. Polling manual tetap tersedia untuk status, kontrol, dan pemulihan dalam mode mana pun. Lihat [Background Tool Calls](/docs/features/agents#background-tool-calls) dan [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation).
+Eksekusi alat latar belakang biasa tetap bersifat lokal pada proses. Selama penghentian yang tertib (graceful shutdown), LibreChat menunggu dalam batas waktu penghentian agar tugas selesai, kemudian menghentikan pekerjaan yang belum selesai dan mencatat hasilnya; kehilangan worker secara tiba-tiba tetap tidak dapat mempertahankan tugas yang sedang berjalan. Setelah hasil terminal yang hanya berisi konten disimpan, pengirimannya bersifat tahan lama dan dapat dilanjutkan pada replika lain. Tugas dengan artefak langsung masih memerlukan polling pada run pemiliknya. Subagent yang terlepas (Detached Subagents) tetap memiliki transkrip tahan lama dan jalur hasil terminal mereka sendiri. Polling manual tetap tersedia untuk status, kontrol, dan pemulihan dalam mode apa pun. Lihat [Background Tool Calls](/docs/features/agents#background-tool-calls) dan [Automatic Parent Continuation](/docs/features/subagents#automatic-parent-continuation).
 
 ## toolApproval
 

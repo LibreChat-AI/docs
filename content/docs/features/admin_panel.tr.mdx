@@ -65,7 +65,7 @@ LibreChat tarafından sunulan yönetici API yüzeyi şöyledir:
 
 ### LibreChat ile birlikte gelir (önerilen) [#bundled-with-librechat-recommended]
 
-LibreChat'i resmi [`docker-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/docker-compose.yml) veya [`deploy-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/deploy-compose.yml) dosyalarıyla çalıştırırsanız, yönetici paneli bir servis olarak gelir ve LibreChat ile birlikte otomatik olarak başlar; ayrı bir dağıtım gerekmez.
+LibreChat'i resmi [`docker-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/docker-compose.yml) veya [`deploy-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/deploy-compose.yml) dosyalarıyla çalıştırırsanız, yönetici paneli bir servis olarak gelir ve LibreChat ile birlikte otomatik olarak başlar; ayrı bir dağıtıma gerek yoktur.
 
 | Compose dosyası                | Yönetici paneli URL'si   | Nasıl sunulduğu                                                   |
 | ------------------------------ | ------------------------ | ----------------------------------------------------------------- |
@@ -203,13 +203,43 @@ Panel, LibreChat yapılandırmasını yapılandırma şeması tarafından yönle
 - **Geriye dönük uyumlu**: LibreChat yeni bir yapılandırma alanı sunduğunda, panel bunu şemadan otomatik olarak alır. Yönetici paneli yükseltmesi veya yeniden dağıtım gerekmez.
 - **Katmanlı geçersiz kılmalar (Layered overrides)**: temel yapılandırma (`librechat.yaml` dosyasından gelen), bir role veya gruba kapsamlanmış, yönetici bazlı geçersiz kılmalar ile gölgelenebilir. Bir kullanıcı giriş yaptığında, geçersiz kılmalar öncelik sırasına göre çözümlenir ve kullanıcının gördüğü etkin yapılandırmayı oluşturmak için temel yapılandırmanın üzerine birleştirilir.
 
-Bu, LibreChat'in [DB-backed per-principal configuration override system](https://github.com/LibreChat-AI/LibreChat/pull/12354) özelliğinin arkasındaki arayüzdür. Tipik kullanım durumları:
+<Callout type="warning" title="İşlem destekli MCP sunucuları YAML içinde kalır">
+  `type: stdio` kullanan veya `command`, `args`, `env`, `cwd` ya da `stderr` gibi süreç alanlarını kullanan MCP sunucuları operatör sahiplidir. Bunları yalnızca `librechat.yaml` içinde yapılandırın; yönetici API'si bunları oluşturma veya değiştirme girişimlerini reddeder ve geçersiz kılmalar (overrides) bunları değiştiremez veya kaldıramaz. Uzak MCP sunucusu yapılandırması, normal geçersiz kılma sistemi aracılığıyla kullanılabilir olmaya devam eder.
+</Callout>
+
+<Callout type="warning" title="Langfuse gateway başlıkları YAML içinde kalır">
+  Dağıtım düzeyindeki `langfuse.headers`, proxy kimlik bilgilerini içerebilir ve Mongo destekli bir yapılandırma yüzeyi değildir. Bunları `librechat.yaml` içinde yapılandırın; yönetici API'si tüm haritayı ve bireysel başlık yollarını reddeder. Bkz. [Authenticated Proxies and Gateways](/docs/configuration/langfuse#authenticated-proxies-and-gateways).
+</Callout>
+
+Bu, LibreChat'in [DB destekli temel bazlı yapılandırma geçersiz kılma sisteminin](https://github.com/LibreChat-AI/LibreChat/pull/12354) arkasındaki arayüzdür. Tipik kullanım durumları:
 
 - Bir "Research" grubuna daha yüksek bir `recursionLimit` ve ek endpoint'ler verin
 - "FinanceAdmins" rolünün uzak MCP sunucularını yönetmesine izin verin, normal kullanıcılar ise bunları yalnızca kullanabilsin
 - `interface` izinlerini harici yüklenici grupları için daha katı olacak şekilde sınırlandırın
 
 Yöneticiler, kiracı kapsamındaki MongoDB etkinliğini incelemek için isteğe bağlı [Admin Insights](/docs/features/insights) panosunu da kullanabilirler. `ENABLE_INSIGHTS=true` ayarını yapın, ardından `ADMIN` rolüne sahip bir hesaba hem `access:admin` hem de `read:insights` yetkilerini verin.
+
+### Geçersiz Kılma Doğrulaması (Override Validation) [#override-validation]
+
+Geçersiz kılma yazma işlemleri (`PUT /api/admin/config/:principalType/:principalId` ve `PATCH .../fields`), dağıtımın temel yapılandırması üzerine uygulanan `librechat.yaml` ile aynı şemaya göre doğrulanır. Geçersiz bir yapılandırma oluşturacak bir yazma işlemi HTTP 400 hatasıyla reddedilir ve hiçbir şey kaydedilmez:
+
+```json
+{
+  "error": "Invalid config override",
+  "code": "CONFIG_OVERRIDE_INVALID",
+  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
+}
+```
+
+Her sorun yalnızca nokta yolunu ve sabit bir kod taşır (örneğin `invalid_type`, `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key` veya `invalid_document` gibi bir şema sorun kodu), gönderilen değeri asla taşımaz. Bir alan yaması yalnızca etkilediği veya ortaya çıkardığı sorunlar nedeniyle reddedilir, bu nedenle aynı geçersiz kılma içindeki başka bir yerdeki eski geçersiz bir değer onu engellemez.
+
+Örneğin bir yükseltme şemayı sıkılaştırdıktan sonra geçersiz hale gelen kayıtlı geçersiz kılmalar (overrides) ölümcül değildir. Yapılandırma çözümlendiğinde, geçersiz alanlar atılır, altlarındaki değer (genellikle temel `librechat.yaml` değeri) uygulanır ve sunucu her alan için bir uyarı günlüğe kaydeder:
+
+```text
+[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
+```
+
+Yükseltme işleminden sonra bu satırlar için günlükleri kontrol edin, ardından panelde listelenen alanları düzeltin veya kaldırın. [Tema kurallarına](/docs/configuration/librechat_yaml/object_structure/theme#validation) uymayan bir geçersiz kılma teması, aynı şekilde temel temaya geri döner.
 
 ### Bölüm Kapsamlı Yetkilendirme [#section-scoped-delegation]
 
