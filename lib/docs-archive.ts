@@ -3,7 +3,11 @@ import 'server-only'
 import { docsArchive } from '@/.source/server'
 import { loader, type StaticSource } from 'fumadocs-core/source'
 import { resolveIcon } from '@/lib/icons'
-import { DOCS_VERSION_ID_PATTERN, compareDocsVersionsDescending } from '@/lib/docs-version-order'
+import {
+  DOCS_VERSION_ID_PATTERN,
+  compareDocsVersionsDescending,
+  latestStableVersion,
+} from '@/lib/docs-version-order'
 import { CURRENT_VERSION_OPTION, type DocsVersionOption } from '@/lib/versions'
 import type { Root } from 'fumadocs-core/page-tree'
 import type { TableOfContents } from 'fumadocs-core/toc'
@@ -76,6 +80,9 @@ export const archivedVersions: string[] = (() => {
   return [...ids].sort(compareDocsVersionsDescending)
 })()
 
+/** The newest archived release (not a release candidate), labelled as the latest release. */
+export const latestReleasedVersion: string | undefined = latestStableVersion(archivedVersions)
+
 export function isArchivedVersion(id: string | undefined): boolean {
   return !!id && archivedVersions.includes(id)
 }
@@ -111,6 +118,10 @@ export function archivedDocsSource(version: string): ArchivedDocsSource {
 export function docsVersionOptions(): DocsVersionOption[] {
   return [
     CURRENT_VERSION_OPTION,
-    ...archivedVersions.map((id) => ({ id, label: id, url: `/${id}/docs` })),
+    ...archivedVersions.map((id) => ({
+      id,
+      label: id === latestReleasedVersion ? `${id} (latest release)` : id,
+      url: `/${id}/docs`,
+    })),
   ]
 }

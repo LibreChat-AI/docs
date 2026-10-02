@@ -11,7 +11,7 @@ import { QuickStartHub } from '@/components/QuickStartHub'
 import { LLMCopyButton, ViewOptions } from '@/components/page-actions'
 import { CredentialsGeneratorMDX } from '@/components/tools/CredentialsGeneratorMDX'
 import { YAMLValidatorMDX } from '@/components/tools/YAMLValidatorMDX'
-import { archivedDocsSource, archivedVersions } from '@/lib/docs-archive'
+import { archivedDocsSource, archivedVersions, latestReleasedVersion } from '@/lib/docs-archive'
 import { i18n, localizedDocsHref } from '@/lib/i18n'
 import { mdxComponents } from '@/lib/mdx-components'
 import { ogImageUrl } from '@/lib/og'
@@ -216,7 +216,11 @@ export async function renderArchivedDocsPage({
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
       <DocsBody>
-        <ArchivedVersionBanner version={version} currentHref={currentHref} />
+        <ArchivedVersionBanner
+          version={version}
+          currentHref={currentHref}
+          latestRelease={version === latestReleasedVersion}
+        />
         <MDX components={localizedMdxComponents(i18n.defaultLanguage)} />
       </DocsBody>
     </DocsPage>

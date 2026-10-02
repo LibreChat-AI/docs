@@ -3,6 +3,7 @@ import {
   DOCS_VERSION_ID_PATTERN,
   compareDocsVersionsDescending,
   docsVersionSortKey,
+  latestStableVersion,
 } from './docs-version-order'
 
 describe('docs version ids', () => {
@@ -50,5 +51,16 @@ describe('docs version ids', () => {
 
   it('treats two identical series as equal instead of NaN', () => {
     expect(compareDocsVersionsDescending('v0.8.x', 'v0.8.x')).toBe(0)
+  })
+})
+
+describe('latestStableVersion', () => {
+  it('skips newer release candidates and picks the newest release', () => {
+    expect(latestStableVersion(['v0.8.7', 'v0.8.9-rc1', 'v0.8.8', 'v0.8.8-rc4'])).toBe('v0.8.8')
+  })
+
+  it('returns undefined when only release candidates exist', () => {
+    expect(latestStableVersion(['v0.8.8-rc1', 'v0.8.8-rc2'])).toBeUndefined()
+    expect(latestStableVersion([])).toBeUndefined()
   })
 })

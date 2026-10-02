@@ -42,3 +42,12 @@ export function compareDocsVersionsDescending(left: string, right: string): numb
 
   return 0
 }
+
+/**
+ * The newest archived version that is a release rather than a release
+ * candidate: the version most self-hosted deployments run. `v0.7.x` series
+ * ids count as releases.
+ */
+export function latestStableVersion(ids: readonly string[]): string | undefined {
+  return [...ids].sort(compareDocsVersionsDescending).find((id) => !id.includes('-rc'))
+}

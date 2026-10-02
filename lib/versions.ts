@@ -1,12 +1,13 @@
 /**
- * The live docs version.
+ * The live docs version. The live docs follow LibreChat's development branch,
+ * so they can describe features newer than the latest release.
  *
  * Archived versions are not listed here: they are discovered from the
  * directories under `content/docs-archive` (see lib/docs-archive.ts), so
  * publishing one is a content-only change. This module stays free of
  * server-only imports because the switcher is a client component.
  */
-export const CURRENT_VERSION = 'v0.8.x'
+export const CURRENT_VERSION = 'latest'
 
 export interface DocsVersionOption {
   /** `current` for the live docs, otherwise the archived version id. */
@@ -25,7 +26,7 @@ export interface DocsVersionOption {
 
 export const CURRENT_VERSION_OPTION: DocsVersionOption = {
   id: 'current',
-  label: `${CURRENT_VERSION} (latest)`,
+  label: 'Latest (dev)',
   url: '/docs',
   current: true,
 }

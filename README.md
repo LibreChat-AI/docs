@@ -204,7 +204,9 @@ Two limits are worth knowing:
 - **Snapshots are bundled, so they cost build memory.** Archived pages inherit real MDX imports
   (`next/image`, `@/components/...`) from the docs they snapshot, which on-demand compilation
   cannot resolve, so the collection is bundled like the live docs. `pnpm build` therefore runs with
-  `--max-old-space-size=8192`; with 14 archived versions it prerenders ~5.1k pages.
+  `--max-old-space-size=8192`. The bundle also has a hard ceiling: with 17 archived versions webpack
+  fails with `RangeError: Invalid string length`, so only final releases are archived and a
+  release's candidate snapshots are deleted once it ships (see `content/docs-archive/README.md`).
 
 ## Available Scripts
 
