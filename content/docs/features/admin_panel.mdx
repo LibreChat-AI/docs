@@ -228,6 +228,28 @@ This is the surface behind LibreChat's [DB-backed per-principal configuration ov
 
 Administrators can also use the opt-in [Admin Insights](/docs/features/insights) dashboard to review tenant-scoped MongoDB activity. Set `ENABLE_INSIGHTS=true`, then grant both `access:admin` and `read:insights` to an account with the `ADMIN` role.
 
+### Override Validation
+
+Override writes (`PUT /api/admin/config/:principalType/:principalId` and `PATCH .../fields`) are validated against the same schema as `librechat.yaml`, applied on top of the deployment's base config. A write that would produce an invalid config is rejected with HTTP 400 and nothing is saved:
+
+```json
+{
+  "error": "Invalid config override",
+  "code": "CONFIG_OVERRIDE_INVALID",
+  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
+}
+```
+
+Each issue carries only the dot-path and a stable code (a schema issue code such as `invalid_type`, or `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key` or `invalid_document`), never the submitted value. A field patch is only rejected for problems it touches or introduces, so an older invalid value elsewhere in the same override does not block it.
+
+Stored overrides that have become invalid, for example after an upgrade tightens the schema, are not fatal. When the config is resolved, the invalid fields are dropped, the value beneath them (usually the base `librechat.yaml` value) applies, and the server logs one warning per field:
+
+```text
+[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
+```
+
+Check the logs for these lines after upgrading, then fix or remove the listed fields in the panel. An override theme that fails the [theme rules](/docs/configuration/librechat_yaml/object_structure/theme#validation) falls back to the base theme in the same way.
+
 ### Section-Scoped Delegation
 
 Configuration grants can be broad (`read:configs`, `manage:configs`) or limited to one top-level section (`read:configs:<section>`, `manage:configs:<section>`). A section-scoped reader receives a filtered configuration response containing only authorized sections instead of being denied the entire request. Section-level manage grants imply read access to the same section; broad manage access implies broad read access.
