@@ -8,7 +8,7 @@
 
 <p align="center">
   The official documentation, blog, and changelog for
-  <a href="https://github.com/danny-avila/LibreChat">LibreChat</a>,
+  <a href="https://github.com/LibreChat-AI/LibreChat">LibreChat</a>,
   the open-source, self-hostable AI chat platform.
 </p>
 
@@ -55,7 +55,7 @@ Read the [full v0.8.8-rc2 changelog](https://www.librechat.ai/changelog/v0.8.8-r
 
 This repository powers **[www.librechat.ai](https://www.librechat.ai)**: the docs, guides, blog, and changelog for LibreChat. It is a [Next.js](https://nextjs.org) application built on [Fumadocs](https://fumadocs.dev), with content authored in MDX.
 
-> Looking for the LibreChat app itself? It lives at **[danny-avila/LibreChat](https://github.com/danny-avila/LibreChat)**. Open code and product issues there, and documentation issues here.
+> Looking for the LibreChat app itself? It lives at **[LibreChat-AI/LibreChat](https://github.com/LibreChat-AI/LibreChat)**. Open code and product issues there, and documentation issues here.
 
 ## Table of Contents
 
@@ -171,23 +171,68 @@ Only pages listed in the `pages` array appear in the sidebar, in the order given
 
 **Localization:** English (`.mdx`) is the source of truth. Translated pages use a locale suffix (for example `index.es.mdx`), and each locale's search index only includes pages that have a real translated file. Keep new content in English and let the translation workflow handle the rest.
 
+## Docs Versions
+
+`content/docs/` is the live version, served at `/docs` and labelled by `CURRENT_VERSION` in
+`lib/versions.ts`. Every published release and release candidate is a frozen snapshot under
+`content/docs-archive/<version>/`, served at `/<version>/docs` — for example
+`/v0.8.5/docs/quick_start`. Version ids match `v<major>.<minor>[.<patch>|.x][-rc<n>]`; the
+switcher orders them newest-first, with a release ranked above its own candidates.
+
+Publish one with:
+
+```bash
+pnpm docs:archive v0.8.5 --ref=<commit-or-tag>
+```
+
+That copies the English docs out of git at `--ref` (default `HEAD`), drops every localized file,
+and rewrites absolute `/docs/...` links to `/<version>/docs/...` so an archived page never links
+back into the live docs. The sidebar version switcher is built from the directories that exist, so
+no code change is needed to publish or retire a version.
+
+Archived snapshots are deliberately inert: English-only, `noindex`, absent from the sitemap,
+search index, `llms.txt`, the translation workflow and `pnpm sync:config-version` (they keep the
+`librechat.yaml` version they shipped with).
+
+Two limits are worth knowing:
+
+- **The archive starts at v0.8.2.** This repository only gained `content/docs` in the Fumadocs
+  migration, and every release up to v0.8.2 had its changelog backfilled in that single commit, so
+  there is exactly one docs tree for all of them — published once as `v0.8.2`. Docs for v0.5.x–v0.8.1
+  exist only as the pre-migration Nextra `pages/` tree and would need converting before they could
+  be archived.
+- **Snapshots are bundled, so they cost build memory.** Archived pages inherit real MDX imports
+  (`next/image`, `@/components/...`) from the docs they snapshot, which on-demand compilation
+  cannot resolve, so the collection is bundled like the live docs. `pnpm build` therefore runs with
+  `--max-old-space-size=8192`. The bundle also has a hard ceiling: with 17 archived versions webpack
+  fails with `RangeError: Invalid string length`, so only final releases are archived and a
+  release's candidate snapshots are deleted once it ships (see `content/docs-archive/README.md`).
+
 ## Available Scripts
 
-| Command                    | Description                                   |
-| -------------------------- | --------------------------------------------- |
-| `pnpm dev`                 | Start the dev server on port 3333             |
-| `pnpm build`               | Production build                              |
-| `pnpm start`               | Start the production server on port 3333      |
-| `pnpm lint`                | Run ESLint (zero warnings allowed)            |
-| `pnpm lint:prettier`       | Check formatting with Prettier                |
-| `pnpm prettier`            | Format the codebase with Prettier             |
-| `pnpm typecheck`           | Generate MDX types and run `tsc --noEmit`     |
-| `pnpm test`                | Run the Vitest suite                          |
-| `pnpm test:watch`          | Run Vitest in watch mode                      |
-| `pnpm analyze`             | Build and analyze the production bundle size  |
-| `pnpm optimize:images`     | Optimize images in `public/`                  |
-| `pnpm web-bot-auth:keygen` | Generate an Ed25519 Web Bot Auth private JWK  |
-| `pnpm translate`           | Generate translations from the English source |
+| Command                     | Description                                                  |
+| --------------------------- | ------------------------------------------------------------ |
+| `pnpm dev`                  | Start the dev server on port 3333                            |
+| `pnpm build`                | Production build                                             |
+| `pnpm start`                | Start the production server on port 3333                     |
+| `pnpm lint`                 | Run ESLint (zero warnings allowed)                           |
+| `pnpm lint:prettier`        | Check formatting with Prettier                               |
+| `pnpm prettier`             | Format the codebase with Prettier                            |
+| `pnpm typecheck`            | Generate MDX types and run `tsc --noEmit`                    |
+| `pnpm test`                 | Run the Vitest suite                                         |
+| `pnpm test:watch`           | Run Vitest in watch mode                                     |
+| `pnpm check:config-version` | Fail if any `librechat.yaml` snippet has a stale `version:`  |
+| `pnpm sync:config-version`  | Rewrite stale `librechat.yaml` `version:` snippets to latest |
+| `pnpm analyze`              | Build and analyze the production bundle size                 |
+| `pnpm optimize:images`      | Optimize images in `public/`                                 |
+| `pnpm web-bot-auth:keygen`  | Generate an Ed25519 Web Bot Auth private JWK                 |
+| `pnpm translate`            | Generate translations from the English source                |
+| `pnpm docs:archive`         | Snapshot the English docs into `content/docs-archive`        |
+
+The config version is sourced from the newest `content/changelog/config_v*.mdx` entry, whose
+`version:` frontmatter must match its filename. Never hand-edit the `version:` line in a docs
+snippet — run `pnpm sync:config-version`, which updates every `librechat.yaml` code fence under
+`content/docs` (all locales included) and leaves unrelated YAML alone.
 
 ## Contributing
 
@@ -198,14 +243,14 @@ Contributions are welcome, from fixing a typo to writing a whole new guide.
 3. Before opening a PR, run `pnpm lint`, `pnpm typecheck`, and `pnpm build`.
 4. Open a pull request describing what you changed and why.
 
-For questions about the documentation, join the [Discord](https://discord.librechat.ai). For issues with the LibreChat application itself, please use the [main repository](https://github.com/danny-avila/LibreChat).
+For questions about the documentation, join the [Discord](https://discord.librechat.ai). For issues with the LibreChat application itself, please use the [main repository](https://github.com/LibreChat-AI/LibreChat).
 
 ## Community & Support
 
 - 🌐 **Website:** [www.librechat.ai](https://www.librechat.ai)
 - 💬 **Discord:** [discord.librechat.ai](https://discord.librechat.ai)
 - 🧠 **Ask DeepWiki:** [deepwiki.com/LibreChat-AI/librechat.ai](https://deepwiki.com/LibreChat-AI/librechat.ai)
-- 🚀 **Main app:** [danny-avila/LibreChat](https://github.com/danny-avila/LibreChat)
+- 🚀 **Main app:** [LibreChat-AI/LibreChat](https://github.com/LibreChat-AI/LibreChat)
 
 ## License
 
