@@ -146,9 +146,11 @@ import {
   ListChecks,
   UserPlus,
   Settings2,
+  GitPullRequest,
 } from 'lucide-react'
 
 const icons: Record<string, ReactElement> = {
+  GitPullRequest: <GitPullRequest />,
   Rocket: <Rocket />,
   Sparkles: <Sparkles />,
   Monitor: <Monitor />,
