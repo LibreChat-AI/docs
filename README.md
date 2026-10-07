@@ -1,3 +1,4 @@
+<!-- Test PR: harmless change to verify the PR workflow. -->
 <p align="center">
   <a href="https://www.librechat.ai">
     <img src="public/librechat.png" alt="LibreChat" width="120" height="120">
