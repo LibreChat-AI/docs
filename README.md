@@ -255,3 +255,5 @@ For questions about the documentation, join the [Discord](https://discord.librec
 ## License
 
 Released under the [MIT License](./LICENSE).
+
+<!-- Test note: random change to verify the draft PR flow. -->
