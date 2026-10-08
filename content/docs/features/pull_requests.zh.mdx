@@ -1,0 +1,235 @@
+---
+title: 对话拉取请求
+icon: GitPullRequest
+description: 显示在附加工作区中运行代码的对话的 GitHub 拉取请求、大小和 CI 状态。
+---
+
+{/*
+  PUBLISHING GATE. Do not merge this page until LibreChat-AI/LibreChat#16876 (default-on, token
+  fallback, allowAllRepositories) is merged to dev. Until then, only the blocks marked
+  "Pending" are unreleased. After it merges: re-check the schema in
+  packages/data-provider/src/config.ts, delete the "Older versions" blocks and every Pending marker.
+  TODO(maintainer): first release version for each part (do not guess).
+  TODO(maintainer): requirement 4 (where an admin sets the workspace environment's repository).
+  Add it to "Requirements" once confirmed. Do not publish without it.
+*/}
+
+当聊天在附加的工作区中运行代码时，worker 会报告其所在的 git 分支和提交记录。LibreChat 会使用该分支，通过服务器上持有的令牌来查找匹配的 GitHub 拉取请求（pull request），并将其显示在以下两个位置：
+
+- **聊天标题**：一个带有 pull request 图标和 CI 点的芯片。悬停或聚焦时会打开一张卡片。
+- **侧边栏对话列表**：行尾显示相同的图标和 CI 点。该行保留对话本身的标题；拉取请求（pull request）标题仅显示在卡片中。
+
+## 要求 [#requirements]
+
+要使聊天中显示拉取请求 (pull request)，必须满足以下所有条件：
+
+1. LibreChat 拥有一个 GitHub token 和一个 repository 范围。请参阅 [Setup](#setup)。
+2. 该聊天使用**附加代码工作区**（代码工作者），而非普通聊天。
+3. Worker 会报告其分支。这需要使用 `LibreChat-AI/code-interpreter` PR #311 或更高版本构建的 worker，并在 Code API 上设置 `CODEAPI_BRIDGE_LANE_GIT=true`。请参阅 [Code Interpreter](/docs/features/code_interpreter#attached-environments-and-pairing)。
+
+如果缺少某项要求，聊天界面将不会显示任何拉取请求，也不会向用户显示任何错误。唯一的例外是设置了 `token` 但其环境变量为空或缺失的情况：此时查找会以 `NOT_CONFIGURED` 失败，并且侧边栏行会显示带有重试按钮的警告图标。
+
+## 设置 [#setup]
+
+### 1. 创建令牌 [#1-create-a-token]
+
+使用一个仅限于您想要展示的仓库的细粒度 GitHub token，并设置 **read-only** 权限：
+
+- 拉取请求
+- 检查
+- 目录
+
+<Callout type="warning" title="权限失败模式">
+  如果没有 **Checks**，每个匹配的拉取请求都将无法加载。如果没有 **Contents**，当聊天记录的分支自上次命令后发生变动时，该聊天记录将无法加载。
+</Callout>
+
+### 2. 将 token 提供给 LibreChat [#2-give-librechat-the-token]
+
+<Callout type="important" title="待定：尚未发布">
+  环境变量回退是默认开启变更的一部分 (LibreChat-AI/LibreChat#16876)。
+</Callout>
+
+LibreChat 按以下顺序查找令牌：
+
+1. `token: "${MY_VAR}"` 在 `librechat.yaml` 中。这是一个环境变量**引用**；YAML 文件本身从不存储 token。
+2. 如果未设置 `token`，则会使用以下环境变量中第一个已设置的值：`GITHUB_PULL_REQUEST_TOKEN`、`GITHUB_TOKEN`、`GH_TOKEN`。
+3. 任何地方都没有 token：该功能将保持休眠状态。
+
+如果设置了 `token` 但无法解析（变量为空或缺失），则会失败并返回 `NOT_CONFIGURED`。它**不会**回退到上述三个变量。
+
+<Callout type="info" title="GITHUB_TOKEN 是一个常见的名称">
+  如果您的部署已经将 `GITHUB_TOKEN` 用于其他用途，一旦设置了存储库范围（repository scope），默认开启的行为就会立即开始使用它。请显式设置 `token`，或使用 `GITHUB_PULL_REQUEST_TOKEN`，以避免共享该令牌。
+</Callout>
+
+**旧版本：** 当启用该功能时，`token` 是必需的，并且必须是一个 `${NAME}` 引用，例如 `"${GITHUB_PULL_REQUEST_TOKEN}"`。没有环境变量回退机制。
+
+### 3. 选择它可以查询的存储库 [#3-choose-which-repositories-it-may-look-up]
+
+Worker 会上报其自身的存储库，因此服务器必须决定该令牌可用于哪些存储库。如果没有作用域（scope），该功能将保持休眠状态。有两种方式：
+
+- `allowedRepositories`：一个包含 `owner/name` 或 `owner/*` 条目的列表（最多 256 个）。匹配时不区分大小写。诸如 `*/*`、`*`、`owner` 或包含 `..` 的条目将被 schema 拒绝。
+- `allowAllRepositories: true` (**待定**): 查找令牌可以读取的任何存储库。默认值为 `false`。
+
+<Callout type="warning" title="安全性：allowAllRepositories">
+  开启此功能后，任何能够运行代码的用户都可以将服务器的令牌指向该令牌有权读取的任何存储库，并查看拉取请求的标题、大小和检查状态。请使用仅限于您愿意展示的存储库的只读令牌。
+</Callout>
+
+### 4. 启用它 [#4-turn-it-on]
+
+<Callout type="important" title="待定：尚未发布">
+  默认开启行为是 LibreChat-AI/LibreChat#16876 的一部分。
+</Callout>
+
+只要存在 token 和 repository 范围，该功能就会立即启用。没有 `enabled` 开关需要设置。无论设置了什么其他内容，`enabled: false` 都会将其关闭。
+
+**旧版本：** 必须设置 `enabled: true`，且如果缺少 `token` 或 `allowedRepositories` 为空，架构将拒绝 `enabled: true`。
+
+### 最小示例 [#minimal-examples]
+
+默认开启的表单（**Pending**），且在服务器环境中设置了 `GITHUB_TOKEN`：
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowAllRepositories: true
+```
+
+仅限于特定存储库（**待定**，相同的 token 回退）：
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowedRepositories:
+        - 'LibreChat-AI/LibreChat'
+        - 'my-org/*'
+```
+
+适用于旧版本的表单：
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      enabled: true
+      token: '${GITHUB_PULL_REQUEST_TOKEN}'
+      allowedRepositories: ['LibreChat-AI/LibreChat']
+```
+
+请参阅 [`pullRequests` 参考](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) 以获取每个键的详细信息，包括调整选项。
+
+## 用户所见 [#what-users-see]
+
+### 聊天头部标签 [#chat-header-chip]
+
+- **Desktop**：该芯片位于页眉左侧，紧邻其他左侧控件。悬停或聚焦时，其右侧的卡片会打开。
+- **移动端**：入口位于页眉的溢出（三个点）菜单中，点击后会打开一个对话框。
+- 页眉会自动刷新：在检查运行期间或仍在计算可合并性时，大约每 20 秒刷新一次；在其他情况下，大约每 60 秒刷新一次；一旦拉取请求被合并或关闭且没有检查在运行时，则不再刷新。
+
+### 侧边栏标记 [#sidebar-mark]
+
+- 对话行末尾有一个带有 CI 点的 pull request 图标。它仅在包含 pull request 的对话中显示。
+- 悬停、聚焦或点击会在标记右侧打开相同的卡片。点击标记本身不会打开对话。
+- 侧边栏从不进行轮询。列表项的状态保持在上次加载时的样子，当窗口重新获得焦点且数据已超过一分钟时，它会自动刷新。
+- 如果查找失败，该行会在其卡片中显示一个带有重试按钮的警告图标，因此失败不会被误认为是“没有拉取请求”。
+
+### 卡片 [#the-card]
+
+该卡片显示 `PR #number`，绿色显示的 `+additions`，红色显示的 `-deletions`，一个在 GitHub 上打开该拉取请求的链接，拉取请求标题，以及两个徽章：
+
+- **状态**：Open（开启）、Draft（草稿）、Merged（合并）或 Closed（关闭）。
+- **检查 (Checks)**：通过 (Passing)、失败 (Failing)、运行中 (Running) 或无 (none)。
+
+{/* TODO(docs): add the screenshots from LibreChat PRs #16794 and #16815. */}
+
+### 图标和圆点的含义 [#icon-and-dot-meaning]
+
+| 情况 | 图标颜色 | CI 圆点 |
+| --------------------------------------- | ------------------------- | ------------------------------------- |
+| 开启，无冲突，检查通过 | 绿色（准备合并） | 绿色 |
+| 开启，无冲突，无任何检查 | 绿色 | 无 |
+| 开启，存在合并冲突 | 红色（无法合并） | 按检查结果 |
+| 草稿 | 中性 | 按检查结果 |
+| 已合并或已关闭 | 中性 | 无（检查仍在运行时为琥珀色） |
+
+CI 点颜色：绿色表示通过，红色表示失败，琥珀色表示正在运行，无颜色表示没有检查，或者当拉取请求已合并或关闭且没有检查仍在运行时。失败的检查优先级高于仍在运行的检查。如果汇总的检查运行次数多于已读取的次数，则永远不会报告为通过。
+
+## 拉取请求是如何匹配的 [#how-a-pull-request-is-matched]
+
+1. Worker 会报告聊天最后一次运行时所在的仓库、分支和提交（head）。
+2. LibreChat 会优先列出该分支的开放拉取请求（pull requests），因此重复使用分支名称时，已关闭的历史记录不会掩盖开放的请求。随后，它会检查来自派生仓库（forks）的开放拉取请求（通过提交记录查找），最后再检查已关闭的请求。
+3. 对于已记录的提交，只有当拉取请求的头指针指向该提交或基于该提交构建时，它才会被计入。这可以防止已删除并重用的分支名称显示旧的拉取请求。
+4. 一个尚无提交的分支（一个全新的空分支）不匹配任何内容。
+5. 结果会根据凭据、存储库、分支和提交进行缓存。
+6. 检查运行是针对拉取请求当前 head 读取的。对于来自 fork 的拉取请求，仅当该 fork 的仓库在范围内（已列出或设置了 `allowAllRepositories`）时，才会从该 fork 读取检查。否则，将读取基础仓库，且令牌永远不会发送到未列出的 fork。
+
+## 行为 [#behavior]
+
+### 速率限制 [#rate-limits]
+
+- GitHub 速率限制适用于该凭据，因此它会暂停对该令牌下每个分支的查找。
+- 最小暂停时间为 10 秒。未指定等待时间的二级限制将等待 60 秒。GitHub 指定的等待时间将被遵守，上限为 1 小时。
+- 在暂停期间，查找操作会返回 `RATE_LIMITED`，且行会显示重试状态。
+
+### 滚动更新 [#rolling-upgrades]
+
+- 只有当启动配置显示服务器拥有该功能（`pullRequestsBatchVersion`）时，侧边栏才会请求批量路由。
+- 如果一个没有该路由的副本返回 404，客户端将回退到单一路由，每次调用一次，或者在服务器通告时以 `pullRequestsMaxConcurrentLookups` 的速度进行调用。这涵盖了客户端从已升级的副本接收到新的启动标志，然后连接到没有该路由的副本的情况。如果 `/api/config` 由没有该标志的副本提供服务，侧边栏将永远不会请求批处理路由，且行将保持为空，因此在依赖侧边栏标记之前，请务必升级所有副本。
+
+### 未设置时的默认值 [#defaults-when-unset]
+
+- 如果没有 token 或没有 repository 范围，该功能将处于休眠状态：启动配置中不会发布任何内容，不会记录任何内容，也不会显示任何内容。
+- 当在配置中关闭该功能时，现有的聊天记录不会发生变化，且客户端永远不会调用新的路由。
+
+## 安全模型 [#security-model]
+
+- 该令牌存储在服务器上。它永远不会被发送到浏览器，且错误响应中绝不会包含 GitHub 的响应文本、令牌或堆栈跟踪信息。
+- 该令牌仅用于范围内的存储库。它绝不会发送到不在范围内的分支（fork）。
+- 两个 `/api/convos` 查找路由都需要经过身份验证的用户，并且是所有者范围内的。缺失、过期或属于其他用户的对话，其表现与没有拉取请求的对话相同。
+- 使用一个只读的、细粒度的令牌，并将其限制在您愿意展示的仓库范围内。
+
+## 故障排除 [#troubleshooting]
+
+| 症状 | 可能的原因 | 修复方法 |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 任何地方都没有芯片和侧边栏标记 | 没有 token、没有仓库范围，或 `enabled: false` | 检查 [Setup](#setup)。登录后打开 `/api/config` 并查找 `pullRequestsEnabled: true`。 |
+| 标题芯片有效，但侧边栏行不显示任何内容 | `/api/config` 中缺少 `pullRequestsBatchVersion`（旧版本构建或过期的标签页） | 重建或升级服务器，重启并强制刷新。确认 `pullRequestsBatchVersion: 1`。 |
+| 仅部分聊天显示芯片 | 只有附加了已报告分支的代码工作区的聊天才有通道 | 在 Code API 上确认 `CODEAPI_BRIDGE_LANE_GIT=true`，并确认 worker 是基于 code-interpreter PR #311 或更高版本构建的。 |
+| 带有重试图标的警告 | 查找失败（速率限制、GitHub 错误或 `NOT_CONFIGURED`） | 重试。如果持续出现，请检查 token 及其权限。 |
+| `NOT_CONFIGURED` | 已设置 `token` 但其变量为空或缺失 | 设置该变量。**待定：** 或移除 `token` 以使用回退变量。 |
+| 拉取请求已加载但检查看起来错误或失败 | token 缺少 Checks 或 Contents 权限 | 授予只读的 Checks 和 Contents 权限。 |
+| 来自 fork 的拉取请求未显示检查 | fork 不在范围内，因此检查是从基础仓库读取的 | 将 fork 所有者添加到 `allowedRepositories`。**待定：** 或设置 `allowAllRepositories: true`。 |
+| 对于多次重复使用的分支名称没有拉取请求 | `maxCandidatePullRequests`、`maxCandidatePages` 或 `maxHeadComparisons` 设置过低，无法匹配频繁重用的名称，导致搜索在到达匹配的拉取请求前停止 | 调高这些数值。 |
+| 代理后的查找缓慢或超时 | `requestTimeoutSeconds` 设置过低 | 调高该数值。检查 `HTTPS_PROXY` 和 `NO_PROXY`。 |
+
+## API 参考 [#api-reference]
+
+以下 `/api/convos` 路由均需要经过身份验证的用户，且受所有者权限范围限制。启动配置端点不受所有者权限范围限制。
+
+### 获取单个对话的拉取请求 [#get-one-conversations-pull-request]
+
+`GET /api/convos/:conversationId/pull-request`
+
+- **200**: `{ "pullRequest": null }` 或 `{ "pullRequest": { number, title, url, additions, deletions, state, isDraft, mergeable, checks } }`。
+- `state` 为 `open`、`closed` 或 `merged`。`mergeable` 为 `clean`、`conflicting` 或 `unknown`。`checks` 为 `passing`、`failing`、`running` 或 `none`。
+- **503**: `{ "error": "...", "code": "NOT_CONFIGURED" | "RATE_LIMITED" | "UPSTREAM_ERROR" }`.
+- **404**: 无效的对话 ID。**500**: 带有固定文本的存储错误。
+
+### 获取多个对话的拉取请求 [#get-many-conversations-pull-requests]
+
+`POST /api/convos/pull-requests`
+
+- Body: `{ "conversationIds": ["..."] }`，包含 1 到 50 个 id。重复项会被合并。其他任何内容均返回 400 错误。
+- **200**: `{ "results": [ { "conversationId", "pullRequest" } | { "conversationId", "error": { "code" } } ] }`，按请求顺序排列。单次查找失败不会掩盖其他结果。
+- 缺少令牌只会导致需要它的条目失败。
+
+### 启动配置 [#startup-config]
+
+`GET /api/config` 包含这些字段。它们由服务器设置；并非用户设置。
+
+- `pullRequestsEnabled` (布尔值)
+- `pullRequestsBatchVersion` (`1`，仅在启用该功能时存在)
+- `pullRequestsMaxConcurrentLookups` (数字，仅在启用该功能时存在)
+
+只有上述列出的错误代码是稳定的。

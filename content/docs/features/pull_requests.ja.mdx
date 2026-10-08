@@ -1,0 +1,235 @@
+---
+title: 会話のプルリクエスト
+icon: GitPullRequest
+description: 添付されたワークスペースでコードを実行するチャットについて、GitHubのプルリクエスト、サイズ、およびCIステータスを表示します。
+---
+
+{/*
+  PUBLISHING GATE. Do not merge this page until LibreChat-AI/LibreChat#16876 (default-on, token
+  fallback, allowAllRepositories) is merged to dev. Until then, only the blocks marked
+  "Pending" are unreleased. After it merges: re-check the schema in
+  packages/data-provider/src/config.ts, delete the "Older versions" blocks and every Pending marker.
+  TODO(maintainer): first release version for each part (do not guess).
+  TODO(maintainer): requirement 4 (where an admin sets the workspace environment's repository).
+  Add it to "Requirements" once confirmed. Do not publish without it.
+*/}
+
+チャットが添付されたワークスペースでコードを実行すると、ワーカーは現在チェックアウトしているgitブランチとコミットを報告します。LibreChatはそのブランチを使用して、サーバーで保持されているトークンで一致するGitHubプルリクエストを検索し、以下の2箇所に表示します。
+
+- **Chat header**: プルリクエストアイコンとCIドットが付いたチップ。ホバーまたはフォーカスするとカードが開きます。
+- **サイドバーの会話リスト**: 行の末尾に同じアイコンとCIドットが表示されます。行には会話自体のタイトルが保持され、プルリクエストのタイトルはカード内にのみ表示されます。
+
+## 要件 [#requirements]
+
+チャットでプルリクエストを表示するには、以下のすべての条件が満たされている必要があります：
+
+1. LibreChatにはGitHubトークンとリポジトリスコープが必要です。詳細は[Setup](#setup)を参照してください。
+2. このチャットでは、単なるチャットではなく、**アタッチされたコードワークスペース**（コードワーカー）を使用します。
+3. ワーカーは自身のブランチを報告します。これには `LibreChat-AI/code-interpreter` の PR #311 以降からビルドされたワーカーが必要であり、Code API 上で `CODEAPI_BRIDGE_LANE_GIT=true` が設定されている必要があります。詳細は [Code Interpreter](/docs/features/code_interpreter#attached-environments-and-pairing) を参照してください。
+
+要件が不足している場合、チャットにはプルリクエストが表示されず、ユーザーに対してエラーも表示されません。例外として、`token` が設定されているものの、対応する環境変数が空であるか欠落している場合は、検索が `NOT_CONFIGURED` で失敗し、サイドバーの行に警告アイコンと再試行ボタンが表示されます。
+
+## セットアップ [#setup]
+
+### 1. トークンを作成する [#1-create-a-token]
+
+表示したいリポジトリのみに制限された、**読み取り専用**権限を持つきめ細かなGitHubトークンを使用してください：
+
+- プルリクエスト
+- チェック
+- 目次
+
+<Callout type="warning" title="権限エラーのモード">
+  **Checks**がない場合、一致したすべてのプルリクエストは読み込みに失敗します。**Contents**がない場合、前回のコマンド実行時からブランチが更新されたチャットは読み込みに失敗します。
+</Callout>
+
+### 2. LibreChatにトークンを渡す [#2-give-librechat-the-token]
+
+<Callout type="important" title="保留中：未リリース">
+  環境変数のフォールバックは、デフォルトで有効化される変更の一部です (LibreChat-AI/LibreChat#16876)。
+</Callout>
+
+LibreChatは、以下の順序でトークンを検索します：
+
+1. `token: "${MY_VAR}"`（`librechat.yaml` 内）。これは環境変数の**参照**であり、YAML 自体にトークンが保持されることはありません。
+2. `token` が設定されていない場合、以下の環境変数のうち最初に設定されているものが使用されます: `GITHUB_PULL_REQUEST_TOKEN`、`GITHUB_TOKEN`、`GH_TOKEN`。
+3. トークンがどこにもない場合：この機能は休止状態のままになります。
+
+設定されているが解決されない（変数が空または欠落している）`token` は、`NOT_CONFIGURED` で失敗します。上記の3つの変数にフォールバックすることは**ありません**。
+
+<Callout type="info" title="GITHUB_TOKEN は一般的な名称です">
+  デプロイメントで既に `GITHUB_TOKEN` を他の用途に使用している場合、リポジトリスコープが設定されるとすぐにデフォルトでオンの動作がそれを使用し始めます。共有を避けるには、`token` を明示的に設定するか、`GITHUB_PULL_REQUEST_TOKEN` を使用してください。
+</Callout>
+
+**Older versions:** `token` is required when the feature is enabled, and must be a `${NAME}` reference such as `"${GITHUB_PULL_REQUEST_TOKEN}"`. There is no environment variable fallback.
+
+### 3. 検索対象とするリポジトリを選択する [#3-choose-which-repositories-it-may-look-up]
+
+ワーカーは自身のレポジトリを報告するため、サーバー側でそのトークンがどのレポジトリに対して使用可能かを決定する必要があります。スコープが指定されていない場合、この機能は休止状態のままとなります。これには2つの方法があります：
+
+- `allowedRepositories`: `owner/name` または `owner/*` エントリのリスト（最大256個）。マッチングはケースインセンシティブです。`*/*`、`*`、`owner`、または `..` を含むエントリは、スキーマによって拒否されます。
+- `allowAllRepositories: true` (**保留中**): トークンが読み取り可能なすべてのリポジトリを検索します。デフォルトは `false` です。
+
+<Callout type="warning" title="セキュリティ: allowAllRepositories">
+  これを有効にすると、コードを実行できるユーザーは誰でも、サーバーのトークンをそのトークンが読み取り可能な任意のレポジトリに向け、プルリクエストのタイトル、サイズ、およびチェックステータスを確認できるようになります。表示しても問題のないレポジトリにスコープを限定した、読み取り専用のトークンを使用してください。
+</Callout>
+
+### 4. 有効にする [#4-turn-it-on]
+
+<Callout type="important" title="保留中：未リリース">
+  Default-onの動作は、LibreChat-AI/LibreChat#16876の一部です。
+</Callout>
+
+トークンとリポジトリスコープが存在すれば、この機能はすぐに有効になります。設定する `enabled` スイッチはありません。`enabled: false` を設定すると、他の設定に関係なく機能が無効になります。
+
+**古いバージョン:** `enabled: true` が必須であり、スキーマは `token` と空ではない `allowedRepositories` の両方が指定されていない `enabled: true` を拒否します。
+
+### 最小限の例 [#minimal-examples]
+
+サーバー環境で `GITHUB_TOKEN` が設定されている場合のデフォルトオンのフォーム (**Pending**):
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowAllRepositories: true
+```
+
+特定のレポジトリに制限 (**Pending**、同じトークンのフォールバック):
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowedRepositories:
+        - 'LibreChat-AI/LibreChat'
+        - 'my-org/*'
+```
+
+古いバージョンで動作するフォーム：
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      enabled: true
+      token: '${GITHUB_PULL_REQUEST_TOKEN}'
+      allowedRepositories: ['LibreChat-AI/LibreChat']
+```
+
+チューニングオプションを含むすべてのキーについては、[`pullRequests` リファレンス](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests)を参照してください。
+
+## ユーザーの表示画面 [#what-users-see]
+
+### チャットヘッダーチップ [#chat-header-chip]
+
+- **Desktop**: チップはヘッダーの左側、他の左側のコントロールの隣に配置されます。ホバーまたはフォーカスすると、その右側にカードが開きます。
+- **Mobile**: エントリはヘッダーのオーバーフロー（3点リーダー）メニュー内にあり、ダイアログを開きます。
+- ヘッダーは自動的に更新されます。チェックが実行中またはマージ可能性が計算中の場合は約20秒ごと、それ以外の場合は約60秒ごとに行われます。プルリクエストがマージされた、またはチェックが実行されていない状態でクローズされた場合は更新されません。
+
+### サイドバーマーク [#sidebar-mark]
+
+- 会話行の末尾に、CIドットが付いたプルリクエストアイコンが表示されます。これは、プルリクエストが存在する会話にのみ表示されます。
+- ホバー、フォーカス、またはクリックすると、マークの右側に同じカードが開きます。マークをクリックしても会話は開きません。
+- サイドバーはポーリングを行いません。各行の情報はリストが最後に読み込まれた時点のままですが、ウィンドウがフォーカスを取り戻した際にデータが1分以上経過している場合は更新されます。
+- ルックアップが失敗した場合、そのカードには警告アイコンと再試行ボタンが表示されるため、失敗が「プルリクエストなし」と誤認されることはありません。
+
+### カード [#the-card]
+
+カードには `PR #number`、緑色で `+additions`、赤色で `-deletions`、GitHubでプルリクエストを開くリンク、プルリクエストのタイトル、そして2つのバッジが表示されます：
+
+- **State**: Open（オープン）、Draft（ドラフト）、Merged（マージ済み）、または Closed（クローズ）。
+- **Checks**: Passing（成功）, Failing（失敗）, Running（実行中）, または none（なし）。
+
+{/* TODO(docs): add the screenshots from LibreChat PRs #16794 and #16815. */}
+
+### アイコンとドットの意味 [#icon-and-dot-meaning]
+
+| 状況 | アイコンの色 | CIドット |
+| --------------------------------------- | ------------------------- | ------------------------------------- |
+| オープン、競合なし、チェック通過済み | 緑（マージ可能） | 緑 |
+| オープン、競合なし、チェックなし | 緑 | なし |
+| オープン、マージ競合あり | 赤（マージ不可） | チェックによる |
+| ドラフト | ニュートラル | チェックによる |
+| マージ済みまたはクローズ済み | ニュートラル | なし（チェック実行中は琥珀色） |
+
+CIドットの色：緑は成功、赤は失敗、琥珀色は実行中を示します。チェックがない場合、またはプルリクエストがマージまたはクローズされ、実行中のチェックがない場合は、何も表示されません。失敗したチェックは、実行中のチェックよりも優先されます。読み取られた数よりも多くのチェック実行を含むロールアップは、成功として報告されることはありません。
+
+## プルリクエストがどのようにマッチングされるか [#how-a-pull-request-is-matched]
+
+1. ワーカーは、チャットが最後に実行されたリポジトリ、ブランチ、およびコミット（ヘッド）を報告します。
+2. LibreChatは、そのブランチのオープンなプルリクエストを最初にリストアップするため、再利用されたブランチ名で過去の履歴が閉じられていても、オープンなものが隠されることはありません。次に、フォークからのオープンなプルリクエスト（コミットを通じて検出）、その後にクローズされたプルリクエストを確認します。
+3. コミットが記録されている場合、プルリクエストは、そのヘッドが当該コミットであるか、またはそのコミットをベースに構築されている場合にのみカウントされます。これにより、削除および再利用されたブランチ名が古いプルリクエストを表示してしまうことを防ぎます。
+4. まだコミットがないブランチ（新規の空のブランチ）は、何も一致しません。
+5. 結果は、認証情報、リポジトリ、ブランチ、およびコミットごとにキャッシュされます。
+6. チェックランは、プルリクエストの現在のヘッドに対して読み取られます。フォークからのプルリクエストの場合、チェックはそのフォークのリポジトリがスコープ内にある（リストされている、または `allowAllRepositories` が設定されている）場合にのみ、フォークから読み取られます。それ以外の場合はベースリポジトリが読み取られ、トークンがリストにないフォークへ渡されることはありません。
+
+## 動作 [#behavior]
+
+### レート制限 [#rate-limits]
+
+- その認証情報にはGitHubのレート制限が適用されるため、そのトークン配下のすべてのブランチに対するルックアップが一時停止されます。
+- 最小待機時間は10秒です。待機時間が指定されていない二次制限は60秒待機します。GitHubが指定する待機時間は尊重されますが、最大1時間までとなります。
+- 一時停止中、ルックアップは `RATE_LIMITED` を返し、行には再試行の状態が表示されます。
+
+### ローリングアップデート [#rolling-upgrades]
+
+- サイドバーは、スタートアップ設定でサーバーがその機能（`pullRequestsBatchVersion`）を持っていると示されている場合にのみ、バッチルートにリクエストを送信します。
+- ルートを持たないレプリカが404を返す場合、クライアントは単一ルートへのフォールバックを行い、一度に1つの呼び出しを行うか、サーバーがアドバタイズした場合は `pullRequestsMaxConcurrentLookups` に従って呼び出しを行います。これは、アップグレードされたレプリカから新しい起動フラグを受け取ったクライアントが、その後ルートを持たないレプリカに到達した場合をカバーします。`/api/config` がフラグを持たないレプリカによって提供される場合、サイドバーはバッチルートを要求せず、行は空のままになります。そのため、サイドバーのマークに依存する前に、すべてのレプリカをアップグレードしてください。
+
+### 設定されていない場合のデフォルト値 [#defaults-when-unset]
+
+- トークンやリポジトリのスコープが設定されていない場合、この機能は休止状態となります。起動時の設定で通知されることはなく、記録も行われず、何も表示されません。
+- 設定でこの機能をオフにすると、既存のチャットは変更されず、クライアントは新しいルートを呼び出すことはありません。
+
+## セキュリティモデル [#security-model]
+
+- トークンはサーバー上に存在します。ブラウザに送信されることは決してなく、エラーレスポンスにGitHubのレスポンステキスト、トークン、またはスタックトレースが含まれることもありません。
+- トークンはスコープ内のリポジトリに対してのみ使用されます。スコープ外のフォークには決して送信されません。
+- 2つの `/api/convos` ルックアップルートは、認証済みユーザーを必要とし、所有者スコープで制限されています。存在しない、期限切れである、または他のユーザーに属する会話は、プルリクエストがない会話と同じように扱われます。
+- 表示を許可するリポジトリに限定された、読み取り専用のきめ細かなトークンを使用してください。
+
+## トラブルシューティング [#troubleshooting]
+
+| 症状 | 考えられる原因 | 修正方法 |
+| :--- | :--- | :--- |
+| チップが表示されず、サイドバーにもマークがない | トークンがない、リポジトリのスコープ外、または `enabled: false` になっている | [Setup](#setup) を確認してください。サインインした状態で `/api/config` を開き、`pullRequestsEnabled: true` となっているか確認してください。 |
+| ヘッダーのチップは機能するが、サイドバーの行に何も表示されない | `/api/config` に `pullRequestsBatchVersion` が欠落している（古いビルド、または古いタブ） | サーバーの再ビルドまたはアップグレードを行い、再起動してハードリロードしてください。`pullRequestsBatchVersion: 1` であることを確認してください。 |
+| 一部のチャットにのみチップが表示される | ブランチが報告されている接続済みコードワークスペースのチャットのみにレーンが表示されます | Code API で `CODEAPI_BRIDGE_LANE_GIT=true` が設定されていること、および code-interpreter PR #311 以降でビルドされたワーカーであることを確認してください。 |
+| 再試行を促す警告アイコンが表示される | ルックアップの失敗（レート制限、GitHub エラー、または `NOT_CONFIGURED`） | 再試行してください。頻発する場合は、トークンとその権限を確認してください。 |
+| `NOT_CONFIGURED` | `token` は設定されているが、その変数が空か欠落している | 変数を設定してください。**保留:** または `token` を削除してフォールバック変数を使用してください。 |
+| プルリクエストは読み込まれるが、チェックの結果が正しくない、または失敗する | トークンに Checks または Contents の権限が不足している | 読み取り専用の Checks および Contents 権限を付与してください。 |
+| フォークからのプルリクエストでチェックが表示されない | フォークがスコープ外であるため、チェックはベースリポジトリから読み込まれます | フォークの所有者を `allowedRepositories` に追加してください。**保留:** または `allowAllRepositories: true` を設定してください。 |
+| 何度も再利用されているブランチ名でプルリクエストが表示されない | `maxCandidatePullRequests`、`maxCandidatePages`、または `maxHeadComparisons` が名前の再利用頻度に対して低すぎるため、一致するプルリクエストに到達する前に検索が停止している | これらの値を上げてください。 |
+| プロキシ環境下でルックアップが遅い、またはタイムアウトする | `requestTimeoutSeconds` が低すぎる | 値を上げてください。`HTTPS_PROXY` および `NO_PROXY` を確認してください。 |
+
+## API reference [#api-reference]
+
+以下の `/api/convos` ルートは両方とも認証済みユーザーを必要とし、オーナー権限にスコープされています。スタートアップ設定エンドポイントはオーナー権限にスコープされていません。
+
+### 特定の会話のプルリクエストを取得する [#get-one-conversations-pull-request]
+
+`GET /api/convos/:conversationId/pull-request`
+
+- **200**: `{ "pullRequest": null }` または `{ "pullRequest": { number, title, url, additions, deletions, state, isDraft, mergeable, checks } }`。
+- `state` は `open`、`closed`、または `merged` です。`mergeable` は `clean`、`conflicting`、または `unknown` です。`checks` は `passing`、`failing`、`running`、または `none` です。
+- **503**: `{ "error": "...", "code": "NOT_CONFIGURED" | "RATE_LIMITED" | "UPSTREAM_ERROR" }`.
+- **404**: 無効な会話IDです。 **500**: 固定テキストによるストレージエラーです。
+
+### 多くの会話のプルリクエストを取得する [#get-many-conversations-pull-requests]
+
+`POST /api/convos/pull-requests`
+
+- Body: `{ "conversationIds": ["..."] }`。1から50個のIDを指定します。重複は統合されます。それ以外は400エラーとなります。
+- **200**: `{ "results": [ { "conversationId", "pullRequest" } | { "conversationId", "error": { "code" } } ] }`。リクエストされた順序で返されます。1つの検索が失敗しても、他の検索結果が隠されることはありません。
+- トークンが不足している場合、それを必要とするエントリのみが失敗します。
+
+### Startup config [#startup-config]
+
+`GET /api/config` にはこれらのフィールドが含まれます。これらはサーバーによって設定されるものであり、ユーザー設定ではありません。
+
+- `pullRequestsEnabled` (boolean)
+- `pullRequestsBatchVersion` (`1`、機能が有効な場合にのみ存在)
+- `pullRequestsMaxConcurrentLookups` (数値、機能が有効な場合のみ存在)
+
+上記のリストにあるエラーコードのみが安定しています。

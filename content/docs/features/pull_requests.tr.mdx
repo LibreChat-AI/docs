@@ -1,0 +1,237 @@
+---
+title: Sohbet Çekme İstekleri
+icon: GitPullRequest
+description: >-
+  Ekli bir çalışma alanında kod çalıştıran sohbetler için GitHub çekme isteğini,
+  boyutunu ve CI durumunu gösterin.
+---
+
+{/*
+  PUBLISHING GATE. Do not merge this page until LibreChat-AI/LibreChat#16876 (default-on, token
+  fallback, allowAllRepositories) is merged to dev. Until then, only the blocks marked
+  "Pending" are unreleased. After it merges: re-check the schema in
+  packages/data-provider/src/config.ts, delete the "Older versions" blocks and every Pending marker.
+  TODO(maintainer): first release version for each part (do not guess).
+  TODO(maintainer): requirement 4 (where an admin sets the workspace environment's repository).
+  Add it to "Requirements" once confirmed. Do not publish without it.
+*/}
+
+Bir sohbet, ekli bir çalışma alanında kod çalıştırdığında, worker bulunduğu git dalını (branch) ve commit'ini raporlar. LibreChat, sunucuda tutulan bir token ile eşleşen GitHub çekme isteğini (pull request) bulmak için bu dalı kullanır ve bunu iki yerde gösterir:
+
+- **Sohbet başlığı**: pull request simgesi ve bir CI noktası içeren bir çip. Üzerine gelindiğinde veya odaklanıldığında bir kart açılır.
+- **Kenar çubuğu konuşma listesi**: satırın sonunda aynı simge ve CI noktası bulunur. Satır, konuşmanın kendi başlığını korur; çekme isteği (pull request) başlığı yalnızca kartta görünür.
+
+## Gereksinimler [#requirements]
+
+Bir sohbetin bir pull request göstermesi için bunların hepsinin doğru olması gerekir:
+
+1. LibreChat bir GitHub token'ına ve repository kapsamına sahiptir. Bkz. [Setup](#setup).
+2. Sohbet, düz bir sohbet değil, **ekli bir kod çalışma alanı** (bir kod çalıştırıcısı) kullanır.
+3. Worker kendi branch'ini raporlar. Bu, `LibreChat-AI/code-interpreter` PR #311 veya sonraki bir sürümünden oluşturulmuş bir worker'a ve Code API üzerinde ayarlanmış `CODEAPI_BRIDGE_LANE_GIT=true` değişkenine ihtiyaç duyar. Bkz. [Code Interpreter](/docs/features/code_interpreter#attached-environments-and-pairing).
+
+Bir gereksinim eksikse, sohbetlerde hiçbir çekme isteği (pull request) görünmez ve kullanıcıya herhangi bir hata gösterilmez. Bunun istisnası, ayarlanmış ancak ortam değişkeni boş veya eksik olan bir `token` durumudur: bu durumda aramalar `NOT_CONFIGURED` hatasıyla başarısız olur ve kenar çubuğu satırlarında yeniden dene düğmesiyle birlikte bir uyarı simgesi görüntülenir.
+
+## Kurulum [#setup]
+
+### 1. Bir token oluşturun [#1-create-a-token]
+
+Yalnızca göstermek istediğiniz depolarla sınırlı, **salt okunur** izinlere sahip, ayrıntılı bir GitHub token'ı kullanın:
+
+- Çekme istekleri
+- Kontroller
+- İçindekiler
+
+<Callout type="warning" title="İzin başarısızlık modları">
+  **Checks** olmadan, eşleşen her çekme isteği (pull request) yüklenemez. **Contents** olmadan, son komutundan bu yana dalı (branch) ilerlemiş bir sohbet yüklenemez.
+</Callout>
+
+### 2. LibreChat'e token'ı verin [#2-give-librechat-the-token]
+
+<Callout type="important" title="Beklemede: henüz yayınlanmadı">
+  Ortam değişkeni yedeği, varsayılan olarak açık (default-on) değişikliğinin bir parçasıdır (LibreChat-AI/LibreChat#16876).
+</Callout>
+
+LibreChat bir token'ı şu sırayla arar:
+
+1. `token: "${MY_VAR}"` ifadesi `librechat.yaml` içindedir. Bu bir ortam değişkeni **referansıdır**; YAML dosyasının kendisi token'ı asla barındırmaz.
+2. `token` ayarlanmamışsa, bu ortam değişkenlerinden ayarlanan ilki kullanılır: `GITHUB_PULL_REQUEST_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`.
+3. Hiçbir yerde token yok: özellik devre dışı kalır.
+
+Ayarlanmış ancak çözümlenemeyen (değişken boş veya eksik) bir `token`, `NOT_CONFIGURED` hatası verir. Yukarıdaki üç değişkene geri dönüş **yapmaz**.
+
+<Callout type="info" title="GITHUB_TOKEN yaygın bir isimdir">
+  Eğer dağıtımınız `GITHUB_TOKEN` değerini başka bir amaçla kullanıyorsa, varsayılan olarak açık olan davranış, bir depo kapsamı (repository scope) ayarlandığı anda onu burada kullanmaya başlar. Paylaşımı önlemek için `token` değerini açıkça belirtin veya `GITHUB_PULL_REQUEST_TOKEN` kullanın.
+</Callout>
+
+**Older versions:** `token` is required when the feature is enabled, and must be a `${NAME}` reference such as `"${GITHUB_PULL_REQUEST_TOKEN}"`. There is no environment variable fallback.
+
+### 3. Hangi depoları inceleyebileceğini seçin [#3-choose-which-repositories-it-may-look-up]
+
+Worker kendi deposunu rapor eder, bu nedenle sunucu, token'ın hangi depolar için kullanılabileceğine karar vermelidir. Bir kapsam (scope) olmadan özellik devre dışı kalır. İki yol vardır:
+
+- `allowedRepositories`: `owner/name` veya `owner/*` girdilerinden oluşan bir liste (256'ya kadar). Eşleştirme büyük/küçük harfe duyarlı değildir. `*/*`, `*`, `owner` gibi veya `..` içeren girdiler şema tarafından reddedilir.
+- `allowAllRepositories: true` (**Beklemede**): token'ın okuyabildiği tüm depoları arayın. Varsayılan değer `false`'tur.
+
+<Callout type="warning" title="Güvenlik: allowAllRepositories">
+  Bu özellik açıkken, kod çalıştırabilen herhangi bir kullanıcı, sunucunun token'ını bu token'ın okuyabildiği herhangi bir depoya yönlendirebilir ve çekme isteği (pull request) başlığını, boyutunu ve kontrol durumunu görebilir. Yalnızca göstermek istediğiniz depolarla sınırlandırılmış, salt okunur bir token kullanın.
+</Callout>
+
+### 4. Etkinleştirin [#4-turn-it-on]
+
+<Callout type="important" title="Beklemede: henüz yayınlanmadı">
+  Varsayılan olarak açık olma davranışı, LibreChat-AI/LibreChat#16876'nın bir parçasıdır.
+</Callout>
+
+Bir token ve bir depo kapsamı (repository scope) olduğu anda özellik etkinleşir. Ayarlanacak bir `enabled` anahtarı yoktur. `enabled: false` ifadesi, başka ne ayarlanmış olursa olsun özelliği kapatır.
+
+**Eski sürümler:** `enabled: true` gereklidir ve şema, hem `token` hem de boş olmayan bir `allowedRepositories` olmadan `enabled: true` değerini reddeder.
+
+### Minimal örnekler [#minimal-examples]
+
+Sunucu ortamında `GITHUB_TOKEN` ayarlanmış şekilde, varsayılan olarak açık form (**Beklemede**):
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowAllRepositories: true
+```
+
+Belirli depolarla sınırlandırılmıştır (**Beklemede**, aynı belirteç yedeği):
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowedRepositories:
+        - 'LibreChat-AI/LibreChat'
+        - 'my-org/*'
+```
+
+Eski sürümlerde çalışan form:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      enabled: true
+      token: '${GITHUB_PULL_REQUEST_TOKEN}'
+      allowedRepositories: ['LibreChat-AI/LibreChat']
+```
+
+Tüm anahtarlar ve ince ayar seçenekleri dahil olmak üzere [`pullRequests` referansına](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) bakın.
+
+## Kullanıcıların gördükleri [#what-users-see]
+
+### Sohbet başlığı çipi [#chat-header-chip]
+
+- **Desktop**: çip, başlığın solunda, diğer sol kontrollerin yanında yer alır. Üzerine gelindiğinde veya odaklanıldığında, sağındaki kart açılır.
+- **Mobil**: giriş, başlığın taşma (üç nokta) menüsündedir ve bir iletişim kutusu açar.
+- Üst bilgi kendiliğinden yenilenir: kontroller çalışırken veya birleştirilebilirlik durumu hesaplanırken yaklaşık her 20 saniyede bir, aksi durumlarda yaklaşık her 60 saniyede bir; bir pull request birleştirildiğinde veya hiçbir kontrol çalışmıyorken kapatıldığında ise hiç yenilenmez.
+
+### Kenar çubuğu işareti [#sidebar-mark]
+
+- Sohbet satırının sonunda CI noktası olan bir pull request simgesi bulunur. Bu simge, yalnızca bir pull request içeren sohbetler için görünür.
+- Üzerine gelme, odaklanma veya tıklama, işaretin sağındaki aynı kartı açar. İşarete tıklamak konuşmayı açmaz.
+- Kenar çubuğu asla yoklama (poll) yapmaz. Bir satır, listenin en son yüklendiği an kadar günceldir ve pencere yeniden odak kazandığında ve verileri bir dakikadan eskiyse yenilenir.
+- Bir arama başarısız olursa, satır kartında bir uyarı simgesi ve yeniden deneme düğmesi gösterilir; böylece bir hata "çekme isteği yok" şeklinde yanlış anlaşılmaz.
+
+### Kart [#the-card]
+
+Kart; `PR #number` ifadesini, yeşil renkte `+additions` değerini, kırmızı renkte `-deletions` değerini, GitHub üzerindeki pull request'i açan bir bağlantıyı, pull request başlığını ve iki rozeti gösterir:
+
+- **Durum**: Open, Draft, Merged veya Closed.
+- **Kontroller**: Başarılı (Passing), Başarısız (Failing), Çalışıyor (Running) veya hiçbiri (none).
+
+{/* TODO(docs): add the screenshots from LibreChat PRs #16794 and #16815. */}
+
+### Simge ve nokta anlamları [#icon-and-dot-meaning]
+
+| Durum | İkon rengi | CI noktası |
+| --------------------------------------- | ------------------------- | ------------------------------------- |
+| Açık, çakışma yok, kontroller başarılı | Yeşil (birleştirmeye hazır) | Yeşil |
+| Açık, çakışma yok, hiç kontrol yok | Yeşil | Yok |
+| Açık, birleştirme çakışmaları var | Kırmızı (birleştirilemez) | Kontrollere göre |
+| Taslak | Nötr | Kontrollere göre |
+| Birleştirildi veya kapatıldı | Nötr | Yok (kontroller devam ederken kehribar rengi) |
+
+CI nokta renkleri: başarılı olduğunda yeşil, başarısız olduğunda kırmızı, çalışıyor olduğunda kehribar rengi; herhangi bir kontrol olmadığında veya çekme isteği birleştirildiğinde ya da kapatıldığında ve hiçbir kontrol çalışmaya devam etmediğinde ise renk yoktur. Başarısız bir kontrol, hala çalışmakta olan bir kontrolden daha önceliklidir. Okunandan daha fazla kontrol çalıştıran bir toplu işlem, asla başarılı olarak raporlanmaz.
+
+## Bir pull request nasıl eşleştirilir [#how-a-pull-request-is-matched]
+
+1. Worker, sohbetin en son çalıştığı depoyu, dalı ve commit'i (head) raporlar.
+2. LibreChat, o dal için açık olan çekme isteklerini (pull requests) ilk sırada listeler, bu nedenle yeniden kullanılan bir dal adındaki kapalı geçmiş, açık olanı gizleyemez. Ardından, çatallardan (forks) gelen açık çekme isteklerini (commit aracılığıyla bulunan) ve sonrasında kapalı olanları kontrol eder.
+3. Kaydedilmiş bir commit ile, bir pull request yalnızca başı o commit ise veya onun üzerine inşa edilmişse sayılır. Bu, silinmiş ve yeniden kullanılmış bir dal adının eski bir pull request'i göstermesini engeller.
+4. Henüz hiçbir commit içermeyen bir dal (yeni, boş bir dal) hiçbir şeyle eşleşmez.
+5. Sonuç; kimlik bilgisi, depo, dal ve commit başına önbelleğe alınır.
+6. Check runs, pull request'in mevcut head'i için okunur. Bir fork'tan gelen pull request için, check'ler yalnızca o fork'un deposu kapsam dahilinde olduğunda (listelenmişse veya `allowAllRepositories` ise) fork'tan okunur. Aksi takdirde temel depo okunur ve token hiçbir zaman listelenmemiş bir fork'a gitmez.
+
+## Davranış [#behavior]
+
+### Hız sınırları [#rate-limits]
+
+- Kimlik bilgisi için bir GitHub hız sınırı geçerlidir, bu nedenle bu belirteç (token) altındaki her dal için aramaları duraklatır.
+- Minimum bekleme süresi 10 saniyedir. Bekleme süresi belirtilmeyen ikincil bir sınır 60 saniye bekletir. GitHub tarafından adlandırılan bir bekleme süresi dikkate alınır ve 1 saat ile sınırlandırılır.
+- Bir duraklama sırasında, aramalar `RATE_LIMITED` yanıtını verir ve satırlar yeniden deneme durumunu gösterir.
+
+### Kademeli yükseltmeler [#rolling-upgrades]
+
+- Kenar çubuğu, toplu iş rotasını yalnızca başlangıç yapılandırması sunucunun buna sahip olduğunu belirttiğinde (`pullRequestsBatchVersion`) sorgular.
+- Eğer rotaya sahip olmayan bir kopya 404 hatası verirse, istemci tekli rotaya geri döner; bu işlem her seferinde bir çağrı şeklinde veya sunucu tarafından duyurulduğunda `pullRequestsMaxConcurrentLookups` değerinde gerçekleşir. Bu durum, yükseltilmiş bir kopyadan yeni başlatma bayrağını alan ve ardından rotaya sahip olmayan bir kopyaya ulaşan bir istemciyi kapsar. Eğer `/api/config` bayrağa sahip olmayan bir kopya tarafından sunuluyorsa, kenar çubuğu hiçbir zaman toplu rotayı sorgulamaz ve satırlar boş kalır; bu nedenle kenar çubuğu işaretlerine güvenmeden önce her kopyayı yükseltin.
+
+### Ayarlanmadığında varsayılanlar [#defaults-when-unset]
+
+- Herhangi bir token veya depo kapsamı (repository scope) olmadığında, özellik devre dışı kalır: başlangıç yapılandırmasında hiçbir şey duyurulmaz, hiçbir şey kaydedilmez ve hiçbir şey gösterilmez.
+- Yapılandırmada özellik kapalıyken, mevcut sohbetler değişmez ve istemci yeni rotaları asla çağırmaz.
+
+## Güvenlik modeli [#security-model]
+
+- Token sunucuda yaşar. Tarayıcıya asla gönderilmez ve hata yanıtları hiçbir zaman GitHub'ın yanıt metnini, token'ı veya yığın izlerini (stack traces) içermez.
+- Belirteç (token) yalnızca kapsam dahilindeki depolar için kullanılır. Kapsam dahilinde olmayan bir çatal (fork) deposuna asla gönderilmez.
+- İki `/api/convos` arama rotası, kimliği doğrulanmış bir kullanıcı gerektirir ve sahip kapsamlıdır (owner-scoped). Eksik, süresi dolmuş veya başka bir kullanıcıya ait olan bir konuşma, herhangi bir çekme isteği (pull request) olmayan bir konuşmayla aynı şekilde görünür.
+- Yalnızca göstermek istediğiniz depolara erişimi olan, salt okunur ve kapsamı sınırlandırılmış bir token kullanın.
+
+## Sorun Giderme [#troubleshooting]
+
+| Belirti | Muhtemel neden | Çözüm |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Hiçbir yerde çip ve kenar çubuğu işareti yok | Token yok, depo kapsamı yok veya `enabled: false` | [Kurulum](#setup) bölümünü kontrol edin. Giriş yapmış durumdayken `/api/config` adresini açın ve `pullRequestsEnabled: true` değerini arayın. |
+| Başlık çipi çalışıyor, kenar çubuğu satırları hiçbir şey göstermiyor | `/api/config` içinde `pullRequestsBatchVersion` eksik (eski yapı veya güncel olmayan sekme) | Sunucuyu yeniden oluşturun veya yükseltin, yeniden başlatın ve sert bir şekilde yeniden yükleyin. `pullRequestsBatchVersion: 1` olduğunu doğrulayın. |
+| Çip sadece bazı sohbetlerde görünüyor | Sadece bir dal bildiren ekli bir kod çalışma alanındaki sohbetlerin bir şeridi vardır | Code API üzerinde `CODEAPI_BRIDGE_LANE_GIT=true` değerini ve code-interpreter PR #311 veya sonrası ile oluşturulmuş bir çalışanı doğrulayın. |
+| Yeniden deneme ile uyarı simgesi | Arama başarısız oldu (hız sınırı, GitHub hatası veya `NOT_CONFIGURED`) | Yeniden deneyin. Eğer sürekliyse, token'ı ve izinlerini kontrol edin. |
+| `NOT_CONFIGURED` | `token` ayarlanmış ancak değişkeni boş veya eksik | Değişkeni ayarlayın. **Beklemede:** veya yedek değişkenleri kullanmak için `token` değerini kaldırın. |
+| Çekme istekleri yükleniyor ancak kontroller yanlış görünüyor veya başarısız oluyor | Token, Kontroller (Checks) veya İçerik (Contents) iznine sahip değil | Salt okunur Kontroller ve İçerik izinlerini verin. |
+| Bir çataldan (fork) gelen çekme isteği hiçbir kontrol göstermiyor | Çatal kapsam dahilinde değil, bu nedenle kontroller temel depodan okunuyor | Çatal sahibini `allowedRepositories` içine ekleyin. **Beklemede:** veya `allowAllRepositories: true` olarak ayarlayın. |
+| Çok kez yeniden kullanılan bir dal adı için çekme isteği yok | `maxCandidatePullRequests`, `maxCandidatePages` veya `maxHeadComparisons` değerleri, ismin ne sıklıkla yeniden kullanıldığına göre çok düşük, bu yüzden arama eşleşen çekme isteğine ulaşmadan duruyor | Bu değerleri yükseltin. |
+| Bir proxy arkasında yavaş veya zaman aşımına uğrayan aramalar | `requestTimeoutSeconds` çok düşük | Yükseltin. `HTTPS_PROXY` ve `NO_PROXY` ayarlarını kontrol edin. |
+
+## API referansı [#api-reference]
+
+Aşağıdaki her iki `/api/convos` rotası da kimliği doğrulanmış bir kullanıcı gerektirir ve sahip kapsamlıdır (owner-scoped). Başlangıç yapılandırması uç noktası sahip kapsamlı değildir.
+
+### Bir konuşmanın çekme isteğini (pull request) al [#get-one-conversations-pull-request]
+
+`GET /api/convos/:conversationId/pull-request`
+
+- **200**: `{ "pullRequest": null }` veya `{ "pullRequest": { number, title, url, additions, deletions, state, isDraft, mergeable, checks } }`.
+- `state` değeri `open`, `closed` veya `merged` olabilir. `mergeable` değeri `clean`, `conflicting` veya `unknown` olabilir. `checks` değeri `passing`, `failing`, `running` veya `none` olabilir.
+- **503**: `{ "error": "...", "code": "NOT_CONFIGURED" | "RATE_LIMITED" | "UPSTREAM_ERROR" }`.
+- **404**: geçersiz konuşma kimliği. **500**: sabit metin ile depolama hatası.
+
+### Birçok konuşmanın çekme isteklerini (pull requests) alın [#get-many-conversations-pull-requests]
+
+`POST /api/convos/pull-requests`
+
+- Gövde: `{ "conversationIds": ["..."] }`, 1 ile 50 arasında kimlik (id) ile. Yinelenenler birleştirilir. Diğer her şey 400 hatası döndürür.
+- **200**: `{ "results": [ { "conversationId", "pullRequest" } | { "conversationId", "error": { "code" } } ] }`, talep edilen sırada. Başarısız olan bir arama, diğerlerini gizlemez.
+- Eksik bir token yalnızca ona ihtiyaç duyan girdilerin başarısız olmasına neden olur.
+
+### Başlangıç yapılandırması [#startup-config]
+
+`GET /api/config` şu alanları içerir. Bunlar sunucu tarafından ayarlanır; kullanıcı ayarları değildir.
+
+- `pullRequestsEnabled` (boole değeri)
+- `pullRequestsBatchVersion` (`1`, yalnızca özellik açıkken mevcuttur)
+- `pullRequestsMaxConcurrentLookups` (sayı, yalnızca özellik açıkken mevcuttur)
+
+Yalnızca yukarıda listelenen hata kodları kararlıdır.

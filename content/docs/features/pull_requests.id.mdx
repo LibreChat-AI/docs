@@ -1,0 +1,237 @@
+---
+title: Pull Request Percakapan
+icon: GitPullRequest
+description: >-
+  Tampilkan pull request GitHub, ukuran, dan status CI untuk chat yang
+  menjalankan kode di workspace terlampir.
+---
+
+{/*
+  PUBLISHING GATE. Do not merge this page until LibreChat-AI/LibreChat#16876 (default-on, token
+  fallback, allowAllRepositories) is merged to dev. Until then, only the blocks marked
+  "Pending" are unreleased. After it merges: re-check the schema in
+  packages/data-provider/src/config.ts, delete the "Older versions" blocks and every Pending marker.
+  TODO(maintainer): first release version for each part (do not guess).
+  TODO(maintainer): requirement 4 (where an admin sets the workspace environment's repository).
+  Add it to "Requirements" once confirmed. Do not publish without it.
+*/}
+
+Saat obrolan menjalankan kode di workspace yang dilampirkan, worker akan melaporkan branch git dan commit yang sedang digunakan. LibreChat menggunakan branch tersebut untuk menemukan pull request GitHub yang cocok, dengan token yang disimpan di server, dan menampilkannya di dua tempat:
+
+- **Header obrolan**: sebuah chip dengan ikon pull request dan titik CI. Mengarahkan kursor atau memfokuskan pada elemen ini akan membuka sebuah kartu.
+- **Daftar percakapan sidebar**: ikon dan titik CI yang sama di akhir baris. Baris tersebut tetap menggunakan judul percakapan itu sendiri; judul pull request hanya muncul di dalam kartu.
+
+## Persyaratan [#requirements]
+
+Semua hal berikut harus terpenuhi agar obrolan menampilkan pull request:
+
+1. LibreChat memiliki token GitHub dan cakupan repositori. Lihat [Setup](#setup).
+2. Obrolan ini menggunakan **ruang kerja kode terlampir** (code worker), bukan obrolan biasa.
+3. Worker melaporkan branch-nya. Hal ini memerlukan worker yang dibangun dari PR #311 `LibreChat-AI/code-interpreter` atau yang lebih baru, dan `CODEAPI_BRIDGE_LANE_GIT=true` yang diatur pada Code API. Lihat [Code Interpreter](/docs/features/code_interpreter#attached-environments-and-pairing).
+
+Jika persyaratan tidak terpenuhi, obrolan tidak akan menampilkan pull request dan tidak ada kesalahan yang ditunjukkan kepada pengguna. Pengecualiannya adalah `token` yang telah diatur tetapi variabel lingkungannya kosong atau tidak ada: pencarian kemudian akan gagal dengan `NOT_CONFIGURED`, dan baris bilah sisi akan menampilkan ikon peringatan dengan tombol coba lagi.
+
+## Pengaturan [#setup]
+
+### 1. Membuat token [#1-create-a-token]
+
+Gunakan token GitHub fine-grained yang dibatasi pada repositori yang ingin Anda tampilkan, dengan izin **read-only**:
+
+- Pull requests
+- Pemeriksaan
+- Daftar Isi
+
+<Callout type="warning" title="Mode kegagalan izin">
+  Tanpa **Checks**, setiap pull request yang cocok gagal dimuat. Tanpa **Contents**, obrolan yang cabangnya telah berubah sejak perintah terakhirnya gagal dimuat.
+</Callout>
+
+### 2. Berikan token kepada LibreChat [#2-give-librechat-the-token]
+
+<Callout type="important" title="Tertunda: belum dirilis">
+  Fallback variabel lingkungan adalah bagian dari perubahan default-on (LibreChat-AI/LibreChat#16876).
+</Callout>
+
+LibreChat mencari token dengan urutan berikut:
+
+1. `token: "${MY_VAR}"` di dalam `librechat.yaml`. Ini adalah **referensi** variabel lingkungan; YAML tidak pernah menyimpan token itu sendiri.
+2. Jika `token` tidak diatur, variabel lingkungan pertama dari daftar berikut yang diatur akan digunakan: `GITHUB_PULL_REQUEST_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`.
+3. Tidak ada token di mana pun: fitur tersebut tetap tidak aktif.
+
+`token` yang telah diatur namun tidak teratasi (variabel kosong atau hilang) akan gagal dengan status `NOT_CONFIGURED`. Hal ini **tidak** akan kembali ke tiga variabel di atas.
+
+<Callout type="info" title="GITHUB_TOKEN adalah nama yang umum">
+  Jika deployment Anda sudah menggunakan `GITHUB_TOKEN` untuk keperluan lain, perilaku default-on akan mulai menggunakannya di sini segera setelah cakupan repositori ditetapkan. Tetapkan `token` secara eksplisit, atau gunakan `GITHUB_PULL_REQUEST_TOKEN`, untuk menghindari penggunaannya secara bersamaan.
+</Callout>
+
+**Versi lama:** `token` diperlukan saat fitur diaktifkan, dan harus berupa referensi `${NAME}` seperti `"${GITHUB_PULL_REQUEST_TOKEN}"`. Tidak ada fallback variabel lingkungan.
+
+### 3. Pilih repositori mana yang boleh diaksesnya [#3-choose-which-repositories-it-may-look-up]
+
+Worker melaporkan repositorinya sendiri, sehingga server harus memutuskan repositori mana yang boleh menggunakan token tersebut. Tanpa cakupan (scope), fitur ini akan tetap tidak aktif. Ada dua cara:
+
+- `allowedRepositories`: daftar entri `owner/name` atau `owner/*` (hingga 256). Pencocokan tidak peka huruf besar/kecil (case-insensitive). Entri seperti `*/*`, `*`, `owner`, atau yang mengandung `..` akan ditolak oleh skema.
+- `allowAllRepositories: true` (**Tertunda**): mencari repositori apa pun yang dapat dibaca oleh token tersebut. Standarnya adalah `false`.
+
+<Callout type="warning" title="Keamanan: allowAllRepositories">
+  Dengan fitur ini aktif, setiap pengguna yang dapat menjalankan kode dapat mengarahkan token server ke repositori mana pun yang dapat dibaca oleh token tersebut, serta melihat judul, ukuran, dan status pemeriksaan pull request. Gunakan token read-only yang dibatasi pada repositori yang ingin Anda tampilkan.
+</Callout>
+
+### 4. Aktifkan [#4-turn-it-on]
+
+<Callout type="important" title="Tertunda: belum dirilis">
+  Perilaku default-on adalah bagian dari LibreChat-AI/LibreChat#16876.
+</Callout>
+
+Fitur ini aktif segera setelah terdapat token dan cakupan repositori. Tidak ada tombol `enabled` untuk diatur. `enabled: false` akan mematikannya, terlepas dari pengaturan lainnya.
+
+**Versi lama:** `enabled: true` diperlukan, dan skema akan menolak `enabled: true` jika tidak menyertakan `token` dan `allowedRepositories` yang tidak kosong.
+
+### Contoh minimal [#minimal-examples]
+
+Form default-on (**Pending**), dengan `GITHUB_TOKEN` diatur di lingkungan server:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowAllRepositories: true
+```
+
+Dibatasi pada repositori tertentu (**Tertunda**, fallback token yang sama):
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowedRepositories:
+        - 'LibreChat-AI/LibreChat'
+        - 'my-org/*'
+```
+
+Formulir yang berfungsi pada versi yang lebih lama:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      enabled: true
+      token: '${GITHUB_PULL_REQUEST_TOKEN}'
+      allowedRepositories: ['LibreChat-AI/LibreChat']
+```
+
+Lihat referensi [`pullRequests`](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) untuk setiap kunci, termasuk opsi penalaan.
+
+## Apa yang dilihat pengguna [#what-users-see]
+
+### Chip header chat [#chat-header-chip]
+
+- **Desktop**: chip tersebut berada di sebelah kiri header, di samping kontrol kiri lainnya. Mengarahkan kursor atau memfokuskan pada chip tersebut akan membuka kartu di sebelah kanannya.
+- **Mobile**: entri tersebut berada di menu luapan (tiga titik) pada header dan membuka sebuah dialog.
+- Header akan menyegarkan diri secara otomatis: sekitar setiap 20 detik saat pemeriksaan sedang berjalan atau kemampuan penggabungan (mergeability) masih dihitung, sekitar setiap 60 detik jika tidak, dan tidak sama sekali setelah pull request digabungkan atau ditutup tanpa ada pemeriksaan yang berjalan.
+
+### Tanda bilah sisi [#sidebar-mark]
+
+- Ikon pull request dengan titik CI berada di akhir baris percakapan. Ikon ini hanya muncul untuk percakapan yang memiliki pull request.
+- Arahkan kursor, fokus, atau klik akan membuka kartu yang sama di sebelah kanan tanda tersebut. Mengeklik tanda tersebut tidak akan membuka percakapan.
+- Sidebar tidak pernah melakukan polling. Baris data akan selalu sama dengan saat terakhir daftar dimuat, dan akan diperbarui saat jendela mendapatkan kembali fokus dan datanya sudah lebih dari satu menit.
+- Jika pencarian gagal, baris tersebut akan menampilkan ikon peringatan dengan tombol coba lagi di kartunya, sehingga kegagalan tidak disalahartikan sebagai "tidak ada pull request".
+
+### Kartu tersebut [#the-card]
+
+Kartu tersebut menampilkan `PR #number`, `+additions` dengan warna hijau, `-deletions` dengan warna merah, tautan yang membuka pull request di GitHub, judul pull request, dan dua lencana:
+
+- **State**: Open, Draft, Merged, atau Closed.
+- **Pemeriksaan**: Berhasil (Passing), Gagal (Failing), Berjalan (Running), atau tidak ada (none).
+
+{/* TODO(docs): add the screenshots from LibreChat PRs #16794 and #16815. */}
+
+### Arti ikon dan titik [#icon-and-dot-meaning]
+
+| Situasi | Warna ikon | Titik CI |
+| --------------------------------------- | ------------------------- | ------------------------------------- |
+| Terbuka, tidak ada konflik, pemeriksaan berhasil | Hijau (siap untuk digabungkan) | Hijau |
+| Terbuka, tidak ada konflik, tidak ada pemeriksaan sama sekali | Hijau | Tidak ada |
+| Terbuka, konflik penggabungan | Merah (tidak dapat digabungkan) | Berdasarkan pemeriksaan |
+| Draf | Netral | Berdasarkan pemeriksaan |
+| Digabungkan atau ditutup | Netral | Tidak ada (kuning saat pemeriksaan masih berjalan) |
+
+Warna titik CI: hijau untuk lulus, merah untuk gagal, kuning untuk sedang berjalan, dan tidak ada warna jika tidak ada pemeriksaan, atau ketika pull request digabungkan atau ditutup dan tidak ada pemeriksaan yang masih berjalan. Pemeriksaan yang gagal lebih diutamakan daripada yang masih berjalan. Rollup dengan jumlah pemeriksaan yang lebih banyak daripada yang terbaca tidak akan pernah dilaporkan sebagai lulus.
+
+## Bagaimana pull request dicocokkan [#how-a-pull-request-is-matched]
+
+1. Worker melaporkan repositori, branch, dan commit (head) tempat chat terakhir kali dijalankan.
+2. LibreChat mencantumkan pull request terbuka untuk branch tersebut terlebih dahulu, sehingga riwayat tertutup pada nama branch yang digunakan kembali tidak dapat menyembunyikan yang terbuka. Kemudian, sistem akan memeriksa pull request terbuka dari fork (ditemukan melalui commit), lalu yang tertutup.
+3. Dengan commit yang tercatat, sebuah pull request hanya akan dihitung jika head-nya adalah commit tersebut atau dibangun di atasnya. Hal ini mencegah nama branch yang telah dihapus dan digunakan kembali menampilkan pull request lama.
+4. Branch yang belum memiliki commit (branch baru yang kosong) tidak mencocokkan apa pun.
+5. Hasilnya di-cache per kredensial, repositori, branch, dan commit.
+6. Check runs dibaca untuk head saat ini dari pull request. Untuk pull request dari fork, check dibaca dari fork hanya ketika repositori fork tersebut berada dalam cakupan (terdaftar, atau `allowAllRepositories`). Jika tidak, repositori dasar yang akan dibaca dan token tidak akan pernah dikirim ke fork yang tidak terdaftar.
+
+## Perilaku [#behavior]
+
+### Batas kecepatan (Rate limits) [#rate-limits]
+
+- Batas kecepatan GitHub berlaku untuk kredensial tersebut, sehingga pencarian untuk setiap branch di bawah token itu akan dijeda.
+- Jeda minimum adalah 10 detik. Batas sekunder tanpa waktu tunggu yang ditentukan akan menunggu selama 60 detik. Waktu tunggu yang ditentukan oleh GitHub akan dipatuhi, dengan batas maksimal 1 jam.
+- Selama jeda, pencarian akan menjawab `RATE_LIMITED` dan baris akan menampilkan status coba ulang.
+
+### Pembaruan bergulir (Rolling upgrades) [#rolling-upgrades]
+
+- Sidebar meminta rute batch hanya ketika konfigurasi startup menyatakan server memilikinya (`pullRequestsBatchVersion`).
+- Jika replika tanpa rute tersebut memberikan respons 404, klien akan kembali ke rute tunggal, satu panggilan setiap kalinya, atau pada `pullRequestsMaxConcurrentLookups` saat server mengiklankannya. Hal ini mencakup klien yang menerima flag startup baru dari replika yang telah ditingkatkan dan kemudian mencapai replika tanpa rute tersebut. Jika `/api/config` dilayani oleh replika tanpa flag tersebut, bilah sisi (sidebar) tidak akan pernah meminta rute batch dan baris akan tetap kosong, jadi tingkatkan (upgrade) setiap replika sebelum mengandalkan penanda bilah sisi.
+
+### Default saat tidak diatur [#defaults-when-unset]
+
+- Tanpa token atau cakupan repositori, fitur ini tidak aktif: tidak ada yang diiklankan dalam konfigurasi startup, tidak ada yang direkam, dan tidak ada yang ditampilkan.
+- Dengan fitur ini dimatikan dalam konfigurasi, obrolan yang sudah ada tidak akan berubah dan klien tidak akan pernah memanggil rute baru tersebut.
+
+## Model keamanan [#security-model]
+
+- Token tersebut berada di server. Token tidak pernah dikirim ke browser, dan respons kesalahan tidak pernah menyertakan teks respons GitHub, token, atau jejak tumpukan (stack traces).
+- Token tersebut hanya digunakan untuk repositori dalam cakupan. Token ini tidak pernah dikirim ke fork yang tidak berada dalam cakupan.
+- Dua rute pencarian `/api/convos` memerlukan pengguna yang terautentikasi dan memiliki cakupan pemilik (owner-scoped). Percakapan yang hilang, kedaluwarsa, atau milik pengguna lain akan terlihat sama dengan percakapan tanpa pull request.
+- Gunakan token *read-only* dengan cakupan terbatas yang hanya mencakup repositori yang ingin Anda tampilkan.
+
+## Pemecahan Masalah [#troubleshooting]
+
+| Gejala | Kemungkinan penyebab | Perbaikan |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Tidak ada chip dan tidak ada tanda sidebar di mana pun | Tidak ada token, tidak ada cakupan repositori, atau `enabled: false` | Periksa [Setup](#setup). Buka `/api/config` saat masuk dan cari `pullRequestsEnabled: true`. |
+| Chip header berfungsi, baris sidebar tidak menampilkan apa pun | `pullRequestsBatchVersion` hilang dari `/api/config` (build lama, atau tab usang) | Bangun ulang atau tingkatkan server, mulai ulang, dan lakukan hard reload. Konfirmasi `pullRequestsBatchVersion: 1`. |
+| Chip hanya muncul untuk beberapa obrolan | Hanya obrolan pada ruang kerja kode terlampir yang telah melaporkan cabang yang memiliki jalur | Konfirmasi `CODEAPI_BRIDGE_LANE_GIT=true` pada Code API dan worker yang dibangun dari code-interpreter PR #311 atau setelahnya. |
+| Ikon peringatan dengan coba lagi | Pencarian gagal (batas kecepatan, kesalahan GitHub, atau `NOT_CONFIGURED`) | Coba lagi. Jika terus-menerus, periksa token dan izinnya. |
+| `NOT_CONFIGURED` | `token` diatur tetapi variabelnya kosong atau hilang | Atur variabelnya. **Pending:** atau hapus `token` untuk menggunakan variabel cadangan. |
+| Pull request dimuat tetapi pemeriksaan terlihat salah atau gagal | Token tidak memiliki izin Checks atau Contents | Berikan izin baca-saja untuk Checks dan Contents. |
+| Pull request dari fork tidak menampilkan pemeriksaan | Fork tidak dalam cakupan, jadi pemeriksaan dibaca dari repositori dasar | Tambahkan pemilik fork ke `allowedRepositories`. **Pending:** atau atur `allowAllRepositories: true`. |
+| Tidak ada pull request untuk nama cabang yang telah digunakan berkali-kali | `maxCandidatePullRequests`, `maxCandidatePages` atau `maxHeadComparisons` terlalu rendah untuk seberapa sering nama tersebut digunakan kembali, sehingga pencarian berhenti sebelum mencapai pull request yang cocok | Tingkatkan nilainya. |
+| Pencarian lambat atau timeout di balik proxy | `requestTimeoutSeconds` terlalu rendah | Tingkatkan nilainya. Periksa `HTTPS_PROXY` dan `NO_PROXY`. |
+
+## Referensi API [#api-reference]
+
+Kedua rute `/api/convos` di bawah ini memerlukan pengguna yang terautentikasi dan memiliki cakupan pemilik (owner-scoped). Titik akhir konfigurasi startup tidak memiliki cakupan pemilik.
+
+### Mendapatkan pull request satu percakapan [#get-one-conversations-pull-request]
+
+`GET /api/convos/:conversationId/pull-request`
+
+- **200**: `{ "pullRequest": null }` atau `{ "pullRequest": { number, title, url, additions, deletions, state, isDraft, mergeable, checks } }`.
+- `state` adalah `open`, `closed`, atau `merged`. `mergeable` adalah `clean`, `conflicting`, atau `unknown`. `checks` adalah `passing`, `failing`, `running`, atau `none`.
+- **503**: `{ "error": "...", "code": "NOT_CONFIGURED" | "RATE_LIMITED" | "UPSTREAM_ERROR" }`.
+- **404**: invalid conversation id. **500**: storage error with fixed text.
+
+### Mendapatkan pull request dari banyak percakapan [#get-many-conversations-pull-requests]
+
+`POST /api/convos/pull-requests`
+
+- Body: `{ "conversationIds": ["..."] }`, dengan 1 hingga 50 id. Duplikat akan digabungkan. Selain itu akan menghasilkan 400.
+- **200**: `{ "results": [ { "conversationId", "pullRequest" } | { "conversationId", "error": { "code" } } ] }`, sesuai urutan yang diminta. Satu pencarian yang gagal tidak akan menyembunyikan yang lainnya.
+- Token yang hilang hanya akan menggagalkan entri yang memerlukannya.
+
+### Konfigurasi startup [#startup-config]
+
+`GET /api/config` mencakup kolom-kolom ini. Server yang mengaturnya; ini bukan pengaturan.
+
+- `pullRequestsEnabled` (boolean)
+- `pullRequestsBatchVersion` (`1`, hanya ada jika fitur diaktifkan)
+- `pullRequestsMaxConcurrentLookups` (angka, hanya ada jika fitur diaktifkan)
+
+Hanya kode kesalahan yang tercantum di atas yang stabil.

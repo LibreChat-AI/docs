@@ -1,0 +1,237 @@
+---
+title: Pull Requests voor gesprekken
+icon: GitPullRequest
+description: >-
+  Toon de GitHub pull request, grootte en CI-status voor chats die code
+  uitvoeren in een gekoppelde workspace.
+---
+
+{/*
+  PUBLISHING GATE. Do not merge this page until LibreChat-AI/LibreChat#16876 (default-on, token
+  fallback, allowAllRepositories) is merged to dev. Until then, only the blocks marked
+  "Pending" are unreleased. After it merges: re-check the schema in
+  packages/data-provider/src/config.ts, delete the "Older versions" blocks and every Pending marker.
+  TODO(maintainer): first release version for each part (do not guess).
+  TODO(maintainer): requirement 4 (where an admin sets the workspace environment's repository).
+  Add it to "Requirements" once confirmed. Do not publish without it.
+*/}
+
+Wanneer een chat code uitvoert in een gekoppelde workspace, rapporteert de worker de git-branch en commit waarop deze zich bevindt. LibreChat gebruikt die branch om de bijbehorende GitHub pull request te vinden, met een token dat op de server wordt bewaard, en toont dit op twee plaatsen:
+
+- **Chat header**: een chip met het pull request-icoon en een CI-punt. Door eroverheen te zweven of erop te focussen, wordt een kaart geopend.
+- **Sidebar conversation list**: hetzelfde icoon en de CI-stip aan het einde van de rij. De rij behoudt de eigen titel van het gesprek; de titel van de pull request verschijnt alleen in de kaart.
+
+## Vereisten [#requirements]
+
+Al deze voorwaarden moeten waar zijn om een pull request in een chat weer te geven:
+
+1. LibreChat heeft een GitHub-token en een repository-scope. Zie [Setup](#setup).
+2. De chat gebruikt een **gekoppelde codewerkruimte** (een code worker), geen gewone chat.
+3. De worker rapporteert zijn branch. Hiervoor is een worker nodig die is gebouwd op basis van `LibreChat-AI/code-interpreter` PR #311 of later, en moet `CODEAPI_BRIDGE_LANE_GIT=true` zijn ingesteld op de Code API. Zie [Code Interpreter](/docs/features/code_interpreter#attached-environments-and-pairing).
+
+Als een vereiste ontbreekt, tonen chats simpelweg geen pull request en wordt er geen foutmelding aan de gebruiker getoond. De uitzondering is een `token` dat is ingesteld, maar waarvan de omgevingsvariabele leeg of afwezig is: opzoekingen mislukken dan met `NOT_CONFIGURED` en rijen in de zijbalk tonen het waarschuwingsicoon met een knop om het opnieuw te proberen.
+
+## Setup [#setup]
+
+### 1. Maak een token [#1-create-a-token]
+
+Gebruik een fine-grained GitHub token dat beperkt is tot de repositories die je wilt tonen, met **read-only** rechten:
+
+- Pull requests
+- Controles
+- Inhoud
+
+<Callout type="warning" title="Foutmodi voor rechten">
+  Zonder **Checks** kan elke overeenkomende pull request niet worden geladen. Zonder **Contents** kan een chat waarvan de branch is gewijzigd sinds de laatste opdracht niet worden geladen.
+</Callout>
+
+### 2. Geef LibreChat de token [#2-give-librechat-the-token]
+
+<Callout type="important" title="In afwachting: nog niet uitgebracht">
+  De fallback voor omgevingsvariabelen maakt deel uit van de default-on wijziging (LibreChat-AI/LibreChat#16876).
+</Callout>
+
+LibreChat zoekt in deze volgorde naar een token:
+
+1. `token: "${MY_VAR}"` in `librechat.yaml`. Dit is een **verwijzing** naar een omgevingsvariabele; de YAML bevat nooit het token zelf.
+2. Als `token` niet is ingesteld, wordt de eerste van deze omgevingsvariabelen gebruikt die wel is ingesteld: `GITHUB_PULL_REQUEST_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`.
+3. Geen token aanwezig: de functie blijft inactief.
+
+Een `token` dat is ingesteld maar niet wordt opgelost (de variabele is leeg of ontbreekt) resulteert in `NOT_CONFIGURED`. Er wordt **niet** teruggevallen op de drie bovenstaande variabelen.
+
+<Callout type="info" title="GITHUB_TOKEN is een veelgebruikte naam">
+  Als uw implementatie al `GITHUB_TOKEN` voor iets anders gebruikt, begint het standaard ingeschakelde gedrag dit hier te gebruiken zodra een repository-scope is ingesteld. Stel `token` expliciet in, of gebruik `GITHUB_PULL_REQUEST_TOKEN`, om te voorkomen dat deze wordt gedeeld.
+</Callout>
+
+**Oudere versies:** `token` is vereist wanneer de functie is ingeschakeld en moet een `${NAME}`-verwijzing zijn, zoals `"${GITHUB_PULL_REQUEST_TOKEN}"`. Er is geen fallback voor omgevingsvariabelen.
+
+### 3. Kies welke repositories het mag raadplegen [#3-choose-which-repositories-it-may-look-up]
+
+De worker rapporteert zijn eigen repository, dus de server moet beslissen voor welke repositories het token mag worden gebruikt. Zonder een scope blijft de functie inactief. Er zijn twee manieren:
+
+- `allowedRepositories`: een lijst van `owner/name` of `owner/*` vermeldingen (tot 256). Overeenkomsten zijn hoofdletterongevoelig. Vermeldingen zoals `*/*`, `*`, `owner`, of vermeldingen die `..` bevatten, worden door het schema geweigerd.
+- `allowAllRepositories: true` (**In afwachting**): zoek in elke repository die het token kan lezen. De standaardwaarde is `false`.
+
+<Callout type="warning" title="Beveiliging: allowAllRepositories">
+  Wanneer dit is ingeschakeld, kan elke gebruiker die code kan uitvoeren het token van de server richten op elke repository die dat token kan lezen, en de titel, grootte en controlestatus van pull requests inzien. Gebruik een alleen-lezen token dat beperkt is tot de repositories die je wilt tonen.
+</Callout>
+
+### 4. Inschakelen [#4-turn-it-on]
+
+<Callout type="important" title="In afwachting: nog niet uitgebracht">
+  Standaard ingeschakeld gedrag is onderdeel van LibreChat-AI/LibreChat#16876.
+</Callout>
+
+De functie is ingeschakeld zodra er een token en een repository-scope aanwezig zijn. Er is geen `enabled`-schakelaar om in te stellen. `enabled: false` schakelt het uit, ongeacht wat er verder is ingesteld.
+
+**Oudere versies:** `enabled: true` is vereist, en het schema wijst `enabled: true` af zonder zowel `token` als een niet-lege `allowedRepositories`.
+
+### Minimale voorbeelden [#minimal-examples]
+
+Standaard ingeschakeld formulier (**In afwachting**), met `GITHUB_TOKEN` ingesteld in de serveromgeving:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowAllRepositories: true
+```
+
+Beperkt tot specifieke repositories (**In afwachting**, zelfde token-fallback):
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowedRepositories:
+        - 'LibreChat-AI/LibreChat'
+        - 'my-org/*'
+```
+
+Formulier dat werkt op oudere versies:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      enabled: true
+      token: '${GITHUB_PULL_REQUEST_TOKEN}'
+      allowedRepositories: ['LibreChat-AI/LibreChat']
+```
+
+Zie de [`pullRequests` referentie](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) voor elke key, inclusief de tuning-opties.
+
+## Wat gebruikers zien [#what-users-see]
+
+### Chat header chip [#chat-header-chip]
+
+- **Desktop**: de chip bevindt zich aan de linkerkant van de koptekst, naast de andere bedieningselementen aan de linkerkant. Door eroverheen te zweven of erop te focussen, wordt de kaart aan de rechterkant geopend.
+- **Mobiel**: het item staat in het overloopmenu (drie puntjes) van de header en opent een dialoogvenster.
+- De header ververst automatisch: ongeveer elke 20 seconden terwijl controles worden uitgevoerd of de samenvoegbaarheid nog wordt berekend, ongeveer elke 60 seconden in andere gevallen, en helemaal niet zodra een pull request is samengevoegd of gesloten zonder actieve controles.
+
+### Zijbalkmarkering [#sidebar-mark]
+
+- Een pull request-icoon met een CI-punt bevindt zich aan het einde van de gespreksrij. Het verschijnt alleen voor gesprekken die een pull request hebben.
+- Hoveren, focus of klikken opent dezelfde kaart rechts van de markering. Het klikken op de markering opent het gesprek niet.
+- De zijbalk voert nooit polls uit. Een rij is zo actueel als de laatste keer dat de lijst werd geladen, en deze ververst wanneer het venster opnieuw focus krijgt en de gegevens ouder zijn dan een minuut.
+- Als een opzoeking mislukt, toont de rij een waarschuwingsicoon met een herstelknop in de kaart, zodat een fout niet wordt aangezien voor "geen pull request".
+
+### De kaart [#the-card]
+
+De kaart toont `PR #number`, `+additions` in het groen, `-deletions` in het rood, een link die de pull request op GitHub opent, de titel van de pull request en twee badges:
+
+- **Status**: Open, Draft, Merged of Closed.
+- **Checks**: Geslaagd, Mislukt, Wordt uitgevoerd, of geen.
+
+{/* TODO(docs): add the screenshots from LibreChat PRs #16794 and #16815. */}
+
+### Betekenis van icoon en punt [#icon-and-dot-meaning]
+
+| Situatie | Icoonkleur | CI-punt |
+| --------------------------------------- | ------------------------- | ------------------------------------- |
+| Open, geen conflicten, checks geslaagd  | Groen (klaar om te mergen) | Groen |
+| Open, geen conflicten, geen checks      | Groen | Geen |
+| Open, merge-conflicten                  | Rood (kan niet mergen) | Op basis van checks |
+| Concept (Draft)                         | Neutraal | Op basis van checks |
+| Gemerged of gesloten                    | Neutraal | Geen (oranje terwijl checks nog draaien) |
+
+CI-puntkleuren: groen voor geslaagd, rood voor mislukt, amber voor lopend, en geen wanneer er geen controles zijn, of wanneer de pull request is samengevoegd of gesloten en er geen controles meer lopen. Een mislukte controle weegt zwaarder dan een die nog loopt. Een rollup met meer controle-runs dan er zijn gelezen, wordt nooit als geslaagd gerapporteerd.
+
+## Hoe een pull request wordt gematcht [#how-a-pull-request-is-matched]
+
+1. De worker rapporteert de repository, branch en commit (head) waarop de chat voor het laatst is uitgevoerd.
+2. LibreChat toont eerst open pull requests voor die branch, zodat een gesloten geschiedenis op een hergebruikte branch-naam een openstaande niet kan verbergen. Daarna controleert het open pull requests van forks (gevonden via de commit), en vervolgens de gesloten exemplaren.
+3. Bij een vastgelegde commit telt een pull request alleen als de head die commit is of daarop voortbouwt. Dit voorkomt dat een verwijderde en opnieuw gebruikte branch-naam een oude pull request laat zien.
+4. Een branch zonder commits (een nieuwe, lege branch) komt met niets overeen.
+5. Het resultaat wordt gecachet per credential, repository, branch en commit.
+6. Check runs worden gelezen voor de huidige head van de pull request. Voor een pull request vanuit een fork worden checks alleen gelezen vanuit de fork wanneer de repository van die fork binnen het bereik valt (vermeld, of `allowAllRepositories`). Anders wordt de basis-repository gelezen en gaat het token nooit naar een niet-vermelde fork.
+
+## Gedrag [#behavior]
+
+### Rate limits [#rate-limits]
+
+- Er is een GitHub rate limit van toepassing op de credential, dus het pauzeert zoekopdrachten voor elke branch onder dat token.
+- De minimale pauze is 10 seconden. Een secundaire limiet zonder opgegeven wachttijd wacht 60 seconden. Een wachttijd die door GitHub wordt benoemd, wordt gerespecteerd, met een maximum van 1 uur.
+- Tijdens een pauze antwoorden opzoekingen met `RATE_LIMITED` en rijen tonen de status van de nieuwe poging.
+
+### Rolling upgrades [#rolling-upgrades]
+
+- De zijbalk vraagt alleen om de batch-route wanneer de startup-configuratie aangeeft dat de server deze heeft (`pullRequestsBatchVersion`).
+- Als een replica zonder de route een 404 geeft, valt de client terug op de enkele route, één aanroep per keer, of op `pullRequestsMaxConcurrentLookups` wanneer de server dit heeft geadverteerd. Dit dekt een client die de nieuwe opstartvlag heeft ontvangen van een bijgewerkte replica en vervolgens een replica zonder de route bereikte. Als `/api/config` wordt geserveerd door een replica zonder de vlag, vraagt de zijbalk nooit de batch-route op en blijven de rijen leeg; upgrade daarom elke replica voordat je vertrouwt op zijbalkmarkeringen.
+
+### Standaardwaarden wanneer niet ingesteld [#defaults-when-unset]
+
+- Zonder token of repository scope is de functie inactief: er wordt niets geadverteerd in de startup config, er wordt niets vastgelegd en er wordt niets getoond.
+- Wanneer de functie is uitgeschakeld in de config, blijven bestaande chats ongewijzigd en roept de client de nieuwe routes nooit aan.
+
+## Beveiligingsmodel [#security-model]
+
+- Het token bevindt zich op de server. Het wordt nooit naar de browser verzonden en foutmeldingen bevatten nooit de reactietekst van GitHub, het token of stack traces.
+- Het token wordt alleen gebruikt voor repositories binnen het bereik. Het wordt nooit verzonden naar een fork die niet binnen het bereik valt.
+- De twee `/api/convos` opzoekroutes vereisen een geauthenticeerde gebruiker en zijn eigenaar-gebonden. Een gesprek dat ontbreekt, verlopen is of toebehoort aan een andere gebruiker ziet er hetzelfde uit als een gesprek zonder pull request.
+- Gebruik een alleen-lezen, fijnmazig token dat beperkt is tot de repositories die je wilt tonen.
+
+## Probleemoplossing [#troubleshooting]
+
+| Symptoom | Waarschijnlijke oorzaak | Oplossing |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Geen chip en nergens een markering in de zijbalk | Geen token, geen repository-scope, of `enabled: false` | Controleer [Setup](#setup). Open `/api/config` terwijl je bent ingelogd en zoek naar `pullRequestsEnabled: true`. |
+| Header-chip werkt, zijbalkrijen tonen niets | `pullRequestsBatchVersion` ontbreekt in `/api/config` (oude build of een verouderd tabblad) | Bouw de server opnieuw op of upgrade deze, start opnieuw op en voer een harde herlaad uit. Bevestig `pullRequestsBatchVersion: 1`. |
+| Chip verschijnt alleen bij sommige chats | Alleen chats in een gekoppelde code-workspace die een branch hebben gerapporteerd, hebben een rij | Bevestig `CODEAPI_BRIDGE_LANE_GIT=true` op de Code API en een worker gebouwd vanuit code-interpreter PR #311 of later. |
+| Waarschuwingsicoon met opnieuw proberen | Opzoeken mislukt (rate limit, GitHub-fout of `NOT_CONFIGURED`) | Probeer het opnieuw. Als het constant is, controleer dan het token en de bijbehorende rechten. |
+| `NOT_CONFIGURED` | `token` is ingesteld maar de variabele is leeg of ontbreekt | Stel de variabele in. **In afwachting:** of verwijder `token` om de fallback-variabelen te gebruiken. |
+| Pull requests laden maar checks zien er verkeerd uit of falen | Het token mist Checks- of Contents-rechten | Verleen alleen-lezen rechten voor Checks en Contents. |
+| Pull request van een fork toont geen checks | De fork valt buiten de scope, dus checks worden gelezen vanuit de basis-repository | Voeg de eigenaar van de fork toe aan `allowedRepositories`. **In afwachting:** of stel `allowAllRepositories: true` in. |
+| Geen pull request voor een branch-naam die vaak is hergebruikt | `maxCandidatePullRequests`, `maxCandidatePages` of `maxHeadComparisons` is te laag voor hoe vaak de naam wordt hergebruikt, waardoor de zoekopdracht stopt voordat het overeenkomende pull request wordt bereikt | Verhoog deze waarden. |
+| Trage of time-out zoekopdrachten achter een proxy | `requestTimeoutSeconds` is te laag | Verhoog deze waarde. Controleer `HTTPS_PROXY` en `NO_PROXY`. |
+
+## API-referentie [#api-reference]
+
+Beide `/api/convos` routes hieronder vereisen een geauthenticeerde gebruiker en zijn eigenaar-gebonden. Het startup config endpoint is niet eigenaar-gebonden.
+
+### Haal de pull request van één conversatie op [#get-one-conversations-pull-request]
+
+`GET /api/convos/:conversationId/pull-request`
+
+- **200**: `{ "pullRequest": null }` of `{ "pullRequest": { number, title, url, additions, deletions, state, isDraft, mergeable, checks } }`.
+- `state` is `open`, `closed` of `merged`. `mergeable` is `clean`, `conflicting` of `unknown`. `checks` is `passing`, `failing`, `running` of `none`.
+- **503**: `{ "error": "...", "code": "NOT_CONFIGURED" | "RATE_LIMITED" | "UPSTREAM_ERROR" }`.
+- **404**: ongeldig conversation id. **500**: opslagfout met vaste tekst.
+
+### Haal pull requests van vele gesprekken op [#get-many-conversations-pull-requests]
+
+`POST /api/convos/pull-requests`
+
+- Body: `{ "conversationIds": ["..."] }`, met 1 tot 50 ids. Duplicaten worden samengevoegd. Al het andere resulteert in een 400.
+- **200**: `{ "results": [ { "conversationId", "pullRequest" } | { "conversationId", "error": { "code" } } ] }`, in de gevraagde volgorde. Eén mislukte opzoeking verbergt de andere niet.
+- Een ontbrekend token zorgt er alleen voor dat de items die het nodig hadden, falen.
+
+### Opstartconfiguratie [#startup-config]
+
+`GET /api/config` bevat deze velden. De server stelt deze in; het zijn geen instellingen.
+
+- `pullRequestsEnabled` (boolean)
+- `pullRequestsBatchVersion` (`1`, alleen aanwezig wanneer de functie is ingeschakeld)
+- `pullRequestsMaxConcurrentLookups` (getal, alleen aanwezig wanneer de functie is ingeschakeld)
+
+Alleen de hierboven vermelde foutcodes zijn stabiel.

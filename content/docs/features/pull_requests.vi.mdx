@@ -1,0 +1,237 @@
+---
+title: Yêu cầu kéo hội thoại
+icon: GitPullRequest
+description: >-
+  Hiển thị pull request trên GitHub, kích thước và trạng thái CI cho các cuộc
+  trò chuyện chạy mã trong một workspace được đính kèm.
+---
+
+{/*
+  PUBLISHING GATE. Do not merge this page until LibreChat-AI/LibreChat#16876 (default-on, token
+  fallback, allowAllRepositories) is merged to dev. Until then, only the blocks marked
+  "Pending" are unreleased. After it merges: re-check the schema in
+  packages/data-provider/src/config.ts, delete the "Older versions" blocks and every Pending marker.
+  TODO(maintainer): first release version for each part (do not guess).
+  TODO(maintainer): requirement 4 (where an admin sets the workspace environment's repository).
+  Add it to "Requirements" once confirmed. Do not publish without it.
+*/}
+
+Khi một cuộc trò chuyện chạy mã trong một workspace được đính kèm, worker sẽ báo cáo nhánh git và commit mà nó đang thực hiện. LibreChat sử dụng nhánh đó để tìm pull request GitHub tương ứng, với một token được lưu giữ trên máy chủ, và hiển thị nó ở hai nơi:
+
+- **Tiêu đề trò chuyện (Chat header)**: một thẻ (chip) với biểu tượng pull request và một dấu chấm CI. Khi di chuột hoặc tập trung vào đó sẽ mở ra một thẻ thông tin.
+- **Danh sách hội thoại trên thanh bên**: cùng biểu tượng và dấu chấm CI ở cuối hàng. Hàng này vẫn giữ tiêu đề riêng của cuộc hội thoại; tiêu đề của pull request chỉ xuất hiện trong thẻ.
+
+## Yêu cầu [#requirements]
+
+Tất cả các điều kiện sau đây phải đúng để một cuộc trò chuyện hiển thị pull request:
+
+1. LibreChat có một GitHub token và một phạm vi repository. Xem [Setup](#setup).
+2. Cuộc trò chuyện sử dụng một **không gian làm việc mã nguồn đính kèm** (code worker), không phải là một cuộc trò chuyện thông thường.
+3. Worker báo cáo nhánh của nó. Điều này yêu cầu một worker được xây dựng từ `LibreChat-AI/code-interpreter` PR #311 trở lên, và `CODEAPI_BRIDGE_LANE_GIT=true` được thiết lập trên Code API. Xem [Code Interpreter](/docs/features/code_interpreter#attached-environments-and-pairing).
+
+Nếu một yêu cầu bị thiếu, các cuộc trò chuyện sẽ đơn giản là không hiển thị pull request nào và không có lỗi nào được hiển thị cho người dùng. Ngoại lệ là một `token` đã được thiết lập nhưng biến môi trường của nó bị trống hoặc bị thiếu: các tra cứu sau đó sẽ thất bại với `NOT_CONFIGURED`, và các hàng trên thanh bên sẽ hiển thị biểu tượng cảnh báo cùng với nút thử lại.
+
+## Thiết lập [#setup]
+
+### 1. Tạo một token [#1-create-a-token]
+
+Sử dụng một fine-grained GitHub token được giới hạn trong các kho lưu trữ mà bạn muốn hiển thị, với quyền **read-only**:
+
+- Pull requests
+- Kiểm tra
+- Mục lục
+
+<Callout type="warning" title="Các chế độ lỗi quyền truy cập">
+  Nếu không có **Checks**, mọi pull request khớp đều không thể tải. Nếu không có **Contents**, một cuộc trò chuyện có nhánh đã thay đổi kể từ lệnh cuối cùng của nó sẽ không thể tải.
+</Callout>
+
+### 2. Cung cấp token cho LibreChat [#2-give-librechat-the-token]
+
+<Callout type="important" title="Đang chờ xử lý: chưa được phát hành">
+  Cơ chế dự phòng biến môi trường (environment variable fallback) là một phần của thay đổi mặc định được bật (LibreChat-AI/LibreChat#16876).
+</Callout>
+
+LibreChat tìm kiếm token theo thứ tự sau:
+
+1. `token: "${MY_VAR}"` trong `librechat.yaml`. Đây là một **tham chiếu** biến môi trường; tệp YAML không bao giờ lưu trữ chính token đó.
+2. Nếu `token` không được thiết lập, biến môi trường đầu tiên trong số các biến sau sẽ được sử dụng: `GITHUB_PULL_REQUEST_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`.
+3. Không có token ở bất kỳ đâu: tính năng này sẽ ở trạng thái không hoạt động.
+
+Một `token` đã được thiết lập nhưng không phân giải được (biến bị trống hoặc thiếu) sẽ dẫn đến lỗi `NOT_CONFIGURED`. Nó sẽ **không** tự động chuyển sang sử dụng ba biến ở trên.
+
+<Callout type="info" title="GITHUB_TOKEN là một tên gọi phổ biến">
+  Nếu quá trình triển khai của bạn đã sử dụng `GITHUB_TOKEN` cho mục đích khác, hành vi mặc định sẽ bắt đầu sử dụng nó tại đây ngay khi phạm vi kho lưu trữ (repository scope) được thiết lập. Hãy đặt `token` một cách rõ ràng, hoặc sử dụng `GITHUB_PULL_REQUEST_TOKEN`, để tránh việc chia sẻ nó.
+</Callout>
+
+**Các phiên bản cũ hơn:** `token` là bắt buộc khi tính năng này được bật và phải là một tham chiếu `${NAME}` như `"${GITHUB_PULL_REQUEST_TOKEN}"`. Không có cơ chế dự phòng cho biến môi trường.
+
+### 3. Chọn các kho lưu trữ mà nó có thể tra cứu [#3-choose-which-repositories-it-may-look-up]
+
+Worker tự báo cáo repository của chính nó, vì vậy server phải quyết định những repository nào mà token có thể được sử dụng. Nếu không có phạm vi (scope), tính năng này sẽ không hoạt động. Có hai cách:
+
+- `allowedRepositories`: một danh sách các mục `owner/name` hoặc `owner/*` (tối đa 256 mục). Việc so khớp không phân biệt chữ hoa chữ thường. Các mục như `*/*`, `*`, `owner`, hoặc các mục chứa `..` sẽ bị lược đồ từ chối.
+- `allowAllRepositories: true` (**Đang chờ xử lý**): tra cứu bất kỳ kho lưu trữ nào mà token có thể đọc. Mặc định là `false`.
+
+<Callout type="warning" title="Bảo mật: allowAllRepositories">
+  Khi bật tính năng này, bất kỳ người dùng nào có thể chạy mã đều có thể trỏ token của máy chủ vào bất kỳ kho lưu trữ nào mà token đó có quyền đọc, đồng thời xem tiêu đề, kích thước và trạng thái kiểm tra của pull request. Hãy sử dụng token chỉ đọc (read-only) được giới hạn phạm vi cho các kho lưu trữ mà bạn sẵn sàng hiển thị.
+</Callout>
+
+### 4. Bật tính năng này [#4-turn-it-on]
+
+<Callout type="important" title="Đang chờ xử lý: chưa được phát hành">
+  Hành vi mặc định bật là một phần của LibreChat-AI/LibreChat#16876.
+</Callout>
+
+Tính năng này sẽ được bật ngay khi có token và phạm vi repository. Không có công tắc `enabled` nào để thiết lập. `enabled: false` sẽ tắt tính năng này, bất kể các thiết lập khác là gì.
+
+**Các phiên bản cũ hơn:** `enabled: true` là bắt buộc, và schema sẽ từ chối `enabled: true` nếu thiếu cả `token` và `allowedRepositories` không trống.
+
+### Các ví dụ tối giản [#minimal-examples]
+
+Biểu mẫu mặc định bật (**Đang chờ xử lý**), với `GITHUB_TOKEN` được thiết lập trong môi trường máy chủ:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowAllRepositories: true
+```
+
+Giới hạn ở các kho lưu trữ cụ thể (**Đang chờ xử lý**, dự phòng cùng token):
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowedRepositories:
+        - 'LibreChat-AI/LibreChat'
+        - 'my-org/*'
+```
+
+Biểu mẫu hoạt động trên các phiên bản cũ hơn:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      enabled: true
+      token: '${GITHUB_PULL_REQUEST_TOKEN}'
+      allowedRepositories: ['LibreChat-AI/LibreChat']
+```
+
+Xem tài liệu tham khảo [`pullRequests`](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) để biết mọi khóa, bao gồm cả các tùy chọn tinh chỉnh.
+
+## Những gì người dùng thấy [#what-users-see]
+
+### Chip tiêu đề trò chuyện [#chat-header-chip]
+
+- **Desktop**: chip nằm ở bên trái của tiêu đề, cạnh các điều khiển bên trái khác. Di chuột hoặc tập trung vào nó sẽ mở thẻ ở bên phải của nó.
+- **Mobile**: mục này nằm trong menu tràn (ba dấu chấm) của tiêu đề và mở ra một hộp thoại.
+- Phần tiêu đề tự động làm mới: khoảng 20 giây một lần khi các kiểm tra đang chạy hoặc khả năng hợp nhất vẫn đang được tính toán, khoảng 60 giây một lần trong các trường hợp khác, và không làm mới sau khi một pull request đã được hợp nhất hoặc đóng mà không có kiểm tra nào đang chạy.
+
+### Đánh dấu thanh bên [#sidebar-mark]
+
+- Một biểu tượng pull request với dấu chấm CI nằm ở cuối hàng hội thoại. Nó chỉ xuất hiện đối với các hội thoại có pull request.
+- Di chuột, tiêu điểm hoặc nhấp chuột sẽ mở cùng một thẻ ở bên phải của dấu. Việc nhấp vào dấu sẽ không mở cuộc trò chuyện.
+- Thanh bên không bao giờ tự động gửi yêu cầu (poll). Một hàng dữ liệu chỉ mới như lần cuối danh sách được tải, và nó sẽ làm mới khi cửa sổ được lấy lại tiêu điểm (focus) và dữ liệu của nó đã cũ hơn một phút.
+- Nếu quá trình tra cứu thất bại, hàng đó sẽ hiển thị biểu tượng cảnh báo kèm theo nút thử lại trong thẻ của nó, để tránh nhầm lẫn lỗi này với trạng thái "không có pull request".
+
+### Thẻ [#the-card]
+
+Thẻ này hiển thị `PR #number`, `+additions` bằng màu xanh lục, `-deletions` bằng màu đỏ, một liên kết mở pull request trên GitHub, tiêu đề của pull request và hai huy hiệu:
+
+- **Trạng thái**: Open (Mở), Draft (Bản nháp), Merged (Đã hợp nhất) hoặc Closed (Đã đóng).
+- **Checks**: Đang vượt qua (Passing), Đang thất bại (Failing), Đang chạy (Running), hoặc không có (none).
+
+{/* TODO(docs): add the screenshots from LibreChat PRs #16794 and #16815. */}
+
+### Ý nghĩa của biểu tượng và dấu chấm [#icon-and-dot-meaning]
+
+| Tình huống | Màu biểu tượng | Chấm CI |
+| --------------------------------------- | ------------------------- | ------------------------------------- |
+| Mở, không xung đột, kiểm tra thành công | Xanh lá (sẵn sàng hợp nhất) | Xanh lá |
+| Mở, không xung đột, không có kiểm tra | Xanh lá | Không có |
+| Mở, xung đột hợp nhất | Đỏ (không thể hợp nhất) | Theo kiểm tra |
+| Bản nháp | Trung tính | Theo kiểm tra |
+| Đã hợp nhất hoặc đóng | Trung tính | Không có (màu hổ phách khi kiểm tra vẫn đang chạy) |
+
+Màu sắc của các dấu chấm CI: màu xanh lá cây cho trạng thái đạt, màu đỏ cho trạng thái thất bại, màu hổ phách cho trạng thái đang chạy, và không có màu khi không có kiểm tra nào, hoặc khi yêu cầu kéo (pull request) đã được hợp nhất hoặc đóng và không còn kiểm tra nào đang chạy. Một kiểm tra thất bại sẽ được ưu tiên hơn một kiểm tra vẫn đang chạy. Một bản tổng hợp có nhiều lượt kiểm tra hơn số lượng đã đọc sẽ không bao giờ được báo cáo là đạt.
+
+## Cách một pull request được khớp [#how-a-pull-request-is-matched]
+
+1. Worker báo cáo kho lưu trữ, nhánh và commit (head) mà cuộc trò chuyện đã chạy lần cuối.
+2. LibreChat liệt kê các pull request đang mở cho nhánh đó trước, vì vậy lịch sử đã đóng trên một tên nhánh được sử dụng lại không thể ẩn đi một pull request đang mở. Sau đó, nó kiểm tra các pull request đang mở từ các fork (được tìm thấy thông qua commit), rồi đến các pull request đã đóng.
+3. Với một commit đã được ghi lại, một pull request chỉ được tính nếu head của nó là commit đó hoặc được xây dựng dựa trên commit đó. Điều này giúp ngăn chặn việc tên nhánh bị xóa và tái sử dụng hiển thị một pull request cũ.
+4. Một nhánh chưa có commit nào (một nhánh mới, trống) sẽ không khớp với bất kỳ thứ gì.
+5. Kết quả được lưu vào bộ nhớ đệm theo thông tin xác thực, kho lưu trữ, nhánh và commit.
+6. Các lượt kiểm tra (check runs) được đọc cho head hiện tại của pull request. Đối với một pull request từ một fork, các kiểm tra chỉ được đọc từ fork đó khi kho lưu trữ của fork đó nằm trong phạm vi (được liệt kê, hoặc `allowAllRepositories`). Nếu không, kho lưu trữ cơ sở sẽ được đọc và token sẽ không bao giờ được gửi đến một fork không được liệt kê.
+
+## Hành vi [#behavior]
+
+### Giới hạn tốc độ (Rate limits) [#rate-limits]
+
+- Giới hạn tốc độ của GitHub được áp dụng cho thông tin xác thực, vì vậy nó sẽ tạm dừng việc tra cứu cho mọi nhánh (branch) dưới token đó.
+- Thời gian tạm dừng tối thiểu là 10 giây. Giới hạn thứ cấp không có thời gian chờ được chỉ định sẽ chờ 60 giây. Thời gian chờ do GitHub đặt tên sẽ được tôn trọng, với mức tối đa là 1 giờ.
+- Trong thời gian tạm dừng, các tra cứu sẽ trả về `RATE_LIMITED` và các hàng sẽ hiển thị trạng thái thử lại.
+
+### Nâng cấp luân phiên [#rolling-upgrades]
+
+- Thanh bên chỉ yêu cầu tuyến đường batch khi cấu hình khởi động cho biết máy chủ có hỗ trợ nó (`pullRequestsBatchVersion`).
+- Nếu một bản sao (replica) không có route trả về lỗi 404, client sẽ quay lại sử dụng route đơn lẻ, mỗi lần gọi một yêu cầu, hoặc theo `pullRequestsMaxConcurrentLookups` khi server quảng bá nó. Điều này bao gồm trường hợp client nhận được cờ khởi động mới từ một bản sao đã nâng cấp và sau đó truy cập vào một bản sao không có route đó. Nếu `/api/config` được phục vụ bởi một bản sao không có cờ này, thanh bên sẽ không bao giờ yêu cầu route hàng loạt và các hàng sẽ vẫn trống, vì vậy hãy nâng cấp mọi bản sao trước khi dựa vào các đánh dấu trên thanh bên.
+
+### Các giá trị mặc định khi không được thiết lập [#defaults-when-unset]
+
+- Nếu không có token hoặc phạm vi repository, tính năng này sẽ ở trạng thái không hoạt động: không có gì được quảng bá trong cấu hình khởi động, không có gì được ghi lại và không có gì được hiển thị.
+- Khi tính năng này bị tắt trong cấu hình, các cuộc trò chuyện hiện có sẽ không thay đổi và client sẽ không bao giờ gọi các route mới.
+
+## Mô hình bảo mật [#security-model]
+
+- Token nằm trên máy chủ. Nó không bao giờ được gửi đến trình duyệt và các phản hồi lỗi không bao giờ bao gồm văn bản phản hồi của GitHub, token hoặc dấu vết ngăn xếp (stack traces).
+- Token này chỉ được sử dụng cho các kho lưu trữ nằm trong phạm vi. Nó không bao giờ được gửi đến một fork không nằm trong phạm vi.
+- Hai tuyến tra cứu `/api/convos` yêu cầu người dùng đã xác thực và được giới hạn quyền sở hữu. Một cuộc trò chuyện bị thiếu, hết hạn hoặc thuộc về người dùng khác sẽ hiển thị giống như một cuộc trò chuyện không có yêu cầu kéo (pull request).
+- Sử dụng một token chỉ đọc, có phạm vi hạn chế (fine-grained) giới hạn trong các kho lưu trữ mà bạn sẵn sàng hiển thị.
+
+## Khắc phục sự cố [#troubleshooting]
+
+| Triệu chứng | Nguyên nhân có khả năng | Khắc phục |
+| :--- | :--- | :--- |
+| Không có chip và không có dấu hiệu thanh bên ở bất kỳ đâu | Thiếu token, thiếu phạm vi kho lưu trữ (repository scope), hoặc `enabled: false` | Kiểm tra [Setup](#setup). Mở `/api/config` khi đã đăng nhập và tìm `pullRequestsEnabled: true`. |
+| Chip tiêu đề hoạt động, các hàng thanh bên không hiển thị gì | Thiếu `pullRequestsBatchVersion` trong `/api/config` (bản dựng cũ hoặc tab cũ) | Xây dựng lại hoặc nâng cấp máy chủ, khởi động lại và tải lại trang (hard reload). Xác nhận `pullRequestsBatchVersion: 1`. |
+| Chip chỉ xuất hiện cho một số cuộc trò chuyện | Chỉ các cuộc trò chuyện trên không gian làm việc mã nguồn (code workspace) đã báo cáo nhánh mới có làn (lane) | Xác nhận `CODEAPI_BRIDGE_LANE_GIT=true` trên Code API và worker được xây dựng từ code-interpreter PR #311 trở lên. |
+| Biểu tượng cảnh báo với nút thử lại | Tra cứu thất bại (giới hạn tốc độ, lỗi GitHub, hoặc `NOT_CONFIGURED`) | Thử lại. Nếu lỗi liên tục, hãy kiểm tra token và quyền của nó. |
+| `NOT_CONFIGURED` | `token` đã được đặt nhưng biến của nó bị trống hoặc thiếu | Đặt biến. **Đang chờ:** hoặc xóa `token` để sử dụng các biến dự phòng. |
+| Pull request tải được nhưng các kiểm tra (checks) trông sai hoặc thất bại | Token thiếu quyền Checks hoặc Contents | Cấp quyền đọc Checks và Contents. |
+| Pull request từ một fork không hiển thị kiểm tra | Fork không nằm trong phạm vi, vì vậy các kiểm tra được đọc từ kho lưu trữ cơ sở | Thêm chủ sở hữu fork vào `allowedRepositories`. **Đang chờ:** hoặc đặt `allowAllRepositories: true`. |
+| Không có pull request cho tên nhánh đã được sử dụng lại nhiều lần | `maxCandidatePullRequests`, `maxCandidatePages` hoặc `maxHeadComparisons` quá thấp so với tần suất tên được sử dụng lại, khiến tìm kiếm dừng trước khi đến được pull request khớp | Tăng các giá trị này. |
+| Tra cứu chậm hoặc hết thời gian chờ sau proxy | `requestTimeoutSeconds` quá thấp | Tăng giá trị này. Kiểm tra `HTTPS_PROXY` và `NO_PROXY`. |
+
+## Tham chiếu API [#api-reference]
+
+Cả hai tuyến `/api/convos` bên dưới đều yêu cầu người dùng đã xác thực và được giới hạn theo quyền sở hữu (owner-scoped). Tuyến cấu hình khởi động (startup config endpoint) không bị giới hạn theo quyền sở hữu.
+
+### Lấy pull request của một cuộc trò chuyện [#get-one-conversations-pull-request]
+
+`GET /api/convos/:conversationId/pull-request`
+
+- **200**: `{ "pullRequest": null }` hoặc `{ "pullRequest": { number, title, url, additions, deletions, state, isDraft, mergeable, checks } }`.
+- `state` là `open`, `closed` hoặc `merged`. `mergeable` là `clean`, `conflicting` hoặc `unknown`. `checks` là `passing`, `failing`, `running` hoặc `none`.
+- **503**: `{ "error": "...", "code": "NOT_CONFIGURED" | "RATE_LIMITED" | "UPSTREAM_ERROR" }`.
+- **404**: id cuộc hội thoại không hợp lệ. **500**: lỗi lưu trữ với văn bản cố định.
+
+### Lấy các yêu cầu kéo (pull requests) của nhiều cuộc trò chuyện [#get-many-conversations-pull-requests]
+
+`POST /api/convos/pull-requests`
+
+- Body: `{ "conversationIds": ["..."] }`, với 1 đến 50 id. Các bản sao sẽ được gộp lại. Bất kỳ nội dung nào khác sẽ trả về lỗi 400.
+- **200**: `{ "results": [ { "conversationId", "pullRequest" } | { "conversationId", "error": { "code" } } ] }`, theo thứ tự được yêu cầu. Một tra cứu thất bại không làm ẩn đi các kết quả khác.
+- Một token bị thiếu chỉ làm thất bại các mục cần đến nó.
+
+### Cấu hình khởi động [#startup-config]
+
+`GET /api/config` bao gồm các trường này. Máy chủ thiết lập chúng; chúng không phải là các cài đặt.
+
+- `pullRequestsEnabled` (boolean)
+- `pullRequestsBatchVersion` (`1`, chỉ xuất hiện khi tính năng này được bật)
+- `pullRequestsMaxConcurrentLookups` (số, chỉ xuất hiện khi tính năng này được bật)
+
+Chỉ các mã lỗi được liệt kê ở trên mới ổn định.

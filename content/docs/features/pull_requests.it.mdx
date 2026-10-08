@@ -1,0 +1,237 @@
+---
+title: Pull Request di conversazione
+icon: GitPullRequest
+description: >-
+  Mostra la pull request di GitHub, le dimensioni e lo stato della CI per le
+  chat che eseguono codice in un workspace allegato.
+---
+
+{/*
+  PUBLISHING GATE. Do not merge this page until LibreChat-AI/LibreChat#16876 (default-on, token
+  fallback, allowAllRepositories) is merged to dev. Until then, only the blocks marked
+  "Pending" are unreleased. After it merges: re-check the schema in
+  packages/data-provider/src/config.ts, delete the "Older versions" blocks and every Pending marker.
+  TODO(maintainer): first release version for each part (do not guess).
+  TODO(maintainer): requirement 4 (where an admin sets the workspace environment's repository).
+  Add it to "Requirements" once confirmed. Do not publish without it.
+*/}
+
+Quando una chat esegue del codice in un workspace collegato, il worker riporta il branch git e il commit su cui si trova. LibreChat utilizza quel branch per trovare la pull request di GitHub corrispondente, tramite un token conservato sul server, e la mostra in due punti:
+
+- **Intestazione della chat**: un chip con l'icona della pull request e un punto CI. Passandoci sopra con il mouse o mettendolo a fuoco si apre una scheda.
+- **Elenco delle conversazioni nella barra laterale**: la stessa icona e il punto CI alla fine della riga. La riga mantiene il titolo della conversazione; il titolo della pull request appare solo nella scheda.
+
+## Requisiti [#requirements]
+
+Tutte queste condizioni devono essere vere affinché una chat mostri una pull request:
+
+1. LibreChat ha un token GitHub e un ambito di repository. Vedi [Setup](#setup).
+2. La chat utilizza un **area di lavoro per il codice allegata** (un code worker), non una semplice chat.
+3. Il worker riporta il suo branch. Ciò richiede un worker compilato a partire dalla PR #311 o successiva di `LibreChat-AI/code-interpreter` e l'impostazione di `CODEAPI_BRIDGE_LANE_GIT=true` sulla Code API. Vedi [Code Interpreter](/docs/features/code_interpreter#attached-environments-and-pairing).
+
+Se un requisito non è soddisfatto, le chat semplicemente non mostrano alcuna pull request e non viene visualizzato alcun errore per l'utente. L'eccezione è rappresentata da un `token` che è impostato ma la cui variabile d'ambiente è vuota o mancante: le ricerche falliscono con `NOT_CONFIGURED` e le righe della barra laterale mostrano l'icona di avviso con un pulsante di riprova.
+
+## Setup [#setup]
+
+### 1. Crea un token [#1-create-a-token]
+
+Utilizza un token GitHub granulare limitato ai repository che desideri mostrare, con autorizzazioni di **sola lettura**:
+
+- Pull request
+- Controlli
+- Indice
+
+<Callout type="warning" title="Modalità di errore dei permessi">
+  Senza **Checks**, ogni pull request corrispondente non riesce a caricarsi. Senza **Contents**, una chat il cui branch è avanzato dall'ultimo comando non riesce a caricarsi.
+</Callout>
+
+### 2. Fornisci il token a LibreChat [#2-give-librechat-the-token]
+
+<Callout type="important" title="In attesa: non ancora rilasciato">
+  Il fallback delle variabili d'ambiente fa parte della modifica abilitata per impostazione predefinita (LibreChat-AI/LibreChat#16876).
+</Callout>
+
+LibreChat cerca un token seguendo questo ordine:
+
+1. `token: "${MY_VAR}"` in `librechat.yaml`. Questo è un **riferimento** a una variabile d'ambiente; lo YAML non contiene mai il token stesso.
+2. Se `token` non è impostato, verrà utilizzata la prima tra queste variabili d'ambiente che risulta impostata: `GITHUB_PULL_REQUEST_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`.
+3. Nessun token ovunque: la funzionalità rimane inattiva.
+
+Un `token` che è impostato ma non viene risolto (la variabile è vuota o mancante) fallisce con `NOT_CONFIGURED`. Non ricorre **non** alle tre variabili sopra indicate.
+
+<Callout type="info" title="GITHUB_TOKEN è un nome comune">
+  Se la tua distribuzione utilizza già `GITHUB_TOKEN` per qualcos'altro, il comportamento predefinito inizierà a utilizzarlo qui non appena viene impostato un ambito di repository. Imposta `token` in modo esplicito, o utilizza `GITHUB_PULL_REQUEST_TOKEN`, per evitare di condividerlo.
+</Callout>
+
+**Versioni precedenti:** `token` è richiesto quando la funzionalità è abilitata e deve essere un riferimento `${NAME}` come `"${GITHUB_PULL_REQUEST_TOKEN}"`. Non esiste un fallback per le variabili d'ambiente.
+
+### 3. Scegli quali repository può consultare [#3-choose-which-repositories-it-may-look-up]
+
+Il worker segnala il proprio repository, quindi il server deve decidere per quali repository il token può essere utilizzato. Senza uno scope, la funzionalità rimane inattiva. Ci sono due modi:
+
+- `allowedRepositories`: un elenco di voci `owner/name` o `owner/*` (fino a 256). La corrispondenza non è sensibile alle maiuscole/minuscole. Voci come `*/*`, `*`, `owner` o quelle contenenti `..` vengono rifiutate dallo schema.
+- `allowAllRepositories: true` (**In sospeso**): cerca in qualsiasi repository che il token può leggere. Il valore predefinito è `false`.
+
+<Callout type="warning" title="Sicurezza: allowAllRepositories">
+  Con questa opzione attiva, qualsiasi utente in grado di eseguire codice può puntare il token del server verso qualsiasi repository che quel token può leggere, visualizzando il titolo, le dimensioni e lo stato dei controlli delle pull request. Utilizza un token di sola lettura limitato ai repository che sei disposto a mostrare.
+</Callout>
+
+### 4. Attivalo [#4-turn-it-on]
+
+<Callout type="important" title="In attesa: non ancora rilasciato">
+  Il comportamento predefinito attivo (default-on) fa parte di LibreChat-AI/LibreChat#16876.
+</Callout>
+
+La funzionalità è attiva non appena sono presenti un token e un ambito di repository. Non c'è un interruttore `enabled` da impostare. `enabled: false` la disattiva, indipendentemente da qualsiasi altra impostazione.
+
+**Versioni precedenti:** `enabled: true` è richiesto e lo schema rifiuta `enabled: true` senza sia `token` che un `allowedRepositories` non vuoto.
+
+### Esempi minimi [#minimal-examples]
+
+Modulo attivo per impostazione predefinita (**In sospeso**), con `GITHUB_TOKEN` impostato nell'ambiente del server:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowAllRepositories: true
+```
+
+Limitato a repository specifiche (**In sospeso**, fallback per lo stesso token):
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowedRepositories:
+        - 'LibreChat-AI/LibreChat'
+        - 'my-org/*'
+```
+
+Modulo che funziona su versioni precedenti:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      enabled: true
+      token: '${GITHUB_PULL_REQUEST_TOKEN}'
+      allowedRepositories: ['LibreChat-AI/LibreChat']
+```
+
+Consulta il riferimento [`pullRequests`](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) per ogni chiave, incluse le opzioni di ottimizzazione.
+
+## Cosa vedono gli utenti [#what-users-see]
+
+### Chip dell'intestazione della chat [#chat-header-chip]
+
+- **Desktop**: il chip si trova a sinistra dell'intestazione, accanto agli altri controlli a sinistra. Passandoci sopra con il mouse o mettendolo a fuoco si apre la scheda alla sua destra.
+- **Mobile**: la voce si trova nel menu a comparsa (tre puntini) dell'intestazione e apre una finestra di dialogo.
+- L'intestazione si aggiorna automaticamente: circa ogni 20 secondi mentre i controlli sono in esecuzione o la possibilità di unione è ancora in fase di calcolo, circa ogni 60 secondi in caso contrario, e non si aggiorna affatto una volta che una pull request è stata unita o chiusa senza controlli in esecuzione.
+
+### Segnalibro della barra laterale [#sidebar-mark]
+
+- Un'icona di pull request con un punto CI si trova alla fine della riga della conversazione. Appare solo per le conversazioni che hanno una pull request.
+- Passare il mouse, mettere a fuoco o fare clic apre la stessa scheda a destra del segno. Fare clic sul segno non apre la conversazione.
+- La barra laterale non esegue mai il polling. Una riga è aggiornata all'ultima volta in cui l'elenco è stato caricato e si aggiorna quando la finestra riacquisisce il focus e i suoi dati sono più vecchi di un minuto.
+- Se una ricerca fallisce, la riga mostra un'icona di avviso con un pulsante di riprova nella sua scheda, in modo che un errore non venga scambiato per "nessuna pull request".
+
+### La scheda [#the-card]
+
+La scheda mostra `PR #number`, `+additions` in verde, `-deletions` in rosso, un link che apre la pull request su GitHub, il titolo della pull request e due badge:
+
+- **Stato**: Open, Draft, Merged o Closed.
+- **Controlli**: Superato, Fallito, In esecuzione, o nessuno.
+
+{/* TODO(docs): add the screenshots from LibreChat PRs #16794 and #16815. */}
+
+### Significato dell'icona e del punto [#icon-and-dot-meaning]
+
+| Situazione | Colore icona | Punto CI |
+| --------------------------------------- | ------------------------- | ------------------------------------- |
+| Aperto, nessun conflitto, controlli superati | Verde (pronto per il merge) | Verde |
+| Aperto, nessun conflitto, nessun controllo | Verde | Nessuno |
+| Aperto, conflitti di merge | Rosso (impossibile eseguire il merge) | In base ai controlli |
+| Bozza | Neutro | In base ai controlli |
+| Unito o chiuso | Neutro | Nessuno (ambra mentre i controlli sono ancora in esecuzione) |
+
+Colori dei punti CI: verde per superato, rosso per fallito, ambra per in esecuzione e nessuno quando non ci sono controlli, o quando la pull request è unita o chiusa e nessun controllo è ancora in esecuzione. Un controllo fallito ha la priorità su uno ancora in esecuzione. Un rollup con più esecuzioni di controllo di quelle lette non viene mai segnalato come superato.
+
+## Come viene abbinata una pull request [#how-a-pull-request-is-matched]
+
+1. Il worker riporta il repository, il branch e il commit (head) in cui la chat è stata eseguita l'ultima volta.
+2. LibreChat elenca prima le pull request aperte per quel branch, in modo che la cronologia chiusa su un nome di branch riutilizzato non possa nasconderne una aperta. Successivamente controlla le pull request aperte dai fork (trovate tramite il commit), e poi quelle chiuse.
+3. Con un commit registrato, una pull request viene conteggiata solo se il suo head corrisponde a quel commit o si basa su di esso. Ciò impedisce che un nome di branch eliminato e riutilizzato mostri una vecchia pull request.
+4. Un branch senza ancora alcun commit (un branch nuovo e vuoto) non corrisponde a nulla.
+5. Il risultato viene memorizzato nella cache per credenziale, repository, branch e commit.
+6. I check run vengono letti per l'head corrente della pull request. Per una pull request proveniente da un fork, i check vengono letti dal fork solo quando il repository di tale fork è nell'ambito (elencato o `allowAllRepositories`). Altrimenti, viene letto il repository di base e il token non viene mai inviato a un fork non elencato.
+
+## Comportamento [#behavior]
+
+### Limiti di frequenza [#rate-limits]
+
+- Un limite di frequenza (rate limit) di GitHub si applica alla credenziale, pertanto sospende le ricerche per ogni branch associato a quel token.
+- La pausa minima è di 10 secondi. Un limite secondario senza attesa specificata attende 60 secondi. Un'attesa definita da GitHub viene rispettata, con un limite massimo di 1 ora.
+- Durante una pausa, le ricerche rispondono `RATE_LIMITED` e le righe mostrano lo stato di riprova.
+
+### Aggiornamenti progressivi [#rolling-upgrades]
+
+- La barra laterale interroga la rotta batch solo quando la configurazione di avvio indica che il server la supporta (`pullRequestsBatchVersion`).
+- Se una replica senza la route risponde 404, il client ripiega sulla route singola, una chiamata alla volta, o su `pullRequestsMaxConcurrentLookups` quando il server lo ha pubblicizzato. Questo copre il caso di un client che ha ricevuto il nuovo flag di avvio da una replica aggiornata e ha poi raggiunto una replica priva della route. Se `/api/config` viene servito da una replica senza il flag, la barra laterale non richiederà mai la route batch e le righe rimarranno vuote, quindi aggiorna ogni replica prima di fare affidamento sui contrassegni della barra laterale.
+
+### Impostazioni predefinite quando non configurate [#defaults-when-unset]
+
+- Senza un token o uno scope del repository, la funzionalità rimane inattiva: nulla viene pubblicizzato nella configurazione di avvio, nulla viene registrato e nulla viene mostrato.
+- Con la funzionalità disattivata nella configurazione, le chat esistenti rimangono invariate e il client non richiama mai le nuove route.
+
+## Modello di sicurezza [#security-model]
+
+- Il token risiede sul server. Non viene mai inviato al browser e le risposte di errore non includono mai il testo della risposta di GitHub, il token o le tracce dello stack.
+- Il token viene utilizzato solo per i repository nell'ambito. Non viene mai inviato a un fork che non rientra nell'ambito.
+- Le due rotte di ricerca `/api/convos` richiedono un utente autenticato e sono limitate al proprietario. Una conversazione mancante, scaduta o che appartiene a un altro utente appare identica a una senza alcuna pull request.
+- Utilizza un token in sola lettura e con privilegi limitati, circoscritto ai repository che desideri mostrare.
+
+## Risoluzione dei problemi [#troubleshooting]
+
+| Sintomo | Causa probabile | Soluzione |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Nessun chip e nessun segno nella barra laterale | Nessun token, nessun ambito di repository, o `enabled: false` | Controlla [Setup](#setup). Apri `/api/config` mentre sei loggato e cerca `pullRequestsEnabled: true`. |
+| Il chip dell'intestazione funziona, le righe della barra laterale non mostrano nulla | `pullRequestsBatchVersion` manca in `/api/config` (build vecchia o scheda non aggiornata) | Ricostruisci o aggiorna il server, riavvia ed esegui un hard reload. Conferma `pullRequestsBatchVersion: 1`. |
+| Il chip appare solo per alcune chat | Solo le chat su un workspace di codice collegato che ha segnalato un branch hanno una corsia | Conferma `CODEAPI_BRIDGE_LANE_GIT=true` sulla Code API e un worker compilato dalla PR di code-interpreter #311 o successiva. |
+| Icona di avviso con riprova | Ricerca fallita (limite di frequenza, errore GitHub o `NOT_CONFIGURED`) | Riprova. Se è costante, controlla il token e i suoi permessi. |
+| `NOT_CONFIGURED` | Il `token` è impostato ma la sua variabile è vuota o mancante | Imposta la variabile. **In sospeso:** o rimuovi `token` per usare le variabili di fallback. |
+| Le pull request si caricano ma i controlli sembrano errati o falliscono | Il token non ha i permessi Checks o Contents | Concedi permessi di sola lettura per Checks e Contents. |
+| La pull request da un fork non mostra controlli | Il fork non è nell'ambito, quindi i controlli vengono letti dal repository di base | Aggiungi il proprietario del fork a `allowedRepositories`. **In sospeso:** o imposta `allowAllRepositories: true`. |
+| Nessuna pull request per un nome di branch riutilizzato molte volte | `maxCandidatePullRequests`, `maxCandidatePages` o `maxHeadComparisons` sono troppo bassi per la frequenza di riutilizzo del nome, quindi la ricerca si interrompe prima di raggiungere la pull request corrispondente | Aumentali. |
+| Ricerche lente o in timeout dietro un proxy | `requestTimeoutSeconds` è troppo basso | Aumentalo. Controlla `HTTPS_PROXY` e `NO_PROXY`. |
+
+## Riferimento API [#api-reference]
+
+Entrambe le rotte `/api/convos` qui sotto richiedono un utente autenticato e sono limitate al proprietario. L'endpoint di configurazione all'avvio non è limitato al proprietario.
+
+### Ottieni la pull request di una conversazione [#get-one-conversations-pull-request]
+
+`GET /api/convos/:conversationId/pull-request`
+
+- **200**: `{ "pullRequest": null }` o `{ "pullRequest": { number, title, url, additions, deletions, state, isDraft, mergeable, checks } }`.
+- `state` è `open`, `closed` o `merged`. `mergeable` è `clean`, `conflicting` o `unknown`. `checks` è `passing`, `failing`, `running` o `none`.
+- **503**: `{ "error": "...", "code": "NOT_CONFIGURED" | "RATE_LIMITED" | "UPSTREAM_ERROR" }`.
+- **404**: id conversazione non valido. **500**: errore di archiviazione con testo fisso.
+
+### Ottieni le pull request di molte conversazioni [#get-many-conversations-pull-requests]
+
+`POST /api/convos/pull-requests`
+
+- Body: `{ "conversationIds": ["..."] }`, con da 1 a 50 id. I duplicati vengono eliminati. Qualsiasi altra cosa restituisce un 400.
+- **200**: `{ "results": [ { "conversationId", "pullRequest" } | { "conversationId", "error": { "code" } } ] }`, nell'ordine richiesto. Una ricerca fallita non nasconde le altre.
+- Un token mancante causa il fallimento solo delle voci che ne avevano bisogno.
+
+### Configurazione di avvio [#startup-config]
+
+`GET /api/config` include questi campi. Il server li imposta; non sono impostazioni.
+
+- `pullRequestsEnabled` (booleano)
+- `pullRequestsBatchVersion` (`1`, presente solo con la funzionalità attiva)
+- `pullRequestsMaxConcurrentLookups` (numero, presente solo con la funzionalità attiva)
+
+Solo i codici di errore elencati sopra sono stabili.
