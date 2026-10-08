@@ -5,10 +5,6 @@ description: Show the GitHub pull request, size and CI status for chats that run
 ---
 
 {/*
-  PUBLISHING GATE. Do not merge this page until LibreChat-AI/LibreChat#16876 (default-on, token
-  fallback, allowAllRepositories) is merged to dev. Until then, only the blocks marked
-  "Pending" are unreleased. After it merges: re-check the schema in
-  packages/data-provider/src/config.ts, delete the "Older versions" blocks and every Pending marker.
   TODO(maintainer): first release version for each part (do not guess).
   TODO(maintainer): requirement 4 (where an admin sets the workspace environment's repository).
   Add it to "Requirements" once confirmed. Do not publish without it.
@@ -46,72 +42,19 @@ Use a fine-grained GitHub token limited to the repositories you want to show, wi
 
 ### 2. Give LibreChat the token
 
-<Callout type="important" title="Pending: not yet released">
-  Environment variable fallback is part of the default-on change (LibreChat-AI/LibreChat#16876).
-</Callout>
+Set `token` in `librechat.yaml` to an environment variable **reference** in the form `${NAME}`, and set that variable in the LibreChat server environment. The YAML never holds the token itself, and the schema rejects any other value.
 
-LibreChat looks for a token in this order:
-
-1. `token: "${MY_VAR}"` in `librechat.yaml`. This is an environment variable **reference**; the YAML never holds the token itself.
-2. If `token` is not set, the first of these environment variables that is set: `GITHUB_PULL_REQUEST_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`.
-3. No token anywhere: the feature stays dormant.
-
-A `token` that is set but does not resolve (the variable is empty or missing) fails with `NOT_CONFIGURED`. It does **not** fall back to the three variables above.
-
-<Callout type="info" title="GITHUB_TOKEN is a common name">
-  If your deployment already uses `GITHUB_TOKEN` for something else, the default-on behavior starts
-  using it here as soon as a repository scope is set. Set `token` explicitly, or use
-  `GITHUB_PULL_REQUEST_TOKEN`, to avoid sharing it.
-</Callout>
-
-**Older versions:** `token` is required when the feature is enabled, and must be a `${NAME}` reference such as `"${GITHUB_PULL_REQUEST_TOKEN}"`. There is no environment variable fallback.
+If the variable is empty or missing, lookups fail with `NOT_CONFIGURED` and sidebar rows show the warning icon with a retry button.
 
 ### 3. Choose which repositories it may look up
 
-The worker reports its own repository, so the server must decide which repositories the token may be used for. Without a scope the feature stays dormant. There are two ways:
-
-- `allowedRepositories`: a list of `owner/name` or `owner/*` entries (up to 256). Matching is case-insensitive. Entries such as `*/*`, `*`, `owner`, or ones containing `..` are rejected by the schema.
-- `allowAllRepositories: true` (**Pending**): look up any repository the token can read. Default is `false`.
-
-<Callout type="warning" title="Security: allowAllRepositories">
-  With this on, any user who can run code can point the server's token at any repository that token
-  can read, and see the pull request title, size and check status. Use a read-only token scoped to
-  the repositories you are willing to show.
-</Callout>
+The worker reports its own repository, so the server must decide which repositories the token may be used for. Set `allowedRepositories` to a list of `owner/name` or `owner/*` entries (up to 256). Matching is case-insensitive. Entries such as `*/*`, `*`, `owner`, or ones containing `..` are rejected by the schema. Only listed repositories are ever looked up with the server's token.
 
 ### 4. Turn it on
 
-<Callout type="important" title="Pending: not yet released">
-  Default-on behavior is part of LibreChat-AI/LibreChat#16876.
-</Callout>
+Set `enabled: true`. The schema rejects `enabled: true` without both `token` and a non-empty `allowedRepositories`. The feature is off by default.
 
-The feature is on as soon as there is a token and a repository scope. There is no `enabled` switch to set. `enabled: false` turns it off, whatever else is set.
-
-**Older versions:** `enabled: true` is required, and the schema rejects `enabled: true` without both `token` and a non-empty `allowedRepositories`.
-
-### Minimal examples
-
-Default-on form (**Pending**), with `GITHUB_TOKEN` set in the server environment:
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      allowAllRepositories: true
-```
-
-Restricted to specific repositories (**Pending**, same token fallback):
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      allowedRepositories:
-        - 'LibreChat-AI/LibreChat'
-        - 'my-org/*'
-```
-
-Form that works on older versions:
+### Example
 
 ```yaml filename="librechat.yaml"
 endpoints:
@@ -119,7 +62,9 @@ endpoints:
     pullRequests:
       enabled: true
       token: '${GITHUB_PULL_REQUEST_TOKEN}'
-      allowedRepositories: ['LibreChat-AI/LibreChat']
+      allowedRepositories:
+        - 'LibreChat-AI/LibreChat'
+        - 'my-org/*'
 ```
 
 See the [`pullRequests` reference](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) for every key, including the tuning options.
@@ -167,7 +112,7 @@ CI dot colors: green for passing, red for failing, amber for running, and none w
 3. With a recorded commit, a pull request counts only if its head is that commit or builds on it. This keeps a deleted and reused branch name from showing an old pull request.
 4. A branch with no commit yet (a new, empty branch) matches nothing.
 5. The result is cached per credential, repository, branch and commit.
-6. Check runs are read for the pull request's current head. For a pull request from a fork, checks are read from the fork only when that fork's repository is in scope (listed, or `allowAllRepositories`). Otherwise the base repository is read and the token never goes to an unlisted fork.
+6. Check runs are read for the pull request's current head. For a pull request from a fork, checks are read from the fork only when that fork's repository is in `allowedRepositories`. Otherwise the base repository is read and the token never goes to an unlisted fork.
 
 ## Behavior
 
@@ -184,8 +129,8 @@ CI dot colors: green for passing, red for failing, amber for running, and none w
 
 ### Defaults when unset
 
-- With no token or no repository scope, the feature is dormant: nothing is advertised in the startup config, nothing is recorded, nothing is shown.
-- With the feature off in the config, existing chats are unchanged and the client never calls the new routes.
+- The feature is off unless `enabled: true` is set. Nothing is advertised in the startup config, nothing is recorded, and nothing is shown.
+- With the feature off, existing chats are unchanged and the client never calls the new routes.
 
 ## Security model
 
@@ -198,13 +143,13 @@ CI dot colors: green for passing, red for failing, amber for running, and none w
 
 | Symptom                                           | Likely cause                                                                          | Fix                                                                                                                                      |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| No chip and no sidebar mark anywhere              | No token, no repository scope, or `enabled: false`                                    | Check [Setup](#setup). Open `/api/config` while signed in and look for `pullRequestsEnabled: true`.                                      |
+| No chip and no sidebar mark anywhere              | `enabled` is not `true`, or `token` or `allowedRepositories` is missing               | Check [Setup](#setup). Open `/api/config` while signed in and look for `pullRequestsEnabled: true`.                                      |
 | Header chip works, sidebar rows show nothing      | `pullRequestsBatchVersion` is missing from `/api/config` (old build, or a stale tab)  | Rebuild or upgrade the server, restart, and hard reload. Confirm `pullRequestsBatchVersion: 1`.                                          |
 | Chip appears for some chats only                  | Only chats on an attached code workspace that has reported a branch have a lane       | Confirm `CODEAPI_BRIDGE_LANE_GIT=true` on the Code API and a worker built from code-interpreter PR #311 or later.                        |
 | Warning icon with retry                           | Lookup failed (rate limit, GitHub error, or `NOT_CONFIGURED`)                         | Retry. If it is constant, check the token and its permissions.                                                                           |
-| `NOT_CONFIGURED`                                  | `token` is set but its variable is empty or missing                                   | Set the variable. **Pending:** or remove `token` to use the fallback variables.                                                          |
+| `NOT_CONFIGURED`                                  | `token` is set but its variable is empty or missing                                   | Set the variable on the LibreChat server and restart.                                                          |
 | Pull requests load but checks look wrong or fail  | The token lacks Checks or Contents permission                                         | Grant read-only Checks and Contents.                                                                                                     |
-| Pull request from a fork shows no checks          | The fork is not in scope, so checks are read from the base repository                 | Add the fork owner to `allowedRepositories`. **Pending:** or set `allowAllRepositories: true`.                                           |
+| Pull request from a fork shows no checks          | The fork is not in scope, so checks are read from the base repository                 | Add the fork owner to `allowedRepositories`.                                           |
 | No pull request for a branch name that has been reused many times | `maxCandidatePullRequests`, `maxCandidatePages` or `maxHeadComparisons` is too low for how often the name is reused, so the search stops before it reaches the matching pull request | Raise them.                                                                                                                      |
 | Slow or timing-out lookups behind a proxy         | `requestTimeoutSeconds` is too low                                                    | Raise it. Check `HTTPS_PROXY` and `NO_PROXY`.                                                                                            |
 
