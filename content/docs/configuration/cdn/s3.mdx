@@ -96,6 +96,7 @@ AWS_REGION=your_selected_region
 AWS_BUCKET_NAME=your_bucket_name
 AWS_ENDPOINT_URL=https://your_endpoint_url
 # AWS_FORCE_PATH_STYLE=false
+# STORAGE_PROXY_FILES=false
 ```
 
 - **AWS_ACCESS_KEY_ID:** Your IAM user's access key.
@@ -106,6 +107,7 @@ AWS_ENDPOINT_URL=https://your_endpoint_url
 - **AWS_FORCE_PATH_STYLE:** (Optional) Set to `true` for providers that require path-style URLs (`endpoint/bucket/key`) rather than virtual-hosted-style (`bucket.endpoint/key`). Required for Hetzner Object Storage, MinIO, and similar providers whose SSL certificates don't cover bucket subdomains. Not needed for AWS S3 or Cloudflare R2. Default: `false`.
 - **S3_URL_EXPIRY_SECONDS:** (Optional) Lifetime of each presigned URL, in seconds. See the note on presigned URLs below for the provider-side caps that apply.
 - **S3_REFRESH_EXPIRY_MS:** (Optional) Regenerate a presigned URL once it reaches this age, in milliseconds, instead of using the default expiry-buffer logic. Unset by default. A value that is not a positive integer is ignored with a warning in the logs.
+- **STORAGE_PROXY_FILES:** (Optional) Set to `true` to serve files through LibreChat instead of presigned URLs. See [Serve Files Through LibreChat](#serve-files-through-librechat). Default: `false`.
 
 If you are using **IRSA** on Kubernetes, you do **not** need to set `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in your environment. The AWS SDK will automatically obtain temporary credentials via the service account assigned to your pod. Ensure that `AWS_REGION` and `AWS_BUCKET_NAME` are still provided.
 
@@ -124,7 +126,7 @@ fileStrategy: 's3'
 
 The refresh logic in LibreChat is not applied consistently for every visual surface. For example, list-style endpoints can return stored URLs while detail endpoints refresh them. This can cause visible broken avatar images in the model selector and chat UI. See the [related discussion](https://github.com/LibreChat-AI/LibreChat/discussions/10280#discussioncomment-14803903) for full context.
 
-**S3 is well-suited for document storage** (PDFs, text files, code) where short-lived presigned download URLs are appropriate. For images and avatars that need to render persistently across the UI, use [CloudFront with S3](/docs/configuration/cdn/cloudfront), [Firebase](/docs/configuration/cdn/firebase), or configure `fileStrategies` to route only those types to a CDN-backed strategy:
+**S3 is well-suited for document storage** (PDFs, text files, code) where short-lived presigned download URLs are appropriate. For images and avatars that need to render persistently across the UI, [serve files through LibreChat](#serve-files-through-librechat), use [CloudFront with S3](/docs/configuration/cdn/cloudfront) or [Firebase](/docs/configuration/cdn/firebase), or configure `fileStrategies` to route only those types to a CDN-backed strategy:
 
 ```yaml filename="librechat.yaml"
 fileStrategies:
@@ -134,6 +136,53 @@ fileStrategies:
 ```
 
 </Callout>
+
+## Serve Files Through LibreChat
+
+Set `STORAGE_PROXY_FILES=true` to have LibreChat serve S3 files itself instead of giving browsers presigned URLs. Stored links point at LibreChat (`/api/stored-files/s3/<key>`) and never expire, and browsers never contact S3, so the bucket can stay private to your network. This works with AWS S3 and S3-compatible services, and needs no CDN or custom domain.
+
+```bash filename=".env"
+STORAGE_PROXY_FILES=true
+```
+
+LibreChat serves a file to the signed-in user who owns it, avatars to any signed-in user, and anyone else the file's own access rules allow, such as users of an agent the file is attached to. Access never crosses tenants, and everyone else gets a 404. Only raster images are shown inline; other files are downloaded.
+
+With browsers out of the picture, you can deny object access to anything but your own network. For example, this bucket policy statement refuses reads and writes that don't arrive through your VPC's S3 gateway endpoint:
+
+```json filename="Bucket policy statement"
+{
+  "Sid": "DenyObjectAccessOutsideVpcEndpoint",
+  "Effect": "Deny",
+  "Principal": "*",
+  "Action": ["s3:GetObject*", "s3:PutObject*", "s3:DeleteObject*"],
+  "Resource": "arn:aws:s3:::your_bucket_name/*",
+  "Condition": { "StringNotEquals": { "aws:SourceVpce": "vpce-0123456789abcdef0" } }
+}
+```
+
+Keep in mind:
+
+- **File bytes pass through the LibreChat server,** as they do with local storage.
+- **Downloads stream through LibreChat** instead of redirecting to S3.
+- **API clients** receive relative links that need a signed-in session.
+- **Existing links:** the file list and avatars replace their presigned URLs as they load. For everything else, run the migration below.
+
+### Migrate Existing Links
+
+Links stored before you turn the setting on keep their presigned URLs in messages, tool calls and avatars. After turning `STORAGE_PROXY_FILES` on, replace them once:
+
+```bash
+npm run migrate:stored-file-links:dry-run   # report what would change
+npm run migrate:stored-file-links           # rewrite stored links
+```
+
+The migration covers every storage service you have configured. It works in batches, and running it again changes nothing.
+
+To turn the setting off again, write the storage links back first, then restart with the setting off:
+
+```bash
+STORAGE_PROXY_FILES=false npm run migrate:stored-file-links:revert
+```
 
 ## Summary
 

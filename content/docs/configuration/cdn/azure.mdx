@@ -72,12 +72,14 @@ AZURE_STORAGE_ACCOUNT_NAME=yourAccountName
 
 AZURE_STORAGE_PUBLIC_ACCESS=false
 AZURE_CONTAINER_NAME=files
+# STORAGE_PROXY_FILES=false
 ```
 
 - **AZURE_STORAGE_CONNECTION_STRING:** Set this if you are using Option A.
 - **AZURE_STORAGE_ACCOUNT_NAME:** Set this if you are using Option B (Managed Identity). Do not set both.
-- **AZURE_STORAGE_PUBLIC_ACCESS:** Set to `false` if you do not want your blobs to be publicly accessible by default. Set to `true` if you need public access (for example, for publicly viewable images).
+- **AZURE_STORAGE_PUBLIC_ACCESS:** Set to `false` if you do not want your blobs to be publicly accessible by default. Set to `true` if you need public access (for example, for publicly viewable images), unless LibreChat [serves the files itself](#serve-files-through-librechat).
 - **AZURE_CONTAINER_NAME:** This is the container name your application will use (e.g., `files`). The application will automatically create this container if it doesn’t exist.
+- **STORAGE_PROXY_FILES:** (Optional) Set to `true` to serve files through LibreChat, so images and downloads work from a private container. See [Serve Files Through LibreChat](#serve-files-through-librechat). Default: `false`.
 
 ## 4. Configure LibreChat to Use Azure Blob Storage
 
@@ -101,6 +103,41 @@ fileStrategy: "azure_blob"
     document: "azure_blob"
   ```
 </Callout>
+
+## Serve Files Through LibreChat
+
+By default LibreChat stores each blob's URL, so browsers can only display images from a container with public access. Set `STORAGE_PROXY_FILES=true` to have LibreChat serve blobs itself instead: stored links point at LibreChat (`/api/stored-files/azure_blob/<blob path>`), LibreChat reads each blob with its own credentials, and the container can stay private. The links never expire, so there is nothing to refresh.
+
+```bash filename=".env"
+AZURE_STORAGE_PUBLIC_ACCESS=false
+STORAGE_PROXY_FILES=true
+```
+
+LibreChat serves a file to the signed-in user who owns it, avatars to any signed-in user, and anyone else the file's own access rules allow, such as users of an agent the file is attached to. Access never crosses tenants, and everyone else gets a 404. Only raster images are shown inline; other files are downloaded.
+
+Keep in mind:
+
+- **File bytes pass through the LibreChat server,** as they do with local storage.
+- **Only the configured container is served this way.** Blobs in another container keep their URLs.
+- **API clients** receive relative links that need a signed-in session.
+- **Existing links:** run the migration below.
+
+### Migrate Existing Links
+
+Links stored before you turn the setting on keep their blob URLs in file records, messages, tool calls and avatars. After turning `STORAGE_PROXY_FILES` on, replace them once:
+
+```bash
+npm run migrate:stored-file-links:dry-run   # report what would change
+npm run migrate:stored-file-links           # rewrite stored links
+```
+
+The migration covers every storage service you have configured. It works in batches, and running it again changes nothing.
+
+To turn the setting off again, write the storage links back first, then restart with the setting off:
+
+```bash
+STORAGE_PROXY_FILES=false npm run migrate:stored-file-links:revert
+```
 
 ---
 
