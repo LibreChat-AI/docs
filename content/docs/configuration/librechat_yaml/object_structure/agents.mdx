@@ -552,16 +552,16 @@ Event Actor detached Action completion is selected automatically from the built-
 
 ## pullRequests
 
-{/* Pending items (LibreChat-AI/LibreChat#16876): delete the "Older versions" notes and Pending markers once it merges. Re-verify defaults and ranges against packages/data-provider/src/config.ts. */}
+{/* Pending items: Bitbucket Cloud (LibreChat-AI/LibreChat#16987), sharedCache (#16988) and oauth (#16989, #16990). Delete the Pending markers once each merges. Re-verify defaults and ranges against packages/data-provider/src/config.ts. */}
 
-Shows the GitHub pull request for a conversation's attached code workspace in the chat header and sidebar. See [Conversation Pull Requests](/docs/features/pull_requests) for setup, behavior and troubleshooting. Every key is optional.
+Shows the pull request (a merge request on GitLab) for a conversation's attached code workspace in the chat header and sidebar. See [Conversation Pull Requests](/docs/features/pull_requests) for setup, behavior and troubleshooting. Every key is optional.
 
-Most administrators set only a token, a repository scope, and possibly `enabled: false`. The remaining keys are for tuning, and their defaults are fine.
+The feature is on as soon as the server has a token and a repository scope, or users can connect their own accounts through `oauth`. Most administrators set only a repository scope and a token, plus `provider` and `host` when not on github.com. The tuning keys' defaults are fine.
 
-<Callout type="important" title="Pending: not yet released">
-  Default-on behavior, the environment variable token fallback, and `allowAllRepositories` are part
-  of LibreChat-AI/LibreChat#16876. In older versions `enabled` defaults to `false` and `token` is
-  required.
+<Callout type="info" title="Read from librechat.yaml only">
+  `provider`, `host` and `oauth` are read from `librechat.yaml` alone. Role, group, user and tenant
+  config overrides of these keys are ignored, so an override cannot redirect a token to another
+  service.
 </Callout>
 
 <OptionTable
@@ -569,31 +569,49 @@ Most administrators set only a token, a repository scope, and possibly `enabled:
     [
       'enabled',
       'Boolean',
-      'Set `false` to turn the feature off. Pending: it is on once a token and a repository scope exist. Older versions: defaults to `false`, and `true` requires `token` and a non-empty `allowedRepositories`.',
+      'Set `false` to turn the feature off. Otherwise it is on once a token and a repository scope exist, or an `oauth` app resolves.',
       'enabled: false',
+    ],
+    [
+      'provider',
+      'String',
+      '`github` (default), `gitlab` for merge requests on gitlab.com or a self-managed GitLab, or `bitbucket` for Bitbucket Cloud (Pending). Read from the YAML only.',
+      'provider: "gitlab"',
+    ],
+    [
+      'host',
+      'String',
+      'Host name the token belongs to, without scheme or path: a GitHub Enterprise Server host, a `*.ghe.com` tenant, or a self-managed GitLab host. A port from 1 to 65535 is allowed, and `:443` is dropped. Defaults to `github.com`, `gitlab.com` or `bitbucket.org` for the provider. Bitbucket accepts no other host. Read from the YAML only.',
+      'host: "github.example.com"',
     ],
     [
       'token',
       'String',
-      'Reference to an environment variable that holds a read-only GitHub token, in the form `${NAME}`. Never the token itself. Pending: when unset, the server uses the first of `GITHUB_PULL_REQUEST_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN` that is set. A `token` that does not resolve fails with `NOT_CONFIGURED` and does not fall back. Older versions: required.',
+      'Reference to an environment variable that holds a read-only token, in the form `${NAME}`. Never the token itself. When unset, the first fallback variable that is set is used: `GITHUB_PULL_REQUEST_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN` on GitHub; `GITLAB_PULL_REQUEST_TOKEN`, `GITLAB_TOKEN` on GitLab; `BITBUCKET_PULL_REQUEST_TOKEN` on Bitbucket. A `token` that does not resolve fails with `NOT_CONFIGURED` and does not fall back.',
       'token: "${GITHUB_PULL_REQUEST_TOKEN}"',
+    ],
+    [
+      'oauth',
+      'Object',
+      'Pending. Lets each user connect their own account, so lookups use that user\'s token, rate limit and repository access. Read from the YAML only. See [oauth](#pullrequestsoauth) below.',
+      'oauth: { clientId: "${GITHUB_PR_OAUTH_CLIENT_ID}", clientSecret: "${GITHUB_PR_OAUTH_CLIENT_SECRET}" }',
     ],
     [
       'allowedRepositories',
       'Array of Strings',
-      'Repositories the token may be used for, as `owner/name` or `owner/*` (up to 256 entries, case-insensitive). `*/*`, `*`, `owner`, and entries containing `..` are rejected.',
+      'Repositories the server token may be used for, as `owner/name` or `owner/*` (up to 256 entries, case-insensitive). On GitLab, nested group paths such as `group/sub/name` or `group/sub/*` are allowed; `*` matches one segment. `*/*`, `*`, `owner`, and entries with `.` or `..` segments are rejected.',
       'allowedRepositories: ["LibreChat-AI/LibreChat", "my-org/*"]',
     ],
     [
       'allowAllRepositories',
       'Boolean',
-      'Pending. Look up any repository the token can read. Default: `false`. See the warning below.',
+      'Look up any repository the server token can read. Default: `false`. See the warning below.',
       'allowAllRepositories: false',
     ],
     [
       'cacheTtlSeconds',
       'Number',
-      'Seconds a result is reused before GitHub is asked again (5-3600). Failures are remembered for at most 10 seconds. Default: 30.',
+      'Seconds a result is reused before the provider is asked again (5-3600). Failures are remembered for at most 10 seconds. Default: 30.',
       'cacheTtlSeconds: 30',
     ],
     [
@@ -605,13 +623,13 @@ Most administrators set only a token, a repository scope, and possibly `enabled:
     [
       'cacheMaxCredentials',
       'Number',
-      'Credentials cached at once, deployment-wide (1-10000). The one idle longest is dropped past it. When principals set different values, the largest applies. Raise it when many tenants each use their own token. Default: 256.',
+      'Credentials cached at once, deployment-wide (1-10000). The one idle longest is dropped past it. When principals set different values, the largest applies. Raise it when many tenants each use their own token, or many users connect their own accounts. Default: 256.',
       'cacheMaxCredentials: 256',
     ],
     [
       'maxConcurrentLookups',
       'Number',
-      'Lookups one sidebar request runs at once (1-16), counted per credential across requests. Each lookup is a few GitHub requests. Default: 4.',
+      'Lookups one sidebar request runs at once (1-16), counted per credential across requests. Each lookup is a few provider requests. Default: 4.',
       'maxConcurrentLookups: 4',
     ],
     [
@@ -623,7 +641,7 @@ Most administrators set only a token, a repository scope, and possibly `enabled:
     [
       'requestTimeoutSeconds',
       'Number',
-      'Longest one GitHub request may take (1-60). Raise it behind a slow proxy. Default: 10.',
+      'Longest one provider request may take (1-60). Raise it behind a slow proxy. Default: 10.',
       'requestTimeoutSeconds: 10',
     ],
     [
@@ -635,7 +653,7 @@ Most administrators set only a token, a repository scope, and possibly `enabled:
     [
       'maxCheckRunPages',
       'Number',
-      'Pages of 100 check runs read before the rollup is reported as still running (1-50). Default: 10.',
+      'Pages of check runs (GitHub) or commit statuses (Bitbucket) read before checks are reported as still running (1-50). GitLab reads the head pipeline instead. Default: 10.',
       'maxCheckRunPages: 10',
     ],
     [
@@ -656,13 +674,25 @@ Most administrators set only a token, a repository scope, and possibly `enabled:
       'Candidates compared with the commit the chat last ran at before the search gives up (0-20). Each comparison is one request. `0` disables comparing. Default: 3.',
       'maxHeadComparisons: 3',
     ],
+    [
+      'sharedCache',
+      'Boolean',
+      'Pending. Share looked-up pull requests and rate limit cooldowns between replicas through Redis. Takes effect only with `USE_REDIS`; each replica keeps its own in-memory cache either way. Default: `false`.',
+      'sharedCache: true',
+    ],
+    [
+      'sharedCacheTimeoutMs',
+      'Number',
+      'Pending. Longest one shared cache read or write may take, in milliseconds, before the lookup carries on without it (10-5000). Default: 250.',
+      'sharedCacheTimeoutMs: 250',
+    ],
   ]}
 />
 
 <Callout type="warning" title="Security: allowAllRepositories">
-  With this on, any user who can run code can point the server's token at any repository that token
-  can read, and see the pull request title, size and check status. Use a read-only token scoped to
-  the repositories you are willing to show.
+  The worker reports its own repository, so with this on, any user who can run code can point the
+  server's token at any repository that token can read, and see the pull request title, size and
+  check status. Use a read-only token scoped to the repositories you are willing to show.
 </Callout>
 
 ```yaml filename="endpoints / agents / pullRequests"
@@ -677,7 +707,62 @@ endpoints:
       maxConcurrentLookups: 4
 ```
 
-On older versions, add `enabled: true`.
+### pullRequests.oauth
+
+Pending. Lets each user connect their own account under **Settings > Account > Pull request account**. A connected user's lookups use their own token and are not held to `allowedRepositories`; users who have not connected keep using the server token. Register `<DOMAIN_SERVER>/api/pull-requests/oauth/callback` as the app's callback URL. On GitHub, a GitHub App with read-only Pull requests, Checks and Contents permissions is recommended. See [Per-user accounts](/docs/features/pull_requests#per-user-accounts).
+
+<OptionTable
+  options={[
+    [
+      'clientId',
+      'String',
+      'Required. Environment variable reference to the app\'s client ID, in the form `${NAME}`.',
+      'clientId: "${GITHUB_PR_OAUTH_CLIENT_ID}"',
+    ],
+    [
+      'clientSecret',
+      'String',
+      'Required. Environment variable reference to the app\'s client secret, in the form `${NAME}`.',
+      'clientSecret: "${GITHUB_PR_OAUTH_CLIENT_SECRET}"',
+    ],
+    [
+      'scope',
+      'String',
+      'Space separated scopes to request, up to 256 characters. Defaults: none on GitHub, `read_api` on GitLab, and the consumer\'s own permissions on Bitbucket. Set it only for a classic GitHub OAuth App.',
+      'scope: "repo"',
+    ],
+    [
+      'flowTimeoutMinutes',
+      'Number',
+      'Minutes a user may take to approve the connection at the provider (1-60). Default: 10.',
+      'flowTimeoutMinutes: 10',
+    ],
+    [
+      'requestTimeoutSeconds',
+      'Number',
+      'Seconds a code exchange or token refresh may take (1-60). Default: 10.',
+      'requestTimeoutSeconds: 10',
+    ],
+    [
+      'retentionDays',
+      'Number',
+      'Days a connection is kept without being used (1-3650). Every use extends it. Default: 180.',
+      'retentionDays: 180',
+    ],
+  ]}
+/>
+
+If either reference does not resolve, users cannot connect and only the server token is used.
+
+```yaml filename="endpoints / agents / pullRequests / oauth"
+endpoints:
+  agents:
+    pullRequests:
+      oauth:
+        clientId: '${GITHUB_PR_OAUTH_CLIENT_ID}'
+        clientSecret: '${GITHUB_PR_OAUTH_CLIENT_SECRET}'
+        retentionDays: 180
+```
 
 ## backgroundTasks
 
