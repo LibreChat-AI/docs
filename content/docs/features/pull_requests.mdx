@@ -1,117 +1,142 @@
 ---
 title: Conversation Pull Requests
 icon: GitPullRequest
-description: Show the GitHub pull request, size and CI status for chats that run code in an attached workspace.
+description: See the GitHub pull request, its size and its CI status right in the chat header and the sidebar.
 ---
 
 {/*
-  PUBLISHING GATE. Do not merge this page until LibreChat-AI/LibreChat#16876 (default-on, token
-  fallback, allowAllRepositories) is merged to dev. Until then, only the blocks marked
-  "Pending" are unreleased. After it merges: re-check the schema in
-  packages/data-provider/src/config.ts, delete the "Older versions" blocks and every Pending marker.
   TODO(maintainer): first release version for each part (do not guess).
   TODO(maintainer): requirement 4 (where an admin sets the workspace environment's repository).
   Add it to "Requirements" once confirmed. Do not publish without it.
 */}
 
-When a chat runs code in an attached workspace, the worker reports the git branch and commit it is on. LibreChat uses that branch to find the matching GitHub pull request, with a token held on the server, and shows it in two places:
+When an agent works on code in an attached workspace, LibreChat can show the GitHub pull request for that branch without leaving the chat. You see at a glance whether the pull request is ready to merge, has conflicts, or is still running checks.
 
-- **Chat header**: a chip with the pull request icon and a CI dot. Hovering or focusing it opens a card.
-- **Sidebar conversation list**: the same icon and CI dot at the end of the row. The row keeps the conversation's own title; the pull request title appears only in the card.
+- **In the chat header**, a small chip shows the pull request icon and a status dot. Hover over it to open a card with the details.
+- **In the sidebar**, the same icon and dot appear at the end of each conversation that has a pull request, so you can spot the ones that need attention without opening them.
+
+<ThemeImage
+  light="/images/pull-requests/hdr-ready-light.png"
+  dark="/images/pull-requests/hdr-ready-dark.png"
+  alt="The chat header chip for an open pull request that is ready to merge, with its card open"
+/>
+
+LibreChat finds the pull request with a read-only GitHub token that stays on your server. Users never see or handle the token.
+
+## What you see
+
+### The status icon and dot
+
+The icon color tells you if the pull request can merge. The dot next to it shows the state of the checks.
+
+| Pull request                              | Icon                   | Dot                                 |
+| ----------------------------------------- | ---------------------- | ----------------------------------- |
+| Open, no conflicts, checks passing        | Green (ready to merge) | Green                               |
+| Open, no conflicts, no checks             | Green                  | None                                |
+| Open, merge conflicts                     | Red (cannot merge)     | Matches the checks                  |
+| Draft                                     | Neutral                | Matches the checks                  |
+| Merged or closed                          | Neutral                | None (amber while checks still run) |
+
+The dot is green when checks pass, red when any check fails, and amber while checks are running. A failing check always wins over one that is still running.
+
+<ThemeImage
+  light="/images/pull-requests/hdr-conflict-light.png"
+  dark="/images/pull-requests/hdr-conflict-dark.png"
+  alt="A pull request with merge conflicts (red icon) and failing checks (red dot)"
+/>
+
+<ThemeImage
+  light="/images/pull-requests/hdr-draft-light.png"
+  dark="/images/pull-requests/hdr-draft-dark.png"
+  alt="A draft pull request (neutral icon) with checks still running (amber dot)"
+/>
+
+### The card
+
+Hover over or focus the chip (or the sidebar mark) to open the card. It shows:
+
+- The pull request number, with lines added in green and lines removed in red.
+- A link that opens the pull request on GitHub.
+- The pull request title.
+- A **State** badge: Open, Draft, Merged or Closed.
+- A **Checks** badge: Passing, Failing, Running, or none.
+
+The card stays open while your pointer or keyboard focus is inside it.
+
+### In the sidebar
+
+Conversations with a pull request show the icon and dot at the end of the row. The row keeps the conversation's own title, and the pull request title only appears in the card. Clicking the mark opens the card and does not open the conversation.
+
+<ThemeImage
+  light="/images/pull-requests/side-rows-light.png"
+  dark="/images/pull-requests/side-rows-dark.png"
+  alt="Sidebar conversation rows with pull request icons and status dots"
+/>
+
+<ThemeImage
+  light="/images/pull-requests/side-card-light.png"
+  dark="/images/pull-requests/side-card-dark.png"
+  alt="The pull request card opened next to a sidebar row"
+/>
+
+The sidebar does not refresh on a timer. Rows update when the list loads and when you return to the window after a minute or more. If a lookup fails, the row shows a warning icon, and its card has a **Retry** button.
+
+### On small screens
+
+There is no room for the chip in the header, so the pull request is an entry in the header's three-dots menu. It opens the same card in a dialog.
+
+<ThemeImage
+  light="/images/pull-requests/mob-menu-light.png"
+  dark="/images/pull-requests/mob-menu-dark.png"
+  alt="The pull request entry in the header menu on a small screen"
+/>
+
+<ThemeImage
+  light="/images/pull-requests/mob-dialog-light.png"
+  dark="/images/pull-requests/mob-dialog-dark.png"
+  alt="The pull request card shown in a dialog on a small screen"
+/>
+
+### Keeping it fresh
+
+The header checks for changes on its own: about every 20 seconds while checks are running or GitHub is still working out whether the pull request can merge, and about every minute otherwise. It stops once the pull request is merged or closed and no checks are running.
 
 ## Requirements
 
-All of these must be true for a chat to show a pull request:
+A chat shows a pull request when all of these are true:
 
-1. LibreChat has a GitHub token and a repository scope. See [Setup](#setup).
+1. LibreChat has a GitHub token and a list of repositories it may look up. See [Set it up](#set-it-up).
 2. The chat uses an **attached code workspace** (a code worker), not a plain chat.
-3. The worker reports its branch. This needs a worker built from `LibreChat-AI/code-interpreter` PR #311 or later, and `CODEAPI_BRIDGE_LANE_GIT=true` set on the Code API. See [Code Interpreter](/docs/features/code_interpreter#attached-environments-and-pairing).
+3. The worker reports its git branch. This needs a worker built from `LibreChat-AI/code-interpreter` PR #311 or later, and `CODEAPI_BRIDGE_LANE_GIT=true` set on the Code API. See [Code Interpreter](/docs/features/code_interpreter#attached-environments-and-pairing).
 
-If a requirement is missing, chats simply show no pull request and no error is shown to the user. The exception is a `token` that is set but whose environment variable is empty or missing: lookups then fail with `NOT_CONFIGURED`, and sidebar rows show the warning icon with a retry button.
+If something is missing, the chat simply shows no pull request and no error. The one exception is a `token` whose environment variable is empty or missing: the sidebar then shows the warning icon with a **Retry** button.
 
-## Setup
+## Set it up
 
-### 1. Create a token
+### 1. Create a GitHub token
 
-Use a fine-grained GitHub token limited to the repositories you want to show, with **read-only** permissions:
+Create a fine-grained GitHub token limited to the repositories you want to show, with these **read-only** permissions:
 
 - Pull requests
 - Checks
 - Contents
 
-<Callout type="warning" title="Permission failure modes">
-  Without **Checks**, every matched pull request fails to load. Without **Contents**, a chat whose
-  branch has moved on since its last command fails to load.
+<Callout type="warning" title="Do not skip a permission">
+  Without **Checks**, every pull request fails to load. Without **Contents**, a chat whose branch
+  has moved on since its last command fails to load.
 </Callout>
 
 ### 2. Give LibreChat the token
 
-<Callout type="important" title="Pending: not yet released">
-  Environment variable fallback is part of the default-on change (LibreChat-AI/LibreChat#16876).
-</Callout>
+Put the token in an environment variable on the LibreChat server, then point `librechat.yaml` at that variable. The YAML only ever holds the variable's name in the form `${NAME}`, never the token itself.
 
-LibreChat looks for a token in this order:
+### 3. Choose the repositories
 
-1. `token: "${MY_VAR}"` in `librechat.yaml`. This is an environment variable **reference**; the YAML never holds the token itself.
-2. If `token` is not set, the first of these environment variables that is set: `GITHUB_PULL_REQUEST_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`.
-3. No token anywhere: the feature stays dormant.
-
-A `token` that is set but does not resolve (the variable is empty or missing) fails with `NOT_CONFIGURED`. It does **not** fall back to the three variables above.
-
-<Callout type="info" title="GITHUB_TOKEN is a common name">
-  If your deployment already uses `GITHUB_TOKEN` for something else, the default-on behavior starts
-  using it here as soon as a repository scope is set. Set `token` explicitly, or use
-  `GITHUB_PULL_REQUEST_TOKEN`, to avoid sharing it.
-</Callout>
-
-**Older versions:** `token` is required when the feature is enabled, and must be a `${NAME}` reference such as `"${GITHUB_PULL_REQUEST_TOKEN}"`. There is no environment variable fallback.
-
-### 3. Choose which repositories it may look up
-
-The worker reports its own repository, so the server must decide which repositories the token may be used for. Without a scope the feature stays dormant. There are two ways:
-
-- `allowedRepositories`: a list of `owner/name` or `owner/*` entries (up to 256). Matching is case-insensitive. Entries such as `*/*`, `*`, `owner`, or ones containing `..` are rejected by the schema.
-- `allowAllRepositories: true` (**Pending**): look up any repository the token can read. Default is `false`.
-
-<Callout type="warning" title="Security: allowAllRepositories">
-  With this on, any user who can run code can point the server's token at any repository that token
-  can read, and see the pull request title, size and check status. Use a read-only token scoped to
-  the repositories you are willing to show.
-</Callout>
+A worker reports its own repository, so you decide which repositories the token may be used for. List them in `allowedRepositories` as `owner/name` or `owner/*`. Matching is not case-sensitive, and you can list up to 256 entries. Entries such as `*/*`, `*` or `owner` are rejected.
 
 ### 4. Turn it on
 
-<Callout type="important" title="Pending: not yet released">
-  Default-on behavior is part of LibreChat-AI/LibreChat#16876.
-</Callout>
-
-The feature is on as soon as there is a token and a repository scope. There is no `enabled` switch to set. `enabled: false` turns it off, whatever else is set.
-
-**Older versions:** `enabled: true` is required, and the schema rejects `enabled: true` without both `token` and a non-empty `allowedRepositories`.
-
-### Minimal examples
-
-Default-on form (**Pending**), with `GITHUB_TOKEN` set in the server environment:
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      allowAllRepositories: true
-```
-
-Restricted to specific repositories (**Pending**, same token fallback):
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      allowedRepositories:
-        - 'LibreChat-AI/LibreChat'
-        - 'my-org/*'
-```
-
-Form that works on older versions:
+Set `enabled: true`. The feature is off by default, and `enabled: true` needs both `token` and at least one entry in `allowedRepositories`.
 
 ```yaml filename="librechat.yaml"
 endpoints:
@@ -119,122 +144,30 @@ endpoints:
     pullRequests:
       enabled: true
       token: '${GITHUB_PULL_REQUEST_TOKEN}'
-      allowedRepositories: ['LibreChat-AI/LibreChat']
+      allowedRepositories:
+        - 'LibreChat-AI/LibreChat'
+        - 'my-org/*'
 ```
 
-See the [`pullRequests` reference](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) for every key, including the tuning options.
+Restart LibreChat after changing `librechat.yaml`. See the [`pullRequests` reference](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) for every option, including the tuning ones. Most deployments never need them.
 
-## What users see
+## Good to know
 
-### Chat header chip
-
-- **Desktop**: the chip sits on the left of the header, next to the other left controls. Hovering or focusing it opens the card to its right.
-- **Mobile**: the entry is in the header's overflow (three dots) menu and opens a dialog.
-- The header refreshes on its own: about every 20 seconds while checks are running or mergeability is still being computed, about every 60 seconds otherwise, and not at all once a pull request is merged or closed with no checks running.
-
-### Sidebar mark
-
-- A pull request icon with a CI dot sits at the end of the conversation row. It appears only for conversations that have a pull request.
-- Hover, focus or click opens the same card to the right of the mark. Clicking the mark does not open the conversation.
-- The sidebar never polls. A row is as fresh as the last time the list loaded, and it refreshes when the window regains focus and its data is older than a minute.
-- If a lookup fails, the row shows a warning icon with a retry button in its card, so a failure is not mistaken for "no pull request".
-
-### The card
-
-The card shows `PR #number`, `+additions` in green, `-deletions` in red, a link that opens the pull request on GitHub, the pull request title, and two badges:
-
-- **State**: Open, Draft, Merged or Closed.
-- **Checks**: Passing, Failing, Running, or none.
-
-{/* TODO(docs): add the screenshots from LibreChat PRs #16794 and #16815. */}
-
-### Icon and dot meaning
-
-| Situation                               | Icon color                | CI dot                                |
-| --------------------------------------- | ------------------------- | ------------------------------------- |
-| Open, no conflicts, checks passing      | Green (ready to merge)    | Green                                 |
-| Open, no conflicts, no checks at all    | Green                     | None                                  |
-| Open, merge conflicts                   | Red (cannot merge)        | By checks                             |
-| Draft                                   | Neutral                   | By checks                             |
-| Merged or closed                        | Neutral                   | None (amber while checks still run)   |
-
-CI dot colors: green for passing, red for failing, amber for running, and none when there are no checks, or when the pull request is merged or closed and no checks are still running. A failed check outranks one still running. A rollup with more check runs than were read is never reported as passing.
-
-## How a pull request is matched
-
-1. The worker reports the repository, branch and commit (head) the chat last ran at.
-2. LibreChat lists open pull requests for that branch first, so closed history on a reused branch name cannot hide an open one. Then it checks open pull requests from forks (found through the commit), then closed ones.
-3. With a recorded commit, a pull request counts only if its head is that commit or builds on it. This keeps a deleted and reused branch name from showing an old pull request.
-4. A branch with no commit yet (a new, empty branch) matches nothing.
-5. The result is cached per credential, repository, branch and commit.
-6. Check runs are read for the pull request's current head. For a pull request from a fork, checks are read from the fork only when that fork's repository is in scope (listed, or `allowAllRepositories`). Otherwise the base repository is read and the token never goes to an unlisted fork.
-
-## Behavior
-
-### Rate limits
-
-- A GitHub rate limit applies to the credential, so it pauses lookups for every branch under that token.
-- The minimum pause is 10 seconds. A secondary limit with no wait given waits 60 seconds. A wait that GitHub names is honored, capped at 1 hour.
-- During a pause, lookups answer `RATE_LIMITED` and rows show the retry state.
-
-### Rolling upgrades
-
-- The sidebar asks the batch route only when the startup config says the server has it (`pullRequestsBatchVersion`).
-- If a replica without the route answers 404, the client falls back to the single route, one call at a time, or at `pullRequestsMaxConcurrentLookups` when the server advertised it. This covers a client that received the new startup flag from an upgraded replica and then reached a replica without the route. If `/api/config` is served by a replica without the flag, the sidebar never asks the batch route and rows stay empty, so upgrade every replica before relying on sidebar marks.
-
-### Defaults when unset
-
-- With no token or no repository scope, the feature is dormant: nothing is advertised in the startup config, nothing is recorded, nothing is shown.
-- With the feature off in the config, existing chats are unchanged and the client never calls the new routes.
-
-## Security model
-
-- The token lives on the server. It is never sent to the browser, and error responses never include GitHub's response text, the token, or stack traces.
-- The token is used only for repositories in scope. It is never sent to a fork that is not in scope.
-- The two `/api/convos` lookup routes require an authenticated user and are owner-scoped. A conversation that is missing, expired, or belongs to another user looks the same as one with no pull request.
-- Use a read-only, fine-grained token limited to the repositories you are willing to show.
+- **Fork pull requests:** checks for a pull request from a fork are read from the fork only if the fork's repository is in `allowedRepositories`. Otherwise LibreChat reads the base repository, and the token is never sent to a repository you did not list.
+- **Reused branch names:** LibreChat only shows a pull request that contains the commit the chat last ran at, so an old pull request on a reused branch name is not shown by mistake. A brand new branch with no commits yet matches nothing.
+- **GitHub rate limits:** a rate limit applies to the whole token. Lookups pause for at least 10 seconds, or as long as GitHub asks (up to 1 hour), and rows show the retry state meanwhile.
+- **Upgrades:** upgrade every LibreChat server before relying on sidebar marks. A server that is not upgraded yet leaves the sidebar rows empty.
+- **Privacy:** only the conversation's owner can see its pull request, and the token never leaves the server.
 
 ## Troubleshooting
 
-| Symptom                                           | Likely cause                                                                          | Fix                                                                                                                                      |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| No chip and no sidebar mark anywhere              | No token, no repository scope, or `enabled: false`                                    | Check [Setup](#setup). Open `/api/config` while signed in and look for `pullRequestsEnabled: true`.                                      |
-| Header chip works, sidebar rows show nothing      | `pullRequestsBatchVersion` is missing from `/api/config` (old build, or a stale tab)  | Rebuild or upgrade the server, restart, and hard reload. Confirm `pullRequestsBatchVersion: 1`.                                          |
-| Chip appears for some chats only                  | Only chats on an attached code workspace that has reported a branch have a lane       | Confirm `CODEAPI_BRIDGE_LANE_GIT=true` on the Code API and a worker built from code-interpreter PR #311 or later.                        |
-| Warning icon with retry                           | Lookup failed (rate limit, GitHub error, or `NOT_CONFIGURED`)                         | Retry. If it is constant, check the token and its permissions.                                                                           |
-| `NOT_CONFIGURED`                                  | `token` is set but its variable is empty or missing                                   | Set the variable. **Pending:** or remove `token` to use the fallback variables.                                                          |
-| Pull requests load but checks look wrong or fail  | The token lacks Checks or Contents permission                                         | Grant read-only Checks and Contents.                                                                                                     |
-| Pull request from a fork shows no checks          | The fork is not in scope, so checks are read from the base repository                 | Add the fork owner to `allowedRepositories`. **Pending:** or set `allowAllRepositories: true`.                                           |
-| No pull request for a branch name that has been reused many times | `maxCandidatePullRequests`, `maxCandidatePages` or `maxHeadComparisons` is too low for how often the name is reused, so the search stops before it reaches the matching pull request | Raise them.                                                                                                                      |
-| Slow or timing-out lookups behind a proxy         | `requestTimeoutSeconds` is too low                                                    | Raise it. Check `HTTPS_PROXY` and `NO_PROXY`.                                                                                            |
-
-## API reference
-
-Both `/api/convos` routes below require an authenticated user and are owner-scoped. The startup config endpoint is not owner-scoped.
-
-### Get one conversation's pull request
-
-`GET /api/convos/:conversationId/pull-request`
-
-- **200**: `{ "pullRequest": null }` or `{ "pullRequest": { number, title, url, additions, deletions, state, isDraft, mergeable, checks } }`.
-- `state` is `open`, `closed` or `merged`. `mergeable` is `clean`, `conflicting` or `unknown`. `checks` is `passing`, `failing`, `running` or `none`.
-- **503**: `{ "error": "...", "code": "NOT_CONFIGURED" | "RATE_LIMITED" | "UPSTREAM_ERROR" }`.
-- **404**: invalid conversation id. **500**: storage error with fixed text.
-
-### Get many conversations' pull requests
-
-`POST /api/convos/pull-requests`
-
-- Body: `{ "conversationIds": ["..."] }`, with 1 to 50 ids. Duplicates collapse. Anything else is a 400.
-- **200**: `{ "results": [ { "conversationId", "pullRequest" } | { "conversationId", "error": { "code" } } ] }`, in the order asked. One failing lookup does not hide the others.
-- A missing token fails only the entries that needed it.
-
-### Startup config
-
-`GET /api/config` includes these fields. The server sets them; they are not settings.
-
-- `pullRequestsEnabled` (boolean)
-- `pullRequestsBatchVersion` (`1`, present only with the feature on)
-- `pullRequestsMaxConcurrentLookups` (number, present only with the feature on)
-
-Only the error codes listed above are stable.
+| Problem                                         | Likely cause                                                        | Fix                                                                                                    |
+| ----------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| No chip and no sidebar mark anywhere            | `enabled` is not `true`, or `token` or `allowedRepositories` is missing | Check [Set it up](#set-it-up), then restart LibreChat.                                              |
+| The header chip works but sidebar rows are empty | A server or browser tab is on an older version                      | Upgrade and restart every server, then hard reload the page.                                           |
+| Only some chats show a pull request             | Only chats on an attached code workspace that reported a branch can | Confirm `CODEAPI_BRIDGE_LANE_GIT=true` on the Code API and a worker from code-interpreter PR #311 or later. |
+| Warning icon with a **Retry** button            | The lookup failed (rate limit, GitHub error or a missing token variable) | Retry. If it keeps failing, check the token variable and the token's permissions.                  |
+| Pull requests load but checks look wrong or fail | The token lacks the Checks or Contents permission                   | Grant read-only Checks and Contents.                                                                   |
+| A fork's pull request shows no checks           | The fork is not in `allowedRepositories`                            | Add the fork owner to `allowedRepositories`.                                                           |
+| No pull request for a branch name used many times | The search stops before it reaches the matching pull request       | Raise `maxCandidatePullRequests`, `maxCandidatePages` or `maxHeadComparisons`.                         |
+| Slow or timing-out lookups behind a proxy       | `requestTimeoutSeconds` is too low                                  | Raise it, and check `HTTPS_PROXY` and `NO_PROXY`.                                                      |
