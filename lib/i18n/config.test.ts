@@ -33,7 +33,7 @@ describe('i18n config', () => {
     vi.resetModules()
     try {
       const { TRANSLATE_MODEL: model } = await import('./config')
-      expect(model).toBe('google/gemini-3.1-flash-lite')
+      expect(model).toBe('anthropic/claude-haiku-5.5')
     } finally {
       if (prev === undefined) delete process.env.OPENROUTER_TRANSLATE_MODEL
       else process.env.OPENROUTER_TRANSLATE_MODEL = prev

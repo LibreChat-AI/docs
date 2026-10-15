@@ -42,14 +42,7 @@ export const VALIDATOR_VERSION = '1'
  * instead of becoming an invalid empty model id.
  */
 export const TRANSLATE_MODEL =
-  process.env.OPENROUTER_TRANSLATE_MODEL || 'google/gemini-3.1-flash-lite'
-
-/**
- * OpenRouter provider routing for translation: pin to Google AI Studio and use
- * its lower-cost `flex` service tier (high-volume, latency-tolerant batch work).
- */
-export const TRANSLATE_PROVIDER = 'google-ai-studio'
-export const TRANSLATE_SERVICE_TIER = 'flex'
+  process.env.OPENROUTER_TRANSLATE_MODEL || 'anthropic/claude-haiku-5.5'
 
 /** Terms that must never be translated and must stay spelled exactly as written. */
 export const GLOSSARY = [

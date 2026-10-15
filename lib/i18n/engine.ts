@@ -1,7 +1,7 @@
 import { generateText } from 'ai'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { OPENROUTER_APP_HEADERS } from '../openrouter-attribution'
-import { GLOSSARY, TRANSLATE_MODEL, TRANSLATE_PROVIDER, TRANSLATE_SERVICE_TIER } from './config'
+import { GLOSSARY, TRANSLATE_MODEL } from './config'
 import { LOCALE_NAMES } from '../i18n'
 import { withRetry } from './retry'
 import { progress } from './progress'
@@ -58,31 +58,31 @@ export function assertNotTruncated(finishReason: string, maxOutputTokens?: numbe
   }
 }
 
+/**
+ * Translation needs no reasoning, and thinking tokens bill as output: left on, they
+ * would cost more than the translation itself. Claude Haiku 5.5 thinks by default.
+ */
+export const TRANSLATE_MODEL_SETTINGS = { reasoning: { effort: 'none' } } as const
+
 export function createOpenRouterModel(): TranslateModel {
   const openrouter = createOpenRouter({
     apiKey: process.env.OPENROUTER_API_KEY,
     headers: OPENROUTER_APP_HEADERS,
   })
-  // Pin the provider via OpenRouter's routing preferences; `service_tier` is not a
-  // typed setting, so pass it through `extraBody` (merged verbatim into the request
-  // body and forwarded to the upstream provider).
-  const model = openrouter.chat(TRANSLATE_MODEL, {
-    provider: { only: [TRANSLATE_PROVIDER] },
-    extraBody: { service_tier: TRANSLATE_SERVICE_TIER },
-  })
-  // The `flex` tier returns 429s under load. Retry with backoff (honoring any
-  // Retry-After) so a single workflow run converges instead of skipping most pages
-  // and needing repeated manual re-runs. SDK-level retries are disabled so the
-  // backoff lives in one place; TRANSLATE_MAX_RETRIES tunes the budget in CI.
+  const model = openrouter.chat(TRANSLATE_MODEL, TRANSLATE_MODEL_SETTINGS)
+  // A burst of 429s must not skip most pages. Retry with backoff (honoring any
+  // Retry-After) so a single workflow run converges instead of needing repeated
+  // manual re-runs. SDK-level retries are disabled so the backoff lives in one
+  // place; TRANSLATE_MAX_RETRIES tunes the budget in CI.
   const maxRetries = Number(process.env.TRANSLATE_MAX_RETRIES) || 6
   return {
     async generate({ system, prompt, maxOutputTokens }) {
+      // No `temperature`: Claude Haiku 5.5 rejects non-default sampling values.
       const { text, finishReason } = await withRetry(
-        () =>
-          generateText({ model, system, prompt, temperature: 0.2, maxRetries: 0, maxOutputTokens }),
+        () => generateText({ model, system, prompt, maxRetries: 0, maxOutputTokens }),
         {
           retries: maxRetries,
-          // Backoff is routine on the flex tier: count it for the progress UI
+          // Backoff is routine under load: count it for the progress UI
           // instead of emitting a log line per attempt (that spam buried the
           // signal in CI). A retry that ultimately exhausts its budget still
           // surfaces — its error rides up to run.ts and into `skipped`.
