@@ -1,7 +1,13 @@
 import { join } from 'node:path'
 import { runTranslation } from '../lib/i18n/run'
-import { createOpenRouterModel } from '../lib/i18n/engine'
-import { TARGET_LOCALES } from '../lib/i18n/config'
+import {
+  buildTranslateRequest,
+  createOpenRouterModel,
+  type TranslateModel,
+  type TranslateRequest,
+} from '../lib/i18n/engine'
+import { createPrefetchedModel, prefetchTranslations } from '../lib/i18n/batch'
+import { TARGET_LOCALES, TRANSLATE_MODEL } from '../lib/i18n/config'
 import { progress } from '../lib/i18n/progress'
 
 const CACHE_DIR = join(process.cwd(), 'content/.i18n-cache')
@@ -34,6 +40,7 @@ async function main() {
   const dryRun = process.argv.includes('--dry-run')
   const locales = arg('locales')?.split(',') ?? [...TARGET_LOCALES]
   const only = arg('only') ?? null
+  const batch = process.argv.includes('--batch') && !dryRun
 
   if (!dryRun && !process.env.OPENROUTER_API_KEY) {
     console.error('OPENROUTER_API_KEY is not set')
@@ -44,15 +51,41 @@ async function main() {
   // lines under CI (no TTY). A dry run does no API work, so keep it quiet.
   progress.configure(dryRun ? 'silent' : undefined)
 
-  const stats = await runTranslation({
+  const base = {
     contentDir: join(process.cwd(), 'content/docs'),
     cacheDir: CACHE_DIR,
     locales,
-    model: createOpenRouterModel(),
     force,
-    dryRun,
     only,
-  })
+  }
+  let model: TranslateModel = createOpenRouterModel()
+
+  if (batch) {
+    // A silent dry run sees exactly the cache misses the real run will, so the
+    // batch is asked for those and nothing else.
+    const requests: TranslateRequest[] = []
+    progress.configure('silent')
+    await runTranslation({
+      ...base,
+      model,
+      dryRun: true,
+      onMiss: (input) => requests.push(buildTranslateRequest(input)),
+    })
+    progress.configure()
+    console.log(`[translate] batch: ${requests.length} uncached request(s)`)
+    const answers = await prefetchTranslations(requests, {
+      apiKey: process.env.OPENROUTER_API_KEY ?? '',
+      model: TRANSLATE_MODEL,
+      chunkSize: Number(process.env.TRANSLATE_BATCH_SIZE) || 1000,
+      waitMs: (Number(process.env.TRANSLATE_BATCH_WAIT_MINUTES) || 180) * 60_000,
+      pollMs: (Number(process.env.TRANSLATE_BATCH_POLL_SECONDS) || 60) * 1000,
+      log: (m) => console.log(`[translate] batch: ${m}`),
+    })
+    console.log(`[translate] batch: ${answers.size} answer(s) prefetched; the rest run live`)
+    model = createPrefetchedModel(answers, model)
+  }
+
+  const stats = await runTranslation({ ...base, model, dryRun })
 
   console.log(
     `[translate] locales=${locales.join(',')} translated=${stats.translatedBlocks} cached=${stats.cachedBlocks} skipped=${stats.skipped.length}/${stats.attempted} quarantined=${stats.quarantined.length}`,

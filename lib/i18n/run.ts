@@ -17,7 +17,7 @@ import {
   type Segment,
 } from './segment'
 import { validatePreservedText, validateTranslation } from './validate'
-import { translate, TruncatedOutputError, type TranslateModel } from './engine'
+import { translate, TruncatedOutputError, type TranslateInput, type TranslateModel } from './engine'
 import { TM } from './tm'
 import { TARGET_LOCALES, VALIDATOR_VERSION } from './config'
 import { progress } from './progress'
@@ -30,6 +30,12 @@ export interface RunOptions {
   force?: boolean
   dryRun?: boolean
   only?: string | null
+  /**
+   * Dry runs only: called for every string a real run would send to the model.
+   * The batch prefetch collects its requests this way, so it sees exactly the
+   * cache misses, give-up markers, and quarantines the real run will.
+   */
+  onMiss?: (input: TranslateInput) => void
 }
 
 export interface RunStats {
@@ -214,6 +220,7 @@ export async function runTranslation(opts: RunOptions): Promise<RunStats> {
         return text
       }
       if (opts.dryRun) {
+        opts.onMiss?.({ text, locale, kind, context })
         stats.translatedBlocks++
         return text
       }

@@ -121,23 +121,34 @@ export function stripWrappingFence(s: string): string {
   return match[1]
 }
 
-export async function translate(opts: {
+export interface TranslateRequest {
+  system: string
+  prompt: string
+  maxOutputTokens: number
+}
+
+export interface TranslateInput {
   text: string
   locale: string
   kind: 'block' | 'inline'
   context?: string
-  model: TranslateModel
-}): Promise<string> {
+}
+
+/**
+ * The exact model request for one string. Shared by the live path and the batch
+ * prefetch so a batch answer is keyed by precisely what `translate` would send.
+ */
+export function buildTranslateRequest(opts: TranslateInput): TranslateRequest {
   const localeName = LOCALE_NAMES[opts.locale] ?? opts.locale
   const system = buildSystemPrompt(localeName, opts.kind)
   const context = opts.context
     ? `Surrounding context (for reference only, DO NOT translate or include in your output):\n${opts.context}\n\n`
     : ''
   const prompt = `${context}Translate the following into ${localeName}:\n${opts.text}`
-  const raw = await opts.model.generate({
-    system,
-    prompt,
-    maxOutputTokens: outputTokenBudget(opts.text),
-  })
+  return { system, prompt, maxOutputTokens: outputTokenBudget(opts.text) }
+}
+
+export async function translate(opts: TranslateInput & { model: TranslateModel }): Promise<string> {
+  const raw = await opts.model.generate(buildTranslateRequest(opts))
   return stripWrappingFence(raw)
 }
