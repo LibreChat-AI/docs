@@ -25,6 +25,7 @@ test.describe('Image generation docs', () => {
     await expect(main).toContainText('defaults to gpt-image-2.5-flare')
     await expect(main).not.toContainText('IMAGE_GEN_OAI_MODEL=gpt-image-1')
     await expect(main).not.toContainText(/defaults? to \**gpt-image-1/i)
+    await expect(main).toContainText('accept any WIDTHxHEIGHT')
   })
 
   test('@scenario:tools-table-and-agent-lists-omit-dalle feature cards and tool lists omit DALL-E and image links resolve', async ({
