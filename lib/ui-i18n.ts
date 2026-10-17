@@ -228,7 +228,7 @@ const en = {
         items: {
           imageGen: {
             title: 'Image Generation',
-            description: 'Create images with GPT-Image-1, DALL-E, Stable Diffusion, and Flux',
+            description: 'Create images with GPT Image, Stable Diffusion, and Flux',
           },
           uploadAsText: {
             title: 'Upload as Text',

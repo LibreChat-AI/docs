@@ -205,7 +205,7 @@ export const tr: UIStrings = {
         items: {
           imageGen: {
             title: 'Görsel üretimi',
-            description: 'GPT-Image-1, DALL-E, Stable Diffusion ve Flux ile görseller oluşturun',
+            description: 'GPT Image, Stable Diffusion ve Flux ile görseller oluşturun',
           },
           uploadAsText: {
             title: 'Metin olarak yükle',

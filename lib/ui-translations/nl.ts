@@ -205,7 +205,7 @@ export const nl: UIStrings = {
         items: {
           imageGen: {
             title: 'Beeldgeneratie',
-            description: 'Maak afbeeldingen met GPT-Image-1, DALL-E, Stable Diffusion en Flux',
+            description: 'Maak afbeeldingen met GPT Image, Stable Diffusion en Flux',
           },
           uploadAsText: {
             title: 'Uploaden als tekst',

@@ -207,7 +207,7 @@ export const ja: UIStrings = {
         items: {
           imageGen: {
             title: '画像生成',
-            description: 'GPT-Image-1、DALL-E、Stable Diffusion、Flux で画像を作成',
+            description: 'GPT Image、Stable Diffusion、Flux で画像を作成',
           },
           uploadAsText: {
             title: 'テキストとしてアップロード',

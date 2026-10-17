@@ -202,7 +202,7 @@ export const id: UIStrings = {
         items: {
           imageGen: {
             title: 'Pembuatan gambar',
-            description: 'Buat gambar dengan GPT-Image-1, DALL-E, Stable Diffusion, dan Flux',
+            description: 'Buat gambar dengan GPT Image, Stable Diffusion, dan Flux',
           },
           uploadAsText: {
             title: 'Unggah sebagai teks',

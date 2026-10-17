@@ -200,7 +200,7 @@ export const vi: UIStrings = {
         items: {
           imageGen: {
             title: 'Tạo ảnh',
-            description: 'Tạo ảnh với GPT-Image-1, DALL-E, Stable Diffusion và Flux',
+            description: 'Tạo ảnh với GPT Image, Stable Diffusion và Flux',
           },
           uploadAsText: {
             title: 'Tải lên dưới dạng văn bản',

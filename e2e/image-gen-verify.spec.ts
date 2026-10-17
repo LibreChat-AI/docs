@@ -27,11 +27,11 @@ test.describe('Image generation docs', () => {
     await expect(main).not.toContainText(/defaults? to \**gpt-image-1/i)
   })
 
-  test('@scenario:tools-table-and-agent-lists-omit-dalle tool lists omit DALL-E and image links resolve', async ({
+  test('@scenario:tools-table-and-agent-lists-omit-dalle feature cards and tool lists omit DALL-E and image links resolve', async ({
     page,
   }) => {
     const anchors = new Set<string>()
-    for (const path of ['/docs/configuration/tools', '/docs/features/agents']) {
+    for (const path of ['/docs/features', '/docs/configuration/tools', '/docs/features/agents']) {
       await page.goto(path)
       const main = page.locator('main')
       await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()

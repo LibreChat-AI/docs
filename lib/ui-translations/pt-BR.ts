@@ -208,7 +208,7 @@ export const ptBR: UIStrings = {
         items: {
           imageGen: {
             title: 'Geração de imagens',
-            description: 'Crie imagens com GPT-Image-1, DALL-E, Stable Diffusion e Flux',
+            description: 'Crie imagens com GPT Image, Stable Diffusion e Flux',
           },
           uploadAsText: {
             title: 'Enviar como texto',

@@ -194,7 +194,7 @@ export const ko: UIStrings = {
         items: {
           imageGen: {
             title: '이미지 생성',
-            description: 'GPT-Image-1, DALL-E, Stable Diffusion, Flux로 이미지 생성',
+            description: 'GPT Image, Stable Diffusion, Flux로 이미지 생성',
           },
           uploadAsText: {
             title: '텍스트로 업로드',

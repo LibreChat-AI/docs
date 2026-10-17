@@ -187,7 +187,7 @@ export const zh: UIStrings = {
         items: {
           imageGen: {
             title: '图像生成',
-            description: '使用 GPT-Image-1、DALL-E、Stable Diffusion 和 Flux 创建图像',
+            description: '使用 GPT Image、Stable Diffusion 和 Flux 创建图像',
           },
           uploadAsText: {
             title: '以文本形式上传',

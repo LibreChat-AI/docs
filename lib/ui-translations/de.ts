@@ -216,7 +216,7 @@ export const de: UIStrings = {
         items: {
           imageGen: {
             title: 'Bildgenerierung',
-            description: 'Bilder erstellen mit GPT-Image-1, DALL-E, Stable Diffusion und Flux',
+            description: 'Bilder erstellen mit GPT Image, Stable Diffusion und Flux',
           },
           uploadAsText: {
             title: 'Als Text hochladen',
