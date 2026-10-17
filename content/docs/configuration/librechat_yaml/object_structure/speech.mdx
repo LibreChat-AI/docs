@@ -3,6 +3,13 @@ title: "Speech Configuration"
 icon: Mic
 ---
 
+{/*
+  Pending items: `stt.openai.prompt`, `keywords`, `languages`, `realtime` and the `realtime`
+  value of `speechTab.speechToText.engineSTT` (LibreChat-AI/LibreChat#17190). Delete the
+  Pending markers once it merges to dev, and re-check the schema in
+  packages/data-provider/src/config.ts.
+*/}
+
 ## Overview
 
 The `speech` object allows you to configure Text-to-Speech (TTS) and Speech-to-Text (STT) providers directly in your `librechat.yaml` configuration file. This enables server-side speech services without requiring users to configure their own API keys.
@@ -203,22 +210,62 @@ The `stt` object configures Speech-to-Text providers.
 
 ### openai
 
-OpenAI Whisper STT configuration.
+OpenAI STT configuration for `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`, `gpt-transcribe`, and OpenAI-compatible endpoints.
 
 <OptionTable
   options={[
     ['url', 'String', 'Custom API URL (optional). Use for OpenAI-compatible endpoints.', ''],
     ['apiKey', 'String', 'OpenAI API key. Use environment variable reference.', 'Required'],
-    ['model', 'String', 'STT model to use (e.g., "whisper-1").', 'Required'],
+    ['model', 'String', 'STT model for recorded dictation (e.g., "whisper-1", "gpt-4o-transcribe", "gpt-transcribe").', 'Required'],
+    ['prompt', 'String', 'Pending. Free-form context about the audio, such as the subject or vocabulary to expect. Sent with every transcription, to every model.', ''],
+    ['keywords', 'Array of Strings', 'Pending. Names, acronyms and other literal terms the model should spell exactly. Sent only to `gpt-transcribe` and `gpt-live-transcribe` models. Entries cannot contain `<`, `>` or line breaks.', ''],
+    ['languages', 'Array of Strings', 'Pending. Languages to expect, as ISO 639-1 or 639-3 codes with an optional region (e.g., "de", "zh-tw"). Sent only to `gpt-transcribe` and `gpt-live-transcribe` models. When a user picks a language in their speech settings, that language replaces this list.', ''],
+    ['realtime', 'Object', 'Pending. Enables live dictation over the Realtime API. See [realtime](#realtime) below.', ''],
   ]}
 />
+
+`gpt-transcribe` and `gpt-live-transcribe` models, including dated snapshots, take `languages` instead of the singular `language` field. LibreChat sends them `prompt`, `keywords` and `languages`. Older models (Whisper, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`) receive `prompt` and the user's speech language as `language`, as before.
 
 **Example:**
 ```yaml filename="speech / stt / openai"
 stt:
   openai:
     apiKey: "${STT_API_KEY}"
-    model: "whisper-1"
+    model: "gpt-transcribe"
+    prompt: "Internal retail and software terminology may be used."
+    keywords: ["LibreChat", "OpenShift"]
+    languages: ["de", "en"]
+```
+
+#### realtime
+
+**Pending.** Live dictation streams microphone audio to a Realtime transcription session over WebRTC, so text appears in the composer while the user speaks. With this block set, users can pick **Live** under **Settings > Speech > Engine**. Recorded dictation (the **External** engine) keeps using `model`.
+
+<OptionTable
+  options={[
+    ['model', 'String', 'Realtime transcription model, such as "gpt-live-transcribe". Older models such as "gpt-4o-transcribe" also work, but return text only after the user stops.', 'Required'],
+    ['url', 'String', 'Realtime API base URL. LibreChat calls `{url}/realtime/client_secrets` and `{url}/realtime/calls`. For Azure OpenAI, use `https://<resource>.openai.azure.com/openai/v1`.', 'https://api.openai.com/v1'],
+    ['delay', 'String', 'Latency preset for `gpt-live-transcribe` models: "minimal", "low", "medium", "high" or "xhigh". Not sent to other models.', ''],
+  ]}
+/>
+
+- Live dictation uses `stt.openai.apiKey`, `prompt`, `keywords` and `languages`. `stt.openai.url` applies only to recorded dictation.
+- **Live** is offered only when `stt` configures exactly one provider and that provider is `openai`. The `azureOpenAI` provider does not enable it.
+- The API key never reaches the browser. For each recording, the server uses it to create a client secret that expires after 60 seconds, then spends that secret on the WebRTC connection setup itself. The browser receives only the connection answer.
+- `stt.allowedAddresses` and the proxy settings apply to both requests the server makes.
+- Live audio and transcripts travel directly between the browser and the provider. `filters` rules for the `transcript` field do not see them; message filters still apply once the text is sent.
+- Realtime sessions are billed per minute while the microphone is open.
+
+**Example:**
+```yaml filename="speech / stt / openai / realtime"
+stt:
+  openai:
+    apiKey: "${STT_API_KEY}"
+    model: "gpt-transcribe"
+    keywords: ["LibreChat", "OpenShift"]
+    realtime:
+      model: "gpt-live-transcribe"
+      delay: "low"
 ```
 
 ### azureOpenAI
@@ -268,7 +315,7 @@ When using an object instead of a boolean:
     [
       'engineSTT',
       'String',
-      'Default STT engine. Use `"browser"` or `"external"`. Legacy `"openai"` and `"azureOpenAI"` values are accepted and normalized to `"external"`.',
+      'Default STT engine. Use `"browser"`, `"external"` or `"realtime"` (Pending; the **Live** engine, which requires `stt.openai.realtime`). Legacy `"openai"` and `"azureOpenAI"` values are accepted and normalized to `"external"`.',
       'browser',
     ],
     ['languageSTT', 'String', 'Default language for STT.', ''],
@@ -359,4 +406,5 @@ speech:
 - The `speechTab` settings define defaults that users can override in their personal settings
 - `browser` uses the browser's built-in speech support; `external` uses the server-side providers configured under `speech.stt` or `speech.tts`
 - Existing `openai` and `azureOpenAI` STT defaults, and `openai`, `azureOpenAI`, `elevenlabs`, and `localai` TTS defaults, are migrated to `external`; an unavailable external engine falls back to `browser`
+- `realtime` (**Pending**) is the **Live** engine. If live dictation is not available, a `realtime` default or a user's saved **Live** choice falls back to `external`, or to `browser` when no external engine is available either
 - For detailed feature documentation, see [Speech to Text & Text to Speech](/docs/configuration/stt_tts)
