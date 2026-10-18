@@ -283,7 +283,7 @@ export async function prefetchTranslations(
       )
       break
     }
-    await sleep(opts.pollMs)
+    await sleep(Math.min(opts.pollMs, Math.max(0, deadline - now())))
   }
 
   const pending = new Set<string>()
