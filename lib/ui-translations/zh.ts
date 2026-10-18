@@ -96,15 +96,25 @@ export const zh: UIStrings = {
         tag: '推荐',
         time: '约 5 分钟',
         description: '一切尽在其中——MongoDB、MeiliSearch 和 RAG API 自动运行。',
-        steps: ['克隆仓库', '将 .env.example 复制为 .env', '运行 docker compose up'],
+        steps: [
+          '克隆仓库',
+          '将 .env.example 复制为 .env',
+          '运行 docker compose up',
+          '打开 localhost:3080 并注册',
+        ],
         prereqs: ['Docker Desktop'],
       },
       npm: {
         tag: '',
         time: '约 20 分钟',
         description: '使用 Node.js 手动部署。需要单独的 MongoDB 和 MeiliSearch 实例。',
-        steps: ['克隆并安装依赖', '配置 .env 并启动 MongoDB', '运行 npm run backend'],
-        prereqs: ['Node.js v20.19+', 'MongoDB 实例'],
+        steps: [
+          '克隆并安装依赖',
+          '配置 .env 并启动 MongoDB',
+          '运行 npm run backend',
+          '打开 localhost:3080 并注册',
+        ],
+        prereqs: ['Node.js v24.16.0', 'MongoDB 实例'],
       },
       railway: {
         tag: '一键部署',

@@ -99,7 +99,12 @@ export const ko: UIStrings = {
         time: '~5분',
         description:
           '모든 것이 포함되어 있습니다 — MongoDB, MeiliSearch, RAG API가 자동으로 실행됩니다.',
-        steps: ['저장소 복제', '.env.example을 .env로 복사', 'docker compose up 실행'],
+        steps: [
+          '저장소 복제',
+          '.env.example을 .env로 복사',
+          'docker compose up 실행',
+          'localhost:3080을 열고 계정 등록',
+        ],
         prereqs: ['Docker Desktop'],
       },
       npm: {
@@ -107,8 +112,13 @@ export const ko: UIStrings = {
         time: '~20분',
         description:
           'Node.js를 사용한 수동 설정입니다. 별도의 MongoDB 및 MeiliSearch 인스턴스가 필요합니다.',
-        steps: ['복제하고 의존성 설치', '.env 구성 및 MongoDB 시작', 'npm run backend 실행'],
-        prereqs: ['Node.js v20.19+', 'MongoDB 인스턴스'],
+        steps: [
+          '복제하고 의존성 설치',
+          '.env 구성 및 MongoDB 시작',
+          'npm run backend 실행',
+          'localhost:3080을 열고 계정 등록',
+        ],
+        prereqs: ['Node.js v24.16.0', 'MongoDB 인스턴스'],
       },
       railway: {
         tag: '원클릭',

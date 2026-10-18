@@ -106,6 +106,7 @@ export const ja: UIStrings = {
           'リポジトリをクローン',
           '.env.example を .env にコピー',
           'docker compose up を実行',
+          'localhost:3080 を開いてアカウント登録',
         ],
         prereqs: ['Docker Desktop'],
       },
@@ -118,8 +119,9 @@ export const ja: UIStrings = {
           'クローンして依存関係をインストール',
           '.env を設定し MongoDB を起動',
           'npm run backend を実行',
+          'localhost:3080 を開いてアカウント登録',
         ],
-        prereqs: ['Node.js v20.19+', 'MongoDB インスタンス'],
+        prereqs: ['Node.js v24.16.0', 'MongoDB インスタンス'],
       },
       railway: {
         tag: 'ワンクリック',

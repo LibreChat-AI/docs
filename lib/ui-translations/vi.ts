@@ -98,7 +98,12 @@ export const vi: UIStrings = {
         tag: 'Được khuyến nghị',
         time: '~5 phút',
         description: 'Đã bao gồm mọi thứ — MongoDB, MeiliSearch và RAG API tự động chạy.',
-        steps: ['Clone repository', 'Sao chép .env.example thành .env', 'Chạy docker compose up'],
+        steps: [
+          'Clone repository',
+          'Sao chép .env.example thành .env',
+          'Chạy docker compose up',
+          'Mở localhost:3080 và đăng ký',
+        ],
         prereqs: ['Docker Desktop'],
       },
       npm: {
@@ -110,8 +115,9 @@ export const vi: UIStrings = {
           'Clone và cài đặt dependency',
           'Cấu hình .env và khởi động MongoDB',
           'Chạy npm run backend',
+          'Mở localhost:3080 và đăng ký',
         ],
-        prereqs: ['Node.js v20.19+', 'Phiên bản MongoDB'],
+        prereqs: ['Node.js v24.16.0', 'Phiên bản MongoDB'],
       },
       railway: {
         tag: 'Một cú nhấp',

@@ -102,6 +102,7 @@ export const tr: UIStrings = {
           "Repository'yi klonla",
           ".env.example'ı .env olarak kopyala",
           'docker compose up çalıştır',
+          'localhost:3080 adresini açın ve kaydolun',
         ],
         prereqs: ['Docker Desktop'],
       },
@@ -113,8 +114,9 @@ export const tr: UIStrings = {
           'Klonla ve bağımlılıkları yükle',
           ".env'yi yapılandır ve MongoDB'yi başlat",
           'npm run backend çalıştır',
+          'localhost:3080 adresini açın ve kaydolun',
         ],
-        prereqs: ['Node.js v20.19+', 'MongoDB örneği'],
+        prereqs: ['Node.js v24.16.0', 'MongoDB örneği'],
       },
       railway: {
         tag: 'Tek tık',

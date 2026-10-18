@@ -99,7 +99,12 @@ export const ptBR: UIStrings = {
         time: '~5 min',
         description:
           'Tudo incluído — MongoDB, MeiliSearch e RAG API são executados automaticamente.',
-        steps: ['Clone o repositório', 'Copie .env.example para .env', 'Execute docker compose up'],
+        steps: [
+          'Clone o repositório',
+          'Copie .env.example para .env',
+          'Execute docker compose up',
+          'Abra localhost:3080 e cadastre-se',
+        ],
         prereqs: ['Docker Desktop'],
       },
       npm: {
@@ -111,8 +116,9 @@ export const ptBR: UIStrings = {
           'Clone e instale as dependências',
           'Configure .env e inicie o MongoDB',
           'Execute npm run backend',
+          'Abra localhost:3080 e cadastre-se',
         ],
-        prereqs: ['Node.js v20.19+', 'Instância MongoDB'],
+        prereqs: ['Node.js v24.16.0', 'Instância MongoDB'],
       },
       railway: {
         tag: 'Um clique',

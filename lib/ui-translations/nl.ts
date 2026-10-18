@@ -102,6 +102,7 @@ export const nl: UIStrings = {
           'Clone de repository',
           'Kopieer .env.example naar .env',
           'Voer docker compose up uit',
+          'Open localhost:3080 en registreer',
         ],
         prereqs: ['Docker Desktop'],
       },
@@ -114,8 +115,9 @@ export const nl: UIStrings = {
           'Clone en installeer afhankelijkheden',
           'Configureer .env en start MongoDB',
           'Voer npm run backend uit',
+          'Open localhost:3080 en registreer',
         ],
-        prereqs: ['Node.js v20.19+', 'MongoDB-instantie'],
+        prereqs: ['Node.js v24.16.0', 'MongoDB-instantie'],
       },
       railway: {
         tag: 'Eén klik',

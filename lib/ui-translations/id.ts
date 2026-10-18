@@ -99,7 +99,12 @@ export const id: UIStrings = {
         time: '~5 mnt',
         description:
           'Semuanya sudah termasuk — MongoDB, MeiliSearch, dan RAG API berjalan otomatis.',
-        steps: ['Clone repository', 'Salin .env.example ke .env', 'Jalankan docker compose up'],
+        steps: [
+          'Clone repository',
+          'Salin .env.example ke .env',
+          'Jalankan docker compose up',
+          'Buka localhost:3080 dan daftar',
+        ],
         prereqs: ['Docker Desktop'],
       },
       npm: {
@@ -111,8 +116,9 @@ export const id: UIStrings = {
           'Clone dan instal dependensi',
           'Konfigurasikan .env dan mulai MongoDB',
           'Jalankan npm run backend',
+          'Buka localhost:3080 dan daftar',
         ],
-        prereqs: ['Node.js v20.19+', 'Instance MongoDB'],
+        prereqs: ['Node.js v24.16.0', 'Instance MongoDB'],
       },
       railway: {
         tag: 'Sekali klik',

@@ -126,7 +126,12 @@ const en = {
         tag: 'Recommended',
         time: '~5 min',
         description: 'Everything included — MongoDB, MeiliSearch, and RAG API run automatically.',
-        steps: ['Clone the repository', 'Copy .env.example to .env', 'Run docker compose up'],
+        steps: [
+          'Clone the repository',
+          'Copy .env.example to .env',
+          'Run docker compose up',
+          'Open localhost:3080 and register',
+        ],
         prereqs: ['Docker Desktop'],
       },
       npm: {
@@ -138,8 +143,9 @@ const en = {
           'Clone and install dependencies',
           'Configure .env and start MongoDB',
           'Run npm run backend',
+          'Open localhost:3080 and register',
         ],
-        prereqs: ['Node.js v20.19+', 'MongoDB instance'],
+        prereqs: ['Node.js v24.16.0', 'MongoDB instance'],
       },
       railway: {
         tag: 'One-click',
