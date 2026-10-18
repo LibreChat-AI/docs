@@ -28,6 +28,8 @@ function countingModel(): TranslateModel & { calls: number } {
 const req = (text: string): TranslateRequest =>
   buildTranslateRequest({ text, locale: 'de', kind: 'block' })
 
+const byKey = (...reqs: TranslateRequest[]) => new Map(reqs.map((r) => [requestKey(r), r]))
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status })
 }
@@ -113,7 +115,7 @@ describe('prefetchTranslations', () => {
       })
     }) as typeof fetch
 
-    const { answers } = await prefetchTranslations([a, b, a], {
+    const { answers } = await prefetchTranslations(byKey(a, b, a), {
       ...baseOpts,
       ledgerPath,
       fetch: fakeFetch,
@@ -134,7 +136,7 @@ describe('prefetchTranslations', () => {
       if (init?.method === 'POST') return json({ id: `b${++posts}`, status: 'validating' })
       return json({ id: 'x', status: 'completed', results: [] })
     }) as typeof fetch
-    await prefetchTranslations([req('1'), req('2'), req('3')], {
+    await prefetchTranslations(byKey(req('1'), req('2'), req('3')), {
       ...baseOpts,
       ledgerPath,
       chunkSize: 2,
@@ -154,7 +156,7 @@ describe('prefetchTranslations', () => {
       }
       return json({ id: 'b1', status: 'in_progress', results: null })
     }) as typeof fetch
-    const first = await prefetchTranslations([r], {
+    const first = await prefetchTranslations(byKey(r), {
       ...baseOpts,
       ledgerPath,
       fetch: running,
@@ -188,7 +190,7 @@ describe('prefetchTranslations', () => {
         ],
       })
     }) as typeof fetch
-    const second = await prefetchTranslations([r], { ...baseOpts, ledgerPath, fetch: done })
+    const second = await prefetchTranslations(byKey(r), { ...baseOpts, ledgerPath, fetch: done })
     expect(posts).toBe(1)
     expect(second.answers.get(requestKey(r))?.text).toBe('Eins')
     expect(second.pending.size).toBe(0)
@@ -202,7 +204,7 @@ describe('prefetchTranslations', () => {
         ? json({ id: 'b1', status: 'validating' })
         : json({ id: 'b1', status: 'in_progress', results: null })) as typeof fetch
     await expect(
-      prefetchTranslations([r], {
+      prefetchTranslations(byKey(r), {
         ...baseOpts,
         ledgerPath,
         fetch: fakeFetch,
@@ -214,6 +216,53 @@ describe('prefetchTranslations', () => {
     expect(JSON.parse(await readFile(ledgerPath, 'utf8'))).toEqual({
       b1: { model: baseOpts.model, keys: [requestKey(r)] },
     })
+  })
+
+  it('collects a carried batch even when the string now first appears in another context', async () => {
+    const inA: TranslateInput = { text: 'Shared.', locale: 'de', kind: 'block', context: 'Page A' }
+    const inB: TranslateInput = { ...inA, context: 'Page B' }
+    let t = 0
+    const posts: string[] = []
+    let customId = ''
+    const running = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        customId = JSON.parse(String(init.body)).requests[0].custom_id
+        posts.push(customId)
+        return json({ id: 'b1', status: 'validating' })
+      }
+      return json({ id: 'b1', status: 'in_progress', results: null })
+    }) as typeof fetch
+    const first = await prefetchMisses([inA], {
+      ...baseOpts,
+      ledgerPath,
+      fetch: running,
+      now: () => t,
+      sleep: async (ms) => {
+        t += ms
+      },
+    })
+    expect([...first.deferred]).toEqual([deferredKey('de', 'Shared.')])
+
+    const done = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') posts.push('again')
+      return json({
+        id: 'b1',
+        status: 'completed',
+        results: [
+          {
+            custom_id: customId,
+            response: {
+              status_code: 200,
+              body: { choices: [{ message: { content: 'Geteilt.' }, finish_reason: 'stop' }] },
+            },
+          },
+        ],
+      })
+    }) as typeof fetch
+    const second = await prefetchMisses([inB], { ...baseOpts, ledgerPath, fetch: done })
+    expect(posts).toHaveLength(1)
+    expect(second.answers.get(requestKey(buildTranslateRequest(inB)))?.[0]?.text).toBe('Geteilt.')
+    expect(second.deferred.size).toBe(0)
   })
 
   it('drops a carried batch that this run no longer needs or that is gone', async () => {
@@ -238,7 +287,7 @@ describe('prefetchTranslations', () => {
         ? json({ error: 'not found' }, 404)
         : json({ id: 'fresh', status: 'completed', results: [] })
     }) as typeof fetch
-    const { pending } = await prefetchTranslations([r], {
+    const { pending } = await prefetchTranslations(byKey(r), {
       ...baseOpts,
       ledgerPath,
       fetch: fakeFetch,
@@ -252,7 +301,7 @@ describe('prefetchTranslations', () => {
 
   it('does not throw when a submit fails', async () => {
     const fakeFetch = (async () => json({ error: 'no :batch endpoint' }, 400)) as typeof fetch
-    const { answers } = await prefetchTranslations([req('One')], {
+    const { answers } = await prefetchTranslations(byKey(req('One')), {
       ...baseOpts,
       ledgerPath,
       fetch: fakeFetch,

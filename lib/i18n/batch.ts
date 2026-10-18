@@ -97,9 +97,9 @@ export interface PrefetchOptions {
 }
 
 export interface PrefetchResult {
-  /** Answers keyed by `requestKey`. */
+  /** Answers keyed by request id. */
   answers: Map<string, BatchAnswer>
-  /** Requests a still-running batch will answer; the caller must not run them live. */
+  /** Ids a still-running batch will answer; the caller must not run them live. */
   pending: Set<string>
 }
 
@@ -117,12 +117,14 @@ async function readLedger(path: string): Promise<Ledger> {
 
 /**
  * Collect the answers of batches an earlier run left running, submit every other
- * distinct request as new batches, and wait for all of them up to `waitMs`. Never
+ * request as new batches, and wait for all of them up to `waitMs`. Requests are
+ * keyed by a caller-chosen id, which doubles as the batch `custom_id` and is what
+ * the ledger remembers, so it must identify the answer across runs. Never
  * throws for a batch-side failure: a request without an answer or a pending batch
  * simply runs live, so the worst case is the old cost, not a failed run.
  */
 export async function prefetchTranslations(
-  requests: TranslateRequest[],
+  unique: Map<string, TranslateRequest>,
   opts: PrefetchOptions,
 ): Promise<PrefetchResult> {
   const doFetch = opts.fetch ?? fetch
@@ -134,8 +136,6 @@ export async function prefetchTranslations(
     ...OPENROUTER_APP_HEADERS,
   }
 
-  const unique = new Map<string, TranslateRequest>()
-  for (const req of requests) unique.set(requestKey(req), req)
   const answers = new Map<string, BatchAnswer>()
 
   // A carried batch is only worth waiting for if this run still needs one of its
@@ -279,22 +279,33 @@ export async function prefetchMisses(
   misses: TranslateInput[],
   opts: PrefetchOptions,
 ): Promise<MissPrefetch> {
+  // Keyed by locale and text, not by the request: which occurrence comes first can
+  // change between runs (`--only`, edited pages), and the ledger must still match a
+  // batch already paid for to the string it answers.
+  const textId = (input: TranslateInput) =>
+    createHash('sha256').update(deferredKey(input.locale, input.text)).digest('hex').slice(0, 32)
   const first = new Map<string, TranslateRequest>()
+  const texts = new Map<string, string>()
   for (const input of misses) {
-    const text = deferredKey(input.locale, input.text)
-    if (!first.has(text)) first.set(text, buildTranslateRequest(input))
+    const id = textId(input)
+    if (first.has(id)) continue
+    first.set(id, buildTranslateRequest(input))
+    texts.set(id, deferredKey(input.locale, input.text))
   }
   opts.log(`${misses.length} uncached occurrence(s), ${first.size} distinct string(s)`)
-  const { answers, pending } = await prefetchTranslations([...first.values()], opts)
+  const { answers, pending } = await prefetchTranslations(first, opts)
 
   const served = new Map<string, BatchAnswer[]>()
   for (const input of misses) {
-    const answer = answers.get(requestKey(first.get(deferredKey(input.locale, input.text))!))
+    const answer = answers.get(textId(input))
     if (!answer) continue
     const key = requestKey(buildTranslateRequest(input))
     served.set(key, [...(served.get(key) ?? []), answer])
   }
   const deferred = new Set<string>()
-  for (const [text, req] of first) if (pending.has(requestKey(req))) deferred.add(text)
+  for (const id of pending) {
+    const text = texts.get(id)
+    if (text) deferred.add(text)
+  }
   return { answers: served, deferred }
 }
