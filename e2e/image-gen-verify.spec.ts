@@ -26,6 +26,11 @@ test.describe('Image generation docs', () => {
     await expect(main).not.toContainText('IMAGE_GEN_OAI_MODEL=gpt-image-1')
     await expect(main).not.toContainText(/defaults? to \**gpt-image-1/i)
     await expect(main).toContainText('accept any WIDTHxHEIGHT')
+    await expect(main).toContainText('stored at 1365x768')
+    const resizeLink = main.getByRole('link', { name: 'fileConfig.imageGeneration' })
+    await expect(resizeLink).toHaveAttribute('href', /file_config#imagegeneration$/)
+    await resizeLink.click()
+    await expect(page.locator('[id="imagegeneration"]')).toHaveCount(1)
   })
 
   test('@scenario:tools-table-and-agent-lists-omit-dalle feature cards and tool lists omit DALL-E and image links resolve', async ({
