@@ -24,9 +24,11 @@ const OPEN_AND_REGISTER: Record<string, string> = {
 }
 
 async function cardSteps(page: Page, method: string) {
+  // Each item is a number badge followed by the step label; read the label only.
   return page
     .getByRole('list', { name: `${method} steps` })
     .getByRole('listitem')
+    .locator('span:last-child')
     .allInnerTexts()
 }
 
