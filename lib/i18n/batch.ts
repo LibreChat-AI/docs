@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { OPENROUTER_APP_HEADERS } from '../openrouter-attribution'
 import {
@@ -184,7 +184,11 @@ export async function prefetchTranslations(
     const ledger: Ledger = Object.fromEntries(known)
     try {
       await mkdir(dirname(opts.ledgerPath), { recursive: true })
-      await writeFile(opts.ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
+      // Write then rename, so an interrupted write never leaves a truncated ledger
+      // that the next run would read as empty.
+      const tmp = `${opts.ledgerPath}.tmp`
+      await writeFile(tmp, `${JSON.stringify(ledger, null, 2)}\n`)
+      await rename(tmp, opts.ledgerPath)
       return true
     } catch (e) {
       opts.log(`could not save the batch ledger: ${(e as Error).message}`)
