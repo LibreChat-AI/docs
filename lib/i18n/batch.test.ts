@@ -302,7 +302,7 @@ describe('prefetchTranslations', () => {
       ledgerPath,
       JSON.stringify({
         stale: { model: baseOpts.model, keys: ['no-longer-needed'], at: 0 },
-        other: { model: 'some/other-model', keys: [requestKey(r)] },
+        other: { model: 'some/other-model', keys: [requestKey(r)], at: Date.now() },
         gone: { model: baseOpts.model, keys: [requestKey(r)] },
       }),
     )
@@ -315,7 +315,7 @@ describe('prefetchTranslations', () => {
       }
       polled.push(url.split('/').at(-1)!)
       return url.endsWith('/gone')
-        ? json({ error: 'not found' }, 404)
+        ? json({ error: 'forbidden' }, 403)
         : json({ id: 'fresh', status: 'completed', results: [] })
     }) as typeof fetch
     const { pending } = await prefetchTranslations(byKey(r), {
@@ -323,11 +323,13 @@ describe('prefetchTranslations', () => {
       ledgerPath,
       fetch: fakeFetch,
     })
-    // `gone` still covers the request, so it is not resubmitted; once it 404s the
+    // `gone` still covers the request, so it is not resubmitted; once it is unreadable the
     // request simply runs live.
     expect(posts).toBe(0)
     expect(polled).toEqual(['gone'])
     expect(pending.size).toBe(0)
+    // The other model's batch is kept for when that model is used again.
+    expect(Object.keys(JSON.parse(await readFile(ledgerPath, 'utf8')))).toEqual(['other'])
   })
 
   it('does not throw when a submit fails', async () => {

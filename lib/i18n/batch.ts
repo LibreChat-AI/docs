@@ -157,16 +157,22 @@ export async function prefetchTranslations(
   // this run waits on: a completed batch stays known until a run no longer needs any
   // of its answers, so a run that dies before caching them can collect them later.
   // One this run does not need is kept, unpolled, for a while (see the retention).
-  const known = new Map<string, { keys: string[]; at: number }>()
+  // Batches of another model (an OPENROUTER_TRANSLATE_MODEL override) are kept the
+  // same way, so switching back still finds them.
+  const known = new Map<string, Ledger[string]>()
   const batches = new Map<string, string[]>()
   for (const [id, entry] of Object.entries(await readLedger(opts.ledgerPath))) {
-    if (entry?.model !== opts.model || !Array.isArray(entry.keys)) continue
-    const at = typeof entry.at === 'number' ? entry.at : 0
-    if (entry.keys.some((k) => unique.has(k))) {
-      known.set(id, { keys: entry.keys, at })
+    if (typeof entry?.model !== 'string' || !Array.isArray(entry.keys)) continue
+    const kept = {
+      model: entry.model,
+      keys: entry.keys,
+      at: typeof entry.at === 'number' ? entry.at : 0,
+    }
+    if (entry.model === opts.model && entry.keys.some((k) => unique.has(k))) {
+      known.set(id, kept)
       batches.set(id, entry.keys)
-    } else if (now() - at < UNNEEDED_RETENTION_MS) {
-      known.set(id, { keys: entry.keys, at })
+    } else if (now() - kept.at < UNNEEDED_RETENTION_MS) {
+      known.set(id, kept)
     }
   }
   if (batches.size > 0) opts.log(`waiting on ${batches.size} batch(es) from an earlier run`)
@@ -175,8 +181,7 @@ export async function prefetchTranslations(
   // Saved after every submit, not only at the end: a run that dies during the long
   // wait must still leave the next run a way to find what it already paid for.
   const saveLedger = async (): Promise<boolean> => {
-    const ledger: Ledger = {}
-    for (const [id, { keys, at }] of known) ledger[id] = { model: opts.model, keys, at }
+    const ledger: Ledger = Object.fromEntries(known)
     try {
       await mkdir(dirname(opts.ledgerPath), { recursive: true })
       await writeFile(opts.ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
@@ -218,7 +223,7 @@ export async function prefetchTranslations(
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`)
       const created = (await res.json()) as BatchObject
       const keys = chunk.map(([key]) => key)
-      known.set(created.id, { keys, at: now() })
+      known.set(created.id, { model: opts.model, keys, at: now() })
       batches.set(created.id, keys)
       opts.log(`submitted batch ${created.id} (${chunk.length} request(s))`)
       await saveLedger()
@@ -235,11 +240,12 @@ export async function prefetchTranslations(
       let batch: BatchObject
       try {
         const res = await doFetch(`${BATCHES_URL}/${id}`, { headers, signal: timeout() })
-        if (res.status === 404) {
-          // Deleted or never ours: nothing will ever arrive, so stop waiting on it.
+        // Deleted, never ours, or no longer readable with this key (any 4xx but a
+        // timeout or rate limit): nothing will ever arrive, so stop waiting on it.
+        if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
           batches.delete(id)
           known.delete(id)
-          opts.log(`batch ${id} not found; its requests will run live`)
+          opts.log(`batch ${id} unreadable (HTTP ${res.status}); its requests will run live`)
           continue
         }
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
