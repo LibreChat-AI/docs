@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createPrefetchedModel, prefetchTranslations, requestKey, type BatchAnswer } from './batch'
@@ -9,7 +9,7 @@ import {
   type TranslateModel,
   type TranslateRequest,
 } from './engine'
-import { runTranslation } from './run'
+import { deferredKey, runTranslation } from './run'
 
 const echoSource = (prompt: string) => prompt.split(/Translate the following[^\n]*:\n/).pop() ?? ''
 
@@ -67,6 +67,10 @@ describe('createPrefetchedModel', () => {
 })
 
 describe('prefetchTranslations', () => {
+  let ledgerPath: string
+  beforeEach(async () => {
+    ledgerPath = join(await mkdtemp(join(tmpdir(), 'ledger-')), 'batches.json')
+  })
   it('submits distinct requests with `requests` last and harvests completed answers', async () => {
     const a = req('One')
     const b = req('Two')
@@ -96,7 +100,11 @@ describe('prefetchTranslations', () => {
       })
     }) as typeof fetch
 
-    const answers = await prefetchTranslations([a, b, a], { ...baseOpts, fetch: fakeFetch })
+    const { answers } = await prefetchTranslations([a, b, a], {
+      ...baseOpts,
+      ledgerPath,
+      fetch: fakeFetch,
+    })
 
     expect(bodies).toHaveLength(1)
     expect(Object.keys(bodies[0]).at(-1)).toBe('requests')
@@ -115,33 +123,106 @@ describe('prefetchTranslations', () => {
     }) as typeof fetch
     await prefetchTranslations([req('1'), req('2'), req('3')], {
       ...baseOpts,
+      ledgerPath,
       chunkSize: 2,
       fetch: fakeFetch,
     })
     expect(posts).toBe(2)
   })
 
-  it('stops waiting at the deadline and returns what it has', async () => {
+  it('hands a batch still running at the deadline to the next run instead of live', async () => {
     let t = 0
-    const fakeFetch = (async (_url: string, init?: RequestInit) =>
-      init?.method === 'POST'
-        ? json({ id: 'b1', status: 'validating' })
-        : json({ id: 'b1', status: 'in_progress', results: null })) as typeof fetch
-    const answers = await prefetchTranslations([req('One')], {
+    const r = req('One')
+    let posts = 0
+    const running = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        posts++
+        return json({ id: 'b1', status: 'validating' })
+      }
+      return json({ id: 'b1', status: 'in_progress', results: null })
+    }) as typeof fetch
+    const first = await prefetchTranslations([r], {
       ...baseOpts,
-      fetch: fakeFetch,
+      ledgerPath,
+      fetch: running,
       now: () => t,
       sleep: async (ms) => {
         t += ms
       },
     })
-    expect(answers.size).toBe(0)
+    expect(first.answers.size).toBe(0)
     expect(t).toBeGreaterThanOrEqual(baseOpts.waitMs)
+    // Not run live: the batch will still answer it.
+    expect([...first.pending]).toEqual([requestKey(r)])
+    expect(JSON.parse(await readFile(ledgerPath, 'utf8'))).toEqual({
+      b1: { model: baseOpts.model, keys: [requestKey(r)] },
+    })
+
+    // The next run collects the carried batch rather than submitting it again.
+    const done = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') posts++
+      return json({
+        id: 'b1',
+        status: 'completed',
+        results: [
+          {
+            custom_id: requestKey(r),
+            response: {
+              status_code: 200,
+              body: { choices: [{ message: { content: 'Eins' }, finish_reason: 'stop' }] },
+            },
+          },
+        ],
+      })
+    }) as typeof fetch
+    const second = await prefetchTranslations([r], { ...baseOpts, ledgerPath, fetch: done })
+    expect(posts).toBe(1)
+    expect(second.answers.get(requestKey(r))?.text).toBe('Eins')
+    expect(second.pending.size).toBe(0)
+    expect(JSON.parse(await readFile(ledgerPath, 'utf8'))).toEqual({})
+  })
+
+  it('drops a carried batch that this run no longer needs or that is gone', async () => {
+    const r = req('One')
+    await writeFile(
+      ledgerPath,
+      JSON.stringify({
+        stale: { model: baseOpts.model, keys: ['no-longer-needed'] },
+        other: { model: 'some/other-model', keys: [requestKey(r)] },
+        gone: { model: baseOpts.model, keys: [requestKey(r)] },
+      }),
+    )
+    const polled: string[] = []
+    let posts = 0
+    const fakeFetch = (async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        posts++
+        return json({ id: 'fresh', status: 'validating' })
+      }
+      polled.push(url.split('/').at(-1)!)
+      return url.endsWith('/gone')
+        ? json({ error: 'not found' }, 404)
+        : json({ id: 'fresh', status: 'completed', results: [] })
+    }) as typeof fetch
+    const { pending } = await prefetchTranslations([r], {
+      ...baseOpts,
+      ledgerPath,
+      fetch: fakeFetch,
+    })
+    // `gone` still covers the request, so it is not resubmitted; once it 404s the
+    // request simply runs live.
+    expect(posts).toBe(0)
+    expect(polled).toEqual(['gone'])
+    expect(pending.size).toBe(0)
   })
 
   it('does not throw when a submit fails', async () => {
     const fakeFetch = (async () => json({ error: 'no :batch endpoint' }, 400)) as typeof fetch
-    const answers = await prefetchTranslations([req('One')], { ...baseOpts, fetch: fakeFetch })
+    const { answers } = await prefetchTranslations([req('One')], {
+      ...baseOpts,
+      ledgerPath,
+      fetch: fakeFetch,
+    })
     expect(answers.size).toBe(0)
   })
 })
@@ -185,5 +266,24 @@ describe('batch prefetch with runTranslation', () => {
     expect(answers.size).toBe(0)
     expect(stats.translatedBlocks).toBeGreaterThan(0)
     expect(stats.skipped).toEqual([])
+  })
+
+  it('keeps a deferred block in English and uncached so a later run can fill it', async () => {
+    const opts = { contentDir: content, cacheDir: cache, locales: ['de'] }
+    const live = countingModel()
+    const stats = await runTranslation({
+      ...opts,
+      model: live,
+      deferred: new Set([deferredKey('de', 'A paragraph.')]),
+    })
+    expect(stats.deferredBlocks).toBe(2)
+    const written = await readFile(join(content, 'index.de.mdx'), 'utf8')
+    expect(written).toContain('A paragraph.')
+
+    // Once the batch has answered, the next run translates the block normally.
+    const next = await runTranslation({ ...opts, model: live })
+    expect(next.deferredBlocks).toBe(0)
+    // Only the deferred text was left uncached; its repeat is served from the staged map.
+    expect(next.translatedBlocks).toBe(1)
   })
 })

@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { OPENROUTER_APP_HEADERS } from '../openrouter-attribution'
 import {
   assertNotTruncated,
@@ -13,8 +15,9 @@ import {
  * not fit the per-block translate/validate/retry loop in run.ts. So the batch only
  * answers each request's first attempt: the run then consumes those answers and
  * falls back to the live model for everything else (validation retries, truncation,
- * requests a batch could not answer before the deadline). The run's caching,
- * validation, and give-up logic stay exactly as they are.
+ * failed batches). A batch still running when the run stops waiting cannot be
+ * cancelled, so its requests are not bought again live: they stay untranslated
+ * for this run and a later run collects the batch's answers through the ledger.
  *
  * https://openrouter.ai/docs/projects/docs/batch-quickstart
  */
@@ -77,25 +80,50 @@ export interface PrefetchOptions {
   model: string
   /** Requests per submitted batch. */
   chunkSize: number
-  /** Give up waiting after this long; unanswered requests run live. */
+  /** Stop waiting after this long; batches still running are handed to a later run. */
   waitMs: number
   pollMs: number
+  /**
+   * Batches still running when a run stops waiting, kept across runs. OpenRouter
+   * has no way to cancel a batch, so a later run collects these answers instead of
+   * buying the same translations again live.
+   */
+  ledgerPath: string
   log: (message: string) => void
   fetch?: typeof fetch
   sleep?: (ms: number) => Promise<void>
   now?: () => number
 }
 
+export interface PrefetchResult {
+  /** Answers keyed by `requestKey`. */
+  answers: Map<string, BatchAnswer>
+  /** Requests a still-running batch will answer; the caller must not run them live. */
+  pending: Set<string>
+}
+
+/** Batch id to the request keys it carries, for one model. */
+type Ledger = Record<string, { model: string; keys: string[] }>
+
+async function readLedger(path: string): Promise<Ledger> {
+  try {
+    const parsed = JSON.parse(await readFile(path, 'utf8'))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
 /**
- * Submit every distinct request as OpenRouter batches, wait for them up to
- * `waitMs`, and return the answers keyed by `requestKey`. Never throws for a
- * batch-side failure: a request without an answer simply runs live, so the worst
- * case is the old cost, not a failed run.
+ * Collect the answers of batches an earlier run left running, submit every other
+ * distinct request as new batches, and wait for all of them up to `waitMs`. Never
+ * throws for a batch-side failure: a request without an answer or a pending batch
+ * simply runs live, so the worst case is the old cost, not a failed run.
  */
 export async function prefetchTranslations(
   requests: TranslateRequest[],
   opts: PrefetchOptions,
-): Promise<Map<string, BatchAnswer>> {
+): Promise<PrefetchResult> {
   const doFetch = opts.fetch ?? fetch
   const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)))
   const now = opts.now ?? Date.now
@@ -108,10 +136,19 @@ export async function prefetchTranslations(
   const unique = new Map<string, TranslateRequest>()
   for (const req of requests) unique.set(requestKey(req), req)
   const answers = new Map<string, BatchAnswer>()
-  if (unique.size === 0) return answers
 
-  const entries = [...unique]
-  const pending: string[] = []
+  // A carried batch is only worth waiting for if this run still needs one of its
+  // answers from the same model; anything else is billed either way and dropped.
+  const batches = new Map<string, string[]>()
+  for (const [id, entry] of Object.entries(await readLedger(opts.ledgerPath))) {
+    if (entry?.model === opts.model && entry.keys?.some((k) => unique.has(k))) {
+      batches.set(id, entry.keys)
+    }
+  }
+  if (batches.size > 0) opts.log(`waiting on ${batches.size} batch(es) from an earlier run`)
+  const carried = new Set([...batches.values()].flat())
+
+  const entries = [...unique].filter(([key]) => !carried.has(key))
   for (let i = 0; i < entries.length; i += opts.chunkSize) {
     const chunk = entries.slice(i, i + opts.chunkSize)
     // Key order matters: OpenRouter rejects a body whose `requests` comes first.
@@ -140,7 +177,10 @@ export async function prefetchTranslations(
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`)
       const created = (await res.json()) as BatchObject
-      pending.push(created.id)
+      batches.set(
+        created.id,
+        chunk.map(([key]) => key),
+      )
       opts.log(`submitted batch ${created.id} (${chunk.length} request(s))`)
     } catch (e) {
       opts.log(
@@ -150,11 +190,17 @@ export async function prefetchTranslations(
   }
 
   const deadline = now() + opts.waitMs
-  while (pending.length > 0) {
-    for (const id of [...pending]) {
+  while (batches.size > 0) {
+    for (const id of [...batches.keys()]) {
       let batch: BatchObject
       try {
         const res = await doFetch(`${BATCHES_URL}/${id}`, { headers })
+        if (res.status === 404) {
+          // Deleted or never ours: nothing will ever arrive, so stop waiting on it.
+          batches.delete(id)
+          opts.log(`batch ${id} not found; its requests will run live`)
+          continue
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         batch = (await res.json()) as BatchObject
       } catch (e) {
@@ -163,7 +209,7 @@ export async function prefetchTranslations(
         continue
       }
       if (!TERMINAL.has(batch.status)) continue
-      pending.splice(pending.indexOf(id), 1)
+      batches.delete(id)
       let harvested = 0
       for (const r of batch.results ?? []) {
         const choice = r.response?.status_code === 200 ? r.response.body?.choices?.[0] : undefined
@@ -177,14 +223,30 @@ export async function prefetchTranslations(
       }
       opts.log(`batch ${id} ${batch.status}: ${harvested} answer(s)`)
     }
-    if (pending.length === 0) break
+    if (batches.size === 0) break
     if (now() >= deadline) {
       opts.log(
-        `stopped waiting on ${pending.length} batch(es) after ${Math.round(opts.waitMs / 60000)} min; their requests will run live`,
+        `stopped waiting on ${batches.size} batch(es) after ${Math.round(opts.waitMs / 60000)} min; a later run collects their answers`,
       )
       break
     }
     await sleep(opts.pollMs)
   }
-  return answers
+
+  const ledger: Ledger = {}
+  const pending = new Set<string>()
+  for (const [id, keys] of batches) {
+    ledger[id] = { model: opts.model, keys }
+    for (const key of keys) if (unique.has(key)) pending.add(key)
+  }
+  try {
+    await mkdir(dirname(opts.ledgerPath), { recursive: true })
+    await writeFile(opts.ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
+  } catch (e) {
+    // Without the ledger a later run cannot find these batches, so their requests
+    // run live now rather than being left for an answer nobody will collect.
+    opts.log(`could not save the batch ledger: ${(e as Error).message}`)
+    pending.clear()
+  }
+  return { answers, pending }
 }

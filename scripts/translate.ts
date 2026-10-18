@@ -1,12 +1,12 @@
 import { join } from 'node:path'
-import { runTranslation } from '../lib/i18n/run'
+import { deferredKey, runTranslation } from '../lib/i18n/run'
 import {
   buildTranslateRequest,
   createOpenRouterModel,
+  type TranslateInput,
   type TranslateModel,
-  type TranslateRequest,
 } from '../lib/i18n/engine'
-import { createPrefetchedModel, prefetchTranslations } from '../lib/i18n/batch'
+import { createPrefetchedModel, prefetchTranslations, requestKey } from '../lib/i18n/batch'
 import { TARGET_LOCALES, TRANSLATE_MODEL } from '../lib/i18n/config'
 import { progress } from '../lib/i18n/progress'
 
@@ -59,36 +59,47 @@ async function main() {
     only,
   }
   let model: TranslateModel = createOpenRouterModel()
+  let deferred: Set<string> | undefined
 
   if (batch) {
     // A silent dry run sees exactly the cache misses the real run will, so the
     // batch is asked for those and nothing else.
-    const requests: TranslateRequest[] = []
+    const inputs = new Map<string, TranslateInput>()
     progress.configure('silent')
     await runTranslation({
       ...base,
       model,
       dryRun: true,
-      onMiss: (input) => requests.push(buildTranslateRequest(input)),
+      onMiss: (input) => inputs.set(requestKey(buildTranslateRequest(input)), input),
     })
     progress.configure()
-    console.log(`[translate] batch: ${requests.length} uncached request(s)`)
-    const answers = await prefetchTranslations(requests, {
+    console.log(`[translate] batch: ${inputs.size} uncached request(s)`)
+    const requests = [...inputs.values()].map(buildTranslateRequest)
+    const { answers, pending } = await prefetchTranslations(requests, {
       apiKey: process.env.OPENROUTER_API_KEY ?? '',
       model: TRANSLATE_MODEL,
       chunkSize: Number(process.env.TRANSLATE_BATCH_SIZE) || 1000,
       waitMs: (Number(process.env.TRANSLATE_BATCH_WAIT_MINUTES) || 180) * 60_000,
       pollMs: (Number(process.env.TRANSLATE_BATCH_POLL_SECONDS) || 60) * 1000,
+      ledgerPath: join(CACHE_DIR, 'batches.json'),
       log: (m) => console.log(`[translate] batch: ${m}`),
     })
-    console.log(`[translate] batch: ${answers.size} answer(s) prefetched; the rest run live`)
+    console.log(
+      `[translate] batch: ${answers.size} answer(s) prefetched, ${pending.size} still pending; the rest run live`,
+    )
     model = createPrefetchedModel(answers, model)
+    deferred = new Set(
+      [...pending].flatMap((key) => {
+        const input = inputs.get(key)
+        return input ? [deferredKey(input.locale, input.text)] : []
+      }),
+    )
   }
 
-  const stats = await runTranslation({ ...base, model, dryRun })
+  const stats = await runTranslation({ ...base, model, dryRun, deferred })
 
   console.log(
-    `[translate] locales=${locales.join(',')} translated=${stats.translatedBlocks} cached=${stats.cachedBlocks} skipped=${stats.skipped.length}/${stats.attempted} quarantined=${stats.quarantined.length}`,
+    `[translate] locales=${locales.join(',')} translated=${stats.translatedBlocks} cached=${stats.cachedBlocks} deferred=${stats.deferredBlocks} skipped=${stats.skipped.length}/${stats.attempted} quarantined=${stats.quarantined.length}`,
   )
   for (const s of stats.skipped) console.warn(`[translate] skipped ${s}`)
   // Settled, not outstanding: the page serves English until its source changes, so

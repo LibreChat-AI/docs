@@ -36,12 +36,24 @@ export interface RunOptions {
    * cache misses, give-up markers, and quarantines the real run will.
    */
   onMiss?: (input: TranslateInput) => void
+  /**
+   * `deferredKey`s of strings a still-running batch will answer. A real run keeps
+   * them in the source language and uncached, so a later run takes the batch's
+   * answer instead of this run buying the same translation again live.
+   */
+  deferred?: Set<string>
+}
+
+export function deferredKey(locale: string, text: string): string {
+  return `${locale}:${hashText(text)}`
 }
 
 export interface RunStats {
   files: number
   translatedBlocks: number
   cachedBlocks: number
+  /** Blocks left in the source language until a pending batch answers them. */
+  deferredBlocks: number
   /** Source files × locales this run set out to produce, so a caller can judge a
    *  skip count as a failure rate rather than an absolute number. */
   attempted: number
@@ -164,6 +176,7 @@ export async function runTranslation(opts: RunOptions): Promise<RunStats> {
     files: 0,
     translatedBlocks: 0,
     cachedBlocks: 0,
+    deferredBlocks: 0,
     attempted: 0,
     skipped: [],
     quarantined: [],
@@ -229,6 +242,10 @@ export async function runTranslation(opts: RunOptions): Promise<RunStats> {
           opts.onMiss?.({ text, locale, kind, context })
         }
         stats.translatedBlocks++
+        return text
+      }
+      if (opts.deferred?.has(deferredKey(locale, text))) {
+        stats.deferredBlocks++
         return text
       }
       let lastValidationError: string | undefined
