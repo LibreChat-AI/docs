@@ -2,10 +2,11 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createPrefetchedModel, prefetchTranslations, requestKey, type BatchAnswer } from './batch'
+import { createPrefetchedModel, prefetchMisses, prefetchTranslations, requestKey } from './batch'
 import {
   buildTranslateRequest,
   TruncatedOutputError,
+  type TranslateInput,
   type TranslateModel,
   type TranslateRequest,
 } from './engine'
@@ -46,7 +47,7 @@ describe('createPrefetchedModel', () => {
     const live = countingModel()
     const r = req('Hello')
     const model = createPrefetchedModel(
-      new Map([[requestKey(r), { text: 'Hallo', finishReason: 'stop' }]]),
+      new Map([[requestKey(r), [{ text: 'Hallo', finishReason: 'stop' }]]]),
       live,
     )
     expect(await model.generate(r)).toBe('Hallo')
@@ -59,7 +60,7 @@ describe('createPrefetchedModel', () => {
   it('rejects a truncated batch answer like the live path does', async () => {
     const r = req('Hello')
     const model = createPrefetchedModel(
-      new Map([[requestKey(r), { text: 'Hal', finishReason: 'length' }]]),
+      new Map([[requestKey(r), [{ text: 'Hal', finishReason: 'length' }]]]),
       countingModel(),
     )
     await expect(model.generate(r)).rejects.toBeInstanceOf(TruncatedOutputError)
@@ -182,6 +183,27 @@ describe('prefetchTranslations', () => {
     expect(JSON.parse(await readFile(ledgerPath, 'utf8'))).toEqual({})
   })
 
+  it('records a submitted batch before waiting, so a run that dies mid-wait loses nothing', async () => {
+    const r = req('One')
+    const fakeFetch = (async (_url: string, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? json({ id: 'b1', status: 'validating' })
+        : json({ id: 'b1', status: 'in_progress', results: null })) as typeof fetch
+    await expect(
+      prefetchTranslations([r], {
+        ...baseOpts,
+        ledgerPath,
+        fetch: fakeFetch,
+        sleep: async () => {
+          throw new Error('runner killed')
+        },
+      }),
+    ).rejects.toThrow('runner killed')
+    expect(JSON.parse(await readFile(ledgerPath, 'utf8'))).toEqual({
+      b1: { model: baseOpts.model, keys: [requestKey(r)] },
+    })
+  })
+
   it('drops a carried batch that this run no longer needs or that is gone', async () => {
     const r = req('One')
     await writeFile(
@@ -235,55 +257,107 @@ describe('batch prefetch with runTranslation', () => {
     content = join(base, 'docs')
     cache = join(base, 'cache')
     await mkdir(content, { recursive: true })
+    // The description repeats the paragraph as an inline string, and the second page
+    // shares that paragraph next to different neighbors: one string, several
+    // distinct requests, of which a real run sends at most one per file.
     await writeFile(
       join(content, 'index.mdx'),
-      // The description repeats the paragraph as an inline string: one source text,
-      // two different requests, but only one is ever sent by a real run.
       `---\ntitle: Hello\ndescription: A paragraph.\n---\n\n# Hello\n\nA paragraph.\n`,
     )
-    await writeFile(join(content, 'meta.json'), JSON.stringify({ title: 'Docs', pages: ['index'] }))
+    await writeFile(
+      join(content, 'other.mdx'),
+      `---\ntitle: Other\n---\n\n# Other\n\nA paragraph.\n\n\`\`\`js\nx()\n\`\`\`\n\nTail text.\n`,
+    )
+    await writeFile(
+      join(content, 'meta.json'),
+      JSON.stringify({ title: 'Docs', pages: ['index', 'other'] }),
+    )
   })
 
-  it('answers every request a real run makes, so nothing runs live', async () => {
+  /** A batch API that answers every request by echoing its source text. */
+  function echoBatchApi() {
+    const submitted: string[] = []
+    const results: unknown[] = []
+    const fakeFetch = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as {
+          requests: Array<{ custom_id: string; body: { messages: Array<{ content: string }> } }>
+        }
+        for (const r of body.requests) {
+          submitted.push(r.custom_id)
+          results.push({
+            custom_id: r.custom_id,
+            response: {
+              status_code: 200,
+              body: {
+                choices: [
+                  {
+                    message: { content: echoSource(r.body.messages[1].content) },
+                    finish_reason: 'stop',
+                  },
+                ],
+              },
+            },
+          })
+        }
+        return json({ id: 'b1', status: 'validating' })
+      }
+      return json({ id: 'b1', status: 'completed', results })
+    }) as typeof fetch
+    return { submitted, fakeFetch }
+  }
+
+  it('buys each string once per locale and serves every occurrence, so nothing runs live', async () => {
     const opts = { contentDir: content, cacheDir: cache, locales: ['de', 'fr'] }
-    const requests: TranslateRequest[] = []
+    const misses: TranslateInput[] = []
     await runTranslation({
       ...opts,
       model: countingModel(),
       dryRun: true,
-      onMiss: (input) => requests.push(buildTranslateRequest(input)),
+      onMiss: (input) => misses.push(input),
     })
-    expect(requests.length).toBeGreaterThan(0)
+    const distinct = new Set(misses.map((m) => deferredKey(m.locale, m.text)))
+    expect(misses.length).toBeGreaterThan(distinct.size)
 
-    const answers = new Map<string, BatchAnswer>()
-    for (const r of requests)
-      answers.set(requestKey(r), { text: echoSource(r.prompt), finishReason: 'stop' })
+    const api = echoBatchApi()
+    const { answers, deferred } = await prefetchMisses(misses, {
+      ...baseOpts,
+      ledgerPath: join(cache, 'batches.json'),
+      fetch: api.fakeFetch,
+    })
+    expect(api.submitted).toHaveLength(distinct.size)
+    expect(deferred.size).toBe(0)
 
     const live = countingModel()
     const stats = await runTranslation({ ...opts, model: createPrefetchedModel(answers, live) })
     expect(live.calls).toBe(0)
-    // Every billed batch answer is consumed: a repeated block is not requested twice.
-    expect(answers.size).toBe(0)
     expect(stats.translatedBlocks).toBeGreaterThan(0)
     expect(stats.skipped).toEqual([])
   })
 
   it('keeps a deferred block in English and uncached so a later run can fill it', async () => {
     const opts = { contentDir: content, cacheDir: cache, locales: ['de'] }
-    const live = countingModel()
+    const prompts: string[] = []
+    const live: TranslateModel = {
+      generate: async ({ prompt }) => {
+        prompts.push(echoSource(prompt))
+        return echoSource(prompt)
+      },
+    }
     const stats = await runTranslation({
       ...opts,
       model: live,
       deferred: new Set([deferredKey('de', 'A paragraph.')]),
     })
-    expect(stats.deferredBlocks).toBe(2)
-    const written = await readFile(join(content, 'index.de.mdx'), 'utf8')
-    expect(written).toContain('A paragraph.')
+    // The description, and the paragraph on both pages: none bought live.
+    expect(stats.deferredBlocks).toBe(3)
+    expect(prompts).not.toContain('A paragraph.')
+    expect(stats.skipped).toEqual([])
 
-    // Once the batch has answered, the next run translates the block normally.
+    // Not cached, so the next run (once the batch has answered) still translates it.
+    prompts.length = 0
     const next = await runTranslation({ ...opts, model: live })
     expect(next.deferredBlocks).toBe(0)
-    // Only the deferred text was left uncached; its repeat is served from the staged map.
-    expect(next.translatedBlocks).toBe(1)
+    expect(prompts).toContain('A paragraph.')
   })
 })

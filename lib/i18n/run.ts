@@ -31,9 +31,9 @@ export interface RunOptions {
   dryRun?: boolean
   only?: string | null
   /**
-   * Dry runs only: called for every string a real run would send to the model.
-   * The batch prefetch collects its requests this way, so it sees exactly the
-   * cache misses, give-up markers, and quarantines the real run will.
+   * Dry runs only: called for every uncached occurrence of a string a real run
+   * would translate. The batch prefetch collects its requests this way, so it sees
+   * exactly the cache misses, give-up markers, and quarantines the real run will.
    */
   onMiss?: (input: TranslateInput) => void
   /**
@@ -196,7 +196,6 @@ export async function runTranslation(opts: RunOptions): Promise<RunStats> {
     progress.startLocale(locale)
     const tm = await TM.load(locale, opts.cacheDir)
     const limit = pLimit(FILE_CONCURRENCY)
-    const dryRunMisses = new Set<string>()
 
     // `ctx.staged` holds a single file's new translations; they are committed to the
     // TM only after that file validates, so a broken page is never cached.
@@ -234,13 +233,7 @@ export async function runTranslation(opts: RunOptions): Promise<RunStats> {
         return text
       }
       if (opts.dryRun) {
-        // Report each text once per locale: a real run translates only its first
-        // occurrence and serves repeats from the staged map or the TM, so a request
-        // for a repeat (whose context differs) would be billed and never used.
-        if (!dryRunMisses.has(hash)) {
-          dryRunMisses.add(hash)
-          opts.onMiss?.({ text, locale, kind, context })
-        }
+        opts.onMiss?.({ text, locale, kind, context })
         stats.translatedBlocks++
         return text
       }

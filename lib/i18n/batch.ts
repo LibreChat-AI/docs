@@ -4,10 +4,13 @@ import { dirname } from 'node:path'
 import { OPENROUTER_APP_HEADERS } from '../openrouter-attribution'
 import {
   assertNotTruncated,
+  buildTranslateRequest,
   TRANSLATE_MODEL_SETTINGS,
+  type TranslateInput,
   type TranslateModel,
   type TranslateRequest,
 } from './engine'
+import { deferredKey } from './run'
 
 /**
  * Batch prefetch for the translation pipeline. OpenRouter's `:batch` endpoints bill
@@ -44,15 +47,13 @@ export function requestKey(req: Parameters<TranslateModel['generate']>[0]): stri
  * handed the same rejected answer again.
  */
 export function createPrefetchedModel(
-  prefetched: Map<string, BatchAnswer>,
+  prefetched: Map<string, BatchAnswer[]>,
   live: TranslateModel,
 ): TranslateModel {
   return {
     async generate(req) {
-      const key = requestKey(req)
-      const hit = prefetched.get(key)
+      const hit = prefetched.get(requestKey(req))?.shift()
       if (!hit) return live.generate(req)
-      prefetched.delete(key)
       // Same contract as the live path: a length-limited answer is not a translation.
       assertNotTruncated(hit.finishReason, req.maxOutputTokens)
       return hit.text
@@ -148,6 +149,21 @@ export async function prefetchTranslations(
   if (batches.size > 0) opts.log(`waiting on ${batches.size} batch(es) from an earlier run`)
   const carried = new Set([...batches.values()].flat())
 
+  // Saved after every submit, not only at the end: a run that dies during the long
+  // wait must still leave the next run a way to find what it already paid for.
+  const saveLedger = async (): Promise<boolean> => {
+    const ledger: Ledger = {}
+    for (const [id, keys] of batches) ledger[id] = { model: opts.model, keys }
+    try {
+      await mkdir(dirname(opts.ledgerPath), { recursive: true })
+      await writeFile(opts.ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
+      return true
+    } catch (e) {
+      opts.log(`could not save the batch ledger: ${(e as Error).message}`)
+      return false
+    }
+  }
+
   const entries = [...unique].filter(([key]) => !carried.has(key))
   for (let i = 0; i < entries.length; i += opts.chunkSize) {
     const chunk = entries.slice(i, i + opts.chunkSize)
@@ -182,6 +198,7 @@ export async function prefetchTranslations(
         chunk.map(([key]) => key),
       )
       opts.log(`submitted batch ${created.id} (${chunk.length} request(s))`)
+      await saveLedger()
     } catch (e) {
       opts.log(
         `batch submit failed, ${chunk.length} request(s) will run live: ${(e as Error).message}`,
@@ -233,20 +250,51 @@ export async function prefetchTranslations(
     await sleep(opts.pollMs)
   }
 
-  const ledger: Ledger = {}
   const pending = new Set<string>()
-  for (const [id, keys] of batches) {
-    ledger[id] = { model: opts.model, keys }
-    for (const key of keys) if (unique.has(key)) pending.add(key)
-  }
-  try {
-    await mkdir(dirname(opts.ledgerPath), { recursive: true })
-    await writeFile(opts.ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
-  } catch (e) {
-    // Without the ledger a later run cannot find these batches, so their requests
-    // run live now rather than being left for an answer nobody will collect.
-    opts.log(`could not save the batch ledger: ${(e as Error).message}`)
-    pending.clear()
+  // Without the ledger a later run cannot find these batches, so their requests run
+  // live now rather than being left for an answer nobody will collect.
+  if (await saveLedger()) {
+    for (const keys of batches.values())
+      for (const key of keys) if (unique.has(key)) pending.add(key)
   }
   return { answers, pending }
+}
+
+export interface MissPrefetch {
+  /** One answer per occurrence, keyed by its `requestKey`: identical requests from
+   *  different files each get their own copy. */
+  answers: Map<string, BatchAnswer[]>
+  /** `deferredKey`s of strings a still-running batch will answer. */
+  deferred: Set<string>
+}
+
+/**
+ * Prefetch the misses a dry run reported, buying one answer per string per locale
+ * and serving it to every occurrence. Two files processed at once can both miss
+ * the same text before either commits it to the TM, and their requests differ by
+ * context; the TM itself is keyed by text alone, so sharing the answer matches
+ * what the run would cache anyway, without paying for the text twice.
+ */
+export async function prefetchMisses(
+  misses: TranslateInput[],
+  opts: PrefetchOptions,
+): Promise<MissPrefetch> {
+  const first = new Map<string, TranslateRequest>()
+  for (const input of misses) {
+    const text = deferredKey(input.locale, input.text)
+    if (!first.has(text)) first.set(text, buildTranslateRequest(input))
+  }
+  opts.log(`${misses.length} uncached occurrence(s), ${first.size} distinct string(s)`)
+  const { answers, pending } = await prefetchTranslations([...first.values()], opts)
+
+  const served = new Map<string, BatchAnswer[]>()
+  for (const input of misses) {
+    const answer = answers.get(requestKey(first.get(deferredKey(input.locale, input.text))!))
+    if (!answer) continue
+    const key = requestKey(buildTranslateRequest(input))
+    served.set(key, [...(served.get(key) ?? []), answer])
+  }
+  const deferred = new Set<string>()
+  for (const [text, req] of first) if (pending.has(requestKey(req))) deferred.add(text)
+  return { answers: served, deferred }
 }

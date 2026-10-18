@@ -1,12 +1,7 @@
 import { join } from 'node:path'
-import { deferredKey, runTranslation } from '../lib/i18n/run'
-import {
-  buildTranslateRequest,
-  createOpenRouterModel,
-  type TranslateInput,
-  type TranslateModel,
-} from '../lib/i18n/engine'
-import { createPrefetchedModel, prefetchTranslations, requestKey } from '../lib/i18n/batch'
+import { runTranslation } from '../lib/i18n/run'
+import { createOpenRouterModel, type TranslateInput, type TranslateModel } from '../lib/i18n/engine'
+import { createPrefetchedModel, prefetchMisses } from '../lib/i18n/batch'
 import { TARGET_LOCALES, TRANSLATE_MODEL } from '../lib/i18n/config'
 import { progress } from '../lib/i18n/progress'
 
@@ -64,18 +59,11 @@ async function main() {
   if (batch) {
     // A silent dry run sees exactly the cache misses the real run will, so the
     // batch is asked for those and nothing else.
-    const inputs = new Map<string, TranslateInput>()
+    const misses: TranslateInput[] = []
     progress.configure('silent')
-    await runTranslation({
-      ...base,
-      model,
-      dryRun: true,
-      onMiss: (input) => inputs.set(requestKey(buildTranslateRequest(input)), input),
-    })
+    await runTranslation({ ...base, model, dryRun: true, onMiss: (input) => misses.push(input) })
     progress.configure()
-    console.log(`[translate] batch: ${inputs.size} uncached request(s)`)
-    const requests = [...inputs.values()].map(buildTranslateRequest)
-    const { answers, pending } = await prefetchTranslations(requests, {
+    const prefetched = await prefetchMisses(misses, {
       apiKey: process.env.OPENROUTER_API_KEY ?? '',
       model: TRANSLATE_MODEL,
       chunkSize: Number(process.env.TRANSLATE_BATCH_SIZE) || 1000,
@@ -85,15 +73,10 @@ async function main() {
       log: (m) => console.log(`[translate] batch: ${m}`),
     })
     console.log(
-      `[translate] batch: ${answers.size} answer(s) prefetched, ${pending.size} still pending; the rest run live`,
+      `[translate] batch: ${prefetched.answers.size} occurrence(s) answered, ${prefetched.deferred.size} string(s) still pending; the rest run live`,
     )
-    model = createPrefetchedModel(answers, model)
-    deferred = new Set(
-      [...pending].flatMap((key) => {
-        const input = inputs.get(key)
-        return input ? [deferredKey(input.locale, input.text)] : []
-      }),
-    )
+    model = createPrefetchedModel(prefetched.answers, model)
+    deferred = prefetched.deferred
   }
 
   const stats = await runTranslation({ ...base, model, dryRun, deferred })
