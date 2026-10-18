@@ -78,19 +78,21 @@ test.describe('Quick Start install steps', () => {
 
     await expect(body(page).getByText('copy .env.example .env')).toBeVisible()
 
+    // Step 4 still hands the reader to the first-chat walkthrough. Checked
+    // before leaving the page: the Docker guide links there too.
+    await expect(body(page).getByRole('link', { name: 'Your First Chat' })).toHaveAttribute(
+      'href',
+      '/docs/quick_start/first_chat',
+    )
+
     // The failure path points somewhere that exists.
     const troubleshooting = body(page).getByRole('link', {
       name: 'Docker guide troubleshooting section',
     })
     await expect(troubleshooting).toHaveAttribute('href', '/docs/local/docker#troubleshooting')
     await troubleshooting.click()
+    await expect(page).toHaveURL(/\/docs\/local\/docker#troubleshooting$/)
     await expect(page.locator('#troubleshooting')).toBeVisible()
-
-    // Step 4 still hands the reader to the first-chat walkthrough.
-    await expect(body(page).getByRole('link', { name: 'Your First Chat' })).toHaveAttribute(
-      'href',
-      '/docs/quick_start/first_chat',
-    )
   })
 
   test('@scenario:docs-landing-desktop-callout-covers-macos the desktop installer callout tells Mac readers what to use', async ({
