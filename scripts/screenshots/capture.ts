@@ -102,6 +102,9 @@ const LOGIN_FORM_TIMEOUT = 45_000
 const APP_READY_TIMEOUT = 45_000
 const TERMS_TIMEOUT = 8_000
 const AGENT_SELECT_TIMEOUT = 20_000
+// Time for layout to settle after web fonts load. At 500ms text in the mobile
+// shots was still captured mid-reflow, with glyphs sitting off the baseline.
+const SETTLE_DELAY = 2_000
 const RETRY_BACKOFF_MS = 10_000
 
 /** Recorded in diagnostics to show what the app managed to fetch. */
@@ -511,7 +514,7 @@ async function captureVariant(
       await page.evaluate(async () => {
         await document.fonts.ready
       })
-      await page.waitForTimeout(500)
+      await page.waitForTimeout(SETTLE_DELAY)
       // These images ship straight onto the landing page, so refuse to save one
       // with a dialog over it. The terms modal did exactly that and the run
       // still reported success.
