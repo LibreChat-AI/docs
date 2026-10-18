@@ -268,6 +268,29 @@ describe('prefetchTranslations', () => {
     expect(second.deferred.size).toBe(0)
   })
 
+  it('stops a stalled status request so the deadline still holds', async () => {
+    let t = 0
+    const r = req('One')
+    const fakeFetch = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') return json({ id: 'b1', status: 'validating' })
+      // Never answers; only the abort signal ends it.
+      return new Promise((_resolve, reject) =>
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)),
+      )
+    }) as typeof fetch
+    const { pending } = await prefetchTranslations(byKey(r), {
+      ...baseOpts,
+      ledgerPath,
+      fetch: fakeFetch,
+      requestTimeoutMs: 5,
+      now: () => t,
+      sleep: async (ms) => {
+        t += ms
+      },
+    })
+    expect([...pending]).toEqual([requestKey(r)])
+  })
+
   it('drops a carried batch that this run no longer needs or that is gone', async () => {
     const r = req('One')
     await writeFile(

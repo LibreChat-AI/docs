@@ -84,6 +84,9 @@ export interface PrefetchOptions {
   /** Stop waiting after this long; batches still running are handed to a later run. */
   waitMs: number
   pollMs: number
+  /** Abort one submit or status request after this long, so a stalled call cannot
+   *  outlast the wait. Defaults to two minutes. */
+  requestTimeoutMs?: number
   /**
    * Batches still running when a run stops waiting, kept across runs. OpenRouter
    * has no way to cancel a batch, so a later run collects these answers instead of
@@ -130,6 +133,7 @@ export async function prefetchTranslations(
   const doFetch = opts.fetch ?? fetch
   const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)))
   const now = opts.now ?? Date.now
+  const timeout = () => AbortSignal.timeout(opts.requestTimeoutMs ?? 120_000)
   const headers = {
     Authorization: `Bearer ${opts.apiKey}`,
     'Content-Type': 'application/json',
@@ -194,6 +198,7 @@ export async function prefetchTranslations(
         method: 'POST',
         headers,
         body: JSON.stringify(body),
+        signal: timeout(),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`)
       const created = (await res.json()) as BatchObject
@@ -214,7 +219,7 @@ export async function prefetchTranslations(
     for (const id of [...batches.keys()]) {
       let batch: BatchObject
       try {
-        const res = await doFetch(`${BATCHES_URL}/${id}`, { headers })
+        const res = await doFetch(`${BATCHES_URL}/${id}`, { headers, signal: timeout() })
         if (res.status === 404) {
           // Deleted or never ours: nothing will ever arrive, so stop waiting on it.
           batches.delete(id)
