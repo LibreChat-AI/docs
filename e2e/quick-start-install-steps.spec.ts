@@ -81,11 +81,11 @@ test.describe('Quick Start install steps', () => {
     await expect(body(page).getByText('copy .env.example .env')).toBeVisible()
 
     // Step 4 still hands the reader to the first-chat walkthrough. Checked
-    // before leaving the page: the Docker guide links there too.
-    await expect(body(page).getByRole('link', { name: 'Your First Chat' })).toHaveAttribute(
-      'href',
-      '/docs/quick_start/first_chat',
-    )
+    // before leaving the page: the Docker guide links there too. Exact match
+    // skips the footer's next-page card, which exists regardless of Step 4.
+    await expect(
+      body(page).getByRole('link', { name: 'Your First Chat', exact: true }),
+    ).toHaveAttribute('href', '/docs/quick_start/first_chat')
 
     // The failure path points somewhere that exists.
     const troubleshooting = body(page).getByRole('link', {
