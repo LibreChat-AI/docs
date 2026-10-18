@@ -183,6 +183,7 @@ export async function runTranslation(opts: RunOptions): Promise<RunStats> {
     progress.startLocale(locale)
     const tm = await TM.load(locale, opts.cacheDir)
     const limit = pLimit(FILE_CONCURRENCY)
+    const dryRunMisses = new Set<string>()
 
     // `ctx.staged` holds a single file's new translations; they are committed to the
     // TM only after that file validates, so a broken page is never cached.
@@ -220,7 +221,13 @@ export async function runTranslation(opts: RunOptions): Promise<RunStats> {
         return text
       }
       if (opts.dryRun) {
-        opts.onMiss?.({ text, locale, kind, context })
+        // Report each text once per locale: a real run translates only its first
+        // occurrence and serves repeats from the staged map or the TM, so a request
+        // for a repeat (whose context differs) would be billed and never used.
+        if (!dryRunMisses.has(hash)) {
+          dryRunMisses.add(hash)
+          opts.onMiss?.({ text, locale, kind, context })
+        }
         stats.translatedBlocks++
         return text
       }

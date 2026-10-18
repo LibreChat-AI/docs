@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { OPENROUTER_APP_HEADERS } from '../openrouter-attribution'
 import {
   assertNotTruncated,
   TRANSLATE_MODEL_SETTINGS,
@@ -72,7 +73,7 @@ interface BatchObject {
 
 export interface PrefetchOptions {
   apiKey: string
-  /** Live model slug; `:batch` is appended. */
+  /** Plain model slug; OpenRouter routes it to the model's `:batch` endpoint itself. */
   model: string
   /** Requests per submitted batch. */
   chunkSize: number
@@ -101,8 +102,7 @@ export async function prefetchTranslations(
   const headers = {
     Authorization: `Bearer ${opts.apiKey}`,
     'Content-Type': 'application/json',
-    'HTTP-Referer': 'https://www.librechat.ai',
-    'X-Title': 'LibreChat',
+    ...OPENROUTER_APP_HEADERS,
   }
 
   const unique = new Map<string, TranslateRequest>()
@@ -115,9 +115,10 @@ export async function prefetchTranslations(
   for (let i = 0; i < entries.length; i += opts.chunkSize) {
     const chunk = entries.slice(i, i + opts.chunkSize)
     // Key order matters: OpenRouter rejects a body whose `requests` comes first.
+    // `model` is the plain slug; a `:batch` suffix here is rejected.
     const body = {
       endpoint: '/v1/chat/completions',
-      model: `${opts.model}:batch`,
+      model: opts.model,
       completion_window: '24h',
       requests: chunk.map(([key, req]) => ({
         custom_id: key,

@@ -100,7 +100,7 @@ describe('prefetchTranslations', () => {
 
     expect(bodies).toHaveLength(1)
     expect(Object.keys(bodies[0]).at(-1)).toBe('requests')
-    expect(bodies[0].model).toBe('anthropic/claude-haiku-5.5:batch')
+    expect(bodies[0].model).toBe('anthropic/claude-haiku-5.5')
     expect((bodies[0].requests as unknown[]).length).toBe(2)
     expect(answers.get(requestKey(a))).toEqual({ text: 'Eins', finishReason: 'stop' })
     // An errored result has no answer, so that request runs live.
@@ -156,7 +156,9 @@ describe('batch prefetch with runTranslation', () => {
     await mkdir(content, { recursive: true })
     await writeFile(
       join(content, 'index.mdx'),
-      `---\ntitle: Hello\n---\n\n# Hello\n\nA paragraph.\n\nA paragraph.\n`,
+      // The description repeats the paragraph as an inline string: one source text,
+      // two different requests, but only one is ever sent by a real run.
+      `---\ntitle: Hello\ndescription: A paragraph.\n---\n\n# Hello\n\nA paragraph.\n`,
     )
     await writeFile(join(content, 'meta.json'), JSON.stringify({ title: 'Docs', pages: ['index'] }))
   })
@@ -179,6 +181,8 @@ describe('batch prefetch with runTranslation', () => {
     const live = countingModel()
     const stats = await runTranslation({ ...opts, model: createPrefetchedModel(answers, live) })
     expect(live.calls).toBe(0)
+    // Every billed batch answer is consumed: a repeated block is not requested twice.
+    expect(answers.size).toBe(0)
     expect(stats.translatedBlocks).toBeGreaterThan(0)
     expect(stats.skipped).toEqual([])
   })
