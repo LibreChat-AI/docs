@@ -244,11 +244,12 @@ export async function prefetchTranslations(
       let batch: BatchObject
       try {
         const res = await doFetch(`${BATCHES_URL}/${id}`, { headers, signal: timeout() })
-        // Deleted, never ours, or no longer readable with this key (any 4xx but a
-        // timeout or rate limit): nothing will ever arrive, so stop waiting on it.
+        // Any 4xx but a timeout or rate limit will not change by asking again, so stop
+        // waiting and let the requests run live. Only a 404 means the batch is gone;
+        // an auth failure keeps it in the ledger for a run with a working key.
         if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
           batches.delete(id)
-          known.delete(id)
+          if (res.status === 404) known.delete(id)
           opts.log(`batch ${id} unreadable (HTTP ${res.status}); its requests will run live`)
           continue
         }

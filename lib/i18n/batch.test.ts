@@ -328,8 +328,12 @@ describe('prefetchTranslations', () => {
     expect(posts).toBe(0)
     expect(polled).toEqual(['gone'])
     expect(pending.size).toBe(0)
-    // The other model's batch is kept for when that model is used again.
-    expect(Object.keys(JSON.parse(await readFile(ledgerPath, 'utf8')))).toEqual(['other'])
+    // The other model's batch is kept for when that model is used again, and the
+    // forbidden one for a run whose key can read it.
+    expect(Object.keys(JSON.parse(await readFile(ledgerPath, 'utf8'))).sort()).toEqual([
+      'gone',
+      'other',
+    ])
   })
 
   it('does not throw when a submit fails', async () => {
