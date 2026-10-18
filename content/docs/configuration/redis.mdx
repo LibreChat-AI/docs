@@ -13,6 +13,7 @@ This guide covers how to configure Redis for caching and session storage in Libr
 - [Security Configuration](#security-configuration)
 - [Advanced Options](#advanced-options)
 - [Replica Failover Recovery](#replica-failover-recovery)
+- [Health Checks](#health-checks)
 - [Performance Tuning](#performance-tuning)
 - [Configuration Examples](#configuration-examples)
 - [Resumable Streams](#resumable-streams)
@@ -234,6 +235,35 @@ REDIS_READONLY_RECOVERY_INTERVAL=5000
 ```
 
 The interval debounces reconnect attempts during a burst of failed writes. Redis Cluster clients are excluded because they use native cluster topology and redirect handling.
+
+### Health Checks
+
+LibreChat serves three probe endpoints. Only `/readyz` reflects Redis:
+
+| Endpoint | Returns `200 OK` | Returns `503 NOT_READY` |
+| --- | --- | --- |
+| `/livez` | Whenever the process is serving requests | Never |
+| `/health` | Whenever the process is serving requests | Never |
+| `/readyz` | After startup completes and, with `USE_REDIS=true`, while Redis is connected | Before startup completes, or while Redis is enabled but disconnected |
+
+When Redis restarts, fails over, or becomes unreachable for longer than the client's retry window, requests that depend on it (sign-in, sessions, rate limits) fail until the connection returns. During that time `/readyz` answers `503`, so a load balancer or Kubernetes readiness probe stops routing traffic to the instance. It returns to `200` as soon as Redis reconnects, without a restart. With Redis enabled, every Redis client must be connected; for a Redis Cluster, that includes every primary node.
+
+Point readiness checks at `/readyz` and liveness checks at `/livez`. Keep Redis out of the liveness check: a liveness probe that fails during a Redis outage restarts every pod at once and cannot bring Redis back.
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /livez
+    port: 3080
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 3080
+  periodSeconds: 10
+  failureThreshold: 3
+```
+
+`/readyz` does not wait out short reconnects on its own, so use `failureThreshold` to decide how long an outage lasts before traffic is withdrawn.
 
 ### Selective In-Memory Caching
 
