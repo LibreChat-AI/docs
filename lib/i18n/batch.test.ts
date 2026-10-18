@@ -170,7 +170,7 @@ describe('prefetchTranslations', () => {
     // Not run live: the batch will still answer it.
     expect([...first.pending]).toEqual([requestKey(r)])
     expect(JSON.parse(await readFile(ledgerPath, 'utf8'))).toEqual({
-      b1: { model: baseOpts.model, keys: [requestKey(r)] },
+      b1: { model: baseOpts.model, keys: [requestKey(r)], at: 0 },
     })
 
     // The next run collects the carried batch rather than submitting it again.
@@ -196,7 +196,12 @@ describe('prefetchTranslations', () => {
     expect(second.pending.size).toBe(0)
     // Kept until a run no longer needs its answers, in case this one dies first.
     expect(Object.keys(JSON.parse(await readFile(ledgerPath, 'utf8')))).toEqual(['b1'])
-    await prefetchTranslations(new Map(), { ...baseOpts, ledgerPath, fetch: done })
+    // A run that does not need it keeps it a while (a scoped run must not forget a
+    // batch a full run wants), then drops it once nothing is left to collect.
+    const later = (ms: number) => ({ ...baseOpts, ledgerPath, fetch: done, now: () => ms })
+    await prefetchTranslations(new Map(), later(3600_000))
+    expect(Object.keys(JSON.parse(await readFile(ledgerPath, 'utf8')))).toEqual(['b1'])
+    await prefetchTranslations(new Map(), later(49 * 3600_000))
     expect(JSON.parse(await readFile(ledgerPath, 'utf8'))).toEqual({})
   })
 
@@ -216,7 +221,7 @@ describe('prefetchTranslations', () => {
         },
       }),
     ).rejects.toThrow('runner killed')
-    expect(JSON.parse(await readFile(ledgerPath, 'utf8'))).toEqual({
+    expect(JSON.parse(await readFile(ledgerPath, 'utf8'))).toMatchObject({
       b1: { model: baseOpts.model, keys: [requestKey(r)] },
     })
   })
@@ -296,7 +301,7 @@ describe('prefetchTranslations', () => {
     await writeFile(
       ledgerPath,
       JSON.stringify({
-        stale: { model: baseOpts.model, keys: ['no-longer-needed'] },
+        stale: { model: baseOpts.model, keys: ['no-longer-needed'], at: 0 },
         other: { model: 'some/other-model', keys: [requestKey(r)] },
         gone: { model: baseOpts.model, keys: [requestKey(r)] },
       }),

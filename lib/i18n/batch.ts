@@ -106,8 +106,15 @@ export interface PrefetchResult {
   pending: Set<string>
 }
 
-/** Batch id to the request keys it carries, for one model. */
-type Ledger = Record<string, { model: string; keys: string[] }>
+/** Batch id to the request keys it carries, its model, and when it was submitted. */
+type Ledger = Record<string, { model: string; keys: string[]; at: number }>
+
+/**
+ * How long a batch this run does not need stays in the ledger. A run scoped with
+ * `--only` or `--locales` must not forget a batch a full run will want; past the
+ * 24h completion window plus a margin, nothing is left to collect.
+ */
+const UNNEEDED_RETENTION_MS = 48 * 3600_000
 
 async function readLedger(path: string): Promise<Ledger> {
   try {
@@ -133,7 +140,10 @@ export async function prefetchTranslations(
   const doFetch = opts.fetch ?? fetch
   const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)))
   const now = opts.now ?? Date.now
-  const timeout = () => AbortSignal.timeout(opts.requestTimeoutMs ?? 120_000)
+  let deadline = Infinity
+  // Never longer than the wait has left, so stalled calls cannot add up past it.
+  const timeout = () =>
+    AbortSignal.timeout(Math.max(1, Math.min(opts.requestTimeoutMs ?? 120_000, deadline - now())))
   const headers = {
     Authorization: `Bearer ${opts.apiKey}`,
     'Content-Type': 'application/json',
@@ -143,17 +153,22 @@ export async function prefetchTranslations(
   const answers = new Map<string, BatchAnswer>()
 
   // A carried batch is only worth waiting for if this run still needs one of its
-  // answers from the same model; anything else is billed either way and dropped.
-  // `known` is what the ledger keeps; `batches` is what this run still waits on. A
-  // completed batch stays known until a run no longer needs any of its answers, so
-  // a run that dies before caching them can still collect them next time.
-  const known = new Map<string, string[]>()
+  // answers from the same model. `known` is what the ledger keeps, `batches` what
+  // this run waits on: a completed batch stays known until a run no longer needs any
+  // of its answers, so a run that dies before caching them can collect them later.
+  // One this run does not need is kept, unpolled, for a while (see the retention).
+  const known = new Map<string, { keys: string[]; at: number }>()
+  const batches = new Map<string, string[]>()
   for (const [id, entry] of Object.entries(await readLedger(opts.ledgerPath))) {
-    if (entry?.model === opts.model && entry.keys?.some((k) => unique.has(k))) {
-      known.set(id, entry.keys)
+    if (entry?.model !== opts.model || !Array.isArray(entry.keys)) continue
+    const at = typeof entry.at === 'number' ? entry.at : 0
+    if (entry.keys.some((k) => unique.has(k))) {
+      known.set(id, { keys: entry.keys, at })
+      batches.set(id, entry.keys)
+    } else if (now() - at < UNNEEDED_RETENTION_MS) {
+      known.set(id, { keys: entry.keys, at })
     }
   }
-  const batches = new Map(known)
   if (batches.size > 0) opts.log(`waiting on ${batches.size} batch(es) from an earlier run`)
   const carried = new Set([...batches.values()].flat())
 
@@ -161,7 +176,7 @@ export async function prefetchTranslations(
   // wait must still leave the next run a way to find what it already paid for.
   const saveLedger = async (): Promise<boolean> => {
     const ledger: Ledger = {}
-    for (const [id, keys] of known) ledger[id] = { model: opts.model, keys }
+    for (const [id, { keys, at }] of known) ledger[id] = { model: opts.model, keys, at }
     try {
       await mkdir(dirname(opts.ledgerPath), { recursive: true })
       await writeFile(opts.ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
@@ -203,7 +218,7 @@ export async function prefetchTranslations(
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`)
       const created = (await res.json()) as BatchObject
       const keys = chunk.map(([key]) => key)
-      known.set(created.id, keys)
+      known.set(created.id, { keys, at: now() })
       batches.set(created.id, keys)
       opts.log(`submitted batch ${created.id} (${chunk.length} request(s))`)
       await saveLedger()
@@ -214,7 +229,7 @@ export async function prefetchTranslations(
     }
   }
 
-  const deadline = now() + opts.waitMs
+  deadline = now() + opts.waitMs
   while (batches.size > 0) {
     for (const id of [...batches.keys()]) {
       let batch: BatchObject
