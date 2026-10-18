@@ -140,12 +140,16 @@ export async function prefetchTranslations(
 
   // A carried batch is only worth waiting for if this run still needs one of its
   // answers from the same model; anything else is billed either way and dropped.
-  const batches = new Map<string, string[]>()
+  // `known` is what the ledger keeps; `batches` is what this run still waits on. A
+  // completed batch stays known until a run no longer needs any of its answers, so
+  // a run that dies before caching them can still collect them next time.
+  const known = new Map<string, string[]>()
   for (const [id, entry] of Object.entries(await readLedger(opts.ledgerPath))) {
     if (entry?.model === opts.model && entry.keys?.some((k) => unique.has(k))) {
-      batches.set(id, entry.keys)
+      known.set(id, entry.keys)
     }
   }
+  const batches = new Map(known)
   if (batches.size > 0) opts.log(`waiting on ${batches.size} batch(es) from an earlier run`)
   const carried = new Set([...batches.values()].flat())
 
@@ -153,7 +157,7 @@ export async function prefetchTranslations(
   // wait must still leave the next run a way to find what it already paid for.
   const saveLedger = async (): Promise<boolean> => {
     const ledger: Ledger = {}
-    for (const [id, keys] of batches) ledger[id] = { model: opts.model, keys }
+    for (const [id, keys] of known) ledger[id] = { model: opts.model, keys }
     try {
       await mkdir(dirname(opts.ledgerPath), { recursive: true })
       await writeFile(opts.ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`)
@@ -193,10 +197,9 @@ export async function prefetchTranslations(
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`)
       const created = (await res.json()) as BatchObject
-      batches.set(
-        created.id,
-        chunk.map(([key]) => key),
-      )
+      const keys = chunk.map(([key]) => key)
+      known.set(created.id, keys)
+      batches.set(created.id, keys)
       opts.log(`submitted batch ${created.id} (${chunk.length} request(s))`)
       await saveLedger()
     } catch (e) {
@@ -215,6 +218,7 @@ export async function prefetchTranslations(
         if (res.status === 404) {
           // Deleted or never ours: nothing will ever arrive, so stop waiting on it.
           batches.delete(id)
+          known.delete(id)
           opts.log(`batch ${id} not found; its requests will run live`)
           continue
         }
@@ -227,6 +231,8 @@ export async function prefetchTranslations(
       }
       if (!TERMINAL.has(batch.status)) continue
       batches.delete(id)
+      // Only a completed batch keeps results to collect again.
+      if (batch.status !== 'completed') known.delete(id)
       let harvested = 0
       for (const r of batch.results ?? []) {
         const choice = r.response?.status_code === 200 ? r.response.body?.choices?.[0] : undefined

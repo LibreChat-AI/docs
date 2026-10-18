@@ -194,6 +194,9 @@ describe('prefetchTranslations', () => {
     expect(posts).toBe(1)
     expect(second.answers.get(requestKey(r))?.text).toBe('Eins')
     expect(second.pending.size).toBe(0)
+    // Kept until a run no longer needs its answers, in case this one dies first.
+    expect(Object.keys(JSON.parse(await readFile(ledgerPath, 'utf8')))).toEqual(['b1'])
+    await prefetchTranslations(new Map(), { ...baseOpts, ledgerPath, fetch: done })
     expect(JSON.parse(await readFile(ledgerPath, 'utf8'))).toEqual({})
   })
 
