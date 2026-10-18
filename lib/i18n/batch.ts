@@ -116,6 +116,12 @@ type Ledger = Record<string, { model: string; keys: string[]; at: number }>
  */
 const UNNEEDED_RETENTION_MS = 48 * 3600_000
 
+/**
+ * A batch OpenRouter has just accepted can answer 404 for a while before it becomes
+ * readable, so a 404 this soon after submit is polled again rather than taken as gone.
+ */
+const NEW_BATCH_GRACE_MS = 10 * 60_000
+
 async function readLedger(path: string): Promise<Ledger> {
   try {
     const parsed = JSON.parse(await readFile(path, 'utf8'))
@@ -244,6 +250,9 @@ export async function prefetchTranslations(
       let batch: BatchObject
       try {
         const res = await doFetch(`${BATCHES_URL}/${id}`, { headers, signal: timeout() })
+        if (res.status === 404 && now() - (known.get(id)?.at ?? 0) < NEW_BATCH_GRACE_MS) {
+          throw new Error('HTTP 404, not readable yet')
+        }
         // Any 4xx but a timeout or rate limit will not change by asking again, so stop
         // waiting and let the requests run live. Only a 404 means the batch is gone;
         // an auth failure keeps it in the ledger for a run with a working key.

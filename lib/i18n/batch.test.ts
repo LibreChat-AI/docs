@@ -296,6 +296,62 @@ describe('prefetchTranslations', () => {
     expect([...pending]).toEqual([requestKey(r)])
   })
 
+  it('keeps polling a just-submitted batch that is not readable yet', async () => {
+    const a = req('One')
+    let polls = 0
+    let clock = 0
+    const fakeFetch = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') return json({ id: 'b1', status: 'validating' })
+      polls++
+      clock += 60_000
+      if (polls <= 2) return json({ error: 'not found' }, 404)
+      return json({
+        id: 'b1',
+        status: 'completed',
+        results: [
+          {
+            custom_id: requestKey(a),
+            response: {
+              status_code: 200,
+              body: { choices: [{ message: { content: 'Eins' }, finish_reason: 'stop' }] },
+            },
+            error: null,
+          },
+        ],
+      })
+    }) as typeof fetch
+    const { answers } = await prefetchTranslations(byKey(a), {
+      ...baseOpts,
+      waitMs: 3600_000,
+      ledgerPath,
+      fetch: fakeFetch,
+      now: () => clock,
+    })
+    expect(polls).toBe(3)
+    expect(answers.get(requestKey(a))).toEqual({ text: 'Eins', finishReason: 'stop' })
+  })
+
+  it('gives up on a new batch that stays unreadable past the grace period', async () => {
+    const a = req('One')
+    let clock = 0
+    const fakeFetch = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') return json({ id: 'b1', status: 'validating' })
+      clock += 4 * 60_000
+      return json({ error: 'not found' }, 404)
+    }) as typeof fetch
+    const { answers, pending } = await prefetchTranslations(byKey(a), {
+      ...baseOpts,
+      waitMs: 3600_000,
+      ledgerPath,
+      fetch: fakeFetch,
+      now: () => clock,
+    })
+    expect(answers.size).toBe(0)
+    expect(pending.size).toBe(0)
+    expect(clock).toBeLessThan(3600_000)
+    expect(JSON.parse(await readFile(ledgerPath, 'utf8'))).toEqual({})
+  })
+
   it('drops a carried batch that this run no longer needs or that is gone', async () => {
     const r = req('One')
     await writeFile(
