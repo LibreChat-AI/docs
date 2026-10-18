@@ -42,9 +42,9 @@ export function requestKey(req: Parameters<TranslateModel['generate']>[0]): stri
 }
 
 /**
- * Serves each prefetched answer once, then defers to the live model. Once, so a
- * validation retry of the same request reaches the live model instead of being
- * handed the same rejected answer again.
+ * Serves each prefetched answer once, and only to a block's first request: a
+ * validation retry always reaches the live model, never another copy of the answer
+ * it just rejected.
  */
 export function createPrefetchedModel(
   prefetched: Map<string, BatchAnswer[]>,
@@ -52,7 +52,7 @@ export function createPrefetchedModel(
 ): TranslateModel {
   return {
     async generate(req) {
-      const hit = prefetched.get(requestKey(req))?.shift()
+      const hit = req.attempt ? undefined : prefetched.get(requestKey(req))?.shift()
       if (!hit) return live.generate(req)
       // Same contract as the live path: a length-limited answer is not a translation.
       assertNotTruncated(hit.finishReason, req.maxOutputTokens)

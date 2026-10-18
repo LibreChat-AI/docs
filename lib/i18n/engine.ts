@@ -7,7 +7,13 @@ import { withRetry } from './retry'
 import { progress } from './progress'
 
 export interface TranslateModel {
-  generate(input: { system: string; prompt: string; maxOutputTokens?: number }): Promise<string>
+  generate(input: {
+    system: string
+    prompt: string
+    maxOutputTokens?: number
+    /** 0 for a block's first request, then 1, 2, ... for its validation retries. */
+    attempt?: number
+  }): Promise<string>
 }
 
 /**
@@ -148,7 +154,9 @@ export function buildTranslateRequest(opts: TranslateInput): TranslateRequest {
   return { system, prompt, maxOutputTokens: outputTokenBudget(opts.text) }
 }
 
-export async function translate(opts: TranslateInput & { model: TranslateModel }): Promise<string> {
-  const raw = await opts.model.generate(buildTranslateRequest(opts))
+export async function translate(
+  opts: TranslateInput & { model: TranslateModel; attempt?: number },
+): Promise<string> {
+  const raw = await opts.model.generate({ ...buildTranslateRequest(opts), attempt: opts.attempt })
   return stripWrappingFence(raw)
 }

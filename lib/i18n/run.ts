@@ -245,7 +245,7 @@ export async function runTranslation(opts: RunOptions): Promise<RunStats> {
       for (let attempt = 0; attempt < BLOCK_VALIDATION_ATTEMPTS; attempt++) {
         let result: string
         try {
-          result = await translate({ text, locale, kind, context, model: opts.model })
+          result = await translate({ text, locale, kind, context, model: opts.model, attempt })
         } catch (e) {
           // Truncation is deterministic for this block, so it belongs to the bounded
           // per-block budget: after the last attempt the give-up path keeps the block

@@ -52,9 +52,21 @@ describe('createPrefetchedModel', () => {
     )
     expect(await model.generate(r)).toBe('Hallo')
     expect(live.calls).toBe(0)
-    // A validation retry of the same request must reach the live model.
+    // A second occurrence finds no copy left, so it runs live.
     expect(await model.generate(r)).toBe('Hello')
     expect(live.calls).toBe(1)
+  })
+
+  it('sends a validation retry live even while copies for other occurrences remain', async () => {
+    const live = countingModel()
+    const r = req('Hello')
+    const answer = { text: 'Hallo', finishReason: 'stop' }
+    const model = createPrefetchedModel(new Map([[requestKey(r), [answer, answer]]]), live)
+    expect(await model.generate({ ...r, attempt: 0 })).toBe('Hallo')
+    expect(await model.generate({ ...r, attempt: 1 })).toBe('Hello')
+    expect(live.calls).toBe(1)
+    // The remaining copy still serves the other occurrence's first request.
+    expect(await model.generate({ ...r, attempt: 0 })).toBe('Hallo')
   })
 
   it('rejects a truncated batch answer like the live path does', async () => {

@@ -25,6 +25,12 @@ const FATAL_SKIP_RE =
 /** Above this share of file×locale pairs failing, the run is broken, not degraded. */
 const MAX_SKIP_RATE = Number(process.env.TRANSLATE_MAX_SKIP_RATE) || 0.25
 
+/** A positive number from the environment, or the fallback for anything else. */
+function positiveEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name])
+  return Number.isFinite(value) && value > 0 ? value : fallback
+}
+
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`))
   return hit?.split('=').slice(1).join('=')
@@ -66,9 +72,9 @@ async function main() {
     const prefetched = await prefetchMisses(misses, {
       apiKey: process.env.OPENROUTER_API_KEY ?? '',
       model: TRANSLATE_MODEL,
-      chunkSize: Number(process.env.TRANSLATE_BATCH_SIZE) || 1000,
-      waitMs: (Number(process.env.TRANSLATE_BATCH_WAIT_MINUTES) || 180) * 60_000,
-      pollMs: (Number(process.env.TRANSLATE_BATCH_POLL_SECONDS) || 60) * 1000,
+      chunkSize: Math.ceil(positiveEnv('TRANSLATE_BATCH_SIZE', 1000)),
+      waitMs: positiveEnv('TRANSLATE_BATCH_WAIT_MINUTES', 180) * 60_000,
+      pollMs: positiveEnv('TRANSLATE_BATCH_POLL_SECONDS', 60) * 1000,
       ledgerPath: join(CACHE_DIR, 'batches.json'),
       log: (m) => console.log(`[translate] batch: ${m}`),
     })
