@@ -4,6 +4,12 @@ icon: Mic
 description: Configuration of the Speech to Text (STT) and Text to Speech (TTS) features
 ---
 
+{/*
+  Pending items: transcription hints, live dictation and the `realtime` engine
+  (LibreChat-AI/LibreChat#17190). Delete the Pending markers once it merges to dev, and
+  re-check the schema in packages/data-provider/src/config.ts.
+*/}
+
 <Callout type="info" title="Upcoming STT/TTS Enhancements" collapsible>
 The Google Cloud STT/TTS and Deepgram services are being planned for future integration.
 </Callout>
@@ -48,7 +54,7 @@ Entries are bare `host:port` pairs: no scheme or path, port required, IPv6 brack
 
 The `speechTab` menu provides customizable options for conversation and advanced modes, as well as detailed settings for STT and TTS. This will set the default settings for users
 
-Use `browser` for built-in browser speech or `external` for a server-side provider configured below. Older provider-specific defaults remain accepted for compatibility and are normalized to `external`; if the matching external service is unavailable, LibreChat falls back to `browser`.
+Use `browser` for built-in browser speech or `external` for a server-side provider configured below. For speech to text, `realtime` (**Pending**) selects [live dictation](#live-dictation) and falls back to `external` when the server does not offer it. Older provider-specific defaults remain accepted for compatibility and are normalized to `external`; if the matching external service is unavailable, LibreChat falls back to `browser`.
 
 example:
 
@@ -89,7 +95,7 @@ speech:
 
 <OptionTable
   options={[
-    ['engineSTT', 'String', 'Which transcription engine to use. `browser` uses the built-in Web Speech API and needs no server config; the others use the matching provider block under `speech.stt`.', 'Options: "browser", "external", "openai", "azureOpenAI"'],
+    ['engineSTT', 'String', 'Which transcription engine to use. `browser` uses the built-in Web Speech API and needs no server config; the others use the matching provider block under `speech.stt`. `realtime` (Pending) is the **Live** engine and needs `speech.stt.openai.realtime`.', 'Options: "browser", "external", "realtime", "openai", "azureOpenAI"'],
     ['languageSTT', 'String', 'Language the transcriber should expect, as shown in the speech settings dropdown.', 'Example: "English (US)"'],
     ['autoTranscribeAudio', 'Boolean', 'Keep the microphone listening instead of stopping at the first pause. With an external engine it also turns on silence detection, which uses `decibelValue` to decide when you have stopped speaking and ends the recording. You still start the recording yourself.', ''],
     ['decibelValue', 'Number', 'Silence threshold in dB used by that silence detection. Lower values are more sensitive to quiet speech.', 'Range: -100 to -30. Default: -45'],
@@ -127,6 +133,8 @@ The Speech-to-Text (STT) feature converts spoken words into written text. To ena
   - Whisper (tested on LocalAI)
 - **Cloud STT**
   - OpenAI Whisper
+  - OpenAI `gpt-4o-transcribe`, `gpt-4o-mini-transcribe` and `gpt-transcribe`
+  - Live dictation with `gpt-live-transcribe` (**Pending**)
   - Azure Whisper
   - Other OpenAI-compatible STT services
 
@@ -157,6 +165,23 @@ speech:
       apiKey: '${STT_API_KEY}'
       model: 'whisper-1'
 ```
+
+- #### OpenAI gpt-transcribe
+
+`gpt-transcribe` accepts hints for names, terminology and the languages to expect. `prompt`, `keywords` and `languages` are **Pending** and optional.
+
+```yaml
+speech:
+  stt:
+    openai:
+      apiKey: '${STT_API_KEY}'
+      model: 'gpt-transcribe'
+      prompt: 'Internal retail and software terminology may be used.'
+      keywords: ['LibreChat', 'OpenShift']
+      languages: ['de', 'en']
+```
+
+`keywords` and `languages` go only to `gpt-transcribe` and `gpt-live-transcribe` models. When a user picks a language in their speech settings, that language replaces `languages`. Older models such as `whisper-1` and `gpt-4o-transcribe` receive `prompt` and the user's language as before.
 
 - #### Azure Whisper
 
@@ -192,6 +217,50 @@ speech:
       model: 'whisper'
   ```
 
+### Live dictation
+
+<Callout type="important" title="Pending: not yet released">
+  Live dictation is part of LibreChat-AI/LibreChat#17190.
+</Callout>
+
+Live dictation shows text in the composer while the user speaks, instead of after the recording ends. It streams microphone audio to an OpenAI Realtime transcription session over WebRTC. Add a `realtime` block under `speech.stt.openai`:
+
+```yaml
+speech:
+  stt:
+    openai:
+      apiKey: '${STT_API_KEY}'
+      model: 'gpt-transcribe'
+      realtime:
+        model: 'gpt-live-transcribe'
+        delay: 'low' # optional, gpt-live-transcribe only: minimal | low | medium | high | xhigh
+        # url: 'https://api.openai.com/v1' # default
+  speechTab:
+    speechToText:
+      engineSTT: 'realtime' # optional: make Live the default engine
+```
+
+Users then pick **Live** under **Settings > Speech > Engine**. Stop, or the silence detection from `autoTranscribeAudio`, ends the take, and the transcript stays in the composer to edit or send. Auto send, cancel and the recording timer work as they do for the **External** engine.
+
+- **Requirements:** `speech.stt` must configure exactly one provider, `openai`. Live dictation uses its `apiKey`, `prompt`, `keywords` and `languages`; `stt.openai.url` applies only to recorded dictation. The browser must support WebRTC.
+- **Models:** `gpt-live-transcribe` streams text while the user speaks. Older realtime transcription models such as `gpt-4o-transcribe` also work, but return text only after the user stops.
+- **Security:** the API key never reaches the browser. For each recording, the server creates a client secret that expires after 60 seconds, spends it on the WebRTC connection setup, and returns only the connection answer. `stt.allowedAddresses` and the proxy settings apply to both requests.
+- **Content filters:** live audio and transcripts travel directly between the browser and the provider, so `filters` rules for the `transcript` field do not see them. Message filters still apply once the text is sent.
+- **Cost:** Realtime sessions are billed per minute while the microphone is open.
+
+To use Azure OpenAI, point the `openai` provider at your Azure resource. Recorded dictation uses the deployment's transcription URL, and live dictation uses the resource's `/openai/v1` base URL:
+
+```yaml
+speech:
+  stt:
+    openai:
+      url: 'https://<resource>.openai.azure.com/openai/deployments/<deployment>/audio/transcriptions?api-version=2025-04-01-preview'
+      apiKey: '${STT_API_KEY}'
+      model: 'gpt-4o-transcribe'
+      realtime:
+        url: 'https://<resource>.openai.azure.com/openai/v1'
+        model: 'gpt-4o-transcribe' # Azure deployment name
+```
 
 ## TTS (Text-to-Speech)
 
