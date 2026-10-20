@@ -1,0 +1,89 @@
+---
+title: Dreamtune MCP
+icon: Blocks
+description: Connect LibreChat to Dreamtune model APIs, tools, GPU compute and run inspection with a workspace API key.
+---
+
+[Dreamtune](https://dreamtunelabs.com) provides an MCP server for model requests, tool runs, GPU compute and run inspection. Your selected LibreChat chat model can invoke these operations as tools, including in saved Agents.
+
+## Prerequisites
+
+- A running LibreChat instance with `librechat.yaml` loaded.
+- A Dreamtune workspace API key with the scopes needed for your intended operations.
+
+## Hosted connection with per-user keys
+
+The hosted server uses Streamable HTTP and an `X-Dreamtune-API-Key` header. Configure each user to supply their own workspace key through [`customUserVars`](/docs/configuration/librechat_yaml/object_structure/mcp_servers#customuservars):
+
+```yaml filename="librechat.yaml"
+mcpServers:
+  dreamtune:
+    type: streamable-http
+    url: https://mcp.dreamtunelabs.com/mcp
+    startup: false
+    timeout: 60000
+    headers:
+      X-Dreamtune-API-Key: '{{DREAMTUNE_API_KEY}}'
+    customUserVars:
+      DREAMTUNE_API_KEY:
+        title: Dreamtune API key
+        description: Enter your Dreamtune workspace API key.
+        sensitive: true
+```
+
+Merge this block into your existing `mcpServers` configuration and restart LibreChat. `startup: false` skips the startup connection; users connect manually after saving their keys. The hosted service uses the workspace key directly; it has no browser OAuth sign-in.
+
+### Connect and select tools
+
+1. Open **MCP Settings** in the right panel, select Dreamtune, and save your workspace key. You can also choose **Configure** on its row in the composer's **+** palette.
+2. Click the reinitialize button (circular arrows) beside Dreamtune and check the resulting connection status.
+3. For regular chat, choose a tool-compatible model and select Dreamtune in the composer's **+** palette under **MCP Servers**.
+4. For an Agent, open **Add tools**, choose **MCP**, select Dreamtune, and enable the tools that Agent needs.
+
+See the [MCP overview](/docs/features/mcp) for connection status, custom credentials and Agent Builder workflows.
+
+## Local stdio alternative
+
+Administrators can run the published Node server inside the same environment as LibreChat. Install Node.js **22.20+**, including `npx`, in that environment. A Docker deployment needs the runtime inside the LibreChat container.
+
+Set a deployment-managed workspace key in LibreChat's private environment:
+
+```dotenv filename=".env"
+DREAMTUNE_API_KEY=YOUR_DREAMTUNE_WORKSPACE_KEY
+```
+
+Use this block instead of the hosted block:
+
+```yaml filename="librechat.yaml"
+mcpServers:
+  dreamtune:
+    type: stdio
+    command: npx
+    args:
+      - '-y'
+      - '--package'
+      - '@dreamtune/sdk@0.1.2'
+      - dreamtune-mcp
+    timeout: 60000
+    initTimeout: 60000
+    env:
+      DREAMTUNE_API_KEY: '${DREAMTUNE_API_KEY}'
+      DREAMTUNE_API_ORIGIN: https://api.dreamtunelabs.com
+      DREAMTUNE_REQUEST_TIMEOUT_MS: '60000'
+```
+
+This pins the published stdio package and sets its API origin and deadline explicitly. The deployment-managed key shares one Dreamtune workspace with authorized LibreChat users of this server. Keep real keys out of YAML committed to Git. Process-backed servers must be configured by administrators in `librechat.yaml`.
+
+## Verify and use the connection
+
+Refreshing MCP tool definitions initializes the connection without starting a model request, paid tool run or compute job. Look for tools such as `list_tools`, `create_model_run` and `compute_catalog`. Follow the input schemas and the [Dreamtune MCP tool reference](https://docs.dreamtunelabs.com/reference/mcp-tools) when requesting an operation.
+
+Calls use the scopes and workspace of the supplied key. Model requests, paid tool runs and compute jobs can incur charges; compute can continue billing until stopped. Enable only the operations the user intends to authorize. For tools that require an idempotency key, persist it before submission and reuse it only for identical intended work.
+
+See Dreamtune's [hosted connection guide](https://docs.dreamtunelabs.com/connect/mcp) and [local setup guide](https://docs.dreamtunelabs.com/connect/local-mcp) for authentication and optional GPU access configuration.
+
+## Troubleshooting
+
+- **Hosted authentication fails:** confirm the header is `X-Dreamtune-API-Key`, the user supplied a workspace API key, and the key has the required scopes.
+- **Local process cannot start:** check Node.js and `npx` in the LibreChat process or container, then inspect its startup logs. The initial package download also requires npm registry access.
+- **Tools are missing:** reconnect after saving the key, confirm the server is selected for the chat or Agent, and check LibreChat's MCP connection status.
