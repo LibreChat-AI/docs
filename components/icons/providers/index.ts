@@ -1,3 +1,4 @@
+export { default as AIStupidLevelIcon } from './aistupidlevel'
 export { default as AnthropicIcon } from './anthropic'
 export { default as AnyscaleIcon } from './anyscale'
 export { default as ApipieIcon } from './apipie'
