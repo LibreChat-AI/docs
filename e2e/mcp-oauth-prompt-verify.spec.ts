@@ -14,6 +14,11 @@ test.describe('MCP OAuth sign-in timing docs', () => {
     await expect(main).toContainText('The prompt appears when the agent first calls one of the')
     await expect(main).toContainText('Without one, the server keeps the turn-start prompt')
     await expect(main).toContainText('fails config validation instead of being ignored')
+    const admin = main.getByRole('link', { name: 'admin configuration overrides', exact: true })
+    await expect(admin).toHaveAttribute(
+      'href',
+      /\/docs\/features\/admin_panel#configuration-management$/,
+    )
   })
 
   test('@scenario:mcp-oauth-prompt-links-resolve the deferred tools, capability and catalog links reach their targets', async ({
