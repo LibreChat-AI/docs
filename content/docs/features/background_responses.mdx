@@ -1,0 +1,100 @@
+---
+title: Background Agent Responses
+description: Run durable Agent Responses, review pending actions, and stop an owned execution
+icon: Workflow
+---
+
+<Callout type="warning" title="Beta and Opt-In">
+These interfaces require a LibreChat version that includes the background Responses runtime and HTTP lifecycle routes. Background execution is disabled by default. Deploy all prerequisite runtime, storage, and route changes before enabling it.
+</Callout>
+
+Background Responses use the existing [Agents API](/docs/features/agents_api), not a separate model execution engine. A request returns a stored response identity while a worker executes the Agent. Clients poll that identity for output, required actions, and the canonical terminal result.
+
+## Enable background execution
+
+Merge this block into your existing configuration:
+
+```yaml filename="endpoints / agents"
+endpoints:
+  agents:
+    remoteApi:
+      background:
+        enabled: true
+        acknowledgementTimeoutMs: 10000
+```
+
+`enabled` defaults to `false`. `acknowledgementTimeoutMs` defaults to `10000` and accepts integers from `100` through `60000`; it bounds the worker admission acknowledgement, not total model execution time. Existing Remote Agents permissions, Agent access, terms acceptance, content checks, and provider/tool policies still apply.
+
+Background submission requires an **Agent API key**, including when ordinary inference also accepts OIDC. A management API machine token is not an execution credential. Configure [Remote Agents permissions](/docs/features/agents_api#enabling-the-agents-api) separately.
+
+Human tool approval and Ask User pauses require durable MongoDB checkpoint storage. Use the existing [`toolApproval`](/docs/configuration/librechat_yaml/object_structure/agents#toolapproval), Ask User, and [`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) settings; background execution does not automatically enable approval or bypass a deny rule. A memory checkpointer does not provide durable background human-action resume. Ordinary requests without a human pause retain their normal execution path.
+
+Set `DOMAIN_CLIENT` to the trusted public browser URL so generated review links point to your deployment. Do not construct review destinations from incoming Host headers.
+
+## Submit and poll
+
+```bash
+curl https://chat.example.com/api/agents/v1/responses \
+  -H 'Authorization: Bearer YOUR_AGENT_API_KEY' \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: report-request-001' \
+  -d '{"model":"AGENT_ID","input":"Summarize the latest report.","background":true,"store":true}'
+```
+
+Accepted background requests return HTTP `202` with a response object. `background: true` requires storage: omit `store` or set it to `true`. `store: false` and `stream: true` are rejected for background requests. Ordinary synchronous and streaming Responses remain separate supported modes when `background` is omitted or false.
+
+Use a stable `Idempotency-Key` for retries of the same logical submission. The optional key must be nonblank and at most 256 characters; do not reuse it for a different request. If omitted, the server creates a new request identity, so an ambiguous network retry can create another request.
+
+```bash
+curl https://chat.example.com/api/agents/v1/responses/RESPONSE_ID \
+  -H 'Authorization: Bearer YOUR_AGENT_API_KEY'
+```
+
+Poll the same response until its public status is `completed`, `failed`, `incomplete`, or `cancelled`. `queued` and `in_progress` are not terminal. The server rechecks the original source key and current authority; possession of a response ID is not permission to read or resume it. Use the returned response ID as `previous_response_id` for a subsequent supported continuation rather than resending the original user input.
+
+## Review a required action
+
+A public response can include:
+
+```json
+{
+  "status": "in_progress",
+  "required_action": {
+    "type": "librechat_review",
+    "kind": "tool_approval",
+    "action_id": "ACTION_ID",
+    "expires_at": 1800000000,
+    "review_url": "https://chat.example.com/responses/RESPONSE_ID/review"
+  }
+}
+```
+
+`kind` is `tool_approval`, `question`, or `oauth`. `expires_at` is Unix time in seconds. Treat the action as actionable only while it is present and unexpired. The public projection intentionally omits private approval payloads and provider OAuth URLs. Do not infer that public `in_progress` means a provider is currently running: it also covers a retained action waiting for its owner.
+
+Open `review_url` in a browser and sign in as the response owner in the correct tenant. The owner can inspect the exact pending tool call, answer a question, or continue an MCP OAuth flow. An unrelated account cannot approve a request just because it can access the same Agent.
+
+The browser lifecycle uses session authentication, not an Agent API key or a management token:
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/agents/responses/{id}/review` | Read the owner-only review view |
+| `POST` | `/api/agents/responses/{id}/review` | Submit the current action decision |
+| `POST` | `/api/agents/responses/{id}/cancel` | Request Stop for an owned response |
+
+Decision submissions include the exact current `actionId` and the payload appropriate to that action. Question submissions use `answer`, or `answers` keyed by the presented question identities. Tool approval submissions use `decisions` containing the exact `tool_call_id` and an allowed `decision` (`approve`, `reject`, `edit`, or `respond`), with the corresponding edited arguments or response text when needed. Use the supplied review UI to respect action-specific validation and offered scopes; an enum value in a transport schema is not a grant to choose an unavailable approval scope.
+
+A successful decision returns HTTP `202` with `responseId`, `actionId`, `intentId`, and `status` (`queued` or `settled`). This is an acknowledgement, not proof that execution completed. Refresh the canonical review/response state. Do not automatically resubmit an ambiguous decision with a different intent or replay a stale action after a conflict. Resume revalidates current Agent/model/tool/project/file authority and retained execution provenance before privileged work.
+
+## OAuth recovery limits
+
+MCP OAuth prompts are retained for owner-only replay until their deadline. Complete authorization through the supplied provider flow; do not submit an approval decision to replace an OAuth callback. A successful callback can continue the same waiting execution while its waiter is still active.
+
+Durable prompt visibility is not a guarantee that an in-memory OAuth waiter survives a server restart. Durable human question/tool-approval checkpoints and OAuth authorization waiters are different mechanisms. If the OAuth attempt expired or its waiting execution was lost, use the current failure/retry state; do not keep replaying an old authorization URL or assume authorization alone restarted the model. See [MCP authentication](/docs/features/mcp#oauth-authentication).
+
+## Stop and recovery
+
+API-key clients can request cancellation with `POST /api/agents/v1/responses/{id}/cancel`. Owners can use **Stop** in the review UI. Both paths operate on the same durable response; neither starts a replacement execution.
+
+A cancellation acknowledgement may still report a nonterminal status while provider drain, checkpoint cleanup, or terminal publication is pending. Continue polling until canonical `cancelled` (or another terminal result already won the race). Stop is not rollback: tools may already have performed external effects. Do not repeat an external operation merely because its answer was cancelled.
+
+Revoked source keys, changed channel/account bindings, missing authority, stale checkpoint identities, and changed privileged code targets fail closed. Temporary storage outages can delay terminal publication and cleanup; do not force-delete execution proof or manually replay tools to make the status change.

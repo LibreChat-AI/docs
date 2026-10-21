@@ -1,0 +1,92 @@
+---
+title: Agent Channels
+description: Connect a Slack integration to durable Agent Responses with explicit identity and delivery boundaries
+icon: MessagesSquare
+---
+
+<Callout type="warning" title="Beta Integration Contract">
+Agent Channels require the matching channel runtime, feedback, HTTP, setup UI, and background Responses changes. They are disabled by default. A compatible Slack gateway is also required; this guide does not provide an installable gateway package or container.
+</Callout>
+
+Agent Channels connect external messaging events to [background Agent Responses](/docs/features/background_responses). Channel routes manage identity, admission, leases, delivery receipts, artifacts, and feedback. They are **not an alternative model-execution endpoint**: a compatible gateway submits execution through `/api/agents/v1/responses` using a server-provisioned, bound credential.
+
+## Configuration and prerequisites
+
+```yaml filename="endpoints / agents"
+endpoints:
+  agents:
+    remoteApi:
+      background:
+        enabled: true
+    channels:
+      enabled: true
+      transport: socket_mode
+```
+
+Both enablement settings default to `false`. Existing Remote Agents permissions must also permit the relevant users to use the Agent API, and channel setup requires Agent sharing permission. Configure `DOMAIN_CLIENT` for trusted owner-review and account-link URLs. Configure a strong `CHANNEL_SERVICE_TOKEN` for the gateway-to-LibreChat service boundary; keep it server-side and distribute it only to a trusted integration process over a secure channel. It is not a browser token or a general Agent API key.
+
+The `transport` option accepts `socket_mode` (default) or `webhook`. This selects integration metadata; it does not deploy a receiver or create a public webhook automatically. `gatewayUrl` is an optional URL advertised by setup metadata. Deploy and secure a compatible gateway separately, with its own Slack transport configuration, event authenticity validation, and bot/app credentials.
+
+See the [channel configuration reference](/docs/configuration/librechat_yaml/object_structure/agents#channels) for limits and defaults.
+
+## Set up a channel
+
+1. Open the Agent's channel setup surface with an authorized LibreChat account.
+2. Create a Slack channel configuration and explicitly choose `shared` or `per_user` credential mode.
+3. Use the generated Slack manifest with your Slack app. Configure the gateway's chosen Slack transport separately; a manifest alone is not a running integration.
+4. Activate the configuration with the matching Slack app ID and bot token. Supply the Slack signing secret when the chosen integration requires signature verification. LibreChat verifies the bot identity and stores credentials encrypted; normal setup responses do not return those secrets.
+5. Complete account linking for the external actor. Send a test event only after the channel is active, the actor is linked, and the gateway is configured.
+
+Browser setup routes live under `/api/agents/{agentId}/channels`: list/create, read `/{channelId}/manifest`, update `/{channelId}`, and delete `/{channelId}`. These use authenticated Agent authorization, not the management API machine-token contract. The create body is `{ "type": "slack", "credentialMode": "per_user" }` (or `shared`). Activation updates use a `slack` object with `appId`, `botToken`, and optional `signingSecret`. To disable a channel, update its status to `disabled`.
+
+### Shared versus per-user credentials
+
+`per_user` binds each linked Slack actor to that actor's existing LibreChat account. Current tenant membership, account state, role capabilities, Agent permissions, and tool/provider credentials are evaluated for that user.
+
+`shared` does **not** make the Agent public to every Slack participant. Linking is restricted to the channel creator's LibreChat account; execution uses that explicitly linked principal's authority. Do not treat the activator's API key, a Slack display name, an email assertion, or another participant's thread history as consent for a new actor.
+
+Each actor/link revision has its own execution lane. Sharing a Slack thread does not share a LibreChat conversation or expose another actor's files, OAuth state, approvals, usage, or trace session. A different actor cannot inherit the first participant's pending question or approve its tool call. Mode/revision changes, unlinking, account removal, Agent access revocation, and key revocation invalidate old authority rather than silently remapping it.
+
+### Account linking
+
+The gateway can request an actor-bound, short-lived linking ticket. The user opens the trusted LibreChat URL, signs in, previews the request, and explicitly accepts it. A gateway then confirms the same ticket/actor binding; it must not infer linkage from a returned browser URL alone.
+
+Browser endpoints under `/api/channels/links` support preview, acceptance, listing, and revocation. Mutations require the normal authenticated browser and same-origin checks. Ticket lifetime defaults to 10 minutes; accepted links default to 30 days. Never post a bearer credential or provider OAuth URL into Slack.
+
+## Gateway protocol boundary
+
+Service requests use `Authorization: Bearer <CHANNEL_SERVICE_TOKEN>` and the exact tenant/channel context. For routes without a tenant path parameter, send the channel's exact tenant in `x-tenant-id`; do not choose a tenant from untrusted message text. The service token permits this integration boundary, not arbitrary user impersonation. Never put it in client-side code, Slack messages, tracing payloads, or public logs. The credential bundle endpoint returns secrets to the trusted gateway and must not be exposed as a public discovery API.
+
+| Stage | Route under `/api/channels` | Responsibility |
+| --- | --- | --- |
+| Configuration | `GET /service/slack/{tenantId}/{channelId}` | Read the active channel and encrypted-at-rest credentials through an authenticated service boundary |
+| Identity | `/service/{channelId}/identity/{externalUserId}` and its ticket/confirm operations | Resolve explicit actor linking; never infer a principal from thread history |
+| Admission | `POST /service/{channelId}/runs` | Admit an idempotent event with verified team/app/actor identity |
+| Ownership | `POST /service/{channelId}/runs/claim`, then `/{runId}/renew` | Claim and renew the exact run lease |
+| Execution preparation | `POST /service/{channelId}/runs/{runId}/response/prepare` | Obtain the bound execution credential, request, and stable request key |
+| Response binding | `POST /service/{channelId}/runs/{runId}/response/bind` | Bind the returned Responses identity to the admitted run |
+| Progress and result | `/{runId}/advance`, `/{runId}/progress/*`, `/{runId}/plan`, `/{runId}/delivery/*`, `/{runId}/commit` | Project canonical state and record fenced delivery effects |
+| Review projection | `POST /service/{channelId}/runs/{runId}/review` | Obtain the safe owner-review projection, not private approval/OAuth payloads |
+| Artifacts | `POST /service/{channelId}/runs/{runId}/artifacts/{artifactId}` | Read only an artifact bound to the authorized run |
+| Stop | `POST /service/{channelId}/runs/stop-thread` or `/{runId}/cancel` | Cancel only the authorized actor lane/run |
+| Feedback | `POST /service/{channelId}/reactions` | Apply authenticated, deduplicated reaction events to confirmed delivered replies |
+
+Run-relative paths in the table are beneath `/service/{channelId}/runs`. Lease mutations carry the exact server-issued `{ runId, owner, epoch }` fence. Treat stale leases, changed authority, and ambiguous delivery outcomes as protocol states to reconcile, not permission to mint a new run or blindly resend a Slack message.
+
+Execution preparation returns an `apiKey`, `requestKey`, optional retained `responseId`, and a Responses `request` with the Agent ID, admitted input, `background: true`, `store: true`, and any authorized continuation. Submit that request to `/api/agents/v1/responses` using the bound key and `Idempotency-Key: <requestKey>`, then bind the returned response ID. Do not substitute a creator's unrestricted key, change the actor/Agent, or send the input to a channel bookkeeping route to execute it.
+
+The gateway owns Slack event verification, retry/deduplication, native message formatting, rate-limit handling, and delivery receipt reconciliation. Preserve exact event identifiers and timestamps. For feedback events, `eventTimestampUs` is an integer timestamp in microseconds; do not round it to milliseconds. Report confirmed, failed, or ambiguous side effects accurately before advancing delivery state.
+
+## Review, files, feedback, and privacy
+
+Only the owner-review link is projected for human actions. Private tool arguments, question payloads, and provider OAuth authorization URLs stay in the authenticated browser review view. The owner completes approval, question, or OAuth actions through the [background Responses lifecycle](/docs/features/background_responses#review-a-required-action).
+
+Artifacts are scoped to the authorized run and actor. Limits default to five files and 10 MiB per file, with a 30-second read timeout. Do not replace an unavailable artifact with another actor's file or an unauthenticated internal download URL. Usage and cost summaries identify incomplete or unavailable coverage instead of presenting a partial subtotal as the complete thread total.
+
+Reaction feedback maps only to confirmed delivered assistant messages. It does not overwrite the browser's feedback field. Export is constrained by recorded sampling/destination provenance and current export policy. Temporary-chat provenance is retained; an old mapping without that provenance is not treated as a permanent chat. A policy change can suppress export even when the original trace was sampled.
+
+## Operational limits
+
+Disabling a channel or changing its credential mode retires old authority; it does not undo external tool effects. Stop can remain pending until the exact provider is drained and canonical cancellation/cleanup completes. A gateway must poll/reconcile canonical state rather than interpreting an acknowledgement as terminal completion.
+
+This contract does not promise a public gateway distribution, arbitrary chat-platform support, automatic migration of legacy thread-wide identity, or restart-survival of an in-memory OAuth waiter. Legacy thread read/write bookkeeping is not a substitute for actor-scoped runs.
