@@ -62,7 +62,7 @@ endpoints:
           context: 128000
 ```
 
-各モデルのエントリには、`prompt`、`completion`、および `context` が必須です。キャッシュされた入力の使用量を報告するプロバイダーに対しては、`cacheRead` および `cacheWrite` を追加できます。複数のendpointを使用するエージェントの場合、LibreChatは使用量とコストを記録する際に、一致するendpoint/modelのトークン設定を使用します。
+`prompt`、`completion`、`context` は、各モデルエントリで必須です。キャッシュ入力の使用量を報告するプロバイダーの場合は、`cacheRead`、`cacheWrite`、`cacheWrite1h`(1時間キャッシュ書き込みレート。省略した場合は `prompt` の2倍になります)を追加できます。複数のエンドポイントを使用するエージェントの場合、LibreChat は使用量とコストを記録する際に、一致するエンドポイント/モデルのトークン設定を使用します。
 
 エンドポイントのモデル、キー、URL、またはヘッダーがリクエストコンテキストによって異なる場合、取得されたトークン設定はユーザースコープでキャッシュされるため、分離されたカスタムエンドポイントの料金設定とコンテキストウィンドウは個別に保持されます。
 
@@ -105,6 +105,9 @@ balance:
   refillIntervalValue: 30 # Numerical value for refill interval
   refillIntervalUnit: 'days' # Time unit for refill interval (days, hours, etc.)
   refillAmount: 10000 # Tokens added during each refill
+  refillMode: 'add' # 'add' or 'reset'
+  reservationTtlMs: 1800000 # How long an in-flight reservation counts against the balance
+  display: 'credits' # 'credits', 'currency', or 'percent'
 ```
 
 ### Balance Settings の解説 [#balance-settings-explained]
@@ -119,11 +122,19 @@ balance:
 
 - **refillIntervalUnit**: リフィル間隔の時間単位を指定します。サポートされている値は "seconds"、"minutes"、"hours"、"days"、"weeks"、"months" です。
 
-- **refillAmount**: 自動リフィル時にユーザーの残高へ追加されるトークン数を指定します。
+- **refillAmount**: 自動補充の各回で、ユーザーの残高に追加されるトークン数を指定します。`refillMode: 'reset'`の場合は、残高がリセットされる値になります。
+
+- **refillMode**: `add`(デフォルト)は、現在の残高に`refillAmount`を加算します。`reset`は、補充間隔が到来した時点で、残高を`refillAmount`に置き換えます。`reset`を使用する場合、`refillIntervalValue`は正の整数である必要があります。
+
+- **reservationTtlMs**: 未解放(リリースされていない)の処理中残高予約が、残高に対して計上され続ける期間をミリ秒単位で指定します。デフォルト: `1800000`(30分)。最小値: `10000`。
+
+- **display**: UIでの残高の表示方法を指定します。`credits`(デフォルト)では生の数値を表示し、`currency`では通貨換算した金額を表示し、`percent`では期間の割り当てのうち既に消費された割合を表示します。
 
 詳細については、[Balance Configuration](/docs/configuration/librechat_yaml/object_structure/balance) ページをご確認ください。
 
 ## Auto-Refill の仕組み [#how-auto-refill-works]
+
+以下の処理は、デフォルトの `add` モードについて説明しています。`refillMode: 'reset'` を指定した場合、残高が尽きても補充は行われません。代わりに、補充間隔が到来すると、ユーザーの次回の残高参照またはリクエスト時に残高が `refillAmount` に置き換えられるため、未使用のクレジットは翌期間に繰り越されません。
 
 ユーザーの残高が追跡されており、**autoRefill** が有効な場合、システムは前回の補充から指定された時間間隔が経過したときにのみ、自動的に残高へクレジットを追加します。これは、現在の日付と `lastRefill` の日付に指定された間隔を加算したものを比較することで実現されます。
 
@@ -234,9 +245,9 @@ docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run list-balances"
 
 - 要約（summarization）が有効な場合、要約が必要なコンテンツのコストとメッセージのペイロードの合計が現在の残高を超えると、APIリクエストの実行がブロックされます。
 - Subagentのchild-runモデルの使用量は親トランザクションに対して記録されるため、親エージェントの実行合計には委任された使用量が含まれます。
-- プロンプトトークンのカウントは、OpenAIの呼び出しに対しては非常に正確ですが、プラグイン（関数呼び出しのため）については100%正確ではありません。非常に近い値かつ保守的な見積もりとなっており、実際のカウントより2〜5トークンほど多くなる可能性があります。
+- プロンプトのトークン数のカウントは、OpenAI への呼び出しでは正確ですが、関数呼び出しが含まれる場合は厳密ではありません。その場合の値は近似値であり、保守的な見積もりとなるため、実際よりも 2〜5 トークン多くカウントされることがあります。
 - システムは、補完トークンによって発生する不足分を許容します。プロンプトトークンに対して十分な残高があるかどうかのみを確認し、補完に関してはかなり寛容です。以下のグラフにそのロジックを詳しく示します。
-- 前述の通り、プラグインは複数のAPI呼び出しを伴うプロセスであるため、各生成ステップでチェックが行われます。LLMが最初のユーザープロンプト以降に生成した内容はすべて、以下のようにエラーメッセージとしてユーザーに共有されます。
+- ツールを使用するエージェントなど、複数回の API 呼び出しを行う実行は、各生成ステップごとにチェックされます。初回のユーザープロンプト以降に LLM が生成した内容は、以下のようにエラーメッセージでユーザーに共有されます。
 - これは2段階のプロセスであるため、タイトル付けには150トークンのバッファがあり、合計で平均約200トークンとなります。資金が不足している場合、支出が発生する前にタイトル付けはキャンセルされ、エラーはスローされません。
 
 ![image](https://github.com/danny-avila/LibreChat/assets/110412045/78175053-9c38-44c8-9b56-4b81df61049e)

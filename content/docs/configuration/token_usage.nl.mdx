@@ -64,7 +64,7 @@ endpoints:
           context: 128000
 ```
 
-`prompt`, `completion` en `context` zijn vereist voor elk model-item. `cacheRead` en `cacheWrite` kunnen worden toegevoegd voor providers die het gebruik van gecachte invoer rapporteren. Voor Agents die meerdere endpoints gebruiken, gebruikt LibreChat de bijbehorende endpoint/model token-configuratie bij het registreren van gebruik en kosten.
+`prompt`, `completion`, en `context` zijn verplicht voor elke modelvermelding. `cacheRead`, `cacheWrite` en `cacheWrite1h` (het tarief voor schrijven naar de cache van één uur, dat twee keer `prompt` is wanneer het wordt weggelaten) kunnen worden toegevoegd voor providers die gebruik van gecachete invoer rapporteren. Voor Agents die meerdere endpoints gebruiken, gebruikt LibreChat de bijbehorende endpoint/model-tokenconfiguratie bij het registreren van gebruik en kosten.
 
 De opgehaalde tokenconfiguratie wordt in de cache opgeslagen met gebruikersbereik wanneer endpoint-modellen, sleutels, URL's of headers per verzoekcontext kunnen variëren, zodat geïsoleerde aangepaste endpoint-prijzen en contextvensters gescheiden blijven.
 
@@ -107,6 +107,9 @@ balance:
   refillIntervalValue: 30 # Numerical value for refill interval
   refillIntervalUnit: 'days' # Time unit for refill interval (days, hours, etc.)
   refillAmount: 10000 # Tokens added during each refill
+  refillMode: 'add' # 'add' or 'reset'
+  reservationTtlMs: 1800000 # How long an in-flight reservation counts against the balance
+  display: 'credits' # 'credits', 'currency', or 'percent'
 ```
 
 ### Uitleg over balansinstellingen [#balance-settings-explained]
@@ -121,11 +124,19 @@ balance:
 
 - **refillIntervalUnit**: Specificeert de tijdseenheid voor het bijvulinterval. Ondersteunde waarden zijn onder andere "seconds", "minutes", "hours", "days", "weeks" en "months".
 
-- **refillAmount**: Specificeert het aantal tokens dat tijdens elke automatische aanvulling aan het saldo van de gebruiker wordt toegevoegd.
+- **refillAmount**: Geeft het aantal tokens aan dat tijdens elke automatische aanvulling aan het saldo van de gebruiker wordt toegevoegd. Met `refillMode: 'reset'` is dit het bedrag waarnaar het saldo wordt teruggezet.
+
+- **refillMode**: `add` (de standaardwaarde) voegt `refillAmount` toe aan het huidige saldo. `reset` vervangt het saldo door `refillAmount` zodra het aanvulinterval is verstreken. `reset` vereist dat `refillIntervalValue` een positief geheel getal is.
+
+- **reservationTtlMs**: Hoe lang, in milliseconden, een niet-vrijgegeven lopende saldoreservering meetelt voor het saldo. Standaard: `1800000` (30 minuten). Minimum: `10000`.
+
+- **display**: Hoe de gebruikersinterface het saldo weergeeft: `credits` (de standaard) toont het ruwe getal, `currency` toont de waarde in valuta, en `percent` toont het aandeel van het toegewezen bedrag voor de periode dat al is uitgegeven.
 
 Bekijk de [Balance Configuration](/docs/configuration/librechat_yaml/object_structure/balance) pagina voor meer details.
 
 ## Hoe Auto-Refill werkt [#how-auto-refill-works]
+
+Het onderstaande proces beschrijft de standaardmodus `add`. Met `refillMode: 'reset'` wordt het saldo niet aangevuld wanneer het op is. In plaats daarvan wordt het saldo, zodra het aanvulinterval verstreken is, vervangen door `refillAmount` bij de volgende saldo-opvraag of het volgende verzoek van de gebruiker, zodat ongebruikte tegoeden niet worden overgedragen.
 
 Wanneer het saldo van een gebruiker wordt bijgehouden en **autoRefill** is ingeschakeld, voegt het systeem alleen automatisch credits toe aan het saldo wanneer het opgegeven tijdsinterval is verstreken sinds de laatste aanvulling. Dit wordt bereikt door de huidige datum te vergelijken met de `lastRefill` datum plus het opgegeven interval.
 
@@ -236,9 +247,9 @@ Dit werkt goed om je eigen verbruik voor persoonlijk gebruik bij te houden; 1000
 
 - Wanneer samenvatten is ingeschakeld, wordt u geblokkeerd voor het maken van een API-verzoek als de kosten van de inhoud die u moet samenvatten + uw berichten-payload het huidige saldo overschrijden.
 - Het gebruik van het subagent child-run model wordt geregistreerd bij de bovenliggende transactie, zodat de runs van de bovenliggende agent het gedelegeerde gebruik in hun totalen opnemen.
-- Het tellen van prompt-tokens is zeer nauwkeurig voor OpenAI-aanroepen, maar niet 100% voor plugins (vanwege function calling). Het is erg accuraat en conservatief, wat betekent dat de telling 2-5 tokens hoger kan uitvallen.
+- Het tellen van prompt-tokens is nauwkeurig voor OpenAI-aanroepen, maar niet exact wanneer functieaanroepen betrokken zijn. Het is dichtbij en conservatief, wat betekent dat het aantal hoger kan uitvallen met 2-5 tokens.
 - Het systeem staat tekorten toe die worden veroorzaakt door de completion tokens. Het controleert alleen of je genoeg hebt voor de prompt tokens, en is vrij coulant met de completion. De onderstaande grafiek geeft de logica in detail weer.
-- Dat gezegd hebbende, worden plugins bij elke generatiestap gecontroleerd, aangezien het proces met meerdere API-aanroepen werkt. Alles wat de LLM sinds de initiële gebruikersprompt heeft gegenereerd, wordt gedeeld met de gebruiker in het foutbericht, zoals hieronder te zien is.
+- Runs die meerdere API-aanroepen doen, zoals agents die tools gebruiken, worden bij elke generatiestap gecontroleerd. Alles wat de LLM sinds de oorspronkelijke gebruikersprompt heeft gegenereerd, wordt in het foutbericht met de gebruiker gedeeld, zoals hieronder te zien is.
 - Er is een buffer van 150 tokens voor het titelen, aangezien dit een proces in 2 stappen is, wat gemiddeld neerkomt op ongeveer 200 tokens in totaal. In het geval van onvoldoende saldo wordt het titelen geannuleerd voordat er kosten worden gemaakt en wordt er geen foutmelding gegeven.
 
 ![image](https://github.com/danny-avila/LibreChat/assets/110412045/78175053-9c38-44c8-9b56-4b81df61049e)

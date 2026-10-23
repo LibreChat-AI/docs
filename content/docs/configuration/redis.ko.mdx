@@ -4,7 +4,7 @@ icon: Redis
 description: 'LibreChat에서 캐싱, 세션 저장소 및 수평적 확장을 위한 Redis 설정하기'
 ---
 
-이 가이드는 LibreChat에서 캐싱 및 세션 저장을 위해 Redis를 구성하는 방법을 다룹니다. Redis는 상당한 성능 향상을 제공하며 **수평적 확장을 위해 필수적**입니다. 로드 밸런서 뒤에서 여러 LibreChat 인스턴스를 실행 중인 경우, Redis는 모든 인스턴스 간의 일관된 상태를 보장합니다.
+이 가이드는 LibreChat에서 캐싱 및 세션 저장을 위해 Redis를 구성하는 방법을 다룹니다. Redis는 상당한 성능 향상을 제공하며 **수평 확장(horizontal scaling)에 필수**입니다. 로드 밸런서 뒤에서 여러 LibreChat 인스턴스를 실행하는 경우, Redis는 모든 인스턴스 간에 일관된 상태를 보장합니다.
 
 ## 목차 [#table-of-contents]
 
@@ -15,6 +15,7 @@ description: 'LibreChat에서 캐싱, 세션 저장소 및 수평적 확장을 �
 - [복제본 장애 조치 복구](#replica-failover-recovery)
 - [상태 점검](#health-checks)
 - [성능 튜닝](#performance-tuning)
+- [고급 연결 튜닝](#advanced-connection-tuning)
 - [구성 예시](#configuration-examples)
 - [재개 가능한 스트림](#resumable-streams)
 - [Generation Protocol Compatibility](#generation-protocol-compatibility)
@@ -111,7 +112,7 @@ REDIS_USERNAME=your_redis_username
 REDIS_PASSWORD=your_redis_password
 ```
 
-**참고**: 사용자 이름/비밀번호 변수와 URI 내 자격 증명이 모두 제공된 경우, 별도의 사용자 이름/비밀번호 변수가 우선 적용됩니다.
+**참고**: `REDIS_URI`에 포함된 자격 증명이 우선합니다. `REDIS_USERNAME`과 `REDIS_PASSWORD`는 URI에 사용자 이름이나 비밀번호가 없는 경우에만 대체값으로 사용됩니다.
 
 ### TLS 구성 [#tls-configuration]
 
@@ -271,35 +272,46 @@ Redis가 활성화된 경우에도 특정 캐시 네임스페이스가 인메모
 
 ```bash
 # Comma-separated list of cache keys
-FORCED_IN_MEMORY_CACHE_NAMESPACES=ROLES,MESSAGES
+FORCED_IN_MEMORY_CACHE_NAMESPACES=CONFIG_STORE,APP_CONFIG,ROLES
 ```
+
+기본값이 설정되지 않은 경우 `CONFIG_STORE,APP_CONFIG`이며, 이에 따라 `librechat.yaml`에서 파생된 구성은 컨테이너별로 유지됩니다. 이 변수를 설정하면 기본값에 추가되는 것이 아니라 기본값을 **대체**하므로, 해당 네임스페이스를 Redis에 저장하지 않으려면 목록에 `CONFIG_STORE,APP_CONFIG`을 포함하세요. 모든 네임스페이스를 Redis를 통해 라우팅하려면 빈 문자열로 설정하세요.
 
 유효한 캐시 키 (`librechat-data-provider`의 `CacheKeys` enum에서 가져옴):
 
-| Key                       | Description               |
-| ------------------------- | ------------------------- |
-| `CONFIG_STORE`            | 구성 저장소               |
-| `ROLES`                   | 사용자 역할               |
-| `PLUGINS`                 | 플러그인 데이터           |
-| `GEN_TITLE`               | 생성된 제목               |
-| `TOOLS`                   | 도구 데이터               |
-| `MODELS_CONFIG`           | 모델 구성                 |
-| `MODEL_QUERIES`           | 모델 쿼리                 |
-| `STARTUP_CONFIG`          | 시작 구성                 |
-| `ENDPOINT_CONFIG`         | endpoint 구성             |
-| `TOKEN_CONFIG`            | 토큰 구성                 |
-| `APP_CONFIG`              | 애플리케이션 구성         |
-| `ABORT_KEYS`              | 중단 키                   |
-| `BANS`                    | 차단 데이터               |
-| `ENCODED_DOMAINS`         | 인코딩된 도메인           |
-| `AUDIO_RUNS`              | 오디오 처리 실행          |
-| `MESSAGES`                | 메시지                    |
-| `FLOWS`                   | 흐름 데이터               |
-| `PENDING_REQ`             | 대기 중인 요청            |
-| `S3_EXPIRY_INTERVAL`      | S3 만료 간격              |
-| `OPENID_EXCHANGED_TOKENS` | OpenID 교환 토큰          |
-| `OPENID_SESSION`          | OpenID 세션               |
-| `SAML_SESSION`            | SAML 세션                 |
+| Key | Description |
+| --- | --- |
+| `CONFIG_STORE` | 구성 저장소 |
+| `TOOL_CACHE` | 도구 캐시 (플러그인, MCP 도구, 도구 정의) |
+| `ROLES` | 사용자 역할 |
+| `USER_PRINCIPALS` | ACL 주체를 확인하는 데 사용되는 그룹 멤버십 |
+| `PROMPT_GROUPS_ACCESS` | 프롬프트 그룹 액세스 ID 집합 |
+| `AGENT_LINKED_INSTRUCTIONS` | 에이전트에 연결된 프롬프트 그룹의 확인된 지침 |
+| `SANDBOX_PREWARM` | 대화별 코드 샌드박스 사전 워밍 상태 |
+| `GEN_TITLE` | 생성된 제목 |
+| `TOOLS` | 도구 데이터 |
+| `MODELS_CONFIG` | 모델 구성 |
+| `MODEL_QUERIES` | 모델 쿼리 |
+| `STARTUP_CONFIG` | 시작 구성 |
+| `ENDPOINT_CONFIG` | 엔드포인트 구성 |
+| `TOKEN_CONFIG` | 토큰 구성 |
+| `REASONING_CAPABILITIES` | OpenRouter 엔드포인트의 모델별 추론 노력 수준 |
+| `PULL_REQUESTS` | 풀 리퀘스트 조회 및 GitHub 속도 제한 쿨다운 |
+| `APP_CONFIG` | 애플리케이션 구성 |
+| `ABORT_KEYS` | 중단 키 |
+| `BANS` | 차단 데이터 |
+| `ENCODED_DOMAINS` | 인코딩된 도메인 |
+| `AUDIO_RUNS` | 오디오 처리 실행 |
+| `MESSAGES` | 진행 중인 메시지 |
+| `FLOWS` | 진행 중인 플로우 상태 |
+| `PENDING_REQ` | 대기 중인 요청 |
+| `S3_EXPIRY_INTERVAL` | S3 만료 간격 |
+| `OPENID_EXCHANGED_TOKENS` | OpenID 교환 토큰 |
+| `AUTH_USER_DOC` | 캐시된 인증 사용자 문서 |
+| `OPENID_SESSION` | OpenID 세션 |
+| `SAML_SESSION` | SAML 세션 |
+| `ADMIN_OAUTH_EXCHANGE` | 관리자 패널 OAuth 교환 코드 |
+| `PASSKEY_CHALLENGE` | 대기 중인 패스키 의식 챌린지 |
 
 <Callout type="warn" title="유효하지 않은 키">
   유효하지 않은 키(예: 더 이상 사용되지 않는 `STATIC_CONFIG`)를 사용하면 시작 오류가 발생합니다. 위의 표에 있는 키만 사용하십시오.
@@ -323,6 +335,20 @@ FORCED_IN_MEMORY_CACHE_NAMESPACES=ROLES,MESSAGES
 
 - **IoRedis client**: 자동 접두사(prefixing)가 포함된 기본 Redis 작업
 - **Keyv Redis client**: `cacheFactory.js` 내 접두사(prefix) 처리를 포함한 저장소 계층 작업
+
+### 고급 연결 튜닝 [#advanced-connection-tuning]
+
+이 선택 사항인 변수들은 연결 동작과 대량 캐시 작업을 조정합니다. 대부분의 배포 환경에서는 기본값이 적합합니다.
+
+| 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `REDIS_CONNECT_TIMEOUT` | `10000` | 연결 시간 초과(밀리초)입니다. |
+| `REDIS_RETRY_MAX_ATTEMPTS` | `10` | 포기하기 전까지의 최대 재연결 시도 횟수입니다. `0`으로 설정하면 무기한 재시도합니다. |
+| `REDIS_RETRY_MAX_DELAY` | `3000` | 재연결 시도 사이의 최대 지연 시간(밀리초)입니다. |
+| `REDIS_ENABLE_OFFLINE_QUEUE` | `true` | 연결이 끊긴 동안 명령을 큐에 저장합니다. `false`로 설정하면 명령이 즉시 실패합니다. |
+| `REDIS_SCAN_COUNT` | `1000` | 패턴으로 키를 찾을 때 `SCAN` 작업에 사용되는 `COUNT` 힌트입니다. |
+| `REDIS_DELETE_CHUNK_SIZE` | `1000` | 대량 삭제 시 배치당 삭제되는 키의 개수입니다. |
+| `MCP_REGISTRY_CACHE_TTL` | `5000` | MCP 레지스트리 캐시가 유지되는 시간(밀리초)입니다. 인스턴스 간 데이터 불일치는 이 값의 두 배까지 발생할 수 있습니다. `0`으로 설정하면 로컬 스냅샷이 비활성화되며, 모든 읽기 요청이 Redis로 전달됩니다. |
 
 ### 메모리 최적화 [#memory-optimization]
 
@@ -349,7 +375,7 @@ REDIS_CA=/etc/ssl/redis-ca.pem
 REDIS_KEY_PREFIX_VAR=DEPLOYMENT_ID
 REDIS_MAX_LISTENERS=100
 REDIS_PING_INTERVAL=300
-FORCED_IN_MEMORY_CACHE_NAMESPACES=ROLES,MESSAGES
+FORCED_IN_MEMORY_CACHE_NAMESPACES=CONFIG_STORE,APP_CONFIG,ROLES,MESSAGES
 ```
 
 ### 클러스터 설정 [#cluster-setup]
@@ -368,7 +394,7 @@ Redis는 수평적으로 확장된 배포를 위해 [Resumable Streams](/docs/fe
 
 **중요:** `USE_REDIS=true`일 때, 재개 가능한 스트림은 인스턴스 간 조정을 위해 자동으로 Redis를 사용합니다. 이는 사용자가 서로 다른 서버 인스턴스에 연결될 수 있는 수평적 확장 배포 환경에서 권장되는 설정입니다.
 
-**참고:** 단일 LibreChat 인스턴스를 실행 중이라면, 재개 가능한 스트림을 위한 Redis는 일반적으로 과도한 설정입니다. 내장된 인메모리 모드로도 충분히 잘 작동합니다. Redis는 로드 밸런서 뒤에 여러 LibreChat 인스턴스가 있어 사용자의 재연결이 스트림이 시작된 서버가 아닌 다른 서버로 연결될 수 있는 경우에 필수적입니다.
+**참고:** LibreChat 인스턴스를 하나만 실행하는 경우, 재개 가능한 스트림을 위한 Redis는 일반적으로 과도합니다. 내장된 인메모리 모드로도 충분히 잘 작동합니다. Redis는 여러 개의 LibreChat 인스턴스가 로드 밸런서 뒤에서 실행될 때 필수적이 되는데, 이 경우 사용자가 다시 연결할 때 스트림이 시작된 서버가 아닌 다른 서버에 연결될 수 있기 때문입니다.
 
 ### 구성 [#configuration]
 

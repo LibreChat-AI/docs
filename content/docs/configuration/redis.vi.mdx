@@ -6,7 +6,7 @@ description: >-
   chiều ngang trong LibreChat
 ---
 
-Hướng dẫn này bao gồm cách cấu hình Redis để lưu trữ bộ nhớ đệm (caching) và phiên làm việc (session) trong LibreChat. Redis mang lại những cải thiện đáng kể về hiệu suất và là **yêu cầu bắt buộc để mở rộng theo chiều ngang**—nếu bạn đang chạy nhiều instance LibreChat phía sau một bộ cân bằng tải (load balancer), Redis sẽ đảm bảo trạng thái nhất quán trên tất cả các instance.
+Hướng dẫn này trình bày cách cấu hình Redis để lưu trữ bộ nhớ đệm (caching) và phiên làm việc (session storage) trong LibreChat. Redis mang lại cải thiện hiệu năng đáng kể và **bắt buộc đối với việc mở rộng theo chiều ngang (horizontal scaling)**. Nếu bạn đang chạy nhiều phiên bản LibreChat phía sau bộ cân bằng tải (load balancer), Redis đảm bảo trạng thái nhất quán giữa tất cả các phiên bản.
 
 ## Mục lục [#table-of-contents]
 
@@ -17,6 +17,7 @@ Hướng dẫn này bao gồm cách cấu hình Redis để lưu trữ bộ nh�
 - [Khôi phục sau lỗi chuyển đổi dự phòng bản sao](#replica-failover-recovery)
 - [Kiểm tra tình trạng hoạt động](#health-checks)
 - [Tối ưu hóa hiệu năng](#performance-tuning)
+- [Tinh chỉnh kết nối nâng cao](#advanced-connection-tuning)
 - [Các ví dụ về cấu hình](#configuration-examples)
 - [Luồng có thể tiếp tục](#resumable-streams)
 - [Khả năng tương thích với giao thức tạo (Generation Protocol Compatibility)](#generation-protocol-compatibility)
@@ -113,7 +114,7 @@ REDIS_USERNAME=your_redis_username
 REDIS_PASSWORD=your_redis_password
 ```
 
-**Lưu ý**: Các biến tên người dùng/mật khẩu riêng biệt sẽ ghi đè lên thông tin xác thực trong URI nếu cả hai đều được cung cấp.
+**Lưu ý**: Thông tin xác thực (credentials) được nhúng trong `REDIS_URI` sẽ được ưu tiên sử dụng. `REDIS_USERNAME` và `REDIS_PASSWORD` chỉ được dùng như phương án dự phòng khi URI không có tên người dùng hoặc mật khẩu.
 
 ### Cấu hình TLS [#tls-configuration]
 
@@ -273,35 +274,46 @@ Buộc các namespace bộ nhớ đệm cụ thể sử dụng bộ nhớ trong 
 
 ```bash
 # Comma-separated list of cache keys
-FORCED_IN_MEMORY_CACHE_NAMESPACES=ROLES,MESSAGES
+FORCED_IN_MEMORY_CACHE_NAMESPACES=CONFIG_STORE,APP_CONFIG,ROLES
 ```
+
+Khi không được thiết lập, giá trị mặc định là `CONFIG_STORE,APP_CONFIG`, vì vậy cấu hình lấy từ `librechat.yaml` sẽ được lưu riêng cho từng container. Thiết lập biến này sẽ **thay thế** giá trị mặc định thay vì bổ sung thêm vào, vì vậy hãy đưa `CONFIG_STORE,APP_CONFIG` vào danh sách của bạn trừ khi bạn muốn các namespace đó được lưu trong Redis. Đặt giá trị thành chuỗi rỗng để định tuyến tất cả các namespace qua Redis.
 
 Các khóa cache hợp lệ (từ enum `CacheKeys` trong `librechat-data-provider`):
 
-| Key                       | Description               |
-| ------------------------- | ------------------------- |
-| `CONFIG_STORE`            | Lưu trữ cấu hình          |
-| `ROLES`                   | Vai trò người dùng        |
-| `PLUGINS`                 | Dữ liệu plugin            |
-| `GEN_TITLE`               | Tiêu đề được tạo          |
-| `TOOLS`                   | Dữ liệu công cụ           |
-| `MODELS_CONFIG`           | Cấu hình model            |
-| `MODEL_QUERIES`           | Truy vấn model            |
-| `STARTUP_CONFIG`          | Cấu hình khởi động        |
-| `ENDPOINT_CONFIG`         | Cấu hình endpoint         |
-| `TOKEN_CONFIG`            | Cấu hình token            |
-| `APP_CONFIG`              | Cấu hình ứng dụng         |
-| `ABORT_KEYS`              | Phím hủy                  |
-| `BANS`                    | Dữ liệu cấm               |
-| `ENCODED_DOMAINS`         | Tên miền đã mã hóa        |
-| `AUDIO_RUNS`              | Các lần xử lý âm thanh    |
-| `MESSAGES`                | Tin nhắn                  |
-| `FLOWS`                   | Dữ liệu luồng             |
-| `PENDING_REQ`             | Yêu cầu đang chờ xử lý    |
-| `S3_EXPIRY_INTERVAL`      | Khoảng thời gian hết hạn S3 |
-| `OPENID_EXCHANGED_TOKENS` | Token trao đổi OpenID     |
-| `OPENID_SESSION`          | Phiên OpenID              |
-| `SAML_SESSION`            | Phiên SAML                |
+| Key | Mô tả |
+| --- | --- |
+| `CONFIG_STORE` | Kho lưu trữ cấu hình |
+| `TOOL_CACHE` | Bộ nhớ đệm công cụ (plugin, công cụ MCP, định nghĩa công cụ) |
+| `ROLES` | Vai trò người dùng |
+| `USER_PRINCIPALS` | Tư cách thành viên nhóm được dùng để xác định các principal ACL |
+| `PROMPT_GROUPS_ACCESS` | Tập hợp ID quyền truy cập nhóm prompt |
+| `AGENT_LINKED_INSTRUCTIONS` | Hướng dẫn đã được phân giải của các nhóm prompt được liên kết với một agent |
+| `SANDBOX_PREWARM` | Trạng thái khởi động sẵn sandbox mã theo từng cuộc hội thoại |
+| `GEN_TITLE` | Tiêu đề được tạo tự động |
+| `TOOLS` | Dữ liệu công cụ |
+| `MODELS_CONFIG` | Cấu hình mô hình |
+| `MODEL_QUERIES` | Truy vấn mô hình |
+| `STARTUP_CONFIG` | Cấu hình khởi động |
+| `ENDPOINT_CONFIG` | Cấu hình endpoint |
+| `TOKEN_CONFIG` | Cấu hình token |
+| `REASONING_CAPABILITIES` | Mức độ suy luận cho từng mô hình trên endpoint OpenRouter |
+| `PULL_REQUESTS` | Tra cứu pull request và thời gian chờ giới hạn tốc độ GitHub |
+| `APP_CONFIG` | Cấu hình ứng dụng |
+| `ABORT_KEYS` | Khóa hủy |
+| `BANS` | Dữ liệu cấm truy cập |
+| `ENCODED_DOMAINS` | Tên miền đã mã hóa |
+| `AUDIO_RUNS` | Các lượt xử lý âm thanh |
+| `MESSAGES` | Tin nhắn đang xử lý |
+| `FLOWS` | Trạng thái luồng đang xử lý |
+| `PENDING_REQ` | Yêu cầu đang chờ xử lý |
+| `S3_EXPIRY_INTERVAL` | Khoảng thời gian hết hạn S3 |
+| `OPENID_EXCHANGED_TOKENS` | Token OpenID đã trao đổi |
+| `AUTH_USER_DOC` | Tài liệu người dùng đã xác thực được lưu trong bộ nhớ đệm |
+| `OPENID_SESSION` | Phiên OpenID |
+| `SAML_SESSION` | Phiên SAML |
+| `ADMIN_OAUTH_EXCHANGE` | Mã trao đổi OAuth của bảng quản trị |
+| `PASSKEY_CHALLENGE` | Thử thách nghi thức passkey đang chờ xử lý |
 
 <Callout type="warn" title="Các khóa không hợp lệ">
   Việc sử dụng một khóa không hợp lệ (ví dụ: `STATIC_CONFIG` đã bị loại bỏ) sẽ gây ra lỗi khởi động. Chỉ sử dụng các khóa từ bảng trên.
@@ -325,6 +337,20 @@ Các khóa cache hợp lệ (từ enum `CacheKeys` trong `librechat-data-provide
 
 - **IoRedis client**: Các thao tác Redis chính với tiền tố tự động
 - **Keyv Redis client**: Các thao tác lớp lưu trữ với xử lý tiền tố trong `cacheFactory.js`
+
+### Điều chỉnh kết nối nâng cao [#advanced-connection-tuning]
+
+Các biến tùy chọn này điều chỉnh hành vi kết nối và các thao tác cache hàng loạt. Giá trị mặc định phù hợp với hầu hết các triển khai.
+
+| Biến | Mặc định | Mô tả |
+| --- | --- | --- |
+| `REDIS_CONNECT_TIMEOUT` | `10000` | Thời gian chờ kết nối, tính bằng mili giây. |
+| `REDIS_RETRY_MAX_ATTEMPTS` | `10` | Số lần thử kết nối lại tối đa trước khi từ bỏ. `0` nghĩa là thử lại vô thời hạn. |
+| `REDIS_RETRY_MAX_DELAY` | `3000` | Độ trễ tối đa giữa các lần thử kết nối lại, tính bằng mili giây. |
+| `REDIS_ENABLE_OFFLINE_QUEUE` | `true` | Xếp hàng các lệnh khi mất kết nối. Đặt thành `false` để các lệnh thất bại ngay lập tức. |
+| `REDIS_SCAN_COUNT` | `1000` | Gợi ý `COUNT` cho các thao tác `SCAN` khi tìm khóa theo mẫu. |
+| `REDIS_DELETE_CHUNK_SIZE` | `1000` | Số khóa được xóa mỗi lô trong các thao tác xóa hàng loạt. |
+| `MCP_REGISTRY_CACHE_TTL` | `5000` | Thời gian, tính bằng mili giây, mà bộ nhớ đệm registry MCP được giữ lại. Độ lỗi thời giữa các instance có thể lên tới gấp đôi giá trị này. `0` tắt bản snapshot cục bộ, do đó mọi lần đọc đều truy vấn Redis. |
 
 ### Tối ưu hóa bộ nhớ [#memory-optimization]
 
@@ -351,7 +377,7 @@ REDIS_CA=/etc/ssl/redis-ca.pem
 REDIS_KEY_PREFIX_VAR=DEPLOYMENT_ID
 REDIS_MAX_LISTENERS=100
 REDIS_PING_INTERVAL=300
-FORCED_IN_MEMORY_CACHE_NAMESPACES=ROLES,MESSAGES
+FORCED_IN_MEMORY_CACHE_NAMESPACES=CONFIG_STORE,APP_CONFIG,ROLES,MESSAGES
 ```
 
 ### Thiết lập Cluster [#cluster-setup]
@@ -370,7 +396,7 @@ Redis cho phép [Resumable Streams](/docs/features/resumable_streams) đối v�
 
 **Quan trọng:** Khi `USE_REDIS=true`, các luồng có thể tiếp tục (resumable streams) sẽ tự động sử dụng Redis để điều phối giữa các instance. Đây là thiết lập được khuyến nghị cho các triển khai mở rộng theo chiều ngang (horizontally scaled), nơi người dùng có thể kết nối với các instance máy chủ khác nhau.
 
-**Lưu ý:** Nếu bạn đang chạy một instance LibreChat đơn lẻ, Redis cho các luồng có thể tiếp tục (resumable streams) thường là không cần thiết—chế độ in-memory tích hợp sẵn đã hoạt động tốt. Redis trở nên cần thiết khi bạn có nhiều instance LibreChat phía sau bộ cân bằng tải (load balancer), nơi việc kết nối lại của người dùng có thể rơi vào một máy chủ khác với máy chủ nơi luồng của họ bắt đầu.
+**Lưu ý:** Nếu bạn chỉ chạy một phiên bản LibreChat duy nhất, Redis cho các luồng có thể tiếp tục (resumable streams) thường là không cần thiết; chế độ bộ nhớ trong (in-memory) tích hợp sẵn hoạt động tốt. Redis trở nên thiết yếu khi bạn có nhiều phiên bản LibreChat đứng sau một bộ cân bằng tải (load balancer), vì khi người dùng kết nối lại, yêu cầu có thể được chuyển đến một máy chủ khác với máy chủ nơi luồng đã bắt đầu.
 
 ### Cấu hình [#configuration]
 

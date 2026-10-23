@@ -6,7 +6,7 @@ description: >-
   LibreChat
 ---
 
-Panduan ini membahas cara mengonfigurasi Redis untuk caching dan penyimpanan sesi di LibreChat. Redis memberikan peningkatan performa yang signifikan dan **diperlukan untuk penskalaan horizontal**—jika Anda menjalankan beberapa instance LibreChat di belakang load balancer, Redis memastikan status yang konsisten di semua instance.
+Panduan ini membahas cara mengonfigurasi Redis untuk caching dan penyimpanan sesi di LibreChat. Redis memberikan peningkatan performa yang signifikan dan **wajib digunakan untuk horizontal scaling**. Jika Anda menjalankan beberapa instance LibreChat di belakang load balancer, Redis memastikan status yang konsisten di seluruh instance.
 
 ## Daftar Isi [#table-of-contents]
 
@@ -17,6 +17,7 @@ Panduan ini membahas cara mengonfigurasi Redis untuk caching dan penyimpanan ses
 - [Pemulihan Failover Replika](#replica-failover-recovery)
 - [Pemeriksaan Kesehatan](#health-checks)
 - [Penyesuaian Performa](#performance-tuning)
+- [Pengaturan Lanjutan Koneksi](#advanced-connection-tuning)
 - [Contoh Konfigurasi](#configuration-examples)
 - [Resumable Streams](#resumable-streams)
 - [Kompatibilitas Protokol Generasi](#generation-protocol-compatibility)
@@ -113,7 +114,7 @@ REDIS_USERNAME=your_redis_username
 REDIS_PASSWORD=your_redis_password
 ```
 
-**Catatan**: Variabel username/password terpisah akan mengesampingkan kredensial di dalam URI jika keduanya disediakan.
+**Catatan**: Kredensial yang disematkan di `REDIS_URI` lebih diutamakan. `REDIS_USERNAME` dan `REDIS_PASSWORD` hanya digunakan sebagai cadangan ketika URI tidak memiliki username atau password.
 
 ### Konfigurasi TLS [#tls-configuration]
 
@@ -273,35 +274,46 @@ Paksa namespace cache tertentu untuk menggunakan penyimpanan in-memory meskipun 
 
 ```bash
 # Comma-separated list of cache keys
-FORCED_IN_MEMORY_CACHE_NAMESPACES=ROLES,MESSAGES
+FORCED_IN_MEMORY_CACHE_NAMESPACES=CONFIG_STORE,APP_CONFIG,ROLES
 ```
+
+Ketika tidak diatur, nilai defaultnya adalah `CONFIG_STORE,APP_CONFIG`, sehingga konfigurasi yang berasal dari `librechat.yaml` tetap berada di setiap container. Mengatur variabel ini **menggantikan** nilai default, bukan menambahkannya, jadi sertakan `CONFIG_STORE,APP_CONFIG` dalam daftar Anda kecuali Anda ingin namespace tersebut disimpan di Redis. Atur variabel ini ke string kosong untuk mengarahkan semua namespace melalui Redis.
 
 Kunci cache yang valid (dari enum `CacheKeys` di `librechat-data-provider`):
 
-| Key                       | Description               |
-| ------------------------- | ------------------------- |
-| `CONFIG_STORE`            | Penyimpanan konfigurasi   |
-| `ROLES`                   | Peran pengguna            |
-| `PLUGINS`                 | Data plugin               |
-| `GEN_TITLE`               | Judul yang dihasilkan     |
-| `TOOLS`                   | Data alat                 |
-| `MODELS_CONFIG`           | Konfigurasi model         |
-| `MODEL_QUERIES`           | Kueri model               |
-| `STARTUP_CONFIG`          | Konfigurasi awal          |
-| `ENDPOINT_CONFIG`         | Konfigurasi endpoint      |
-| `TOKEN_CONFIG`            | Konfigurasi token         |
-| `APP_CONFIG`              | Konfigurasi aplikasi      |
-| `ABORT_KEYS`              | Kunci pembatalan          |
-| `BANS`                    | Data pemblokiran          |
-| `ENCODED_DOMAINS`         | Domain terenkripsi        |
-| `AUDIO_RUNS`              | Proses pemrosesan audio   |
-| `MESSAGES`                | Pesan                     |
-| `FLOWS`                   | Data alur                 |
-| `PENDING_REQ`             | Permintaan tertunda       |
-| `S3_EXPIRY_INTERVAL`      | Interval kedaluwarsa S3   |
-| `OPENID_EXCHANGED_TOKENS` | Token yang ditukar OpenID |
-| `OPENID_SESSION`          | Sesi OpenID               |
-| `SAML_SESSION`            | Sesi SAML                 |
+| Key | Description |
+| --- | --- |
+| `CONFIG_STORE` | Penyimpanan konfigurasi |
+| `TOOL_CACHE` | Cache alat (plugin, alat MCP, definisi alat) |
+| `ROLES` | Peran pengguna |
+| `USER_PRINCIPALS` | Keanggotaan grup yang digunakan untuk menyelesaikan principal ACL |
+| `PROMPT_GROUPS_ACCESS` | Kumpulan ID akses grup prompt |
+| `AGENT_LINKED_INSTRUCTIONS` | Instruksi yang telah diselesaikan dari grup prompt yang ditautkan ke agen |
+| `SANDBOX_PREWARM` | Status pemanasan awal sandbox kode per percakapan |
+| `GEN_TITLE` | Judul yang dihasilkan |
+| `TOOLS` | Data alat |
+| `MODELS_CONFIG` | Konfigurasi model |
+| `MODEL_QUERIES` | Kueri model |
+| `STARTUP_CONFIG` | Konfigurasi startup |
+| `ENDPOINT_CONFIG` | Konfigurasi endpoint |
+| `TOKEN_CONFIG` | Konfigurasi token |
+| `REASONING_CAPABILITIES` | Tingkat upaya penalaran per model untuk endpoint OpenRouter |
+| `PULL_REQUESTS` | Pencarian pull request dan masa tunggu batas laju GitHub |
+| `APP_CONFIG` | Konfigurasi aplikasi |
+| `ABORT_KEYS` | Kunci pembatalan |
+| `BANS` | Data pemblokiran |
+| `ENCODED_DOMAINS` | Domain yang dienkode |
+| `AUDIO_RUNS` | Proses pemrosesan audio |
+| `MESSAGES` | Pesan yang sedang diproses |
+| `FLOWS` | Status alur yang sedang berjalan |
+| `PENDING_REQ` | Permintaan yang tertunda |
+| `S3_EXPIRY_INTERVAL` | Interval kedaluwarsa S3 |
+| `OPENID_EXCHANGED_TOKENS` | Token OpenID yang ditukar |
+| `AUTH_USER_DOC` | Dokumen pengguna terautentikasi yang di-cache |
+| `OPENID_SESSION` | Sesi OpenID |
+| `SAML_SESSION` | Sesi SAML |
+| `ADMIN_OAUTH_EXCHANGE` | Kode pertukaran OAuth panel admin |
+| `PASSKEY_CHALLENGE` | Tantangan seremoni passkey yang tertunda |
 
 <Callout type="warn" title="Kunci tidak valid">
   Menggunakan kunci yang tidak valid (contohnya, `STATIC_CONFIG` yang sudah tidak digunakan lagi) akan menyebabkan kesalahan saat memulai. Hanya gunakan kunci dari tabel di atas.
@@ -325,6 +337,20 @@ Aplikasi ini menggunakan pendekatan klien ganda:
 
 - **Klien IoRedis**: Operasi Redis utama dengan pemberian awalan otomatis
 - **Klien Keyv Redis**: Operasi lapisan penyimpanan dengan penanganan awalan di `cacheFactory.js`
+
+### Pengaturan Lanjutan Koneksi [#advanced-connection-tuning]
+
+Variabel opsional ini mengatur perilaku koneksi dan operasi cache massal. Nilai default sudah sesuai untuk sebagian besar deployment.
+
+| Variabel | Default | Deskripsi |
+| --- | --- | --- |
+| `REDIS_CONNECT_TIMEOUT` | `10000` | Batas waktu koneksi dalam milidetik. |
+| `REDIS_RETRY_MAX_ATTEMPTS` | `10` | Jumlah maksimum percobaan koneksi ulang sebelum menyerah. `0` berarti mencoba ulang tanpa batas. |
+| `REDIS_RETRY_MAX_DELAY` | `3000` | Jeda maksimum antara percobaan koneksi ulang, dalam milidetik. |
+| `REDIS_ENABLE_OFFLINE_QUEUE` | `true` | Antrikan perintah saat tidak terhubung. Atur ke `false` untuk langsung menggagalkannya. |
+| `REDIS_SCAN_COUNT` | `1000` | Petunjuk `COUNT` untuk operasi `SCAN` saat mencari kunci berdasarkan pola. |
+| `REDIS_DELETE_CHUNK_SIZE` | `1000` | Jumlah kunci yang dihapus per batch dalam penghapusan massal. |
+| `MCP_REGISTRY_CACHE_TTL` | `5000` | Lama waktu dalam milidetik cache registri MCP disimpan. Ketidaksinkronan antar-instans dapat mencapai dua kali nilai ini. `0` menonaktifkan snapshot lokal, sehingga setiap pembacaan dikirim ke Redis. |
 
 ### Optimalisasi Memori [#memory-optimization]
 
@@ -351,7 +377,7 @@ REDIS_CA=/etc/ssl/redis-ca.pem
 REDIS_KEY_PREFIX_VAR=DEPLOYMENT_ID
 REDIS_MAX_LISTENERS=100
 REDIS_PING_INTERVAL=300
-FORCED_IN_MEMORY_CACHE_NAMESPACES=ROLES,MESSAGES
+FORCED_IN_MEMORY_CACHE_NAMESPACES=CONFIG_STORE,APP_CONFIG,ROLES,MESSAGES
 ```
 
 ### Pengaturan Klaster [#cluster-setup]
@@ -370,7 +396,7 @@ Redis mengaktifkan [Resumable Streams](/docs/features/resumable_streams) untuk d
 
 **Penting:** Saat `USE_REDIS=true`, aliran yang dapat dilanjutkan (resumable streams) secara otomatis menggunakan Redis untuk koordinasi lintas instans. Ini adalah pengaturan yang direkomendasikan untuk penyebaran berskala horizontal di mana pengguna mungkin terhubung ke instans server yang berbeda.
 
-**Catatan:** Jika Anda menjalankan satu instans LibreChat, Redis untuk *resumable streams* biasanya berlebihan—mode *in-memory* bawaan sudah berfungsi dengan baik. Redis menjadi penting ketika Anda memiliki beberapa instans LibreChat di belakang *load balancer*, di mana penyambungan kembali pengguna mungkin diarahkan ke server yang berbeda dari tempat *stream* mereka dimulai.
+**Catatan:** Jika Anda menjalankan satu instans LibreChat, Redis untuk resumable streams biasanya berlebihan; mode in-memory bawaan sudah berfungsi dengan baik. Redis menjadi penting ketika Anda memiliki beberapa instans LibreChat di belakang load balancer, di mana koneksi ulang pengguna dapat mengarah ke server yang berbeda dari tempat stream dimulai.
 
 ### Konfigurasi [#configuration]
 

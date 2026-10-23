@@ -6,7 +6,7 @@ description: >-
   horizontal no LibreChat
 ---
 
-Este guia aborda como configurar o Redis para cache e armazenamento de sessão no LibreChat. O Redis oferece melhorias significativas de desempenho e é **necessário para escalonamento horizontal** — se você estiver executando múltiplas instâncias do LibreChat atrás de um balanceador de carga, o Redis garante um estado consistente em todas as instâncias.
+Este guia aborda como configurar o Redis para cache e armazenamento de sessões no LibreChat. O Redis oferece melhorias significativas de desempenho e é **obrigatório para escalonamento horizontal**. Se você estiver executando várias instâncias do LibreChat atrás de um balanceador de carga, o Redis garante um estado consistente entre todas as instâncias.
 
 ## Sumário [#table-of-contents]
 
@@ -17,6 +17,7 @@ Este guia aborda como configurar o Redis para cache e armazenamento de sessão n
 - [Recuperação de Failover de Réplica](#replica-failover-recovery)
 - [Verificações de Saúde](#health-checks)
 - [Ajuste de Desempenho](#performance-tuning)
+- [Ajuste Avançado de Conexão](#advanced-connection-tuning)
 - [Exemplos de Configuração](#configuration-examples)
 - [Resumable Streams](#resumable-streams)
 - [Compatibilidade do Protocolo de Geração](#generation-protocol-compatibility)
@@ -113,7 +114,7 @@ REDIS_USERNAME=your_redis_username
 REDIS_PASSWORD=your_redis_password
 ```
 
-**Nota**: Variáveis de nome de usuário/senha separadas substituem as credenciais na URI caso ambas sejam fornecidas.
+**Nota**: As credenciais incorporadas em `REDIS_URI` têm precedência. `REDIS_USERNAME` e `REDIS_PASSWORD` são usados apenas como alternativa quando a URI não possui nome de usuário ou senha.
 
 ### Configuração de TLS [#tls-configuration]
 
@@ -273,35 +274,46 @@ Forçar namespaces de cache específicos a usar armazenamento em memória mesmo 
 
 ```bash
 # Comma-separated list of cache keys
-FORCED_IN_MEMORY_CACHE_NAMESPACES=ROLES,MESSAGES
+FORCED_IN_MEMORY_CACHE_NAMESPACES=CONFIG_STORE,APP_CONFIG,ROLES
 ```
+
+Quando não definida, o padrão é `CONFIG_STORE,APP_CONFIG`, de modo que a configuração derivada do `librechat.yaml` permanece por contêiner. Definir esta variável **substitui** o padrão em vez de acrescentar a ele; por isso, inclua `CONFIG_STORE,APP_CONFIG` na sua lista, a menos que você queira esses namespaces no Redis. Defina-a como uma string vazia para direcionar todos os namespaces para o Redis.
 
 Chaves de cache válidas (do enum `CacheKeys` em `librechat-data-provider`):
 
-| Chave                     | Descrição                 |
-| ------------------------- | ------------------------- |
-| `CONFIG_STORE`            | Armazenamento de configuração |
-| `ROLES`                   | Funções de usuário        |
-| `PLUGINS`                 | Dados de plugins          |
-| `GEN_TITLE`               | Títulos gerados           |
-| `TOOLS`                   | Dados de ferramentas      |
-| `MODELS_CONFIG`           | Configuração de modelos   |
-| `MODEL_QUERIES`           | Consultas de modelos      |
-| `STARTUP_CONFIG`          | Configuração de inicialização |
-| `ENDPOINT_CONFIG`         | Configuração de endpoint  |
-| `TOKEN_CONFIG`            | Configuração de token     |
-| `APP_CONFIG`              | Configuração do aplicativo |
-| `ABORT_KEYS`              | Chaves de interrupção     |
-| `BANS`                    | Dados de banimentos       |
-| `ENCODED_DOMAINS`         | Domínios codificados      |
-| `AUDIO_RUNS`              | Execuções de processamento de áudio |
-| `MESSAGES`                | Mensagens                 |
-| `FLOWS`                   | Dados de fluxos           |
-| `PENDING_REQ`             | Requisições pendentes     |
-| `S3_EXPIRY_INTERVAL`      | Intervalos de expiração S3 |
-| `OPENID_EXCHANGED_TOKENS` | Tokens trocados OpenID    |
-| `OPENID_SESSION`          | Sessões OpenID            |
-| `SAML_SESSION`            | Sessões SAML              |
+| Chave | Descrição |
+| --- | --- |
+| `CONFIG_STORE` | Armazenamento de configuração |
+| `TOOL_CACHE` | Cache de ferramentas (plugins, ferramentas MCP, definições de ferramentas) |
+| `ROLES` | Funções de usuário |
+| `USER_PRINCIPALS` | Associações de grupo usadas para resolver principais de ACL |
+| `PROMPT_GROUPS_ACCESS` | Conjuntos de IDs de acesso a grupos de prompts |
+| `AGENT_LINKED_INSTRUCTIONS` | Instruções resolvidas dos grupos de prompts vinculados a um agente |
+| `SANDBOX_PREWARM` | Estado de pré-aquecimento do sandbox de código por conversa |
+| `GEN_TITLE` | Títulos gerados |
+| `TOOLS` | Dados de ferramentas |
+| `MODELS_CONFIG` | Configuração de modelos |
+| `MODEL_QUERIES` | Consultas de modelos |
+| `STARTUP_CONFIG` | Configuração de inicialização |
+| `ENDPOINT_CONFIG` | Configuração de endpoints |
+| `TOKEN_CONFIG` | Configuração de tokens |
+| `REASONING_CAPABILITIES` | Esforço de raciocínio por modelo para endpoints OpenRouter |
+| `PULL_REQUESTS` | Consultas de pull requests e períodos de espera por limite de taxa do GitHub |
+| `APP_CONFIG` | Configuração da aplicação |
+| `ABORT_KEYS` | Chaves de cancelamento |
+| `BANS` | Dados de banimento |
+| `ENCODED_DOMAINS` | Domínios codificados |
+| `AUDIO_RUNS` | Execuções de processamento de áudio |
+| `MESSAGES` | Mensagens em andamento |
+| `FLOWS` | Estados de fluxos em andamento |
+| `PENDING_REQ` | Requisições pendentes |
+| `S3_EXPIRY_INTERVAL` | Intervalos de expiração do S3 |
+| `OPENID_EXCHANGED_TOKENS` | Tokens OpenID trocados |
+| `AUTH_USER_DOC` | Documentos de usuário autenticado em cache |
+| `OPENID_SESSION` | Sessões OpenID |
+| `SAML_SESSION` | Sessões SAML |
+| `ADMIN_OAUTH_EXCHANGE` | Códigos de troca OAuth do painel de administração |
+| `PASSKEY_CHALLENGE` | Desafios de cerimônia de passkey pendentes |
 
 <Callout type="warn" title="Chaves inválidas">
   Usar uma chave inválida (por exemplo, a obsoleta `STATIC_CONFIG`) causará um erro na inicialização. Use apenas as chaves da tabela acima.
@@ -325,6 +337,20 @@ A aplicação utiliza uma abordagem de cliente duplo:
 
 - **Cliente IoRedis**: Operações primárias de Redis com prefixação automática
 - **Cliente Keyv Redis**: Operações da camada de armazenamento com manipulação de prefixo em `cacheFactory.js`
+
+### Ajuste Avançado de Conexão [#advanced-connection-tuning]
+
+Essas variáveis opcionais ajustam o comportamento das conexões e as operações de cache em massa. Os valores padrão atendem à maioria das implantações.
+
+| Variável | Padrão | Descrição |
+| --- | --- | --- |
+| `REDIS_CONNECT_TIMEOUT` | `10000` | Tempo limite de conexão em milissegundos. |
+| `REDIS_RETRY_MAX_ATTEMPTS` | `10` | Número máximo de tentativas de reconexão antes de desistir. `0` tenta indefinidamente. |
+| `REDIS_RETRY_MAX_DELAY` | `3000` | Atraso máximo entre as tentativas de reconexão, em milissegundos. |
+| `REDIS_ENABLE_OFFLINE_QUEUE` | `true` | Enfileira comandos enquanto desconectado. Defina como `false` para falhar imediatamente. |
+| `REDIS_SCAN_COUNT` | `1000` | Dica `COUNT` para operações `SCAN` ao localizar chaves por padrão. |
+| `REDIS_DELETE_CHUNK_SIZE` | `1000` | Número de chaves excluídas por lote em exclusões em massa. |
+| `MCP_REGISTRY_CACHE_TTL` | `5000` | Milissegundos pelos quais os caches do registro MCP são mantidos. A desatualização entre instâncias pode chegar ao dobro desse valor. `0` desativa o snapshot local, de modo que cada leitura vai ao Redis. |
 
 ### Otimização de Memória [#memory-optimization]
 
@@ -351,7 +377,7 @@ REDIS_CA=/etc/ssl/redis-ca.pem
 REDIS_KEY_PREFIX_VAR=DEPLOYMENT_ID
 REDIS_MAX_LISTENERS=100
 REDIS_PING_INTERVAL=300
-FORCED_IN_MEMORY_CACHE_NAMESPACES=ROLES,MESSAGES
+FORCED_IN_MEMORY_CACHE_NAMESPACES=CONFIG_STORE,APP_CONFIG,ROLES,MESSAGES
 ```
 
 ### Configuração de Cluster [#cluster-setup]
@@ -370,7 +396,7 @@ O Redis habilita [Resumable Streams](/docs/features/resumable_streams) para impl
 
 **Importante:** Quando `USE_REDIS=true`, os streams retomáveis usam automaticamente o Redis para coordenação entre instâncias. Esta é a configuração recomendada para implantações com escalonamento horizontal, onde os usuários podem se conectar a diferentes instâncias de servidor.
 
-**Nota:** Se você estiver executando uma única instância do LibreChat, o Redis para fluxos (streams) retomáveis geralmente é um exagero — o modo em memória integrado funciona perfeitamente. O Redis torna-se essencial quando você tem múltiplas instâncias do LibreChat atrás de um balanceador de carga, onde a reconexão de um usuário pode atingir um servidor diferente daquele onde o fluxo começou.
+**Nota:** Se você estiver executando uma única instância do LibreChat, o Redis para streams retomáveis normalmente é desnecessário; o modo padrão em memória funciona bem. O Redis se torna essencial quando você tem várias instâncias do LibreChat atrás de um balanceador de carga, onde a reconexão de um usuário pode cair em um servidor diferente daquele em que o stream foi iniciado.
 
 ### Configuração [#configuration]
 

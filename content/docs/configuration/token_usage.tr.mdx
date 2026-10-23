@@ -65,7 +65,7 @@ endpoints:
           context: 128000
 ```
 
-Her model girişi için `prompt`, `completion` ve `context` gereklidir. Önbelleğe alınmış girdi kullanımını raporlayan sağlayıcılar için `cacheRead` ve `cacheWrite` eklenebilir. Birden fazla endpoint kullanan Ajanlar için LibreChat, kullanım ve maliyeti kaydederken eşleşen endpoint/model token yapılandırmasını kullanır.
+`prompt`, `completion` ve `context` her model girişi için zorunludur. `cacheRead`, `cacheWrite` ve `cacheWrite1h` (`prompt` değerinin iki katı olan, belirtilmediğinde varsayılan olarak kullanılan bir saatlik önbellek yazma oranı) önbelleğe alınmış girdi kullanımını raporlayan sağlayıcılar için eklenebilir. Birden fazla endpoint kullanan Agent'lar için LibreChat, kullanımı ve maliyeti kaydederken eşleşen endpoint/model token yapılandırmasını kullanır.
 
 Getirilen token yapılandırması, endpoint modelleri, anahtarlar, URL'ler veya başlıklar istek bağlamına göre değişebildiğinde kullanıcı kapsamıyla önbelleğe alınır; böylece izole edilmiş özel endpoint fiyatlandırması ve bağlam pencereleri ayrı tutulur.
 
@@ -108,6 +108,9 @@ balance:
   refillIntervalValue: 30 # Numerical value for refill interval
   refillIntervalUnit: 'days' # Time unit for refill interval (days, hours, etc.)
   refillAmount: 10000 # Tokens added during each refill
+  refillMode: 'add' # 'add' or 'reset'
+  reservationTtlMs: 1800000 # How long an in-flight reservation counts against the balance
+  display: 'credits' # 'credits', 'currency', or 'percent'
 ```
 
 ### Bakiye Ayarları Açıklandı [#balance-settings-explained]
@@ -122,11 +125,19 @@ balance:
 
 - **refillIntervalUnit**: Yenileme aralığı için zaman birimini belirtir. Desteklenen değerler arasında "seconds", "minutes", "hours", "days", "weeks" ve "months" bulunur.
 
-- **refillAmount**: Her otomatik yenileme sırasında kullanıcının bakiyesine eklenecek token sayısını belirtir.
+- **refillAmount**: Her otomatik yenileme sırasında kullanıcının bakiyesine eklenecek token sayısını belirtir. `refillMode: 'reset'` ile kullanıldığında, bakiyenin sıfırlanacağı tutardır.
+
+- **refillMode**: `add` (varsayılan) mevcut bakiyeye `refillAmount` değerini ekler. `reset` ise yenileme aralığı geldiğinde bakiyeyi `refillAmount` değeriyle değiştirir. `reset` kullanılabilmesi için `refillIntervalValue` değerinin pozitif bir tam sayı olması gerekir.
+
+- **reservationTtlMs**: Serbest bırakılmamış, işlemdeki bir bakiye rezervasyonunun bakiyeye ne kadar süre boyunca dahil edilmeye devam edeceğini milisaniye cinsinden belirtir. Varsayılan: `1800000` (30 dakika). Minimum: `10000`.
+
+- **display**: Bakiyenin arayüzde nasıl gösterileceği: `credits` (varsayılan) ham değeri gösterir, `currency` para birimi karşılığını gösterir ve `percent` dönemin tahsisinin ne kadarının zaten harcandığını yüzde olarak gösterir.
 
 Daha fazla ayrıntı için [Balance Configuration](/docs/configuration/librechat_yaml/object_structure/balance) sayfasına göz atın.
 
 ## Otomatik Yenileme (Auto-Refill) Nasıl Çalışır [#how-auto-refill-works]
+
+Varsayılan `add` modunu aşağıdaki süreç açıklamaktadır. `refillMode: 'reset'` ile bakiye, tükendiğinde yeniden doldurulmaz. Bunun yerine, yenileme aralığı geldiğinde bakiye, kullanıcının bir sonraki bakiye okumasında veya isteğinde `refillAmount` değeriyle değiştirilir; böylece kullanılmayan krediler bir sonraki döneme devredilmez.
 
 Bir kullanıcının bakiyesi takip edildiğinde ve **autoRefill** etkinleştirildiğinde, sistem bakiyeye yalnızca son yüklemeden bu yana belirtilen zaman aralığı geçtiğinde otomatik olarak kredi ekler. Bu, mevcut tarihin `lastRefill` tarihi ile belirtilen aralığın toplamı ile karşılaştırılmasıyla gerçekleştirilir.
 
@@ -237,9 +248,9 @@ Bu, kişisel kullanımınız için kendi kullanımınızı takip etmek adına iy
 
 - Özetleme etkinleştirildiğinde, özetlemeniz gereken içeriğin maliyeti + mesaj yükünüzün toplamı mevcut bakiyenizi aşarsa API isteği yapmanız engellenecektir.
 - Alt temsilci (subagent) alt çalıştırma modeli kullanımı, üst işlem üzerinden kaydedilir; böylece üst temsilci çalıştırmaları, devredilen kullanımı toplamlarına dahil eder.
-- İstem belirteçlerini (Prompt tokens) saymak OpenAI çağrıları için oldukça doğrudur, ancak eklentiler (plugins) için %100 kesin değildir (işlev çağırma nedeniyle). Oldukça yakın ve ihtiyatlıdır, yani sayımı 2-5 belirteç kadar daha yüksek olabilir.
+- Öğelerin sayılması OpenAI çağrılarında doğrudur, ancak fonksiyon çağrısı söz konusu olduğunda tam olarak kesin değildir. Sayım yaklaşık ve temkinlidir; yani sayılan değer gerçek değerden 2-5 token kadar fazla olabilir.
 - Sistem, tamamlama belirteçleri (completion tokens) tarafından oluşturulan açıklara izin verir. Yalnızca istem (prompt) belirteçleri için yeterli bakiyenizin olup olmadığını kontrol eder ve tamamlama konusunda oldukça esnektir. Aşağıdaki grafik mantığı detaylandırmaktadır.
-- Bununla birlikte, süreç birden fazla API çağrısıyla çalıştığından, eklentiler her üretim adımında kontrol edilir. LLM'in ilk kullanıcı isteminden bu yana ürettiği her şey, aşağıda görüldüğü gibi hata mesajında kullanıcıyla paylaşılır.
+- Araç kullanan agent'lar gibi birden fazla API çağrısı yapan çalıştırmalar, her üretim adımında kontrol edilir. LLM'in ilk kullanıcı isteminden bu yana ürettiği her şey, aşağıda görüldüğü gibi hata mesajında kullanıcıyla paylaşılır.
 - Bu 2 adımlı bir süreç olduğundan, başlıklandırma için 150 token'lık bir tampon bellek bulunur ve bu toplamda ortalama 200 token'a denk gelir. Yetersiz bakiye durumunda, başlıklandırma herhangi bir harcama gerçekleşmeden iptal edilir ve hiçbir hata döndürülmez.
 
 ![image](https://github.com/danny-avila/LibreChat/assets/110412045/78175053-9c38-44c8-9b56-4b81df61049e)

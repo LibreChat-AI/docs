@@ -64,7 +64,7 @@ endpoints:
           context: 128000
 ```
 
-`prompt`, `completion`, và `context` là bắt buộc cho mỗi mục model. `cacheRead` và `cacheWrite` có thể được thêm vào cho các nhà cung cấp báo cáo mức sử dụng đầu vào được lưu trong bộ nhớ đệm (cached input). Đối với các Agent sử dụng nhiều endpoint, LibreChat sử dụng cấu hình token của endpoint/model tương ứng khi ghi lại mức sử dụng và chi phí.
+`prompt`, `completion` và `context` là các trường bắt buộc đối với mỗi mục mô hình. Có thể thêm `cacheRead`, `cacheWrite` và `cacheWrite1h` (mức phí ghi cache một giờ, bằng hai lần `prompt` nếu bỏ qua) cho các nhà cung cấp có báo cáo lượng đầu vào đã được cache. Đối với Agent sử dụng nhiều endpoint, LibreChat sử dụng cấu hình token của endpoint/mô hình tương ứng khi ghi nhận lượng sử dụng và chi phí.
 
 Cấu hình token được lấy về sẽ được lưu vào bộ nhớ đệm theo phạm vi người dùng khi các endpoint models, keys, URLs hoặc headers có thể thay đổi theo ngữ cảnh yêu cầu, nhờ đó việc định giá và cửa sổ ngữ cảnh của endpoint tùy chỉnh được cách ly sẽ luôn tách biệt.
 
@@ -107,6 +107,9 @@ balance:
   refillIntervalValue: 30 # Numerical value for refill interval
   refillIntervalUnit: 'days' # Time unit for refill interval (days, hours, etc.)
   refillAmount: 10000 # Tokens added during each refill
+  refillMode: 'add' # 'add' or 'reset'
+  reservationTtlMs: 1800000 # How long an in-flight reservation counts against the balance
+  display: 'credits' # 'credits', 'currency', or 'percent'
 ```
 
 ### Giải thích các thiết lập số dư (Balance Settings) [#balance-settings-explained]
@@ -121,11 +124,19 @@ balance:
 
 - **refillIntervalUnit**: Chỉ định đơn vị thời gian cho khoảng thời gian nạp lại. Các giá trị được hỗ trợ bao gồm "seconds", "minutes", "hours", "days", "weeks" và "months".
 
-- **refillAmount**: Chỉ định số lượng token sẽ được thêm vào số dư của người dùng trong mỗi lần nạp tự động.
+- **refillAmount**: Chỉ định số lượng token sẽ được cộng vào số dư của người dùng trong mỗi lần nạp tự động. Khi `refillMode: 'reset'`, đây là số lượng mà số dư sẽ được đặt lại về.
+
+- **refillMode**: `add` (mặc định) cộng `refillAmount` vào số dư hiện tại. `reset` thay thế số dư bằng `refillAmount` khi đến hạn chu kỳ nạp lại. `reset` yêu cầu `refillIntervalValue` phải là một số nguyên dương.
+
+- **reservationTtlMs**: Thời gian (tính bằng mili giây) mà một khoản đặt trước số dư đang xử lý, chưa được giải phóng, tiếp tục được tính vào số dư. Mặc định: `1800000` (30 phút). Tối thiểu: `10000`.
+
+- **display**: Cách giao diện hiển thị số dư: `credits` (mặc định) hiển thị số liệu thô, `currency` hiển thị giá trị quy đổi thành tiền tệ, và `percent` hiển thị tỷ lệ đã sử dụng so với hạn mức được cấp trong kỳ.
 
 Xem trang [Balance Configuration](/docs/configuration/librechat_yaml/object_structure/balance) để biết thêm chi tiết.
 
 ## Cách thức hoạt động của Auto-Refill [#how-auto-refill-works]
+
+Quy trình dưới đây mô tả chế độ `add` mặc định. Với `refillMode: 'reset'`, số dư sẽ không được nạp thêm khi hết. Thay vào đó, khi đến thời điểm nạp lại theo chu kỳ, số dư sẽ được thay thế bằng `refillAmount` ở lần đọc số dư hoặc yêu cầu tiếp theo của người dùng, nên các credit chưa sử dụng sẽ không được chuyển sang kỳ sau.
 
 Khi số dư của người dùng được theo dõi và tính năng **autoRefill** được bật, hệ thống sẽ tự động cộng thêm tín dụng vào số dư chỉ khi khoảng thời gian xác định đã trôi qua kể từ lần nạp gần nhất. Điều này đạt được bằng cách so sánh ngày hiện tại với ngày `lastRefill` cộng với khoảng thời gian đã chỉ định.
 
@@ -236,9 +247,9 @@ Cách này hoạt động hiệu quả để theo dõi mức sử dụng của r
 
 - Khi tính năng tóm tắt được bật, bạn sẽ bị chặn thực hiện yêu cầu API nếu chi phí của nội dung bạn cần tóm tắt + payload tin nhắn của bạn vượt quá số dư hiện tại.
 - Việc sử dụng mô hình của Subagent child-run được ghi lại dựa trên giao dịch gốc, do đó các lượt chạy của agent gốc sẽ bao gồm cả mức sử dụng được ủy quyền trong tổng số của chúng.
-- Việc đếm token của Prompt thực sự chính xác đối với các lệnh gọi OpenAI, nhưng không chính xác 100% đối với các plugin (do việc gọi hàm). Con số này rất sát và mang tính thận trọng, nghĩa là số lượng đếm được có thể cao hơn từ 2-5 token.
+- Việc đếm số token prompt là chính xác đối với các lệnh gọi OpenAI, nhưng không hoàn toàn chính xác khi có sử dụng gọi hàm (function calling). Kết quả gần đúng và mang tính bảo thủ, nghĩa là số lượng đếm được có thể cao hơn từ 2-5 token.
 - Hệ thống cho phép thâm hụt phát sinh từ các completion tokens. Hệ thống chỉ kiểm tra xem bạn có đủ số dư cho các prompt Tokens hay không, và khá linh hoạt đối với phần completion. Biểu đồ dưới đây trình bày chi tiết logic này.
-- Như đã nói ở trên, các plugin được kiểm tra tại mỗi bước tạo phản hồi, vì quy trình này hoạt động với nhiều lệnh gọi API. Bất kỳ nội dung nào mà LLM đã tạo kể từ lời nhắc ban đầu của người dùng đều được chia sẻ với người dùng trong thông báo lỗi như dưới đây.
+- Các lần chạy thực hiện nhiều lệnh gọi API, chẳng hạn như agent sử dụng công cụ, được kiểm tra ở mỗi bước tạo nội dung. Bất kỳ nội dung nào mà LLM đã tạo kể từ lời nhắc ban đầu của người dùng đều được hiển thị cho người dùng trong thông báo lỗi, như được minh họa bên dưới.
 - Có một bộ đệm 150 token cho việc đặt tiêu đề vì đây là quy trình gồm 2 bước, trung bình khoảng 200 token tổng cộng. Trong trường hợp không đủ kinh phí, việc đặt tiêu đề sẽ bị hủy trước khi bất kỳ khoản chi tiêu nào xảy ra và không có lỗi nào được đưa ra.
 
 ![image](https://github.com/danny-avila/LibreChat/assets/110412045/78175053-9c38-44c8-9b56-4b81df61049e)

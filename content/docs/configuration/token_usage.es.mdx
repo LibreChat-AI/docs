@@ -64,7 +64,7 @@ endpoints:
           context: 128000
 ```
 
-`prompt`, `completion` y `context` son obligatorios para cada entrada de modelo. `cacheRead` y `cacheWrite` pueden añadirse para proveedores que reportan el uso de entrada en caché. Para los Agentes que utilizan múltiples endpoints, LibreChat utiliza la configuración de tokens del endpoint/modelo correspondiente al registrar el uso y el costo.
+`prompt`, `completion` y `context` son obligatorios para cada entrada de modelo. `cacheRead`, `cacheWrite` y `cacheWrite1h` (la tarifa de escritura de caché de una hora, que equivale al doble de `prompt` si se omite) pueden añadirse para los proveedores que informan del uso de entrada en caché. Para los Agents que utilizan varios endpoints, LibreChat emplea la configuración de tokens del endpoint/modelo correspondiente al registrar el uso y el costo.
 
 La configuración de token obtenida se almacena en caché con ámbito de usuario cuando los modelos, claves, URLs o encabezados de endpoint pueden variar según el contexto de la solicitud, de modo que los precios y las ventanas de contexto de los endpoints personalizados aislados permanezcan separados.
 
@@ -107,6 +107,9 @@ balance:
   refillIntervalValue: 30 # Numerical value for refill interval
   refillIntervalUnit: 'days' # Time unit for refill interval (days, hours, etc.)
   refillAmount: 10000 # Tokens added during each refill
+  refillMode: 'add' # 'add' or 'reset'
+  reservationTtlMs: 1800000 # How long an in-flight reservation counts against the balance
+  display: 'credits' # 'credits', 'currency', or 'percent'
 ```
 
 ### Explicación de los ajustes de balance [#balance-settings-explained]
@@ -121,11 +124,19 @@ balance:
 
 - **refillIntervalUnit**: Especifica la unidad de tiempo para el intervalo de recarga. Los valores admitidos incluyen "seconds", "minutes", "hours", "days", "weeks" y "months".
 
-- **refillAmount**: Especifica la cantidad de tokens que se añadirán al saldo del usuario durante cada recarga automática.
+- **refillAmount**: Especifica la cantidad de tokens que se añadirán al saldo del usuario durante cada recarga automática. Con `refillMode: 'reset'`, es la cantidad a la que se restablece el saldo.
+
+- **refillMode**: `add` (el valor predeterminado) suma `refillAmount` al saldo actual. `reset` reemplaza el saldo por `refillAmount` cuando corresponde el intervalo de recarga. `reset` requiere que `refillIntervalValue` sea un entero positivo.
+
+- **reservationTtlMs**: Cuánto tiempo, en milisegundos, una reserva de saldo en curso que aún no se ha liberado sigue contando contra el saldo. Valor predeterminado: `1800000` (30 minutos). Mínimo: `10000`.
+
+- **display**: Cómo la interfaz presenta el saldo: `credits` (el valor predeterminado) muestra la cifra sin formato, `currency` muestra su valor en moneda y `percent` muestra la proporción de la asignación del periodo que ya se ha gastado.
 
 Consulta la página de [Balance Configuration](/docs/configuration/librechat_yaml/object_structure/balance) para obtener más detalles.
 
 ## Cómo funciona el Auto-Refill [#how-auto-refill-works]
+
+El proceso descrito a continuación corresponde al modo `add` predeterminado. Con `refillMode: 'reset'`, el saldo no se recarga cuando se agota. En su lugar, una vez que llega el intervalo de recarga, el saldo se reemplaza por `refillAmount` en la siguiente lectura del saldo o solicitud del usuario, de modo que los créditos no utilizados no se acumulan.
 
 Cuando se realiza un seguimiento del saldo de un usuario y **autoRefill** está habilitado, el sistema añadirá automáticamente créditos al saldo solo cuando haya transcurrido el intervalo de tiempo especificado desde la última recarga. Esto se logra comparando la fecha actual con la fecha de `lastRefill` más el intervalo especificado.
 
@@ -236,9 +247,9 @@ Esto funciona bien para realizar un seguimiento de su propio uso para uso person
 
 - Con la función de resumen habilitada, se le impedirá realizar una solicitud a la API si el costo del contenido que necesita resumir + la carga útil de sus mensajes excede el saldo actual.
 - El uso del modelo de ejecución secundaria de un subagente se registra en la transacción principal, por lo que las ejecuciones del agente principal incluyen el uso delegado en sus totales.
-- El conteo de tokens de Prompt es muy preciso para las llamadas a OpenAI, pero no al 100% para los plugins (debido a la llamada de funciones). Es muy cercano y conservador, lo que significa que su conteo puede ser entre 2 y 5 tokens más alto.
+- El recuento de tokens del prompt es preciso para las llamadas a OpenAI, pero no es exacto cuando se usa llamada a funciones. Es un valor aproximado y conservador, lo que significa que su recuento puede ser mayor entre 2 y 5 tokens.
 - El sistema permite déficits incurridos por los tokens de finalización. Solo verifica si tienes suficientes para los tokens del prompt, y es bastante permisivo con la finalización. El siguiente gráfico detalla la lógica
-- Dicho esto, los plugins se verifican en cada paso de generación, ya que el proceso funciona con múltiples llamadas a la API. Todo lo que el LLM haya generado desde el prompt inicial del usuario se comparte con el usuario en el mensaje de error, como se muestra a continuación.
+- Las ejecuciones que realizan múltiples llamadas a la API, como los agentes que usan herramientas, se verifican en cada paso de generación. Todo lo que el LLM ha generado desde el mensaje inicial del usuario se muestra al usuario en el mensaje de error, como se ve a continuación.
 - Existe un búfer de 150 tokens para la creación de títulos, ya que este es un proceso de 2 pasos, lo que promedia alrededor de 200 tokens en total. En caso de fondos insuficientes, la creación del título se cancela antes de que se produzca cualquier gasto y no se genera ningún error.
 
 ![image](https://github.com/danny-avila/LibreChat/assets/110412045/78175053-9c38-44c8-9b56-4b81df61049e)

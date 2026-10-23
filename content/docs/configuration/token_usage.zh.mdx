@@ -61,7 +61,7 @@ endpoints:
           context: 128000
 ```
 
-每个模型条目都需要 `prompt`、`completion` 和 `context`。对于报告缓存输入用量的提供商，可以添加 `cacheRead` 和 `cacheWrite`。对于使用多个 endpoint 的 Agent，LibreChat 在记录用量和成本时会使用匹配的 endpoint/model 令牌配置。
+`prompt`、`completion` 和 `context` 是每个模型条目的必填项。对于会报告缓存输入用量的提供商,可以添加 `cacheRead`、`cacheWrite` 和 `cacheWrite1h`(一小时缓存写入费率,省略时为 `prompt` 的两倍)。对于使用多个端点的 Agent,LibreChat 在记录用量和费用时会使用与之匹配的端点/模型 token 配置。
 
 当 endpoint 模型、密钥、URL 或请求头可能因请求上下文而异时，获取的令牌配置将按用户范围进行缓存，从而确保隔离的自定义 endpoint 定价和上下文窗口保持独立。
 
@@ -104,6 +104,9 @@ balance:
   refillIntervalValue: 30 # Numerical value for refill interval
   refillIntervalUnit: 'days' # Time unit for refill interval (days, hours, etc.)
   refillAmount: 10000 # Tokens added during each refill
+  refillMode: 'add' # 'add' or 'reset'
+  reservationTtlMs: 1800000 # How long an in-flight reservation counts against the balance
+  display: 'credits' # 'credits', 'currency', or 'percent'
 ```
 
 ### 余额设置说明 [#balance-settings-explained]
@@ -118,11 +121,19 @@ balance:
 
 - **refillIntervalUnit**: 指定填充间隔的时间单位。支持的值包括 "seconds"（秒）、"minutes"（分钟）、"hours"（小时）、"days"（天）、"weeks"（周）和 "months"（月）。
 
-- **refillAmount**: 指定每次自动充值时添加到用户余额中的令牌数量。
+- **refillAmount**:指定每次自动充值时添加到用户余额中的令牌数量。当 `refillMode: 'reset'` 时,则为余额被重置到的数值。
+
+- **refillMode**:`add`(默认值)会将`refillAmount`添加到当前余额中。`reset`会在补充间隔到期时,将余额替换为`refillAmount`。使用`reset`时,`refillIntervalValue`必须为正整数。
+
+- **reservationTtlMs**:未释放的进行中余额预留在多长时间内(以毫秒为单位)仍计入余额扣减。默认值:`1800000`(30 分钟)。最小值:`10000`。
+
+- **display**: 界面展示余额的方式。`credits`(默认值)显示原始数值,`currency` 显示其对应的货币价值,`percent` 显示本周期配额已消耗的百分比。
 
 请查看 [Balance Configuration](/docs/configuration/librechat_yaml/object_structure/balance) 页面以了解更多详情。
 
 ## Auto-Refill 的工作原理 [#how-auto-refill-works]
+
+下面的流程描述的是默认的 `add` 模式。当 `refillMode: 'reset'` 时,余额耗尽后不会累加补充。相反,到达补充间隔时,在用户下一次读取余额或发起请求时,余额会被替换为 `refillAmount`,因此未使用的额度不会结转。
 
 当用户的余额受到跟踪且启用了 **autoRefill** 时，系统仅在距离上次充值已过去指定时间间隔后，才会自动向余额添加额度。这是通过将当前日期与 `lastRefill` 日期加上指定间隔后的时间进行比较来实现的。
 
@@ -233,9 +244,9 @@ docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run list-balances"
 
 - 启用摘要功能后，如果需要摘要的内容成本加上您的消息负载超过了当前余额，您将被禁止发起 API 请求。
 - Subagent 子运行的模型使用量会记录在父级事务中，因此父级代理运行的总量中包含了委托任务的使用量。
-- 对于 OpenAI 调用，计算 Prompt token 非常准确，但对于插件（由于函数调用）则无法达到 100% 准确。其结果非常接近且较为保守，这意味着其计数值可能会比实际高出 2-5 个 token。
+- 对于 OpenAI 的调用,统计提示词 token 是准确的,但当涉及函数调用时则并不精确。统计结果接近且偏保守,即计数可能会高出 2-5 个 token。
 - 该系统允许补全 token 产生的赤字。它仅检查您是否有足够的额度用于提示词（prompt）Token，并且对补全部分的限制较为宽松。下图详细说明了其逻辑。
-- 话虽如此，由于该过程涉及多次 API 调用，插件会在每个生成步骤进行检查。LLM 自初始用户提示词以来生成的所有内容都会在如下所示的错误消息中共享给用户。
+- 对于会进行多次 API 调用的运行(例如使用工具的智能体),系统会在每个生成步骤进行检查。自用户初始提示以来,LLM 生成的所有内容都会在错误消息中展示给用户,如下所示。
 - 由于这是一个两步过程，标题生成会有 150 个 token 的缓冲区，总计平均约为 200 个 token。如果资金不足，标题生成会在产生任何费用之前取消，且不会抛出错误。
 
 ![image](https://github.com/danny-avila/LibreChat/assets/110412045/78175053-9c38-44c8-9b56-4b81df61049e)

@@ -65,7 +65,7 @@ endpoints:
           context: 128000
 ```
 
-`prompt`, `completion` et `context` sont requis pour chaque entrée de modèle. `cacheRead` et `cacheWrite` peuvent être ajoutés pour les fournisseurs qui signalent l'utilisation d'entrées en cache. Pour les Agents qui utilisent plusieurs endpoints, LibreChat utilise la configuration de jetons endpoint/modèle correspondante lors de l'enregistrement de l'utilisation et du coût.
+`prompt`, `completion` et `context` sont obligatoires pour chaque entrée de modèle. `cacheRead`, `cacheWrite` et `cacheWrite1h` (le tarif d'écriture en cache d'une heure, qui vaut deux fois `prompt` lorsqu'il est omis) peuvent être ajoutés pour les fournisseurs qui signalent l'utilisation d'entrées mises en cache. Pour les Agents qui utilisent plusieurs endpoints, LibreChat utilise la configuration de jetons correspondant à l'endpoint/modèle lors de l'enregistrement de l'utilisation et du coût.
 
 La configuration des jetons récupérée est mise en cache avec une portée utilisateur lorsque les modèles, clés, URL ou en-têtes d'un endpoint peuvent varier selon le contexte de la requête, afin que la tarification et les fenêtres de contexte des endpoints personnalisés isolés restent séparées.
 
@@ -108,6 +108,9 @@ balance:
   refillIntervalValue: 30 # Numerical value for refill interval
   refillIntervalUnit: 'days' # Time unit for refill interval (days, hours, etc.)
   refillAmount: 10000 # Tokens added during each refill
+  refillMode: 'add' # 'add' or 'reset'
+  reservationTtlMs: 1800000 # How long an in-flight reservation counts against the balance
+  display: 'credits' # 'credits', 'currency', or 'percent'
 ```
 
 ### Explication des paramètres de solde [#balance-settings-explained]
@@ -122,11 +125,19 @@ balance:
 
 - **refillIntervalUnit** : Spécifie l'unité de temps pour l'intervalle de recharge. Les valeurs prises en charge incluent "seconds", "minutes", "hours", "days", "weeks" et "months".
 
-- **refillAmount** : Spécifie le nombre de jetons à ajouter au solde de l'utilisateur lors de chaque rechargement automatique.
+- **refillAmount** : Spécifie le nombre de jetons à ajouter au solde de l'utilisateur lors de chaque recharge automatique. Avec `refillMode: 'reset'`, il s'agit du montant auquel le solde est réinitialisé.
+
+- **refillMode** : `add` (la valeur par défaut) ajoute `refillAmount` au solde actuel. `reset` remplace le solde par `refillAmount` lorsque l'intervalle de recharge est échu. `reset` exige que `refillIntervalValue` soit un entier positif.
+
+- **reservationTtlMs** : Durée, en millisecondes, pendant laquelle une réservation de solde en cours, non libérée, continue d'être déduite du solde. Valeur par défaut : `1800000` (30 minutes). Valeur minimale : `10000`.
+
+- **display** : Indique comment l'interface présente le solde : `credits` (la valeur par défaut) affiche le montant brut, `currency` affiche sa valeur monétaire, et `percent` affiche la part de l'allocation de la période déjà dépensée.
 
 Consultez la page [Balance Configuration](/docs/configuration/librechat_yaml/object_structure/balance) pour plus de détails.
 
 ## Comment fonctionne le remplissage automatique (Auto-Refill) [#how-auto-refill-works]
+
+Le processus décrit ci-dessous correspond au mode `add` par défaut. Avec `refillMode: 'reset'`, le solde n'est pas réapprovisionné lorsqu'il atteint zéro. À la place, une fois l'intervalle de recharge échu, le solde est remplacé par `refillAmount` lors de la prochaine lecture du solde ou de la prochaine requête de l'utilisateur, de sorte que les crédits non utilisés ne sont pas reportés.
 
 Lorsque le solde d'un utilisateur est suivi et que **autoRefill** est activé, le système ajoutera automatiquement des crédits au solde uniquement lorsque l'intervalle de temps spécifié s'est écoulé depuis la dernière recharge. Ceci est réalisé en comparant la date actuelle avec la date `lastRefill` augmentée de l'intervalle spécifié.
 
@@ -237,9 +248,9 @@ Cela fonctionne bien pour suivre votre propre utilisation pour un usage personne
 
 - Lorsque la fonction de résumé est activée, vous ne pourrez pas effectuer de requête API si le coût du contenu que vous devez résumer + la charge utile de vos messages dépasse votre solde actuel.
 - L'utilisation du modèle par les sous-agents (child-run) est enregistrée dans la transaction parente, de sorte que les exécutions des agents parents incluent l'utilisation déléguée dans leurs totaux.
-- Le comptage des jetons (tokens) de prompt est très précis pour les appels OpenAI, mais pas à 100 % pour les plugins (en raison de l'appel de fonctions). Il est très proche et conservateur, ce qui signifie que son décompte peut être supérieur de 2 à 5 jetons.
+- Compter les tokens du prompt est précis pour les appels à OpenAI, mais ne l'est pas exactement lorsque l'appel de fonctions est impliqué. Le résultat est proche et conservateur, ce qui signifie que le nombre obtenu peut être supérieur de 2 à 5 tokens.
 - Le système autorise les déficits occasionnés par les jetons de complétion. Il vérifie uniquement si vous disposez d'un solde suffisant pour les jetons de prompt, et se montre assez indulgent concernant la complétion. Le graphique ci-dessous détaille la logique.
-- Cela étant dit, les plugins sont vérifiés à chaque étape de génération, car le processus fonctionne avec plusieurs appels API. Tout ce que le LLM a généré depuis la requête initiale de l'utilisateur est partagé avec l'utilisateur dans le message d'erreur, comme illustré ci-dessous.
+- Les exécutions qui effectuent plusieurs appels d'API, comme les agents utilisant des outils, sont vérifiées à chaque étape de génération. Tout ce que le LLM a généré depuis le prompt initial de l'utilisateur est partagé avec celui-ci dans le message d'erreur, comme illustré ci-dessous.
 - Il existe une mémoire tampon de 150 jetons pour le titrage, car il s'agit d'un processus en 2 étapes, ce qui représente environ 200 jetons au total. En cas de fonds insuffisants, le titrage est annulé avant toute dépense et aucune erreur n'est générée.
 
 ![image](https://github.com/danny-avila/LibreChat/assets/110412045/78175053-9c38-44c8-9b56-4b81df61049e)

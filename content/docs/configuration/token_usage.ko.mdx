@@ -63,7 +63,7 @@ endpoints:
           context: 128000
 ```
 
-각 모델 항목에는 `prompt`, `completion`, `context`가 필수입니다. 캐시된 입력 사용량을 보고하는 공급자의 경우 `cacheRead` 및 `cacheWrite`를 추가할 수 있습니다. 여러 endpoint를 사용하는 에이전트의 경우, LibreChat은 사용량과 비용을 기록할 때 일치하는 endpoint/model 토큰 구성을 사용합니다.
+`prompt`, `completion`, `context`는 각 모델 항목에 필수입니다. 캐시된 입력 사용량을 보고하는 공급자의 경우 `cacheRead`, `cacheWrite`, `cacheWrite1h`(1시간 캐시 쓰기 요금으로, 생략하면 `prompt`의 두 배)를 추가할 수 있습니다. 여러 엔드포인트를 사용하는 에이전트의 경우, LibreChat은 사용량과 비용을 기록할 때 일치하는 엔드포인트/모델의 토큰 설정을 사용합니다.
 
 엔드포인트 모델, 키, URL 또는 헤더가 요청 컨텍스트에 따라 달라질 수 있는 경우, 가져온 토큰 구성은 사용자 범위로 캐시되므로 격리된 사용자 지정 엔드포인트 가격 책정 및 컨텍스트 창이 분리된 상태로 유지됩니다.
 
@@ -106,6 +106,9 @@ balance:
   refillIntervalValue: 30 # Numerical value for refill interval
   refillIntervalUnit: 'days' # Time unit for refill interval (days, hours, etc.)
   refillAmount: 10000 # Tokens added during each refill
+  refillMode: 'add' # 'add' or 'reset'
+  reservationTtlMs: 1800000 # How long an in-flight reservation counts against the balance
+  display: 'credits' # 'credits', 'currency', or 'percent'
 ```
 
 ### Balance Settings 설명 [#balance-settings-explained]
@@ -120,11 +123,19 @@ balance:
 
 - **refillIntervalUnit**: 리필 간격에 대한 시간 단위를 지정합니다. 지원되는 값은 "seconds", "minutes", "hours", "days", "weeks", "months"입니다.
 
-- **refillAmount**: 자동 충전이 발생할 때마다 사용자의 잔액에 추가될 토큰 수를 지정합니다.
+- **refillAmount**: 각 자동 리필 시 사용자의 잔액에 추가될 토큰 수를 지정합니다. `refillMode: 'reset'`인 경우, 잔액이 이 값으로 재설정되는 금액입니다.
+
+- **refillMode**: `add`(기본값)은 현재 잔액에 `refillAmount`를 더합니다. `reset`은 리필 간격이 도래하면 잔액을 `refillAmount`로 대체합니다. `reset`을 사용하려면 `refillIntervalValue`가 양의 정수여야 합니다.
+
+- **reservationTtlMs**: 해제되지 않은 진행 중 잔액 예약이 잔액에서 차감된 상태로 유지되는 시간(밀리초)입니다. 기본값: `1800000`(30분). 최소값: `10000`.
+
+- **display**: UI에서 잔액을 표시하는 방식입니다. `credits`(기본값)는 원시 수치를 표시하고, `currency`는 통화 금액으로 표시하며, `percent`는 해당 기간의 할당량 중 이미 사용된 비율을 표시합니다.
 
 자세한 내용은 [Balance Configuration](/docs/configuration/librechat_yaml/object_structure/balance) 페이지를 확인하세요.
 
 ## Auto-Refill 작동 방식 [#how-auto-refill-works]
+
+아래 과정은 기본 `add` 모드를 설명합니다. `refillMode: 'reset'`을 사용하면, 잔액이 모두 소진되었을 때 잔액을 채우지 않습니다. 대신 리필 주기가 도래하면 사용자의 다음 잔액 조회 또는 요청 시 잔액이 `refillAmount`로 교체되므로, 사용하지 않은 크레딧은 다음 주기로 이월되지 않습니다.
 
 사용자의 잔액이 추적되고 **autoRefill**이 활성화된 경우, 시스템은 마지막 충전 이후 지정된 시간 간격이 경과했을 때만 자동으로 잔액을 충전합니다. 이는 현재 날짜와 `lastRefill` 날짜에 지정된 간격을 더한 값을 비교하여 수행됩니다.
 
@@ -237,9 +248,9 @@ docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run list-balances"
 - Subagent child-run model usage is recorded against the parent transaction so parent agent runs include delegated usage in their totals.
 
 Subagent child-run 모델 사용량은 부모 트랜잭션에 기록되므로, 부모 에이전트 실행 시 위임된 사용량이 총계에 포함됩니다.
-- 프롬프트 토큰 계산은 OpenAI 호출에 대해서는 매우 정확하지만, 플러그인의 경우(함수 호출로 인해) 100% 정확하지는 않습니다. 매우 근사하고 보수적인 수치이므로, 실제 계산값이 2-5 토큰 정도 더 높을 수 있습니다.
+- 프롬프트 토큰 수 계산은 OpenAI 호출에서는 정확하지만, 함수 호출(function calling)이 포함된 경우에는 정확하지 않습니다. 계산값은 실제에 가깝고 보수적이며, 실제 토큰 수보다 2~5개 더 많을 수 있습니다.
 - 이 시스템은 완료 토큰으로 인해 발생하는 부족분을 허용합니다. 프롬프트 토큰에 대해서만 충분한 잔액이 있는지 확인하며, 완료 토큰에 대해서는 상당히 관대하게 처리합니다. 아래 그래프는 해당 로직을 자세히 설명합니다.
-- 위에서 언급했듯이, 플러그인은 여러 API 호출을 통해 프로세스가 작동하므로 각 생성 단계에서 확인됩니다. 초기 사용자 프롬프트 이후 LLM이 생성한 모든 내용은 아래와 같이 오류 메시지를 통해 사용자에게 공유됩니다.
+- 여러 번의 API 호출을 수행하는 실행(예: 도구를 사용하는 에이전트)은 각 생성 단계마다 검사됩니다. 초기 사용자 프롬프트 이후 LLM이 생성한 모든 내용은 아래와 같이 오류 메시지에 포함되어 사용자에게 공유됩니다.
 - 제목 생성은 2단계 과정이므로 150 토큰의 버퍼가 있으며, 이는 평균적으로 총 200 토큰 정도를 차지합니다. 잔액이 부족한 경우, 비용이 발생하기 전에 제목 생성이 취소되며 오류는 발생하지 않습니다.
 
 ![image](https://github.com/danny-avila/LibreChat/assets/110412045/78175053-9c38-44c8-9b56-4b81df61049e)

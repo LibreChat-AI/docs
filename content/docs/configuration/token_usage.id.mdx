@@ -64,7 +64,7 @@ endpoints:
           context: 128000
 ```
 
-`prompt`, `completion`, dan `context` wajib ada untuk setiap entri model. `cacheRead` dan `cacheWrite` dapat ditambahkan untuk penyedia yang melaporkan penggunaan input yang di-cache. Untuk Agen yang menggunakan beberapa endpoint, LibreChat menggunakan konfigurasi token endpoint/model yang cocok saat mencatat penggunaan dan biaya.
+`prompt`, `completion`, dan `context` wajib ada untuk setiap entri model. `cacheRead`, `cacheWrite`, dan `cacheWrite1h` (tarif penulisan cache satu jam, yang sama dengan dua kali `prompt` jika tidak dicantumkan) dapat ditambahkan untuk penyedia yang melaporkan penggunaan input yang di-cache. Untuk Agents yang menggunakan beberapa endpoint, LibreChat menggunakan konfigurasi token endpoint/model yang sesuai saat mencatat penggunaan dan biaya.
 
 Konfigurasi token yang diambil di-cache dengan cakupan pengguna ketika model endpoint, kunci, URL, atau header dapat bervariasi berdasarkan konteks permintaan, sehingga penetapan harga endpoint kustom dan jendela konteks yang terisolasi tetap terpisah.
 
@@ -107,6 +107,9 @@ balance:
   refillIntervalValue: 30 # Numerical value for refill interval
   refillIntervalUnit: 'days' # Time unit for refill interval (days, hours, etc.)
   refillAmount: 10000 # Tokens added during each refill
+  refillMode: 'add' # 'add' or 'reset'
+  reservationTtlMs: 1800000 # How long an in-flight reservation counts against the balance
+  display: 'credits' # 'credits', 'currency', or 'percent'
 ```
 
 ### Penjelasan Pengaturan Saldo [#balance-settings-explained]
@@ -121,11 +124,19 @@ balance:
 
 - **refillIntervalUnit**: Menentukan satuan waktu untuk interval pengisian ulang. Nilai yang didukung mencakup "seconds", "minutes", "hours", "days", "weeks", dan "months".
 
-- **refillAmount**: Menentukan jumlah token yang akan ditambahkan ke saldo pengguna selama setiap pengisian ulang otomatis.
+- **refillAmount**: Menentukan jumlah token yang akan ditambahkan ke saldo pengguna pada setiap pengisian ulang otomatis. Dengan `refillMode: 'reset'`, nilai ini adalah jumlah saldo yang akan di-reset.
+
+- **refillMode**: `add` (bawaan) menambahkan `refillAmount` ke saldo saat ini. `reset` mengganti saldo dengan `refillAmount` ketika interval pengisian ulang telah tiba. `reset` mengharuskan `refillIntervalValue` berupa bilangan bulat positif.
+
+- **reservationTtlMs**: Berapa lama, dalam milidetik, sebuah reservasi saldo yang sedang berjalan dan belum dilepaskan terus dihitung terhadap saldo. Default: `1800000` (30 menit). Minimum: `10000`.
+
+- **display**: Cara antarmuka menampilkan saldo: `credits` (default) menampilkan angka mentah, `currency` menampilkan nilainya dalam mata uang, dan `percent` menampilkan persentase dari alokasi periode yang sudah digunakan.
 
 Lihat halaman [Balance Configuration](/docs/configuration/librechat_yaml/object_structure/balance) untuk detail lebih lanjut.
 
 ## Cara Kerja Auto-Refill [#how-auto-refill-works]
+
+Proses di bawah ini menjelaskan mode `add` default. Dengan `refillMode: 'reset'`, saldo tidak diisi ulang saat habis. Sebagai gantinya, setelah interval pengisian ulang jatuh tempo, saldo digantikan dengan `refillAmount` pada pembacaan saldo atau permintaan berikutnya dari pengguna, sehingga kredit yang tidak terpakai tidak terbawa ke periode berikutnya.
 
 Ketika saldo pengguna dilacak dan **autoRefill** diaktifkan, sistem akan secara otomatis menambahkan kredit ke saldo hanya setelah interval waktu yang ditentukan berlalu sejak pengisian ulang terakhir. Hal ini dicapai dengan membandingkan tanggal saat ini dengan tanggal `lastRefill` ditambah interval yang ditentukan.
 
@@ -236,9 +247,9 @@ Ini berfungsi dengan baik untuk melacak penggunaan Anda sendiri untuk penggunaan
 
 - Dengan fitur peringkasan diaktifkan, Anda akan diblokir dari melakukan permintaan API jika biaya konten yang perlu diringkas + payload pesan Anda melebihi saldo saat ini.
 - Penggunaan model *subagent child-run* dicatat terhadap transaksi induk sehingga *run* agen induk menyertakan penggunaan yang didelegasikan dalam totalnya.
-- Penghitungan token Prompt sangat akurat untuk panggilan OpenAI, tetapi tidak 100% untuk plugin (karena pemanggilan fungsi). Hasilnya sangat mendekati dan konservatif, yang berarti jumlahnya mungkin lebih tinggi sebesar 2-5 token.
+- Menghitung token prompt akurat untuk panggilan OpenAI, tetapi tidak tepat sekali ketika pemanggilan fungsi (function calling) terlibat. Hasilnya mendekati dan bersifat konservatif, artinya jumlahnya bisa lebih tinggi 2-5 token.
 - Sistem ini mengizinkan defisit yang terjadi akibat token penyelesaian (completion tokens). Sistem hanya memeriksa apakah Anda memiliki cukup token untuk token prompt, dan cukup longgar terhadap penyelesaian. Grafik di bawah ini merinci logikanya.
-- Meskipun demikian, plugin diperiksa pada setiap langkah pembuatan, karena proses ini bekerja dengan beberapa panggilan API. Apa pun yang telah dihasilkan oleh LLM sejak prompt awal pengguna akan dibagikan kepada pengguna dalam pesan kesalahan seperti yang terlihat di bawah ini.
+- Eksekusi yang melakukan beberapa panggilan API, seperti agen yang menggunakan alat, diperiksa pada setiap langkah generasi. Semua yang telah dihasilkan oleh LLM sejak prompt awal pengguna akan ditampilkan kepada pengguna dalam pesan kesalahan seperti terlihat di bawah ini.
 - Terdapat buffer 150 token untuk pemberian judul karena ini adalah proses 2 langkah, yang rata-rata menghabiskan sekitar 200 token secara total. Jika dana tidak mencukupi, pemberian judul akan dibatalkan sebelum ada penggunaan biaya dan tidak ada error yang muncul.
 
 ![image](https://github.com/danny-avila/LibreChat/assets/110412045/78175053-9c38-44c8-9b56-4b81df61049e)
