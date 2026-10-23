@@ -118,7 +118,7 @@ export const it: UIStrings = {
           'Esegui npm run backend',
           'Apri localhost:3080 e registrati',
         ],
-        prereqs: ['Node.js v24.16.0', 'Istanza MongoDB'],
+        prereqs: ['Node.js v24.22.1', 'Istanza MongoDB'],
       },
       railway: {
         tag: 'Un clic',

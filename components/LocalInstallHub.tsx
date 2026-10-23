@@ -102,7 +102,7 @@ const methods: {
     time: '~20 min',
     difficulty: 'Intermediate',
     prereqs: [
-      { label: 'Node.js v24.16.0', href: 'https://nodejs.org/en/download' },
+      { label: 'Node.js v24.22.1', href: 'https://nodejs.org/en/download' },
       { label: 'Git', href: 'https://git-scm.com/downloads' },
       { label: 'MongoDB', href: '/docs/configuration/mongodb/mongodb_atlas' },
     ],

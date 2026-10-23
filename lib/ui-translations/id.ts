@@ -118,7 +118,7 @@ export const id: UIStrings = {
           'Jalankan npm run backend',
           'Buka localhost:3080 dan daftar',
         ],
-        prereqs: ['Node.js v24.16.0', 'Instance MongoDB'],
+        prereqs: ['Node.js v24.22.1', 'Instance MongoDB'],
       },
       railway: {
         tag: 'Sekali klik',

@@ -471,7 +471,7 @@ statefulCodeSessions:
 
 `allowedEnvironments` is required whenever the block is present and must include at least one workspace scope. Omit the entire block to allow all three scopes and continue routing stateful work through [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint). The personal default and Agent Builder only permit allowed values. If an administrator tightens the policy, a saved personal default remains visible but disabled, and new Agents use the first allowed scope. Existing enabled Agents retain their saved scope, but a now-disallowed scope fails closed at runtime until the Agent is reconfigured.
 
-`conversationMoves.enabled: true` lets the conversation owner explicitly move a sealed attached workspace to a compatible environment and recover a missing workspace without replacing chat history or restoring old workspace files. To additionally allow a saved chat to **attach** a workspace or **leave** one for normal chat, set `conversationMoves.allowAttachDetach: true`. Both switches are off by default; enabling moves alone retains move-only behavior. Upgrade **all** API replicas, then enable [`CODE_ENVIRONMENT_DECISION_VERSION=1`](/docs/configuration/dotenv#code-interpreter) before opting in. Ownership, target access, active work, and current policy are rechecked at the transition; a running generation cannot be moved.
+`conversationMoves.enabled: true` lets the conversation owner explicitly move a sealed attached workspace to a compatible environment and recover a missing workspace without replacing chat history or restoring old workspace files. To additionally allow a saved chat to **attach** a workspace or **leave** one for normal chat, set `conversationMoves.allowAttachDetach: true`. Both switches are off by default; enabling moves alone retains move-only behavior. Upgrade **all** API replicas, confirm decision protocol v1 is advertised (the default; [`CODE_ENVIRONMENT_DECISION_VERSION=0`](/docs/configuration/dotenv#code-interpreter) disables it), then opt in. Ownership, target access, active work, and current policy are rechecked at the transition; a running generation cannot be moved.
 
 ```yaml filename="endpoints / agents / statefulCodeSessions / conversationMoves"
 statefulCodeSessions:
@@ -495,7 +495,7 @@ When `environments` is non-empty, every entry requires a unique `id`, a display 
 - `pairing.tokenEnv` names the environment variable containing the bridge administrator token; it never contains the token itself. Pairing requires HTTPS except for loopback development.
 - `configSchema.permissions` optionally lets authorized owners choose `fileWrite` and `commandExecution` policy for personal environments under **Settings > Code environments**. Each field requires a non-empty `allowed` list containing `allow`, `ask`, and/or `deny`; `default` is `ask` when omitted and must appear in `allowed`. LibreChat rejects stored values outside the administrator's list.
 - `configSchema.limits.maxCommandTimeoutMs` sets the largest Bash timeout the model may request for that environment. It accepts `1` through `300000` ms; omission preserves the 30-second default. With a total request budget, the advertised command timeout also fits the remaining time after command admission, settlement, and delivery. This is a deployment ceiling and is not user-configurable.
-- `configSchema.workspaces.linkedWorktrees: true` enables per-worktree scheduling only for attached workspaces advertising `git_linked_worktree`; omission keeps all requests in the checkout's root lane. Upgrade LibreChat **before** a worker advertises this scope, deploy a Code API supporting linked-worktree lanes, then start the worker with `--linked-worktree-lanes` before enabling the YAML setting. File operations targeting a path inside `.worktrees/<name>` and Bash commands with a `cwd` there use that lane and return checkout-relative paths. Commands that `cd` inside their command text, checkout-root operations, conversation workspace instances, and environment actions stay root-scoped.
+- `configSchema.workspaces.linkedWorktrees` permits per-worktree scheduling unless explicitly disabled, and only for attached workers advertising `git_linked_worktree`. Upgrade LibreChat **before** a worker advertises this scope, deploy a compatible Code API, then start the worker with `--linked-worktree-lanes`. Set the YAML field to `false` to retain checkout-wide scheduling. File operations targeting a path inside `.worktrees/<name>` and Bash commands with a `cwd` there use that lane and return checkout-relative paths. Commands that `cd` inside their command text, checkout-root operations, conversation workspace instances, and environment actions stay root-scoped.
 - `configSchema.edits.tolerantMatching` permits whitespace-tolerant fallback by default on attached workers advertising `tolerant_match`; set it to `false` to require exact matching, including protected edit previews. Matching must remain unique unless the edit explicitly sets `replace_all`. Older workers receive no new matching fields; attached `replace_all` is refused before dispatch unless the worker advertises it. These capabilities require compatible Code API and worker builds implementing [Code Interpreter #271](https://github.com/LibreChat-AI/code-interpreter/pull/271).
 - Do not configure `settings` in deployment YAML. LibreChat supplies that request-scoped field from the authenticated owner's server-validated preferences.
 - Only file-write and command-execution policy is user-configurable. Isolation, networking, mounts, privileged execution, ingress, egress, and secrets remain administrator-controlled.
@@ -1446,3 +1446,37 @@ For user-facing behavior and limits, see [Subagents](/docs/features/subagents).
 - The `context` capability works without OCR configuration using text parsing methods. OCR enhances extraction quality when configured.
 - The `ocr` capability requires an OCR service to be configured (see [OCR Configuration](/docs/configuration/librechat_yaml/object_structure/ocr)).
 - `maxSubagents` bounds how many subagents a single agent may reference. It does not change the depth or graph limits documented under [Subagents](/docs/features/subagents#limits).
+
+## hostFileEdits
+
+These limits apply to host-side Skill and managed-sandbox edits, not attached-worker edits. Over-budget calls write nothing. Defaults: `maxEdits: 100`, `maxWorkBytes: 67108864`, `maxOccurrences: 100000`, `timeoutMs: 2000`, and `maxConcurrent: 2`. Concurrency is per API process, with no waiting queue.
+
+## subagentActivity
+
+Live child activity is independent of completed-transcript recovery. Defaults: `replayTtlMs: 300000`, `publicationTimeoutMs: 1000`, `retryAttempts: 3`, `retryBaseDelayMs: 100`, `recoveryDelayMs: 1000`, `memoryMaxStreams: 1000`, and `memoryMaxBytes: 16777216`. Increase replay TTL for long silent calls. Full-content recovery is separately opt-in through `contentRecoveryEnabled`, default `false`.
+
+## Batched Background Completions
+
+`backgroundTasks.completionReceiptBatching` defaults to `true`, combining compatible ready sibling results into one parent continuation. Set it to `false` while older replicas that cannot read batched receipts still serve traffic. This flag does not enable background-execution capabilities.
+
+## Per-Agent Approval Modes
+
+`toolApproval.agentModes` and `toolApproval.allowAlways` are both opt-in and default to `false`. Agent modes expose per-tool approval choices. Always allow remembers an eligible tool for the conversation, not across every conversation. Administrator deny/ask rules and hooks remain authoritative. Upgrade every replica before enabling these controls; `grantLookupTimeoutMs` defaults to `3000`.
+
+## Machine Selection and Browser Enrollment
+
+Unset or blank `CODE_ENVIRONMENT_DECISION_VERSION` advertises protocol `1`; `0` disables it and per-chat machine choice. `statefulCodeSessions.allowEnvironmentSelection` defaults to allowed, but users can choose only from the agent's saved machine allowlist. Saved-chat moves and attach/detach remain separate opt-ins.
+
+Browser enrollment is separately off by default. Enable `statefulCodeSessions.principalWorkers.browserSetup.enabled`, configure its canonical public `instance` including any deployment prefix, and use an approved personal-worker control plane with compatible enrollment support. Existing principal-worker limits and authentication still apply. Opening the verification page does not enroll a machine: explicit browser approval is required.
+
+LibreChat permits linked-worktree routing unless explicitly disabled, but a compatible worker advertising `git_linked_worktree` is still required. Conversation-isolated workspace instances do not use those lanes. [Upgrade compatibility](/docs/configuration/upgrade#mixed-version-compatibility) describes the rollout boundaries.
+
+## Stream Keepalives
+
+`streamKeepaliveIntervalMs` defaults to `25000` milliseconds for quiet Agent streams. Set `0` to disable keepalives. This does not extend the model's request or generation deadline.
+
+## Attached-Environment Defaults
+
+`statefulCodeSessions.maxEnvironmentChoices` caps additional choices saved on an agent; omission uses `32`, with a wire ceiling of `128`. Only explicit saved choices are selectable.
+
+Each attached environment may set `configSchema.limits.defaultCommandTimeoutMs` for foreground Bash calls omitting `timeoutMs`, and `defaultReadFileLines` for `read_file` calls omitting `max_lines`. Omission retains `30000` ms and `200` lines. Both are positive integers bounded by the worker protocol; effective command ceilings and response-byte budgets may reduce the result. Upgrade every API replica before using these strict-schema fields.

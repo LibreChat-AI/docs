@@ -145,7 +145,7 @@ const en = {
           'Run npm run backend',
           'Open localhost:3080 and register',
         ],
-        prereqs: ['Node.js v24.16.0', 'MongoDB instance'],
+        prereqs: ['Node.js v24.22.1', 'MongoDB instance'],
       },
       railway: {
         tag: 'One-click',

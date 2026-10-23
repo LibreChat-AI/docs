@@ -116,7 +116,7 @@ export const tr: UIStrings = {
           'npm run backend çalıştır',
           'localhost:3080 adresini açın ve kaydolun',
         ],
-        prereqs: ['Node.js v24.16.0', 'MongoDB örneği'],
+        prereqs: ['Node.js v24.22.1', 'MongoDB örneği'],
       },
       railway: {
         tag: 'Tek tık',
