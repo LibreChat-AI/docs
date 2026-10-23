@@ -4,7 +4,7 @@ icon: Redis
 description: Setting up Redis for caching, session storage, and horizontal scaling in LibreChat
 ---
 
-This guide covers how to configure Redis for caching and session storage in LibreChat. Redis provides significant performance improvements and is **required for horizontal scaling**—if you're running multiple LibreChat instances behind a load balancer, Redis ensures consistent state across all instances.
+This guide covers how to configure Redis for caching and session storage in LibreChat. Redis provides significant performance improvements and is **required for horizontal scaling**. If you're running multiple LibreChat instances behind a load balancer, Redis ensures consistent state across all instances.
 
 ## Table of Contents
 
@@ -15,6 +15,7 @@ This guide covers how to configure Redis for caching and session storage in Libr
 - [Replica Failover Recovery](#replica-failover-recovery)
 - [Health Checks](#health-checks)
 - [Performance Tuning](#performance-tuning)
+- [Advanced Connection Tuning](#advanced-connection-tuning)
 - [Configuration Examples](#configuration-examples)
 - [Resumable Streams](#resumable-streams)
 - [Generation Protocol Compatibility](#generation-protocol-compatibility)
@@ -111,7 +112,7 @@ REDIS_USERNAME=your_redis_username
 REDIS_PASSWORD=your_redis_password
 ```
 
-**Note**: Separate username/password variables override credentials in the URI if both are provided.
+**Note**: Credentials embedded in `REDIS_URI` take precedence. `REDIS_USERNAME` and `REDIS_PASSWORD` are only used as a fallback when the URI has no username or password.
 
 ### TLS Configuration
 
@@ -271,35 +272,46 @@ Force specific cache namespaces to use in-memory storage even when Redis is enab
 
 ```bash
 # Comma-separated list of cache keys
-FORCED_IN_MEMORY_CACHE_NAMESPACES=ROLES,MESSAGES
+FORCED_IN_MEMORY_CACHE_NAMESPACES=CONFIG_STORE,APP_CONFIG,ROLES
 ```
+
+When unset, the default is `CONFIG_STORE,APP_CONFIG`, so configuration derived from `librechat.yaml` stays per-container. Setting this variable **replaces** the default rather than adding to it, so include `CONFIG_STORE,APP_CONFIG` in your list unless you want those namespaces in Redis. Set it to an empty string to route every namespace through Redis.
 
 Valid cache keys (from the `CacheKeys` enum in `librechat-data-provider`):
 
-| Key                       | Description               |
-| ------------------------- | ------------------------- |
-| `CONFIG_STORE`            | Configuration store       |
-| `ROLES`                   | User roles                |
-| `PLUGINS`                 | Plugins data              |
-| `GEN_TITLE`               | Generated titles          |
-| `TOOLS`                   | Tools data                |
-| `MODELS_CONFIG`           | Models configuration      |
-| `MODEL_QUERIES`           | Model queries             |
-| `STARTUP_CONFIG`          | Startup configuration     |
-| `ENDPOINT_CONFIG`         | Endpoint configuration    |
-| `TOKEN_CONFIG`            | Token configuration       |
-| `APP_CONFIG`              | Application configuration |
-| `ABORT_KEYS`              | Abort keys                |
-| `BANS`                    | Ban data                  |
-| `ENCODED_DOMAINS`         | Encoded domains           |
-| `AUDIO_RUNS`              | Audio processing runs     |
-| `MESSAGES`                | Messages                  |
-| `FLOWS`                   | Flows data                |
-| `PENDING_REQ`             | Pending requests          |
-| `S3_EXPIRY_INTERVAL`      | S3 expiry intervals       |
-| `OPENID_EXCHANGED_TOKENS` | OpenID exchanged tokens   |
-| `OPENID_SESSION`          | OpenID sessions           |
-| `SAML_SESSION`            | SAML sessions             |
+| Key | Description |
+| --- | --- |
+| `CONFIG_STORE` | Configuration store |
+| `TOOL_CACHE` | Tool cache (plugins, MCP tools, tool definitions) |
+| `ROLES` | User roles |
+| `USER_PRINCIPALS` | Group memberships used to resolve ACL principals |
+| `PROMPT_GROUPS_ACCESS` | Prompt group access ID sets |
+| `AGENT_LINKED_INSTRUCTIONS` | Resolved instructions of an agent's linked prompt groups |
+| `SANDBOX_PREWARM` | Per-conversation code sandbox prewarm state |
+| `GEN_TITLE` | Generated titles |
+| `TOOLS` | Tools data |
+| `MODELS_CONFIG` | Models configuration |
+| `MODEL_QUERIES` | Model queries |
+| `STARTUP_CONFIG` | Startup configuration |
+| `ENDPOINT_CONFIG` | Endpoint configuration |
+| `TOKEN_CONFIG` | Token configuration |
+| `REASONING_CAPABILITIES` | Per-model reasoning effort for OpenRouter endpoints |
+| `PULL_REQUESTS` | Pull request lookups and GitHub rate limit cooldowns |
+| `APP_CONFIG` | Application configuration |
+| `ABORT_KEYS` | Abort keys |
+| `BANS` | Ban data |
+| `ENCODED_DOMAINS` | Encoded domains |
+| `AUDIO_RUNS` | Audio processing runs |
+| `MESSAGES` | In-progress messages |
+| `FLOWS` | In-progress flow states |
+| `PENDING_REQ` | Pending requests |
+| `S3_EXPIRY_INTERVAL` | S3 expiry intervals |
+| `OPENID_EXCHANGED_TOKENS` | OpenID exchanged tokens |
+| `AUTH_USER_DOC` | Cached authenticated user documents |
+| `OPENID_SESSION` | OpenID sessions |
+| `SAML_SESSION` | SAML sessions |
+| `ADMIN_OAUTH_EXCHANGE` | Admin panel OAuth exchange codes |
+| `PASSKEY_CHALLENGE` | Pending passkey ceremony challenges |
 
 <Callout type="warn" title="Invalid keys">
   Using an invalid key (e.g., the deprecated `STATIC_CONFIG`) will cause a startup error. Only use
@@ -324,6 +336,20 @@ The application uses a dual-client approach:
 
 - **IoRedis client**: Primary Redis operations with automatic prefixing
 - **Keyv Redis client**: Store-layer operations with prefix handling in `cacheFactory.js`
+
+### Advanced Connection Tuning
+
+These optional variables tune connection behavior and bulk cache operations. The defaults suit most deployments.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `REDIS_CONNECT_TIMEOUT` | `10000` | Connection timeout in milliseconds. |
+| `REDIS_RETRY_MAX_ATTEMPTS` | `10` | Maximum reconnection attempts before giving up. `0` retries indefinitely. |
+| `REDIS_RETRY_MAX_DELAY` | `3000` | Maximum delay between reconnection attempts, in milliseconds. |
+| `REDIS_ENABLE_OFFLINE_QUEUE` | `true` | Queue commands while disconnected. Set to `false` to fail them immediately. |
+| `REDIS_SCAN_COUNT` | `1000` | `COUNT` hint for `SCAN` operations when finding keys by pattern. |
+| `REDIS_DELETE_CHUNK_SIZE` | `1000` | Number of keys deleted per batch in bulk deletes. |
+| `MCP_REGISTRY_CACHE_TTL` | `5000` | Milliseconds MCP registry caches are kept. Cross-instance staleness can reach twice this value. `0` disables the local snapshot, so every read goes to Redis. |
 
 ### Memory Optimization
 
@@ -350,7 +376,7 @@ REDIS_CA=/etc/ssl/redis-ca.pem
 REDIS_KEY_PREFIX_VAR=DEPLOYMENT_ID
 REDIS_MAX_LISTENERS=100
 REDIS_PING_INTERVAL=300
-FORCED_IN_MEMORY_CACHE_NAMESPACES=ROLES,MESSAGES
+FORCED_IN_MEMORY_CACHE_NAMESPACES=CONFIG_STORE,APP_CONFIG,ROLES,MESSAGES
 ```
 
 ### Cluster Setup
@@ -369,7 +395,7 @@ Redis enables [Resumable Streams](/docs/features/resumable_streams) for horizont
 
 **Important:** When `USE_REDIS=true`, resumable streams automatically use Redis for cross-instance coordination. This is the recommended setup for horizontally scaled deployments where users might connect to different server instances.
 
-**Note:** If you're running a single LibreChat instance, Redis for resumable streams is typically overkill—the built-in in-memory mode works fine. Redis becomes essential when you have multiple LibreChat instances behind a load balancer, where a user's reconnection might hit a different server than where their stream started.
+**Note:** If you're running a single LibreChat instance, Redis for resumable streams is typically overkill; the built-in in-memory mode works fine. Redis becomes essential when you have multiple LibreChat instances behind a load balancer, where a user's reconnection might hit a different server than where their stream started.
 
 ### Configuration
 
