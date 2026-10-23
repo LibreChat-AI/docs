@@ -14,19 +14,19 @@ L'OCR (Reconnaissance Optique de Caractères) dans LibreChat est une améliorati
 La fonctionnalité "Upload as Text" (depuis le chat) fonctionne de la même manière :
 
 - Les fichiers correspondant à `fileConfig.ocr.supportedMimeTypes` utilisent l'OCR s'il est disponible
-- Revient à l'analyse de texte si l'OCR n'est pas configuré
+- Sans OCR, les fichiers PDF, DOCX, tableur et ODT se replient sur le [analyseur de documents intégré](#built-in-document-parser) ; les images et les autres types que l'analyseur ne peut pas lire nécessitent un OCR.
 - Particulièrement utile pour les images contenant du texte, les documents numérisés et les PDF complexes
-- Priorité de traitement : **OCR > STT > analyse de texte**
+- Ordre de traitement : **OCR > extraction de texte RAG > analyseur de documents intégré > STT > texte brut**
 - Consultez la documentation [Upload as Text](/docs/features/upload_as_text) pour plus de détails.
 
 ### Contexte de fichier (pour les agents) [#file-context-for-agents]
 
 Lorsque vous téléversez des fichiers via la section File Context du Agent Builder :
 
-1. Le texte est extrait par défaut à l'aide de l'analyse syntaxique (OCR/STT si configuré et si le fichier correspond).
+1. Le texte est extrait à l'aide de l'analyseur de documents intégré ou de la lecture de texte brut par défaut (OCR/STT si configuré et si le fichier correspond)
 2. Le texte extrait est stocké dans le cadre des instructions système de l'agent.
 3. L'agent peut référencer ce contexte dans toutes les conversations
-4. **Le service OCR est optionnel** - la fonctionnalité fonctionne sans lui en utilisant l'analyse de texte
+4. **Le service OCR est facultatif** : la fonctionnalité fonctionne sans lui pour les fichiers texte brut et pour les documents que l'analyseur intégré peut traiter.
 
 Les fichiers téléchargés en tant que "File Context" sont traités pour en extraire le texte, qui est ensuite ajouté aux instructions système de l'Agent. C'est idéal pour les documents, les fichiers de code, les PDF ou les images contenant du texte dont vous avez besoin que le contenu textuel complet soit inclus dans les instructions de l'agent.
 
@@ -34,7 +34,7 @@ Les fichiers téléchargés en tant que "File Context" sont traités pour en ext
 
 ## Configuration OCR optionnelle [#optional-ocr-configuration]
 
-Le contexte de fichier d'agent (Agent File Context) et le téléchargement en tant que texte (Upload as Text) fonctionnent tous deux immédiatement grâce à l'analyse de texte. Pour améliorer la qualité de l'extraction pour les images et les documents numérisés, vous pouvez éventuellement configurer un service OCR :
+Le « Contexte de fichier de l'agent » et « Télécharger comme texte » fonctionnent tous deux directement pour les fichiers texte brut et pour les types de documents que l'analyseur intégré prend en charge. Pour extraire du texte à partir d'images, de documents numérisés et d'autres formats, vous pouvez éventuellement configurer un service OCR :
 
 ```yaml
 # librechat.yaml
@@ -51,9 +51,20 @@ ocr:
   mistralModel: "mistral-ocr-latest"
 ```
 
-**Remarque :** La fonctionnalité `context` est activée par défaut. Vous n'avez besoin de configurer l'OCR (la fonctionnalité `ocr`) que si vous souhaitez une qualité d'extraction améliorée pour les images et les documents numérisés.
+**Remarque :** La capacité `context` est activée par défaut, de même que `ocr` dans la liste de capacités par défaut. Si vous définissez une liste personnalisée `endpoints.agents.capabilities` qui omet `ocr` alors que l'OCR est configuré, les téléversements correspondant aux types MIME OCR échouent avec le message « OCR capability is not enabled for Agents ».
 
 Les connexions OCR bloquent par défaut les destinations privées, de bouclage (loopback), locales au lien (link-local) et les métadonnées cloud. Pour un service OCR privé de confiance, ajoutez son hôte et son port privés exacts à [`ocr.allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/ocr#allowedaddresses). Il s'agit d'une exemption à la protection SSRF, ne listez donc que l'infrastructure que vous contrôlez.
+
+## Analyseur de documents intégré [#built-in-document-parser]
+
+Lorsqu'aucun service OCR ne traite un fichier, le contexte de fichier de l'agent et l'option Télécharger comme texte utilisent une stratégie intégrée `document_parser`. Elle sert également de solution de repli si un service OCR configuré échoue. Elle ne gère que les formats suivants :
+
+- PDF (couche de texte uniquement, sans reconnaissance d'images)
+- DOCX (pas l'ancien format `.doc`)
+- Feuilles de calcul : xlsx, xls et ods
+- ODT
+
+Les fichiers de plus de 15 Mo sont rejetés par l'analyseur, et un document sans texte extractible renvoie une erreur. Les fichiers PowerPoint, `.doc`, EPUB et les images nécessitent un service OCR (ou la voie texte de l'API RAG, voir [Upload as Text](/docs/features/upload_as_text)).
 
 ## Aperçu des capacités OCR [#overview-of-ocr-capabilities]
 
@@ -168,9 +179,9 @@ ocr:
 3. Téléchargez le fichier de clé JSON du compte de service
 4. Définissez la variable d'environnement `GOOGLE_SERVICE_KEY_FILE` en utilisant l'une des méthodes prises en charge.
 
-### 4. OCR personnalisé (Prévu) [#4-custom-ocr-planned]
+### 4. OCR personnalisé (non implémenté) [#4-custom-ocr-not-implemented]
 
-La prise en charge de fournisseurs OCR personnalisés et de stratégies définies par l'utilisateur est prévue pour les prochaines versions.
+`custom_ocr` apparaît comme valeur dans la liste des stratégies, mais LibreChat n'en possède aucune implémentation. La prise en charge des fournisseurs OCR personnalisés et des stratégies définies par l'utilisateur est prévue pour les prochaines versions.
 
 ### 5. Téléverser des fichiers vers le fournisseur (Direct) [#5-upload-files-to-provider-direct]
 
@@ -219,7 +230,7 @@ fileConfig:
 
 Les fichiers correspondant à ces modèles utiliseront l'OCR lorsque :
 - Téléversé dans le contexte de fichier de l'agent (toujours, si l'OCR est configuré)
-- Téléchargé en tant que texte dans le chat (si l'OCR est configuré ; sinon, revient à l'analyse de texte)
+- Téléversé sous forme de texte dans le chat (si l'OCR est configuré ; sinon, l'analyseur de documents intégré ou la lecture de texte brut s'applique lorsque le fichier est pris en charge)
 
 Pour plus de détails sur la configuration du traitement des fichiers, consultez [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config).
 

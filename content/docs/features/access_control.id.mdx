@@ -2,20 +2,16 @@
 title: Kontrol Akses
 icon: ShieldCheck
 description: >-
-  Sistem otorisasi granular LibreChat - kendalikan siapa yang dapat menggunakan,
-  membagikan, mengedit, dan mengelola agen, prompt, server MCP, serta sumber
-  daya lainnya di tingkat pengguna, grup, peran, dan instans.
+  Sistem otorisasi granular LibreChat: kontrol siapa yang dapat menggunakan,
+  membagikan, mengedit, dan mengelola agen, prompt, server MCP, dan sumber daya
+  lainnya di tingkat pengguna, grup, peran, dan instans.
 ---
 
 # Kontrol Akses Granular [#granular-access-control]
 
-LibreChat hadir dengan sistem otorisasi lengkap di atas autentikasi. Akses tidak bersifat "semua atau tidak sama sekali": setiap entitas yang dapat dibagikan di dalam aplikasi (agen, prompt, server MCP, agen jarak jauh, file, percakapan) memiliki Access Control List (ACL) sendiri, dan setiap fitur dapat diaktifkan atau dibatasi secara independen per **pengguna**, **grup**, **peran**, atau **publik**.
+LibreChat dilengkapi dengan sistem otorisasi yang lengkap di atas autentikasi. Akses tidak bersifat "semua-atau-tidak-sama-sekali": setiap entitas yang dapat dibagikan di aplikasi (agen, prompt, server MCP, agen jarak jauh, skill, lingkungan kode, dan tautan bersama) memiliki Access Control List (ACL) sendiri, dan setiap fitur dapat diaktifkan atau dibatasi secara independen per **pengguna**, **grup**, **peran**, atau **secara publik**.
 
 Halaman ini menjelaskan bagaimana bagian-bagian tersebut disatukan sehingga Anda dapat memodelkan izin agar sesuai dengan organisasi Anda, mulai dari tim kecil di mana setiap orang berbagi secara bebas, hingga penyebaran perusahaan dengan grup Entra ID yang disinkronkan, peran kustom, dan admin yang didelegasikan.
-
-<Callout type="info" title="Panel Admin">
-  [**Panel Admin LibreChat**](/docs/features/admin_panel) khusus adalah UI yang akan datang untuk mengelola pengguna, grup, peran, profil izin kustom, dan pemberian akses seluruh sistem yang diperkenalkan pada [v0.8.5](/changelog/v0.8.5). Halaman ini mendokumentasikan model dasar, yang tersedia saat ini di LibreChat itu sendiri.
-</Callout>
 
 ## Sekilas tentang Model Akses [#the-access-model-at-a-glance]
 
@@ -102,12 +98,12 @@ ACL Sumber Daya saat ini berlaku untuk:
 - **Server MCP** (`mcpServer`)
 - **Skills** (`skill`), lihat [Skills](/docs/features/skills)
 - **Remote Agents** (`remoteAgent`), untuk [Agents API](/docs/features/agents_api)
-- **Files** (`file`), biasanya diwarisi dari sumber daya yang menggunakannya
-- **Projects** (`project`), mendukung pewarisan sehingga sumber daya yang dibagikan ke sebuah project secara otomatis mewarisi ACL
+- **Lingkungan Kode** (`codeEnvironment`), untuk pekerja kode milik deployment; lihat [Code Interpreter](/docs/features/code_interpreter)
+- **Tautan Bersama** (`sharedLink`), lihat [Tautan yang Dapat Dibagikan](/docs/features/shareable_links)
 
 ### Peran Akses (Preset Izin) [#access-roles-permission-presets]
 
-Daripada mengekspos bit izin mentah kepada pengguna akhir, berbagi menggunakan tiga peran bernama per jenis sumber daya:
+Alih-alih menampilkan bit izin mentah kepada pengguna akhir, fitur berbagi menggunakan tiga peran bernama untuk setiap jenis sumber daya (tautan bersama hanya memiliki peran Viewer dan Owner).
 
 | Peran | Bit izin | Apa yang dapat dilakukan penerima |
 | ---------- | ----------------------------------------------- | ------------------------------------------------------------------- |
@@ -116,6 +112,8 @@ Daripada mengekspos bit izin mentah kepada pengguna akhir, berbagi menggunakan t
 | **Owner** | `VIEW` + `EDIT` + `DELETE` + `SHARE` (`0b1111`) | Kontrol penuh: mengedit, menghapus, dan membagikan ulang kepada orang lain |
 
 Di balik layar, izin disimpan sebagai bitmask (`permBits`) untuk setiap pasangan (resource, principal); superset ditangani secara otomatis, sehingga memberikan akses Editor secara implisit juga memberikan akses Viewer.
+
+Bit kelima, `VIEW_INSIGHTS` (`0b10000`), hanya berlaku untuk agen. Bit ini memungkinkan principal yang juga memiliki `VIEW` untuk melihat [Insights](/docs/features/insights) agen tersebut. Bit ini tidak termasuk dalam preset Viewer, Editor, atau Owner: hanya administrator yang dapat memberikannya, melalui sakelar **View insights** di dialog berbagi agen, dan bit ini tidak dapat diberikan kepada principal publik.
 
 ### Memberikan Akses dari UI [#granting-access-from-the-ui]
 
@@ -138,35 +136,38 @@ Di balik layar, izin disimpan sebagai bitmask (`permBits`) untuk setiap pasangan
 - **Pemilik (Owners)** memiliki UI yang sama dengan penulis asli, serta dapat menghapus dan membagikan ulang secara bebas.
 - **Penulis asli** selalu memegang kendali penuh terlepas dari status ACL, dan admin dapat mengelola sumber daya apa pun pada instance tersebut.
 
-### Pewarisan Proyek [#project-inheritance]
-
-Izin dapat diwariskan dari **project** induk. Saat entri ACL diwariskan, tautan `inheritedFrom` akan mengarah kembali ke sumbernya. Inilah yang menggerakkan project "Global" di LibreChat, di mana sumber daya yang ditambahkan ke project global menjadi tersedia bagi semua pengguna tanpa memerlukan entri per prinsipal.
-
 ## Layer 3: System Grants (Kemampuan Admin) [#layer-3-system-grants-admin-capabilities]
 
 System grants adalah tabel hibah terpisah yang digunakan untuk **kapabilitas tingkat admin**, yang menjawab pertanyaan seperti _"Bisakah pengguna ini mengakses panel admin?"_ atau _"Bisakah grup ini mengelola server MCP secara global?"_. Hibah ini selalu dicakupkan ke principal (pengguna, grup, atau peran) dan string kapabilitas.
 
 Kemampuan kanonik meliputi:
 
-| Kemampuan | Tujuan |
+| Kemampuan                            | Tujuan                                        |
 | ------------------------------------ | --------------------------------------------- |
-| `access:admin`                       | Mengakses panel admin secara keseluruhan |
-| `read:users` / `manage:users`        | Melihat / mengubah akun pengguna |
-| `read:groups` / `manage:groups`      | Melihat / mengubah grup |
-| `read:roles` / `manage:roles`        | Melihat / mengubah peran kustom |
-| `read:configs` / `manage:configs`    | Melihat / mengubah semua konfigurasi sistem |
+| `access:admin`                       | Mengakses panel admin sama sekali             |
+| `read:users` / `manage:users`        | Melihat / mengubah akun pengguna              |
+| `read:groups` / `manage:groups`      | Melihat / mengubah grup                       |
+| `read:roles` / `manage:roles`        | Melihat / mengubah peran kustom               |
+| `read:configs` / `manage:configs`    | Melihat / mengubah seluruh konfigurasi sistem |
 | `read:configs:<section>` / `manage:configs:<section>` | Melihat / mengubah satu bagian konfigurasi tingkat atas |
-| `assign:configs:{user\|group\|role}` | Menetapkan profil penggantian konfigurasi ke prinsipal |
-| `read:usage`                         | Melihat penggunaan platform dan telemetri |
-| `read:agents` / `manage:agents`      | Melihat / memoderasi setiap agen pada instans |
-| `read:prompts` / `manage:prompts`    | Melihat / memoderasi setiap prompt |
-| `manage:mcpservers`                  | Mengelola MCP servers secara global |
+| `assign:configs:{user\|group\|role}` | Menetapkan profil penimpaan konfigurasi kepada principal |
+| `read:usage`                         | Melihat penggunaan platform dan telemetri     |
+| `read:agents` / `manage:agents`      | Melihat / memoderasi setiap agen pada instance |
+| `read:prompts` / `manage:prompts`    | Melihat / memoderasi setiap prompt            |
+| `read:skills` / `manage:skills`      | Melihat / memoderasi setiap skill             |
+| `read:sharedlinks` / `manage:sharedlinks` | Melihat / memoderasi setiap tautan bersama |
+| `manage:mcpservers`                  | Mengelola server MCP secara global            |
+| `manage:code_environments`           | Mendaftarkan dan mencabut pekerja kode yang dimiliki deployment |
+| `read:insights`                      | Melihat [Insights](/docs/features/insights) untuk setiap agen |
+| `read:audit_log`                     | Mendaftar, melihat, dan mengekspor log audit pemberian izin (hanya baca; tidak ada padanan manage) |
 
 Kemampuan kelola (manage) menyiratkan kemampuan baca (read) yang sesuai (misalnya, memiliki `manage:users` secara otomatis memberikan `read:users`). Hal ini juga berlaku untuk bagian konfigurasi: `manage:configs:endpoints` memenuhi `read:configs:endpoints`. Pengguna yang hanya memiliki akses konfigurasi lingkup bagian menerima respons konfigurasi admin yang difilter ke bagian yang dapat mereka baca; pengguna tanpa izin baca konfigurasi akan menerima `403`.
 
+`read:assistants` dan `manage:assistants` juga ada tetapi dicadangkan: belum ada middleware yang menegakkannya.
+
 Pengguna `SystemRoles.ADMIN` secara implisit memiliki semua kemampuan; pemberian akses (grants) memungkinkan Anda untuk **mendelegasikan** sebagian kemampuan admin kepada prinsipal non-admin tanpa menjadikan mereka admin penuh. Akses ke UI admin itu sendiri tetap memerlukan `access:admin`.
 
-Hak akses sistem diberikan dan dicabut melalui panel admin.
+Hibah sistem diberikan dan dicabut melalui [Admin Panel](/docs/features/admin_panel).
 
 ## Prinsip-prinsip secara Mendalam [#principals-in-depth]
 

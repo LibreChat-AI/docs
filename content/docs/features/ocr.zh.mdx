@@ -11,19 +11,19 @@ LibreChat 中的 OCR（光学字符识别）是一项用于从文件中提取文
 “Upload as Text”功能（在聊天界面中）的工作方式相同：
 
 - 匹配 `fileConfig.ocr.supportedMimeTypes` 的文件将在可用时使用 OCR。
-- 如果未配置 OCR，则回退到文本解析
+- 在未启用 OCR 的情况下,PDF、DOCX、电子表格和 ODT 文件会回退到[内置文档解析器](#built-in-document-parser)处理;图像以及解析器无法读取的其他类型文件则需要 OCR。
 - 对于包含文本的图像、扫描文档和复杂的 PDF 文件特别有用
-- 处理优先级：**OCR > STT > 文本解析**
+- 处理顺序:**OCR > RAG 文本提取 > 内置文档解析器 > STT > 纯文本**
 - 请参阅 [Upload as Text](/docs/features/upload_as_text) 文档以了解详细信息。
 
 ### 文件上下文（针对智能体） [#file-context-for-agents]
 
 当您通过 Agent Builder 的 File Context 部分上传文件时：
 
-1. 默认情况下，文本通过文本解析提取（如果已配置且文件匹配，则使用 OCR/STT）。
+1. 默认情况下,文本通过内置文档解析器或纯文本读取提取(如已配置且文件类型匹配,则使用 OCR/STT)。
 2. 提取的文本将作为 Agent 系统指令的一部分进行存储
 3. Agent 可以在所有对话中引用此上下文
-4. **OCR 服务是可选的** - 该功能无需 OCR 即可通过文本解析正常工作
+4. **OCR 服务是可选的** - 对于纯文本文件以及内置解析器可以处理的文档,该功能无需 OCR 服务也可正常工作
 
 作为“文件上下文 (File Context)”上传的文件会被处理以提取文本，随后这些文本会被添加到 Agent 的系统指令中。这非常适合文档、代码文件、PDF 或包含文本的图像，在这些场景下，您需要将全文内容包含在 Agent 的指令中。
 
@@ -31,7 +31,7 @@ LibreChat 中的 OCR（光学字符识别）是一项用于从文件中提取文
 
 ## 可选的 OCR 配置 [#optional-ocr-configuration]
 
-Agent File Context 和 Upload as Text 均可通过文本解析直接开箱即用。若要提升图像和扫描文档的提取质量，您可以选择配置 OCR 服务：
+两者(Agent File Context 和 Upload as Text)对于纯文本文件以及内置解析器可处理的文档类型均可开箱即用。若要从图片、扫描文档及其他格式中提取文本,可以选择配置 OCR 服务:
 
 ```yaml
 # librechat.yaml
@@ -48,9 +48,20 @@ ocr:
   mistralModel: "mistral-ocr-latest"
 ```
 
-**注意：** `context` 功能默认处于启用状态。仅当您需要提高图像和扫描文档的提取质量时，才需要配置 OCR（即 `ocr` 功能）。
+**注意:** `context` 功能默认启用,`ocr` 也在默认功能列表中。如果你设置了自定义的 `endpoints.agents.capabilities` 列表且该列表中省略了 `ocr`,而 OCR 已配置,那么与 OCR MIME 类型匹配的上传将失败,并提示"OCR capability is not enabled for Agents"。
 
 OCR 连接默认会阻止私有地址、回环地址、链路本地地址以及云元数据目的地。对于受信任的私有 OCR 服务，请将其确切的私有主机和端口添加到 [`ocr.allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/ocr#allowedaddresses) 中。这是对 SSRF 保护的豁免，因此请仅列出您所控制的基础设施。
+
+## 内置文档解析器 [#built-in-document-parser]
+
+当没有 OCR 服务处理文件时,智能体的文件上下文和“作为文本上传”会使用内置的 `document_parser` 策略。如果已配置的 OCR 服务失败,它也会作为回退方案使用。它仅处理以下类型:
+
+- PDF(仅文本层,不包含图像识别)
+- DOCX(非旧版 `.doc`)
+- 电子表格：xlsx、xls 和 ods
+- ODT
+
+超过 15 MB 的文件会被解析器拒绝,且无法提取出文本的文档会返回错误。PowerPoint 文件、`.doc`、EPUB 以及图片需要使用 OCR 服务(或 RAG API 文本路由,参见 [Upload as Text](/docs/features/upload_as_text))。
 
 ## OCR 功能概述 [#overview-of-ocr-capabilities]
 
@@ -165,9 +176,9 @@ ocr:
 3. 下载服务账号 JSON 密钥文件
 4. 使用支持的方法之一设置 `GOOGLE_SERVICE_KEY_FILE` 环境变量
 
-### 4. 自定义 OCR（计划中） [#4-custom-ocr-planned]
+### 4. 自定义 OCR(未实现) [#4-custom-ocr-not-implemented]
 
-计划在未来的版本中支持自定义 OCR 提供商和用户定义的策略。
+`custom_ocr` 出现在策略列表的值中，但 LibreChat 中并没有与之对应的实现。对自定义 OCR 提供商和用户自定义策略的支持计划在未来版本中推出。
 
 ### 5. 将文件上传至提供商 (直接) [#5-upload-files-to-provider-direct]
 
@@ -216,7 +227,7 @@ fileConfig:
 
 符合这些模式的文件将在以下情况下使用 OCR：
 - 上传至 agent 文件上下文（如果已配置 OCR，则始终上传）
-- 作为聊天中的文本上传（如果配置了 OCR；否则回退到文本解析）
+- 通过聊天上传为文本(如已配置 OCR,则使用 OCR;否则在支持该文件类型时使用内置文档解析器或纯文本读取)
 
 有关文件处理配置的更多详细信息，请参阅 [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config)。
 

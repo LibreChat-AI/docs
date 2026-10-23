@@ -13,19 +13,19 @@ LibreChat içindeki OCR (Optical Character Recognition), dosyalardan metin ayık
 "Upload as Text" özelliği (sohbet içinden) aynı şekilde çalışır:
 
 - `fileConfig.ocr.supportedMimeTypes` ile eşleşen dosyalar, eğer mevcutsa OCR kullanır
-- OCR yapılandırılmamışsa metin ayrıştırmaya geri döner
+- OCR, PDF, DOCX, spreadsheet ve ODT dosyaları OCR olmadan [yerleşik belge ayrıştırıcısına](#built-in-document-parser) geri döner; görseller ve ayrıştırıcının okuyamadığı diğer türler ise OCR gerektirir.
 - Özellikle metin içeren görseller, taranmış belgeler ve karmaşık PDF'ler için kullanışlıdır
-- İşleme önceliği: **OCR > STT > metin ayrıştırma**
+- İşleme sırası: **OCR > RAG metin çıkarma > yerleşik belge ayrıştırıcı > STT > düz metin**
 - Ayrıntılar için [Upload as Text](/docs/features/upload_as_text) belgelerine bakın.
 
 ### Dosya Bağlamı (ajanlar için) [#file-context-for-agents]
 
 Agent Builder'ın File Context bölümü aracılığıyla dosya yüklediğinizde:
 
-1. Metin, varsayılan olarak metin ayrıştırma (yapılandırılmışsa ve dosya eşleşiyorsa OCR/STT) kullanılarak çıkarılır
+1. Metin, varsayılan olarak yerleşik belge ayrıştırıcı veya düz metin okuma kullanılarak çıkarılır (yapılandırılmışsa ve dosya eşleşiyorsa OCR/STT ile).
 2. Çıkarılan metin, ajanın sistem talimatlarının bir parçası olarak saklanır
 3. Ajan, bu bağlama tüm konuşmalarda başvurabilir
-4. **OCR hizmeti isteğe bağlıdır** - özellik, metin ayrıştırma (text parsing) kullanarak bu hizmet olmadan da çalışır
+4. **OCR hizmeti isteğe bağlıdır** - bu özellik, düz metin dosyaları ve yerleşik ayrıştırıcının işleyebildiği belgeler için OCR olmadan da çalışır
 
 "Dosya Bağlamı" (File Context) olarak yüklenen dosyalar, metin çıkarımı için işlenir ve ardından bu metin, Agent'ın sistem talimatlarına eklenir. Bu yöntem; belgeler, kod dosyaları, PDF'ler veya tam metin içeriğinin Agent'ın talimatlarına dahil edilmesini istediğiniz metin içeren görseller için idealdir.
 
@@ -33,7 +33,7 @@ Agent Builder'ın File Context bölümü aracılığıyla dosya yüklediğinizde
 
 ## İsteğe Bağlı OCR Yapılandırması [#optional-ocr-configuration]
 
-Hem Agent File Context hem de Upload as Text, metin ayrıştırma kullanarak kutudan çıktığı gibi çalışır. Görseller ve taranmış belgeler için çıkarma kalitesini artırmak isterseniz, isteğe bağlı olarak bir OCR hizmeti yapılandırabilirsiniz:
+Hem Agent Dosya Bağlamı hem de Metin Olarak Yükle, düz metin dosyaları ve yerleşik ayrıştırıcının işleyebildiği belge türleri için kutudan çıktığı gibi çalışır. Görsellerden, taranmış belgelerden ve diğer biçimlerden metin çıkarmak için isteğe bağlı olarak bir OCR hizmeti yapılandırabilirsiniz:
 
 ```yaml
 # librechat.yaml
@@ -50,9 +50,20 @@ ocr:
   mistralModel: "mistral-ocr-latest"
 ```
 
-**Not:** `context` özelliği varsayılan olarak etkindir. Yalnızca görseller ve taranmış belgeler için gelişmiş ayıklama kalitesi istiyorsanız OCR'yi (`ocr` özelliği) yapılandırmanız gerekir.
+**Not:** `context` özelliği varsayılan olarak etkindir; varsayılan özellik listesinde `ocr` de etkindir. OCR yapılandırılmışken `endpoints.agents.capabilities` listesini özel olarak ayarlar ve bu listeden `ocr` öğesini çıkarırsanız, OCR MIME türlerine uyan yüklemeler "OCR capability is not enabled for Agents" hatasıyla başarısız olur.
 
 OCR bağlantıları varsayılan olarak özel, loopback, link-local ve bulut meta veri hedeflerini engeller. Güvenilir bir özel OCR hizmeti için, tam özel ana bilgisayarını ve bağlantı noktasını [`ocr.allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/ocr#allowedaddresses) kısmına ekleyin. Bu, SSRF korumasından bir muafiyettir, bu nedenle yalnızca kontrol ettiğiniz altyapıyı listeleyin.
+
+## Yerleşik Belge Ayrıştırıcı [#built-in-document-parser]
+
+Hiçbir OCR hizmeti bir dosyayı işlemediğinde, ajan Dosya Bağlamı ve Metin Olarak Yükle, yerleşik bir `document_parser` stratejisini kullanır. Ayrıca yapılandırılmış bir OCR hizmeti başarısız olduğunda yedek olarak da görev görür. Yalnızca şunları işler:
+
+- PDF (yalnızca metin katmanı, görüntü tanıma yok)
+- DOCX (eski `.doc` değil)
+- Elektronik tablolar: xlsx, xls ve ods
+- ODT
+
+15 MB'den büyük dosyalar ayrıştırıcı tarafından reddedilir ve çıkarılabilir metin içermeyen bir belge hata döndürür. PowerPoint dosyaları, `.doc`, EPUB ve görseller bir OCR hizmeti (veya RAG API metin yolu, bkz. [Metin Olarak Yükleme](/docs/features/upload_as_text)) gerektirir.
 
 ## OCR Yeteneklerine Genel Bakış [#overview-of-ocr-capabilities]
 
@@ -167,9 +178,9 @@ ocr:
 3. Hizmet hesabı JSON anahtar dosyasını indirin
 4. Desteklenen yöntemlerden birini kullanarak `GOOGLE_SERVICE_KEY_FILE` ortam değişkenini ayarlayın
 
-### 4. Özel OCR (Planlandı) [#4-custom-ocr-planned]
+### 4. Özel OCR (Uygulanmadı) [#4-custom-ocr-not-implemented]
 
-Özel OCR sağlayıcıları ve kullanıcı tanımlı stratejiler için destek, gelecek sürümlerde planlanmaktadır.
+`custom_ocr` strateji listesinde bir değer olarak görünüyor, ancak LibreChat'te bunun arkasında herhangi bir uygulama bulunmuyor. Özel OCR sağlayıcıları ve kullanıcı tanımlı stratejiler için destek gelecek sürümlerde planlanmaktadır.
 
 ### 5. Dosyaları Sağlayıcıya Yükle (Doğrudan) [#5-upload-files-to-provider-direct]
 
@@ -218,7 +229,7 @@ fileConfig:
 
 Bu desenlerle eşleşen dosyalar şu durumlarda OCR kullanacaktır:
 - Ajan dosya bağlamına yüklendi (OCR yapılandırılmışsa her zaman)
-- Sohbette metin olarak yüklendi (OCR yapılandırılmışsa; aksi takdirde metin ayrıştırmaya geri döner)
+- Sohbette metin olarak yüklenen (OCR yapılandırılmışsa; yapılandırılmamışsa, dosyayı destekleyen yerleşik belge ayrıştırıcısı veya düz metin okuma uygulanır)
 
 Dosya işleme yapılandırması hakkında daha fazla ayrıntı için [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config) bölümüne bakın.
 

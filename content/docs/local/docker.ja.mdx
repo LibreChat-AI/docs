@@ -23,11 +23,11 @@ Docker Desktopを使用する場合、コンテナはDocker Desktop独自の仮�
 
 LibreChat を同じマシン上で動作しているモデル(たとえば [Ollama](/docs/configuration/librechat_yaml/ai_endpoints/ollama))に接続する場合は、選択するモデルに合わせてハードウェアの規模を決めてください。そのモデルの実行環境は、LibreChat 本体よりもはるかに多くのメモリを必要とし、多くの場合 GPU も必要になります。
 
-<Callout type="warn" title="Apple Silicon (Mシリーズ) Mac">
+<Callout type="warn" title="AVX非対応のCPU">
 
-Apple Silicon (M1, M2, M3, M4) プロセッサを搭載したMacコンピュータは、LibreChatのDocker Compose設定で使用されるデフォルトのMongoDBイメージで必要とされるAVX命令をサポートしていません。MシリーズのMacを使用している場合、MongoDBは起動時にクラッシュします。
+LibreChat のデフォルトの Docker Compose セットアップで使用される MongoDB イメージは、AVX 命令をサポートする CPU を必要とします。AVX に対応していない旧世代の x86 CPU（およびゲストに AVX を公開していない一部の仮想マシン）では、MongoDB は起動時にクラッシュします。
 
-**修正:** `docker-compose.override.yml` を作成し、互換性のある古い MongoDB イメージを使用するようにします:
+**修正:** AVXを必要としない古いMongoDBイメージを使用するために、`docker-compose.override.yml`を作成します:
 
 ```yaml filename="docker-compose.override.yml"
 services:
@@ -88,11 +88,11 @@ docker compose up -d
 
 <Callout type="info" title="シングルテナント環境では最初のアカウントが管理者になります">
 
-スコープ設定のないシングルテナント環境では、最初に登録したアカウントが管理者アカウントになります。デフォルトの認証情報は存在しません。登録時に独自のユーザー名とパスワードを作成してください。テナントスコープの環境では、各テナントの最初のユーザーが自動的に昇格されることはありません。信頼できる管理フローを通じてテナント管理者をプロビジョニングしてください。
+スコープなしのシングルテナント構成では、最初に登録されたアカウントが管理者アカウントになります。デフォルトの認証情報は存在せず、登録時にユーザー名とパスワードを自分で作成します。テナントスコープ構成では、各テナントの最初のユーザーが自動的に管理者に昇格することはありません。テナント管理者は、信頼できる管理用のフローを通じてプロビジョニングしてください。
 
 </Callout>
 
-**Register**をクリックしてアカウントを作成し、[Your First Chat](/docs/quick_start/first_chat)に従ってモデルのAPIキーを追加し、最初のメッセージを送信してください。
+アカウントを作成するには **Sign up** をクリックしてください。その後、[最初のチャット](/docs/quick_start/first_chat)の手順に従ってモデルの API キーを追加し、最初のメッセージを送信してください。
 
   </Step>
 </Steps>
@@ -136,6 +136,12 @@ docker compose down && docker compose up -d
 
 </Callout>
 
+<Callout type="info" title="アップデートスクリプト">
+
+リポジトリの `npm run update:docker` スクリプトは、ローカルでビルドされたイメージを再ビルドしますが、デフォルトの `docker-compose.yml` が使用する事前ビルド済みイメージのプルは行いません。そのため、デフォルトのインストールを更新するには、以下の手順に従って手動で操作してください。
+
+</Callout>
+
 ```bash filename="Stop the running container(s)"
 docker compose down
 ```
@@ -167,16 +173,24 @@ docker compose up
 
 ポート3080で `bind: address already in use` のようなエラーが表示される場合、別のアプリケーションがそのポートを使用しています。
 
-競合しているアプリケーションを停止するか、`docker-compose.override.yml` でポートを変更してください。
+競合しているアプリケーションを停止するか、LibreChat が使用するポートを変更してください。デフォルトの `docker-compose.yml` は `"${PORT}:${PORT}"` を公開しており、オーバーライドファイルで追加されたポートは、この一覧を置き換えるのではなく末尾に追加されるため、オーバーライドファイルだけではポート 3080 は解放されません。
+
+最も簡単な解決策は、`.env` ファイルで `PORT` を設定することです。これにより、LibreChat がリッスンするポートと公開ポートの両方が変更されます。
+
+```bash filename=".env"
+PORT=3081
+```
+
+または、Docker Compose 2.24.4 以降を使用する場合は、`docker-compose.override.yml` の公開ポートを `!override` タグで置き換えてください(コンテナは引き続き 3080 でリッスンします):
 
 ```yaml filename="docker-compose.override.yml"
 services:
   api:
-    ports:
+    ports: !override
       - "3081:3080"
 ```
 
-その場合は、代わりに `http://localhost:3081` にアクセスしてください。
+`docker compose down && docker compose up -d` で再起動し、代わりに `http://localhost:3081` にアクセスしてください。
 
 ### コンテナが起動時にクラッシュする [#container-crashes-on-startup]
 
@@ -188,7 +202,7 @@ docker compose logs api
 
 一般的な原因:
 
-- `librechat.yaml` の構文が無効です -- [YAML Validator](/toolkit/yaml_checker) で検証してください
+- 無効な`librechat.yaml`の構文: [YAML Validator](/toolkit/yaml_checker)で検証してください
 - `.env` ファイルが見つかりません -- プロジェクトのルートディレクトリに `.env` が存在することを確認してください
 - Dockerが実行されていません -- Docker Desktopが開いて実行されていることを確認してください
 

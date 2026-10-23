@@ -13,7 +13,7 @@ Wollten Sie schon immer ein PDF, eine Codedatei oder eine Tabelle an die KI übe
 Sie hängen eine Datei an, LibreChat extrahiert den Text daraus und der vollständige Inhalt wird direkt in Ihre Unterhaltung eingefügt. Die KI kann dann jedes Wort davon lesen – ohne Plugins, ohne Vektordatenbanken und ohne zusätzliche Dienste, die konfiguriert werden müssen. Es funktioniert sofort nach der Installation.
 
 <Callout type="info" title="Keine Einrichtung erforderlich">
-  „Upload as Text“ funktioniert sofort auf jeder LibreChat-Instanz. Es verwendet eine integrierte Textanalyse – Sie benötigen weder OCR, eine RAG-Pipeline noch einen externen Dienst, um loszulegen.
+  Upload as Text funktioniert sofort auf jeder LibreChat-Instanz. Es verwendet einen integrierten Dokumentenparser für gängige Formate, sodass Klartext, Code, PDF, DOCX, Tabellenkalkulationen und ODT ohne OCR, eine RAG-Pipeline oder einen externen Dienst funktionieren. Bilder und einige Office-Formate benötigen einen zusätzlichen Dienst; siehe [Welche Dateien werden unterstützt](#which-files-are-supported).
 </Callout>
 
 ---
@@ -68,32 +68,35 @@ Eingefügte Textanhänge folgen denselben Regeln für Dateigröße, Token und [`
 Wenn ein Upload an Text weitergeleitet wird, speist LibreChat keine Rohdaten in den Prompt ein. Er durchläuft eine Verarbeitungspipeline, um sauberen, lesbaren Text zu extrahieren:
 
 1. **MIME-Typ-Erkennung** — LibreChat überprüft, welche Art von Datei Sie hochgeladen haben (PDF, Bild, Audio, Quellcode usw.), indem es deren MIME-Typ untersucht.
-2. **Methodenauswahl** — Basierend auf dem Dateityp und den verfügbaren Diensten wählt es die beste Extraktionsmethode unter Verwendung dieser Priorität:
+2. **Methodenauswahl**: Auf Grundlage des Dateityps und der verfügbaren Dienste wählt es eine Extraktionsmethode in folgender Reihenfolge aus:
 
 <Tabs items={["Prioritätsreihenfolge", "Entscheidungsbeispiele"]}>
   <Tabs.Tab>
-    | Priorität | Methode | Wann sie verwendet wird |
-    |----------|--------|---------------|
-    | 1. | **OCR** | Datei ist ein Bild oder ein gescanntes Dokument _und_ OCR ist konfiguriert |
-    | 2. | **STT** (Speech-to-Text) | Datei ist Audio _und_ STT ist konfiguriert |
-    | 3. | **Text-Parsing** | Datei entspricht einem bekannten Text-MIME-Typ |
-    | 4. | **Fallback** | Nichts der oben genannten hat zugetroffen — versucht trotzdem Text-Parsing |
+    | Priorität | Methode | Wann wird sie verwendet? |
+|----------|--------|---------------|
+| 1. | **OCR** | OCR ist konfiguriert _und_ die Datei entspricht `fileConfig.ocr.supportedMimeTypes`. Wenn OCR fehlschlägt, greift LibreChat auf den integrierten Dokumentenparser zurück. |
+| 2. | **RAG API `/text`** | `RAG_API_URL` ist gesetzt, `fileConfig.text.supportedMimeTypes` wurde eingeschränkt, und die Datei entspricht diesem Eintrag. Wenn die RAG API nicht verfügbar ist, greift LibreChat auf den integrierten Dokumentenparser zurück. |
+| 3. | **Integrierter Dokumentenparser** | Datei ist ein PDF, DOCX, xlsx/xls/ods-Tabellenblatt oder ODT, bis zu 15 MB. |
+| 4. | **STT** (Speech-to-Text) | Datei ist eine Audiodatei und entspricht `fileConfig.stt.supportedMimeTypes`. |
+| 5. | **Klartext** | Datei entspricht `fileConfig.text.supportedMimeTypes`. Text- und Code-Dateien werden direkt gelesen; andere Typen werden an die RAG API-Route `/text` gesendet, sofern `RAG_API_URL` gesetzt ist, andernfalls schlagen sie fehl. |
+
+    Eine Datei, auf die keines dieser Kriterien zutrifft, wird als für die Textverarbeitung nicht unterstützt abgelehnt.
   </Tabs.Tab>
   <Tabs.Tab>
     **Eine `.pdf` auf einer Instanz mit konfigurierter OCR:**
     → OCR wird aktiviert. Großartig für gescannte Dokumente und komplexe Layouts.
 
-    **Eine `.pdf`-Datei auf einer Standard-Instanz (kein OCR):**
-    → Die Textanalyse übernimmt dies. Funktioniert gut bei digital erstellten PDFs.
+    **Eine `.pdf`-Datei auf einer Standardinstanz (ohne OCR):**
+→ Der integrierte Dokumentenparser verarbeitet sie. Funktioniert gut bei digital erstellten PDFs.
 
-    **Eine `.py` Python-Datei:**
-    → Direkte Textanalyse. Der Quellcode ist bereits Text – keine Konvertierung erforderlich.
+    **Eine `.py`-Python-Datei:**
+→ Reiner Text. Quellcode ist bereits Text, daher ist keine Konvertierung erforderlich.
 
     **Eine `.mp3`-Datei auf einer Instanz mit konfiguriertem STT:**
     → Speech-to-Text transkribiert sie in Text für die Konversation.
 
-    **Ein `.png`-Screenshot ohne konfigurierte OCR:**
-    → Greift auf Text-Parsing zurück (eingeschränkte Ergebnisse — erwägen Sie die Einrichtung von OCR für Bilder).
+    **Ein `.png`-Screenshot ohne konfiguriertes OCR:**
+→ Der Upload gibt eine Fehlermeldung statt Text zurück. Konfigurieren Sie OCR für Bilder.
   </Tabs.Tab>
 </Tabs>
 
@@ -116,16 +119,21 @@ Wenn Sie einen Anhang vom Typ „Upload as Text“ in der Vorschau anzeigen oder
     - Shell-Skripte, SQL-Dateien
   </Tabs.Tab>
   <Tabs.Tab>
-    Die Textanalyse verarbeitet diese standardmäßig. Wenn OCR konfiguriert ist, übernimmt diese die Aufgabe für eine höhere Genauigkeit bei komplexen Layouts.
+    Der integrierte Dokumentenparser verarbeitet diese Dateien standardmäßig, bis zu 15 MB pro Datei. Ist OCR konfiguriert, übernimmt es für eine bessere Genauigkeit bei komplexen Layouts.
 
-    - **PDF** — digital und gescannt (gescannte PDFs profitieren von OCR)
-    - **Word** — `.docx`, `.doc`
+    - **PDF**: digitale Textebene (gescannte PDFs benötigen OCR)
+    - **Word**: `.docx` (nicht das veraltete `.doc`)
+    - **Tabellenkalkulationen**: `.xlsx`, `.xls`, `.ods`
+    - **OpenDocument-Text**: `.odt`
+
+    Diese benötigen OCR oder die Route `/text` der RAG API, da der integrierte Parser sie nicht lesen kann:
+
+    - **Wort**: `.doc`
     - **PowerPoint** — `.pptx`, `.potx`, `.ppt`
-    - **Excel** — `.xlsx`, `.xls`
     - **EPUB**-Bücher
   </Tabs.Tab>
   <Tabs.Tab>
-    Bilder **erfordern OCR**, um nützlichen Text zu erzeugen. Ohne diese Funktion werden die Ergebnisse mangelhaft sein.
+    Bilder **benötigen OCR**, um Text zu erzeugen. Ohne OCR gibt der Upload eine Fehlermeldung statt Text zurück.
 
     - JPEG, PNG, GIF, WebP
     - HEIC, HEIF (Apple-Formate)
@@ -220,7 +228,7 @@ fileConfig:
 
 ## Optional: Boosting der Extraktion mit OCR [#optional-boosting-extraction-with-ocr]
 
-Die Textanalyse funktioniert bei digital erstellten Dokumenten (PDFs, die aus Word gespeichert wurden, Codedateien, Klartext) einwandfrei. Wenn Sie jedoch **gescannte Dokumente, Fotos von Seiten oder Bilder mit Text** hochladen, wird der integrierte Parser keine optimalen Ergebnisse liefern.
+Der integrierte Parser funktioniert einwandfrei für digital erstellte PDFs, DOCX, Tabellenkalkulationen, ODT, Code-Dateien und Klartext. **Gescannte Dokumente, Fotos von Seiten, Bilder mit Text sowie Formate wie `.doc`, PowerPoint und EPUB** benötigen jedoch OCR.
 
 Hier kommt OCR ins Spiel. Wenn es konfiguriert ist, verwendet LibreChat automatisch OCR für Dateitypen, die davon profitieren – als Benutzer müssen Sie nichts anders machen.
 
@@ -256,7 +264,8 @@ Dieser Abschnitt ist für Administratoren gedacht, die steuern möchten, welche 
       # Max tokens extracted from a single file before truncation
       fileTokenLimit: 100000
 
-      # Files matching these MIME patterns use OCR (if configured)
+      # Example only: files matching these MIME patterns use OCR (if configured).
+      # These are examples for narrowing or extending, not required settings.
       ocr:
         supportedMimeTypes:
           - "^image/(jpeg|gif|png|webp|heic|heif)$"
@@ -265,18 +274,19 @@ Dieser Abschnitt ist für Administratoren gedacht, die steuern möchten, welche 
           - "^application/vnd\\.ms-(word|powerpoint|excel)$"
           - "^application/epub\\+zip$"
 
-      # Files matching these MIME patterns use text parsing
+      # Example only: narrowing this list sends the matching types to the RAG API /text
+      # route when RAG_API_URL is set
       text:
         supportedMimeTypes:
           - "^text/(plain|markdown|csv|json|xml|html|css|javascript|typescript|x-python|x-java|x-csharp|x-php|x-ruby|x-go|x-rust|x-kotlin|x-swift|x-scala|x-perl|x-lua|x-shell|x-sql|x-yaml|x-toml)$"
 
-      # Files matching these MIME patterns use STT (if configured)
+      # Example only: files matching these MIME patterns use STT (if configured)
       stt:
         supportedMimeTypes:
           - "^audio/(mp3|mpeg|mpeg3|wav|wave|x-wav|ogg|vorbis|mp4|x-m4a|flac|x-flac|webm)$"
     ```
 
-    **Prioritätshinweis:** OCR > STT > Text-Parsing > Fallback.
+    **Prioritätserinnerung:** OCR > RAG `/text` (wenn `RAG_API_URL` gesetzt ist und die Textliste eingegrenzt wurde) > integrierter Dokumentenparser > STT > Klartext.
 
     Für die vollständige Referenz siehe [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config).
   </Accordion>
@@ -299,10 +309,10 @@ Dieser Abschnitt ist für Administratoren gedacht, die steuern möchten, welche 
   </Accordion>
   <Accordion title="Der Dateiinhalt sieht falsch aus oder ist größtenteils leer">
     Ein paar Dinge, die Sie überprüfen sollten:
-    - **Gescannte PDFs / Bilder** — Diese benötigen OCR, um Text korrekt zu extrahieren. Ohne diese Funktion könnte der Parser fehlerhafte oder gar keine Ergebnisse liefern. Bitten Sie Ihren Administrator, [OCR zu konfigurieren](/docs/features/ocr).
+    - **Gescannte PDFs / Bilder**: Diese benötigen OCR, um den Text korrekt zu extrahieren. Ohne OCR gibt der Parser bei einem gescannten PDF nichts zurück, und Bilder führen zu einem Fehler. Bitten Sie Ihren Administrator, [OCR zu konfigurieren](/docs/features/ocr).
     - **Audiodateien** — Diese benötigen STT. Es gibt keinen Text-Fallback für Audio.
     - **Beschädigte Dateien** — Versuchen Sie, die Datei lokal zu öffnen, um sicherzustellen, dass sie nicht beschädigt ist.
-    - **Nicht unterstütztes Format** — Wenn der MIME-Typ mit keinem konfigurierten Muster übereinstimmt, versucht LibreChat ein Text-Parsing als Fallback, was bei Binärformaten möglicherweise nicht funktioniert.
+    - **Nicht unterstütztes Format**: Der integrierte Parser verarbeitet nur PDF-, DOCX-, xlsx/xls/ods- und ODT-Dateien (bis zu 15 MB). Formate wie `.doc`, PowerPoint und EPUB erfordern OCR oder die Route `/text` der RAG API. Ein MIME-Typ, der keinem konfigurierten Muster entspricht, wird abgelehnt.
   </Accordion>
   <Accordion title="Upload wurde als nicht unterstützter Dateityp abgelehnt">
     LibreChat gibt den abgelehnten MIME-Typ im Upload-Fehler zurück. Überprüfen Sie die [`fileConfig.endpoints.<endpoint>.supportedMimeTypes`](/docs/configuration/librechat_yaml/object_structure/file_config#supportedmimetypes-3)-Muster des aktiven endpoint und erlauben Sie den kanonischen Typ, den Sie akzeptieren möchten. Verwenden Sie für Shell-Skripte `application/x-sh`; LibreChat normalisiert die gängigen Varianten `application/x-shellscript` und `text/x-shellscript` vor dem Abgleich.
@@ -316,7 +326,7 @@ Dieser Abschnitt ist für Administratoren gedacht, die steuern möchten, welche 
     - Teilen Sie die Datei in kleinere Teile auf und laden Sie diese separat hoch.
   </Accordion>
   <Accordion title="Bilder werden hochgeladen, aber die KI kann den Text darin nicht lesen">
-    Ohne OCR werden Bilder durch Text-Parsing verarbeitet, das den Text in einem Bild nicht tatsächlich „sehen“ kann. Sie müssen OCR konfigurieren, damit dies funktioniert. Siehe [OCR für Dokumente](/docs/features/ocr).
+    Ohne OCR kann niemand den Text in einem Bild lesen, daher gibt der Upload eine Fehlermeldung zurück. Du musst OCR konfigurieren, damit dies funktioniert. Siehe [OCR für Dokumente](/docs/features/ocr).
 
     Alternativ können Sie ein **Vision-Modell** mit Standard-Datei-Upload verwenden – das Modell selbst kann Text in Bildern lesen.
   </Accordion>

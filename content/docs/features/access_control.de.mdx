@@ -2,20 +2,16 @@
 title: Zugriffskontrolle
 icon: ShieldCheck
 description: >-
-  Das granulare Autorisierungssystem von LibreChat – steuern Sie, wer Agents,
-  Prompts, MCP-Server und andere Ressourcen auf Benutzer-, Gruppen-, Rollen- und
-  Instanzebene verwenden, teilen, bearbeiten und verwalten darf.
+  LibreChats granulares Berechtigungssystem: Steuern Sie, wer Agenten, Prompts,
+  MCP-Server und andere Ressourcen auf Benutzer-, Gruppen-, Rollen- und
+  Instanzebene verwenden, teilen, bearbeiten und verwalten kann.
 ---
 
 # Granulare Zugriffskontrolle [#granular-access-control]
 
-LibreChat wird mit einem vollständigen Autorisierungssystem zusätzlich zur Authentifizierung ausgeliefert. Der Zugriff ist kein „Alles-oder-Nichts“-Prinzip: Jede teilbare Entität in der App (Agents, Prompts, MCP Server, Remote Agents, Dateien, Konversationen) verfügt über eine eigene Zugriffssteuerungsliste (Access Control List, ACL), und jede Funktion kann unabhängig pro **Benutzer**, **Gruppe**, **Rolle** oder **öffentlich** aktiviert oder eingeschränkt werden.
+LibreChat enthält ein vollständiges Autorisierungssystem zusätzlich zur Authentifizierung. Der Zugriff ist nicht „alles oder nichts“: Jede teilbare Entität in der Anwendung (Agenten, Prompts, MCP-Server, Remote-Agenten, Skills, Code-Umgebungen, geteilte Links) verfügt über eine eigene Zugriffskontrollliste (Access Control List, ACL), und jede Funktion kann unabhängig pro **Benutzer**, **Gruppe**, **Rolle** oder **öffentlich** aktiviert oder eingeschränkt werden.
 
 Diese Seite erklärt, wie die einzelnen Komponenten zusammenwirken, damit Sie Berechtigungen passend für Ihre Organisation modellieren können – von einem kleinen Team, in dem jeder alles frei teilen kann, bis hin zu einer Unternehmensbereitstellung mit synchronisierten Entra ID-Gruppen, benutzerdefinierten Rollen und delegierten Administratoren.
-
-<Callout type="info" title="Admin-Panel">
-  Ein dediziertes [**LibreChat Admin Panel**](/docs/features/admin_panel) ist die kommende Benutzeroberfläche zur Verwaltung von Benutzern, Gruppen, Rollen, benutzerdefinierten Berechtigungsprofilen und systemweiten Berechtigungen, die in [v0.8.5](/changelog/v0.8.5) eingeführt wurden. Diese Seite dokumentiert das zugrunde liegende Modell, das bereits heute in LibreChat selbst verfügbar ist.
-</Callout>
 
 ## Das Zugriffsmodell auf einen Blick [#the-access-model-at-a-glance]
 
@@ -102,12 +98,12 @@ Ressourcen-ACLs gelten derzeit für:
 - **MCP-Server** (`mcpServer`)
 - **Skills** (`skill`), siehe [Skills](/docs/features/skills)
 - **Remote Agents** (`remoteAgent`), für die [Agents API](/docs/features/agents_api)
-- **Dateien** (`file`), die normalerweise von der Ressource geerbt werden, die sie verwendet
-- **Projekte** (`project`), unterstützen Vererbung, sodass Ressourcen, die für ein Projekt freigegeben wurden, automatisch ACLs erben
+- **Code-Umgebungen** (`codeEnvironment`), für vom Deployment verwaltete Code-Worker; siehe [Code Interpreter](/docs/features/code_interpreter)
+- **Geteilte Links** (`sharedLink`), siehe [Teilbare Links](/docs/features/shareable_links)
 
 ### Zugriffsrollen (Berechtigungsvoreinstellungen) [#access-roles-permission-presets]
 
-Anstatt Endbenutzern rohe Berechtigungs-Bits offenzulegen, verwendet das Teilen drei benannte Rollen pro Ressourcentyp:
+Anstatt rohe Berechtigungsbits für Endbenutzer sichtbar zu machen, verwendet die Freigabe drei benannte Rollen pro Ressourcentyp (Freigabelinks haben nur die Rollen Viewer und Owner):
 
 | Rolle | Berechtigungsbits | Was der Empfänger tun kann |
 | ---------- | ----------------------------------------------- | ------------------------------------------------------------------- |
@@ -116,6 +112,8 @@ Anstatt Endbenutzern rohe Berechtigungs-Bits offenzulegen, verwendet das Teilen 
 | **Owner** | `VIEW` + `EDIT` + `DELETE` + `SHARE` (`0b1111`) | Volle Kontrolle: bearbeiten, löschen und für andere freigeben |
 
 Unter der Haube werden Berechtigungen als Bitmaske (`permBits`) für jedes (Ressource, Principal)-Paar gespeichert; Obermengen werden automatisch gehandhabt, sodass die Gewährung von Editor-Rechten implizit auch Viewer-Rechte beinhaltet.
+
+Ein fünftes Bit, `VIEW_INSIGHTS` (`0b10000`), gilt nur für Agenten. Es erlaubt einem Principal, der außerdem `VIEW` besitzt, die [Insights](/docs/features/insights) dieses Agenten einzusehen. Es ist nicht Teil der Voreinstellungen Viewer, Editor oder Owner: Nur Administratoren können es vergeben, und zwar über den Schalter **View insights** im Freigabedialog eines Agenten. Es kann nicht dem öffentlichen Principal gewährt werden.
 
 ### Zugriff über die UI gewähren [#granting-access-from-the-ui]
 
@@ -138,35 +136,38 @@ Unter der Haube werden Berechtigungen als Bitmaske (`permBits`) für jedes (Ress
 - **Besitzer** haben die gleiche Benutzeroberfläche wie der ursprüngliche Autor und können Inhalte frei löschen und erneut teilen.
 - **Der ursprüngliche Autor** behält immer die volle Kontrolle, unabhängig vom ACL-Status, und Administratoren können jede Ressource auf der Instanz verwalten.
 
-### Projektvererbung [#project-inheritance]
-
-Berechtigungen können von einem übergeordneten **project** geerbt werden. Wenn ein ACL-Eintrag vererbt wird, verweist der `inheritedFrom`-Link zurück auf die Quelle. Dies ist die Grundlage für das „Global“-Projekt in LibreChat, bei dem eine Ressource, die dem globalen Projekt hinzugefügt wurde, für alle Benutzer verfügbar wird, ohne dass ein Eintrag pro Principal erforderlich ist.
-
 ## Ebene 3: System-Berechtigungen (Admin-Funktionen) [#layer-3-system-grants-admin-capabilities]
 
 System-Berechtigungen sind eine separate Berechtigungstabelle, die für **Funktionen auf Admin-Ebene** verwendet wird und Fragen beantwortet wie _"Kann dieser Benutzer auf das Admin-Panel zugreifen?"_ oder _"Kann diese Gruppe MCP-Server global verwalten?"_. Sie sind immer an einen Principal (Benutzer, Gruppe oder Rolle) und eine Berechtigungszeichenfolge gebunden.
 
 Die kanonischen Funktionen umfassen:
 
-| Fähigkeit | Zweck |
+| Fähigkeit                            | Zweck                                         |
 | ------------------------------------ | --------------------------------------------- |
-| `access:admin`                       | Zugriff auf das Admin-Panel überhaupt |
-| `read:users` / `manage:users`        | Benutzerkonten anzeigen / bearbeiten |
-| `read:groups` / `manage:groups`      | Gruppen anzeigen / bearbeiten |
-| `read:roles` / `manage:roles`        | Benutzerdefinierte Rollen anzeigen / bearbeiten |
-| `read:configs` / `manage:configs`    | Gesamte Systemkonfiguration anzeigen / bearbeiten |
-| `read:configs:<section>` / `manage:configs:<section>` | Einen Konfigurationsabschnitt der obersten Ebene anzeigen / bearbeiten |
-| `assign:configs:{user\|group\|role}` | Konfigurations-Override-Profile an Prinzipale zuweisen |
-| `read:usage`                         | Plattformnutzung und Telemetrie anzeigen |
+| `access:admin`                       | Überhaupt auf das Admin-Panel zugreifen       |
+| `read:users` / `manage:users`        | Benutzerkonten anzeigen / ändern              |
+| `read:groups` / `manage:groups`      | Gruppen anzeigen / ändern                     |
+| `read:roles` / `manage:roles`        | Benutzerdefinierte Rollen anzeigen / ändern   |
+| `read:configs` / `manage:configs`    | Gesamte Systemkonfiguration anzeigen / ändern |
+| `read:configs:<section>` / `manage:configs:<section>` | Einen Konfigurationsabschnitt der obersten Ebene anzeigen / ändern |
+| `assign:configs:{user\|group\|role}` | Konfigurations-Override-Profile Prinzipalen zuweisen |
+| `read:usage`                         | Plattformnutzung und Telemetrie anzeigen      |
 | `read:agents` / `manage:agents`      | Jeden Agenten auf der Instanz anzeigen / moderieren |
-| `read:prompts` / `manage:prompts`    | Jeden Prompt anzeigen / moderieren |
-| `manage:mcpservers`                  | MCP Server global verwalten |
+| `read:prompts` / `manage:prompts`    | Jeden Prompt anzeigen / moderieren            |
+| `read:skills` / `manage:skills`      | Jede Fähigkeit (Skill) anzeigen / moderieren  |
+| `read:sharedlinks` / `manage:sharedlinks` | Jeden geteilten Link anzeigen / moderieren |
+| `manage:mcpservers`                  | MCP-Server global verwalten                   |
+| `manage:code_environments`           | Vom Deployment verwaltete Code-Worker registrieren und widerrufen |
+| `read:insights`                      | [Insights](/docs/features/insights) für jeden Agenten anzeigen |
+| `read:audit_log`                     | Das Audit-Protokoll der Berechtigungsvergaben auflisten, anzeigen und exportieren (nur lesend; es gibt keine manage-Entsprechung) |
 
 Die Verwaltung von Berechtigungen (Manage capabilities) impliziert die entsprechenden Lese-Berechtigungen (z. B. gewährt `manage:users` automatisch `read:users`). Dies gilt auch für Konfigurationsabschnitte: `manage:configs:endpoints` erfüllt `read:configs:endpoints`. Benutzer, die nur über einen auf Abschnitte beschränkten Konfigurationszugriff verfügen, erhalten Admin-Konfigurationsantworten, die auf die Abschnitte gefiltert sind, die sie lesen dürfen; Benutzer ohne Konfigurations-Lese-Berechtigung erhalten den Status `403`.
 
+`read:assistants` und `manage:assistants` existieren ebenfalls, sind jedoch reserviert: Derzeit erzwingt keine Middleware diese.
+
 Ein `SystemRoles.ADMIN`-Benutzer besitzt implizit alle Berechtigungen; Grants ermöglichen es Ihnen, eine Teilmenge der Admin-Befugnisse an Nicht-Admin-Principals zu **delegieren**, ohne diese zu vollständigen Administratoren zu machen. Der Zugriff auf die Admin-UI selbst erfordert weiterhin `access:admin`.
 
-System-Berechtigungen werden über das Admin-Panel erteilt und entzogen.
+Systemberechtigungen werden über das [Admin-Panel](/docs/features/admin_panel) vergeben und entzogen.
 
 ## Principals im Detail [#principals-in-depth]
 

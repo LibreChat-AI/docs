@@ -14,19 +14,19 @@ L'OCR (Optical Character Recognition) in LibreChat è un miglioramento opzionale
 La funzionalità "Upload as Text" (dalla chat) funziona allo stesso modo:
 
 - I file che corrispondono a `fileConfig.ocr.supportedMimeTypes` utilizzano l'OCR se disponibile
-- Ricorre all'analisi del testo se OCR non è configurato
+- Senza OCR, i file PDF, DOCX, di fogli di calcolo e ODT ricorrono al [parser di documenti integrato](#built-in-document-parser); le immagini e gli altri tipi che il parser non è in grado di leggere richiedono l'OCR
 - Particolarmente utile per immagini con testo, documenti scansionati e PDF complessi
-- Priorità di elaborazione: **OCR > STT > text parsing**
+- Ordine di elaborazione: **OCR > estrazione del testo RAG > parser di documenti integrato > STT > testo semplice**
 - Consulta la documentazione [Upload as Text](/docs/features/upload_as_text) per i dettagli.
 
 ### Contesto del file (per gli agenti) [#file-context-for-agents]
 
 Quando carichi file attraverso la sezione File Context dell'Agent Builder:
 
-1. Il testo viene estratto utilizzando il parsing del testo per impostazione predefinita (OCR/STT se configurato e se il file corrisponde)
+1. Il testo viene estratto utilizzando il parser di documenti integrato o la lettura di testo semplice per impostazione predefinita (OCR/STT se configurato e il file corrisponde)
 2. Il testo estratto viene archiviato come parte delle istruzioni di sistema dell'agente
 3. L'agente può fare riferimento a questo contesto in tutte le conversazioni
-4. **Il servizio OCR è facoltativo** - la funzionalità funziona senza di esso utilizzando l'analisi del testo
+4. **Il servizio OCR è facoltativo** - la funzionalità funziona anche senza di esso per i file di testo semplice e per i documenti gestiti dal parser integrato
 
 I file caricati come "File Context" vengono elaborati per estrarre il testo, che viene poi aggiunto alle istruzioni di sistema dell'Agent. Questa soluzione è ideale per documenti, file di codice, PDF o immagini contenenti testo di cui è necessario includere l'intero contenuto nelle istruzioni dell'agent.
 
@@ -34,7 +34,7 @@ I file caricati come "File Context" vengono elaborati per estrarre il testo, che
 
 ## Configurazione OCR opzionale [#optional-ocr-configuration]
 
-Sia Agent File Context che Upload as Text funzionano immediatamente utilizzando il parsing del testo. Per migliorare la qualità dell'estrazione per immagini e documenti scansionati, è possibile configurare facoltativamente un servizio OCR:
+Sia Agent File Context che Upload as Text funzionano subito per i file di testo semplice e per i tipi di documento gestiti dal parser integrato. Per estrarre il testo da immagini, documenti scansionati e altri formati, puoi configurare facoltativamente un servizio OCR:
 
 ```yaml
 # librechat.yaml
@@ -51,9 +51,20 @@ ocr:
   mistralModel: "mistral-ocr-latest"
 ```
 
-**Nota:** La funzionalità `context` è abilitata per impostazione predefinita. È necessario configurare l'OCR (la funzionalità `ocr`) solo se si desidera una qualità di estrazione migliorata per immagini e documenti scansionati.
+**Nota:** La capacità `context` è abilitata per impostazione predefinita, così come `ocr` nell'elenco di capacità predefinito. Se imposti un elenco personalizzato `endpoints.agents.capabilities` che omette `ocr` mentre l'OCR è configurato, i caricamenti che corrispondono ai tipi MIME OCR non riescono con l'errore "OCR capability is not enabled for Agents".
 
 Le connessioni OCR bloccano per impostazione predefinita le destinazioni private, loopback, link-local e i metadati cloud. Per un servizio OCR privato attendibile, aggiungi il suo host privato e la sua porta esatti a [`ocr.allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/ocr#allowedaddresses). Questa è un'esenzione dalla protezione SSRF, quindi elenca solo le infrastrutture che controlli.
+
+## Parser di documenti integrato [#built-in-document-parser]
+
+Quando nessun servizio OCR gestisce un file, le funzionalità File Context e Upload as Text degli agenti utilizzano una strategia integrata `document_parser`. Essa funge anche da alternativa nel caso in cui un servizio OCR configurato non riesca a funzionare. Gestisce solo:
+
+- PDF (solo livello di testo, senza riconoscimento delle immagini)
+- DOCX (non il formato legacy `.doc`)
+- Fogli di calcolo: xlsx, xls e ods
+- ODT
+
+I file più grandi di 15 MB vengono rifiutati dal parser, e un documento privo di testo estraibile restituisce un errore. I file PowerPoint, `.doc`, EPUB e le immagini richiedono un servizio OCR (oppure la route di testo della RAG API, vedi [Upload as Text](/docs/features/upload_as_text)).
 
 ## Panoramica delle funzionalità OCR [#overview-of-ocr-capabilities]
 
@@ -168,9 +179,9 @@ ocr:
 3. Scarica il file della chiave JSON dell'account di servizio
 4. Imposta la variabile d'ambiente `GOOGLE_SERVICE_KEY_FILE` utilizzando uno dei metodi supportati
 
-### 4. OCR personalizzato (Pianificato) [#4-custom-ocr-planned]
+### 4. OCR personalizzato (non implementato) [#4-custom-ocr-not-implemented]
 
-Il supporto per provider OCR personalizzati e strategie definite dall'utente è previsto per le prossime versioni.
+`custom_ocr` appare come valore nell'elenco delle strategie, ma LibreChat non dispone di alcuna implementazione corrispondente. Il supporto per provider OCR personalizzati e strategie definite dall'utente è previsto per le versioni future.
 
 ### 5. Caricamento file al provider (Diretto) [#5-upload-files-to-provider-direct]
 
@@ -219,7 +230,7 @@ fileConfig:
 
 I file che corrispondono a questi pattern utilizzeranno l'OCR quando:
 - Caricato nel contesto del file dell'agente (sempre, se l'OCR è configurato)
-- Caricato come testo nella chat (se l'OCR è configurato; altrimenti ricorre all'analisi del testo)
+- Caricato come testo nella chat (se l'OCR è configurato; in caso contrario si applica il parser di documenti integrato o la lettura di testo semplice, dove supportato dal file)
 
 Per ulteriori dettagli sulla configurazione dell'elaborazione dei file, consulta [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config).
 

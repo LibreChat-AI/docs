@@ -2,19 +2,15 @@
 title: アクセス制御
 icon: ShieldCheck
 description: >-
-  LibreChatの粒度の細かい認可システム -
-  ユーザー、グループ、ロール、インスタンスレベルで、エージェント、プロンプト、MCPサーバー、その他のリソースの使用、共有、編集、管理を制御します。
+  LibreChat の細分化された認可システム: エージェント、プロンプト、MCP
+  サーバー、その他のリソースを、ユーザー、グループ、ロール、インスタンスの各レベルで、誰が利用、共有、編集、管理できるかを制御します。
 ---
 
 # Granular Access Control [#granular-access-control]
 
-LibreChatは、認証の上に完全な認可システムを搭載しています。アクセス権は「すべてか無か」ではありません。アプリ内のすべての共有可能なエンティティ（エージェント、プロンプト、MCPサーバー、リモートエージェント、ファイル、会話）は独自のアクセス制御リスト（ACL）を持っており、すべての機能は**ユーザー**、**グループ**、**ロール**、または**公開**ごとに個別に有効化または制限することができます。
+LibreChatには、認証の上に構築された完全な認可システムが搭載されています。アクセスは「すべてか無か」ではありません。アプリ内の共有可能なすべてのエンティティ(エージェント、プロンプト、MCPサーバー、リモートエージェント、スキル、コード実行環境、共有リンク)は、それぞれ独自のアクセス制御リスト(ACL)を持ち、すべての機能は**ユーザー**、**グループ**、**ロール**、または**公開**単位で、個別に有効化または制限することができます。
 
 このページでは、小規模なチームで全員が自由に共有する環境から、Entra IDグループの同期、カスタムロール、委任された管理者を利用するエンタープライズ環境まで、組織に合わせて権限をモデル化できるよう、各要素がどのように組み合わさっているかを説明します。
-
-<Callout type="info" title="管理パネル">
-  専用の [**LibreChat Admin Panel**](/docs/features/admin_panel) は、[v0.8.5](/changelog/v0.8.5) で導入されたユーザー、グループ、ロール、カスタム権限プロファイル、およびシステム全体の権限を管理するための次期UIです。このページでは、現在 LibreChat 自体で利用可能な基盤となるモデルについて説明します。
-</Callout>
 
 ## アクセスモデルの概要 [#the-access-model-at-a-glance]
 
@@ -101,12 +97,12 @@ LibreChatのすべての共有可能なリソースには、ロールベース�
 - **MCP Servers** (`mcpServer`)
 - **Skills** (`skill`)、[Skills](/docs/features/skills) を参照してください
 - **リモートエージェント** (`remoteAgent`)。 [Agents API](/docs/features/agents_api) 用
-- **Files** (`file`)。通常、それらを使用するリソースから継承されます。
-- **Projects** (`project`) は継承をサポートしており、プロジェクトに共有されたリソースは自動的にACLを継承します。
+- **コード環境** (`codeEnvironment`)、デプロイ所有のコードワーカー向け。詳細は [Code Interpreter](/docs/features/code_interpreter) を参照してください。
+- **共有リンク** (`sharedLink`)、[共有可能なリンク](/docs/features/shareable_links) を参照
 
 ### アクセスロール (権限プリセット) [#access-roles-permission-presets]
 
-エンドユーザーに生のパーミッションビットを公開するのではなく、共有機能ではリソースタイプごとに3つの名前付きロールを使用します。
+生のパーミッションビットをエンドユーザーに公開するのではなく、共有機能ではリソースの種類ごとに3つの名前付きロールを使用します(共有リンクにはViewerとOwnerの2つのロールのみがあります)。
 
 | ロール | 権限ビット | 付与されたユーザーができること |
 | ---------- | ----------------------------------------------- | ------------------------------------------------------------------- |
@@ -115,6 +111,8 @@ LibreChatのすべての共有可能なリソースには、ロールベース�
 | **Owner**  | `VIEW` + `EDIT` + `DELETE` + `SHARE` (`0b1111`) | フルコントロール：編集、削除、および他者への再共有 |
 
 内部的には、権限は各（リソース、プリンシパル）のペアに対してビットマスク（`permBits`）として保存されます。スーパーセットは自動的に処理されるため、Editorを付与すると自動的にViewerも付与されます。
+
+`VIEW_INSIGHTS`(`0b10000`)という5つ目のビットは、エージェントにのみ適用されます。このビットを持つプリンシパルが`VIEW`も保持している場合、そのエージェントの[Insights](/docs/features/insights)を表示できます。Viewer、Editor、Ownerのプリセットには含まれておらず、管理者のみが、エージェントの共有ダイアログにある**View insights**トグルを通じて付与できます。また、公開プリンシパルに付与することはできません。
 
 ### UIからアクセスを許可する [#granting-access-from-the-ui]
 
@@ -137,10 +135,6 @@ LibreChatのすべての共有可能なリソースには、ロールベース�
 - **Owners**は元の作成者と同じUIを持ち、自由に削除や再共有を行うことができます。
 - **元の作成者**は、ACLの状態に関係なく常に完全な制御権を保持し、管理者はインスタンス上のあらゆるリソースを管理できます。
 
-### Project Inheritance [#project-inheritance]
-
-権限は親の **project** から継承できます。ACLエントリが継承されると、`inheritedFrom` リンクがソースを指し示します。これがLibreChatにおける「グローバル」プロジェクトの仕組みであり、グローバルプロジェクトに追加されたリソースは、プリンシパルごとにエントリを作成することなく、すべてのユーザーが利用できるようになります。
-
 ## Layer 3: System Grants (Admin Capabilities) [#layer-3-system-grants-admin-capabilities]
 
 System grants は、**管理者レベルの機能**に使用される個別の権限テーブルであり、「このユーザーは管理パネルにアクセスできるか？」や「このグループは MCP サーバーをグローバルに管理できるか？」といった問いに答えるものです。これらは常にプリンシパル（ユーザー、グループ、またはロール）と機能文字列に対してスコープが設定されます。
@@ -149,23 +143,30 @@ System grants は、**管理者レベルの機能**に使用される個別の�
 
 | 機能 | 目的 |
 | ------------------------------------ | --------------------------------------------- |
-| `access:admin`                       | 管理パネルへのアクセス権限 |
-| `read:users` / `manage:users`        | ユーザーアカウントの表示 / 変更 |
-| `read:groups` / `manage:groups`      | グループの表示 / 変更 |
-| `read:roles` / `manage:roles`        | カスタムロールの表示 / 変更 |
-| `read:configs` / `manage:configs`    | すべてのシステム設定の表示 / 変更 |
-| `read:configs:<section>` / `manage:configs:<section>` | 特定のトップレベル設定セクションの表示 / 変更 |
+| `access:admin` | 管理パネルへのアクセス |
+| `read:users` / `manage:users` | ユーザーアカウントの閲覧 / 変更 |
+| `read:groups` / `manage:groups` | グループの閲覧 / 変更 |
+| `read:roles` / `manage:roles` | カスタムロールの閲覧 / 変更 |
+| `read:configs` / `manage:configs` | すべてのシステム設定の閲覧 / 変更 |
+| `read:configs:<section>` / `manage:configs:<section>` | 1つのトップレベル設定セクションの閲覧 / 変更 |
 | `assign:configs:{user\|group\|role}` | プリンシパルへの設定オーバーライドプロファイルの割り当て |
-| `read:usage`                         | プラットフォームの使用状況とテレメトリの表示 |
-| `read:agents` / `manage:agents`      | インスタンス上の全エージェントの表示 / モデレーション |
-| `read:prompts` / `manage:prompts`    | すべてのプロンプトの表示 / モデレーション |
-| `manage:mcpservers`                  | MCPサーバーのグローバル管理 |
+| `read:usage` | プラットフォームの利用状況とテレメトリーの閲覧 |
+| `read:agents` / `manage:agents` | インスタンス上のすべてのエージェントの閲覧 / モデレーション |
+| `read:prompts` / `manage:prompts` | すべてのプロンプトの閲覧 / モデレーション |
+| `read:skills` / `manage:skills` | すべてのスキルの閲覧 / モデレーション |
+| `read:sharedlinks` / `manage:sharedlinks` | すべての共有リンクの閲覧 / モデレーション |
+| `manage:mcpservers` | MCPサーバーのグローバル管理 |
+| `manage:code_environments` | デプロイメントが所有するコードワーカーの登録と取り消し |
+| `read:insights` | すべてのエージェントの [インサイト](/docs/features/insights) の閲覧 |
+| `read:audit_log` | 権限付与の監査ログの一覧表示、閲覧、エクスポート(読み取り専用。対応する manage 権限はありません) |
 
 管理（manage）権限は、対応する読み取り（read）権限を暗黙的に含みます（例：`manage:users` を保持している場合、自動的に `read:users` も付与されます）。これは設定セクションにも適用され、`manage:configs:endpoints` は `read:configs:endpoints` を満たします。セクション単位の設定アクセス権のみを持つユーザーには、読み取り可能なセクションにフィルタリングされた管理設定レスポンスが返されます。設定の読み取り権限を持たないユーザーには `403` が返されます。
 
+`read:assistants` と `manage:assistants` も存在しますが、予約済みです。これらを適用するミドルウェアはまだ実装されていません。
+
 `SystemRoles.ADMIN` ユーザーは暗黙的にすべての権限を保持します。権限付与（grants）を使用することで、非管理者ユーザーを完全な管理者権限に昇格させることなく、管理者権限のサブセットを**委任**できます。管理UI自体へのアクセスには、引き続き `access:admin` が必要です。
 
-システム権限は、管理パネルを通じて付与および取り消しが行われます。
+システムの権限の付与と取り消しは、[管理パネル](/docs/features/admin_panel)から行います。
 
 ## Principals in Depth [#principals-in-depth]
 

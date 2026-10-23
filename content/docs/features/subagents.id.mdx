@@ -16,18 +16,18 @@ Gunakan subagen untuk:
 - Alur kerja tim multi-agen yang harus dijalankan di balik satu tugas yang didelegasikan
 - Dekomposisi gaya paralel di mana induk mengoordinasikan dan meringkas
 
-## Bagaimana Subagents Berbeda dari Agent Chain [#how-subagents-differ-from-agent-chain]
+## Bagaimana Subagen Berbeda dari Handoff [#how-subagents-differ-from-handoffs]
 
-Agent Chain membangun grafik multi-agen di mana agen meneruskan hasil melalui langkah-langkah rantai yang telah dikonfigurasi. Subagen dibuat oleh agen sebagai panggilan alat (tool call) selama proses berjalan.
+Handoff memindahkan percakapan dari agen utama ke agen spesialis, yang kemudian melanjutkan pertukaran tersebut. Subagen dibuat oleh sebuah agen sebagai panggilan alat selama proses berjalan, melakukan pekerjaannya secara terisolasi, dan mengembalikan hasil yang ringkas ke agen induk.
 
-- **Agent Chain**: alur kerja multi-agen tingkat grafik
-- **Subagents**: delegasi runtime dari agen induk ke eksekusi anak yang terisolasi
+- **Handoffs**: percakapan berpindah ke agen lain
+- **Subagents**: delegasi saat runtime dari agen induk ke proses turunan yang terisolasi, dengan agen induk tetap memegang kendali
 
-Keduanya dapat menggunakan agen yang sudah ada, namun subagent dirancang untuk delegasi terlingkup dari dalam loop penalaran satu agen.
+Keduanya dapat menggunakan agen yang sudah ada, tetapi subagen dirancang untuk delegasi terbatas dari dalam loop penalaran satu agen. Agent Chains lama sudah tidak direkomendasikan (deprecated); gunakan Handoffs atau Subagents untuk orkestrasi baru. Lihat [Agents](/docs/features/agents#handoffs).
 
 ## Mengaktifkan Kapabilitas [#enable-the-capability]
 
-Kemampuan `subagents` diaktifkan secara default. Admin dapat menghapusnya dari daftar kemampuan endpoint agents untuk menonaktifkan fitur tersebut.
+Kapabilitas `subagents` diaktifkan secara default. Admin dapat menghapusnya dari daftar kapabilitas endpoint agents untuk menonaktifkan fitur ini. Daftar kapabilitas default adalah:
 
 ```yaml filename="librechat.yaml"
 endpoints:
@@ -42,19 +42,23 @@ endpoints:
       - 'actions'
       - 'context'
       - 'skills'
+      - 'memory'
+      - 'ask_user_question'
       - 'tools'
-      - 'chain'
       - 'ocr'
 ```
 
+Jika Anda mengatur `capabilities` sendiri, cantumkan setiap kapabilitas yang ingin Anda pertahankan, karena daftar Anda akan menggantikan daftar default. Eksekusi di latar belakang (`run_in_background`) tidak termasuk dalam daftar default; lihat [Detached Subagent Threads](#detached-subagent-threads).
+
 ## Mengonfigurasi Agen [#configure-an-agent]
 
-Di Agent Builder, buka **Advanced Settings** dan aktifkan **Subagents**.
+Di Agent Builder, buka **Add tools**, pilih **Subagents** di pustaka alat, lalu aktifkan sakelar (**Enable subagents**).
 
 Pengaturan yang tersedia:
 
 - **Aktifkan subagent**: menambahkan alat pembuat subagent ke agen.
 - **Allow self-spawn**: memungkinkan agen untuk membuat salinan baru dari dirinya sendiri dalam konteks yang terisolasi. Fitur ini diaktifkan secara default saat subagents diaktifkan.
+- **Bagikan file dengan subagen**: membagikan file pesan kepada subagen foreground yang berwenang. Opsi ini hanya muncul ketika `endpoints.agents.fileSharing.enabled` bernilai true.
 - **Subagent tambahan**: memilih agen spesifik yang dapat dipicu oleh agen induk.
 
 Tim Agen yang disimpan disematkan sebagai `subagents.graphs` dalam payload pembuatan atau pembaruan Agen. Agent Builder saat ini mempertahankan definisi ini saat Anda mengedit pengaturan *self-spawn* dan pengaturan Agen individu, namun tidak membuat definisi graf. Setiap tim menamai graf asiklik berarah yang dibatasi, Agen entri-nya, dan Agen yang hasilnya dikembalikan ke induk:
@@ -129,7 +133,7 @@ Pada giliran berikutnya, LibreChat menyimpan panggilan sebelumnya dari alat anak
 
 ## Thread Subagen Terpisah [#detached-subagent-threads]
 
-Ketika `run_in_background` diaktifkan untuk endpoint Agents, Agent induk dapat melepaskan pekerjaan subagent dan melanjutkannya tanpa harus menunggu. LibreChat menyimpan setiap anak yang dilepaskan dengan silsilah eksekusi pribadi dan transkrip kanonik. Thread anak tetap berada di luar navigasi dan pencarian percakapan normal serta tidak dapat dibaca secara langsung; tampilan induk yang diotorisasi hanya menampilkan aktivitas anak yang terbatas.
+`run_in_background` bersifat opt-in: tambahkan ke `endpoints.agents.capabilities` untuk mengaktifkannya bagi endpoint Agents. Ketika diaktifkan, sebuah Agent induk dapat memisahkan pekerjaan subagen dan melanjutkan tanpa menunggu hasilnya. LibreChat menyimpan setiap child yang dipisahkan beserta silsilah eksekusi privat dan transkrip kanonik. Thread child tidak ditampilkan dalam navigasi dan pencarian percakapan normal, serta tidak dapat dibaca secara langsung; tampilan induk yang berwenang hanya menampilkan aktivitas child yang terbatas.
 
 Child threads adalah catatan eksekusi yang hanya dapat dilihat (view-only). Pengguna tidak dapat mengedit atau menghapus child canonical secara langsung. Untuk child direct-Agent yang tahan lama dan telah selesai, **Continue in a new chat** akan memforking cabang yang telah selesai tersebut menjadi percakapan Agent normal yang dapat ditulis, sementara child aslinya tetap tersembunyi dan bersifat read-only. Panel aktivitas menjaga satu composer tetap terpasang selama proses berjalan dan di seluruh pengiriman tugas yang masuk, menjaga fokus dan panduan yang setengah diketik saat tampilan tugas baru dimuat. Pengiriman tetap tidak tersedia sampai tugas dapat menerima kontrol. Teks yang dimasukkan setelah penyelesaian akan dibawa ke dalam fork, dan fork yang gagal akan memulihkan draf di panel. Tindakan ini tidak tersedia untuk tampilan yang sedang berjalan, graph, anonymous-Agent, dan shared. Menghapus parent akan berdampak pada silsilah child-nya. Agent parent dapat melakukan polling, mengarahkan, mengantre, menginterupsi, membatalkan, mengumpulkan, dan nantinya melanjutkan child canonical melalui alat tugasnya; lease berbasis Mongo men-serialize kelanjutan tersebut di seluruh replika API.
 

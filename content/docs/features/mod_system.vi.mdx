@@ -17,8 +17,9 @@ Trong môi trường production, bạn nên sử dụng Cloudflare hoặc một 
 
 ### Ghi chú [#notes]
 
-- Sử dụng Caching cho bảo mật cơ bản và ghi nhật ký vi phạm (cấm, tin nhắn đồng thời, vượt quá giới hạn tốc độ)
-    - Trong tương lai gần, tôi sẽ thêm hỗ trợ **Redis** cho các instance production, tính năng này có thể được tích hợp dễ dàng vào thiết lập bộ nhớ đệm hiện tại.
+- Sử dụng bộ nhớ đệm (caching) để bảo mật cơ bản và ghi nhật ký vi phạm (cấm truy cập, tin nhắn đồng thời, vượt quá giới hạn tốc độ)
+    - Khi `USE_REDIS=true`, điểm vi phạm và các lệnh cấm được lưu trữ trong **Redis**, nhờ đó chúng được chia sẻ giữa các bản sao (replica). Nếu không có Redis, hệ thống sẽ sử dụng bộ nhớ đệm trong bộ nhớ (in-memory cache).
+    - Điểm vi phạm sẽ hết hạn sau một khoảng thời gian không có vi phạm, được đặt bởi `VIOLATION_SCORE_TTL` (tính bằng mili giây, mặc định là một giờ; mỗi vi phạm mới sẽ khởi động lại bộ đếm thời gian, và giá trị không dương sẽ vô hiệu hóa việc hết hạn). Xem [Kiểm duyệt tự động](/docs/configuration/mod_system)
 - Việc vượt quá bất kỳ giới hạn tốc độ nào (đăng nhập/đăng ký/nhắn tin) đều được coi là vi phạm, điểm mặc định là 1
 - Nguồn gốc không phải trình duyệt là một vi phạm
 - Điểm mặc định cho mỗi vi phạm có thể được cấu hình
@@ -28,8 +29,7 @@ Trong môi trường production, bạn nên sử dụng Cloudflare hoặc một 
   - `violations.json` theo dõi tổng số lần vi phạm cho mỗi người dùng
   - `logs.json` ghi lại từng vi phạm riêng lẻ cho mỗi người dùng
 - Các bản ghi (logs) bị cấm được lưu trữ trong MongoDB dưới collection `logs`. Chúng là tạm thời vì chúng chỉ tồn tại trong thời gian bị cấm.
-    - Nếu bạn muốn xóa lệnh cấm theo cách thủ công, bạn sẽ phải xóa người dùng đó khỏi cơ sở dữ liệu theo cách thủ công và khởi động lại máy chủ.
-    - Hỗ trợ **Redis** cũng đã được lên kế hoạch cho tính năng này.
+    - Để gỡ bỏ lệnh cấm thủ công, hãy xóa mục tương ứng khỏi cơ sở dữ liệu và khởi động lại máy chủ.
 
 ### Các loại Rate Limiter [#rate-limiter-types]
 
@@ -47,9 +47,9 @@ Ngăn chặn việc lạm dụng tính năng nhập cuộc trò chuyện bằng 
 - Các tập lệnh tự động cố gắng làm tràn hệ thống bằng dữ liệu được nhập
 - Cạn kiệt tài nguyên do xử lý số lượng lớn các tệp nhập (imports)
 
-Các giới hạn mặc định:
-- Dựa trên IP: 100 lượt nhập mỗi phút
-- Dựa trên người dùng: 50 lượt nhập mỗi phút (mặc định bị vô hiệu hóa)
+Giới hạn mặc định (cả hai bộ giới hạn luôn được áp dụng):
+- IP-based: 100 lượt nhập mỗi 15 phút
+- Dựa trên người dùng: 50 lần nhập mỗi 15 phút
 
 #### Giới hạn tốc độ phân nhánh hội thoại (Conversation Forking Rate Limiting) [#conversation-forking-rate-limiting]
 Kiểm soát tần suất người dùng có thể tạo bản sao (fork) của các cuộc trò chuyện hiện có. Điều này giúp ngăn chặn:
@@ -57,9 +57,9 @@ Kiểm soát tần suất người dùng có thể tạo bản sao (fork) của 
 - Cạn kiệt tài nguyên do các thao tác fork
 - Lạm dụng tính năng forking để gửi thư rác (spam) hoặc thu thập dữ liệu
 
-Các giới hạn mặc định:
-- Dựa trên IP: 30 yêu cầu mỗi phút
-- Dựa trên người dùng: 7 forks mỗi phút (mặc định bị vô hiệu hóa)
+Giới hạn mặc định (cả hai bộ giới hạn luôn được áp dụng):
+- IP-based: 30 forks mỗi 1 phút
+- Dựa trên người dùng: 7 lần rẽ nhánh (forks) mỗi 1 phút
 
 #### Giới hạn tốc độ tải lên tệp tin [#file-upload-rate-limiting]
 Được cấu hình thông qua tệp librechat.yaml, tính năng này kiểm soát tần suất người dùng có thể tải tệp lên nhằm ngăn chặn việc lạm dụng lưu trữ và cạn kiệt băng thông.
@@ -111,8 +111,8 @@ Các bộ giới hạn tốc độ hiện tại của dự án như sau (xem bê
 - Giới hạn tốc độ đăng nhập và đăng ký
 - `Optional:` Giới hạn tin nhắn đồng thời (chỉ cho phép X tin nhắn cùng lúc trên mỗi người dùng)
 - `Optional:` Giới hạn tin nhắn (tần suất người dùng có thể gửi tin nhắn, có thể cấu hình theo IP và User)
-- `Optional:` Nhập giới hạn hội thoại (tần suất người dùng có thể nhập hội thoại, có thể cấu hình theo IP và User)
-- `Optional:` Giới hạn phân nhánh cuộc trò chuyện (tần suất người dùng có thể phân nhánh cuộc trò chuyện, có thể cấu hình theo IP và User)
+- Giới hạn tần suất nhập cuộc trò chuyện (số lần người dùng có thể nhập cuộc trò chuyện, có thể cấu hình theo IP và theo Người dùng)
+- Giới hạn tần suất phân nhánh cuộc trò chuyện (số lần người dùng có thể phân nhánh cuộc trò chuyện, có thể cấu hình theo IP và theo người dùng)
 - `Optional:` Text-to-Speech (TTS) limiting (configurable through [`librechat.yaml` config file](/docs/configuration/librechat_yaml/object_structure/config#ratelimits))
 - `Optional:` Speech-to-Text (STT) limiting (configurable through [`librechat.yaml` config file](/docs/configuration/librechat_yaml/object_structure/config#ratelimits))
 - `Optional:` File Upload limiting (configurable through [`librechat.yaml` config file](/docs/configuration/librechat_yaml/object_structure/config#ratelimits))

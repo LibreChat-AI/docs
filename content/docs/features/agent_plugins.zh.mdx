@@ -20,7 +20,7 @@ DEPLOYMENT_PLUGINS_DIR=./plugin
 DEPLOYMENT_PLUGIN_DATA_DIR=./data/plugins
 
 # Optional and disabled by default; see Command Hooks below
-DEPLOYMENT_PLUGIN_HOOKS=true
+# DEPLOYMENT_PLUGIN_HOOKS=true
 ```
 
 相对路径是相对于 LibreChat 项目根目录进行解析的。如果默认的 `./plugin` 目录不存在，启动将继续进行且不加载任何插件。如果显式设置了 `DEPLOYMENT_PLUGINS_DIR` 但无法读取，启动将会失败，以确保部署错误不会被静默忽略。
@@ -96,6 +96,14 @@ plugin/
 
 对于 `stdio` 服务器，`${PLUGIN_ROOT}` 和 `${PLUGIN_DATA}` 会在 `args`、`env` 和 `cwd` 中进行一次扩展；这两个值也会被添加到启动进程的环境变量中。插件 MCP 配置不会从 LibreChat 的宿主环境中扩展任意变量。像 `${OPENAI_API_KEY}` 这样的值在注册表存储和运行时初始化期间将保持为字面量。请将凭据保留在插件文件之外，并通过专门构建的身份验证服务或其他受部署控制的机制来提供它们。
 
+LibreChat 在注册服务器之前会验证每个 `mcp.json`:
+
+- `command` 必须是单个可执行令牌:可以是 `node` 这样的裸名称,也可以是插件目录内的 `./` 路径。Shell 字符串和绝对路径会被拒绝,并且 `command` 中的 `${PLUGIN_ROOT}` 不会被展开。
+- `cwd` 必须以 `./`、`${PLUGIN_ROOT}` 或 `${PLUGIN_DATA}` 开头，并且必须解析到其所指定的基础路径之内。
+- `env` 不能声明 `PLUGIN_ROOT` 或 `PLUGIN_DATA`;LibreChat 会自动设置它们。
+- 远程 `url` 值必须是绝对的 `http` 或 `https` URL,且不得包含用户信息或片段(fragment)。除非主机为环回地址(例如 `localhost` 或 `127.0.0.1`),否则必须使用 `https`。
+- 服务器条目中包含未知字段时，该条目会被拒绝并跳过。如果顶层存在未知字段，或 `$schema` 与受支持的 `1.0.0` 架构 URL 不匹配，则会为整个插件禁用 MCP。
+
 在 `librechat.yaml` 中声明的 MCP 服务器优先级高于同名的插件服务器。重复的插件服务器名称将被跳过并记录在日志中。
 
 ## 持久化插件数据 [#persistent-plugin-data]
@@ -146,7 +154,8 @@ DEPLOYMENT_PLUGIN_HOOKS=true
 - 子环境仅包含 `PATH`、`HOME`、`LANG`、`LC_ALL` 以及存在时的 `TZ`、三个插件路径变量，以及在 `allowedEnvVars` 中明确列出的名称。
 - 退出代码 `0` 表示成功。写入标准输出的 JSON 可以返回与事件相关的决策和有界上下文；纯文本输出仅被视为 `SessionStart` 和 `UserPromptSubmit` 的附加上下文。
 - 退出代码 `2` 会阻止相应的操作或继续执行，并使用标准错误作为原因。其他非零退出代码会被记录，但在其他方面会被忽略。
-- 当 hook 被中止或超时时，LibreChat 会终止该进程。在 POSIX 主机上，命令通过 Bash 运行。Windows 插件必须提供 `commandWindows` 或选择 PowerShell。
+- `timeout` 的单位为秒,取值为 1 到 3600 之间的整数。
+- LibreChat terminates the process when the hook is aborted or times out. On POSIX hosts, commands run through `bash`, which must be available on the API host. On Windows hosts they run through `powershell.exe`, so plugins must provide `commandWindows` or select PowerShell. If the shell cannot start, LibreChat logs a startup warning and blocking hooks fail closed.
 
 LibreChat 会将常见的 Claude 工具名称 `Bash`、`Write`、`Edit`、`Read` 和 `WebSearch` 及其文件参数名称转换为相应的 LibreChat 工具。使用 LibreChat 原生工具名称编写的匹配器将保留原生的载荷格式。
 

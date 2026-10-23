@@ -22,7 +22,7 @@ DEPLOYMENT_PLUGINS_DIR=./plugin
 DEPLOYMENT_PLUGIN_DATA_DIR=./data/plugins
 
 # Optional and disabled by default; see Command Hooks below
-DEPLOYMENT_PLUGIN_HOOKS=true
+# DEPLOYMENT_PLUGIN_HOOKS=true
 ```
 
 Relatieve paden worden opgelost vanuit de hoofdmap van het LibreChat-project. Als de standaard `./plugin` map niet bestaat, gaat het opstarten door zonder plugins. Als `DEPLOYMENT_PLUGINS_DIR` expliciet is ingesteld maar niet kan worden gelezen, mislukt het opstarten zodat een implementatiefout niet stilletjes wordt genegeerd.
@@ -98,6 +98,14 @@ Ondersteunde transports zijn `stdio`, `streamable-http` en `sse`. Externe HTTP-t
 
 Voor `stdio` servers worden `${PLUGIN_ROOT}` en `${PLUGIN_DATA}` eenmaal geëxpandeerd in `args`, `env` en `cwd`; beide waarden worden ook toegevoegd aan de omgeving van het gestarte proces. De MCP-configuratie van de plugin expandeert geen willekeurige variabelen uit de host-omgeving van LibreChat. Een waarde zoals `${OPENAI_API_KEY}` blijft letterlijk door de registeropslag en runtime-initialisatie heen. Houd inloggegevens buiten plugin-bestanden en verstrek deze via een speciaal daarvoor gebouwde geauthenticeerde service of een ander door de implementatie beheerd mechanisme.
 
+LibreChat valideert elke `mcp.json` voordat het de servers registreert:
+
+- `command` moet een enkel uitvoerbaar token zijn: ofwel een kale naam zoals `node`, ofwel een `./`-pad binnen de plugin. Shell-strings en absolute paden worden geweigerd, en `${PLUGIN_ROOT}` wordt niet uitgebreid in `command`.
+- `cwd` moet beginnen met `./`, `${PLUGIN_ROOT}` of `${PLUGIN_DATA}`, en moet resolven binnen de basis die het benoemt.
+- `env` mag `PLUGIN_ROOT` of `PLUGIN_DATA` niet declareren; LibreChat stelt deze zelf in.
+- Externe `url`-waarden moeten absolute `http`- of `https`-URL's zijn zonder gebruikersinformatie of een fragment, en moeten `https` gebruiken, tenzij de host een loopback-adres is (zoals `localhost` of `127.0.0.1`).
+- Een serverregel met een onbekend veld wordt geweigerd en overgeslagen. Een onbekend veld op het hoogste niveau, of een `$schema` die niet overeenkomt met de ondersteunde schema-URL `1.0.0`, schakelt MCP voor de hele plugin uit.
+
 Een MCP server die is gedeclareerd in `librechat.yaml` krijgt voorrang op een plugin-server met dezelfde naam. Dubbele plugin-servernamen worden overgeslagen en gelogd.
 
 ## Persistente plug-ingegevens [#persistent-plugin-data]
@@ -148,7 +156,8 @@ Declareer hooks in `ai.librechat/hooks/hooks.json`:
 - De child environment bevat alleen `PATH`, `HOME`, `LANG`, `LC_ALL`, en `TZ` indien aanwezig, de drie plugin-padvariabelen, en namen die expliciet worden vermeld in `allowedEnvVars`.
 - Exit code `0` betekent succes. JSON geschreven naar standaarduitvoer kan gebeurtenis-specifieke beslissingen en begrensde context retourneren; platte tekstuitvoer wordt alleen behandeld als aanvullende context voor `SessionStart` en `UserPromptSubmit`.
 - Exit code `2` blokkeert de betreffende actie of voortzetting en gebruikt standaardfout als reden. Andere niet-nul exit codes worden gelogd en verder genegeerd.
-- LibreChat beëindigt het proces wanneer de hook wordt afgebroken of een time-out bereikt. Op POSIX-hosts worden opdrachten uitgevoerd via Bash. Windows-plugins moeten `commandWindows` opgeven of PowerShell selecteren.
+- `timeout` is in seconden, een geheel getal van 1 tot 3600.
+- LibreChat beëindigt het proces wanneer de hook wordt afgebroken of de time-out wordt bereikt. Op POSIX-hosts worden opdrachten uitgevoerd via `bash`, dat beschikbaar moet zijn op de API-host. Op Windows-hosts worden ze uitgevoerd via `powershell.exe`, dus plug-ins moeten `commandWindows` opgeven of PowerShell selecteren. Als de shell niet kan worden gestart, schrijft LibreChat een waarschuwing bij het opstarten naar het logboek en falen blokkerende hooks gesloten (fail closed).
 
 LibreChat vertaalt de algemene Claude-toolnamen `Bash`, `Write`, `Edit`, `Read` en `WebSearch` en hun bestandsargumentnamen naar de bijbehorende LibreChat-tools. Een matcher die is geschreven met de eigen toolnaam van LibreChat behoudt de eigen payload-vorm.
 

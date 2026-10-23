@@ -2,20 +2,16 @@
 title: Controle de Acesso
 icon: ShieldCheck
 description: >-
-  Sistema de autorização granular do LibreChat - controle quem pode usar,
+  O sistema de autorização granular do LibreChat: controle quem pode usar,
   compartilhar, editar e gerenciar agentes, prompts, servidores MCP e outros
   recursos no nível de usuário, grupo, função e instância.
 ---
 
 # Controle de Acesso Granular [#granular-access-control]
 
-O LibreChat vem com um sistema de autorização completo sobre a autenticação. O acesso não é "tudo ou nada": cada entidade compartilhável no aplicativo (agentes, prompts, servidores MCP, agentes remotos, arquivos, conversas) possui sua própria Lista de Controle de Acesso (ACL), e cada recurso pode ser habilitado ou restrito independentemente por **usuário**, **grupo**, **função** ou **publicamente**.
+O LibreChat vem com um sistema completo de autorização além da autenticação. O acesso não é "tudo ou nada": cada entidade compartilhável do aplicativo (agentes, prompts, servidores MCP, agentes remotos, skills, ambientes de código e links compartilhados) possui sua própria Lista de Controle de Acesso (ACL), e cada recurso pode ser habilitado ou restrito de forma independente por **usuário**, **grupo**, **papel** ou **publicamente**.
 
 Esta página explica como as peças se encaixam para que você possa modelar permissões de acordo com sua organização, desde uma pequena equipe onde todos compartilham livremente, até uma implementação empresarial com grupos do Entra ID sincronizados, funções personalizadas e administradores delegados.
-
-<Callout type="info" title="Painel de Administração">
-  Um [**Painel de Administração do LibreChat**](/docs/features/admin_panel) dedicado é a próxima interface de usuário para gerenciar usuários, grupos, funções, perfis de permissão personalizados e concessões em todo o sistema, introduzidos na [v0.8.5](/changelog/v0.8.5). Esta página documenta o modelo subjacente, que já está disponível hoje no próprio LibreChat.
-</Callout>
 
 ## Visão Geral do Modelo de Acesso [#the-access-model-at-a-glance]
 
@@ -105,12 +101,12 @@ As ACLs de recursos atualmente se aplicam a:
 - **Servidores MCP** (`mcpServer`)
 - **Skills** (`skill`), veja [Skills](/docs/features/skills)
 - **Agentes Remotos** (`remoteAgent`), para a [Agents API](/docs/features/agents_api)
-- **Arquivos** (`file`), normalmente herdados do recurso que os utiliza
-- **Projetos** (`project`), suportam herança, de modo que os recursos compartilhados com um projeto herdam automaticamente as ACLs
+- **Ambientes de Código** (`codeEnvironment`), para workers de código gerenciados pela implantação; veja [Interpretador de Código](/docs/features/code_interpreter)
+- **Links Compartilhados** (`sharedLink`), veja [Links Compartilháveis](/docs/features/shareable_links)
 
 ### Funções de Acesso (Predefinições de Permissão) [#access-roles-permission-presets]
 
-Em vez de expor bits de permissão brutos aos usuários finais, o compartilhamento utiliza três funções nomeadas por tipo de recurso:
+Em vez de expor bits de permissão brutos aos usuários finais, o compartilhamento usa três funções nomeadas por tipo de recurso (links compartilhados têm apenas Visualizador e Proprietário):
 
 | Função | Bits de permissão | O que o beneficiário pode fazer |
 | ---------- | ----------------------------------------------- | ------------------------------------------------------------------- |
@@ -119,6 +115,8 @@ Em vez de expor bits de permissão brutos aos usuários finais, o compartilhamen
 | **Owner** | `VIEW` + `EDIT` + `DELETE` + `SHARE` (`0b1111`) | Controle total: editar, excluir e compartilhar novamente com outros |
 
 Por baixo dos panos, as permissões são armazenadas como uma máscara de bits (`permBits`) para cada par (recurso, principal); superconjuntos são tratados automaticamente, portanto, conceder Editor implica em Visualizador.
+
+Um quinto bit, `VIEW_INSIGHTS` (`0b10000`), aplica-se apenas a agentes. Ele permite que um principal que também possui `VIEW` veja os [Insights](/docs/features/insights) daquele agente. Ele não faz parte dos presets Viewer, Editor ou Owner: somente administradores podem concedê-lo, por meio da opção **View insights** no diálogo de compartilhamento de um agente, e ele não pode ser atribuído ao principal público.
 
 ### Concedendo Acesso pela UI [#granting-access-from-the-ui]
 
@@ -141,35 +139,38 @@ Por baixo dos panos, as permissões são armazenadas como uma máscara de bits (
 - **Owners** possuem a mesma interface que o autor original e podem excluir e compartilhar novamente livremente.
 - **O autor original** sempre mantém controle total, independentemente do estado da ACL, e administradores podem gerenciar qualquer recurso na instância.
 
-### Herança de Projeto [#project-inheritance]
-
-As permissões podem ser herdadas de um **projeto** pai. Quando uma entrada de ACL é herdada, o link `inheritedFrom` aponta de volta para a origem. É isso que impulsiona o projeto "Global" no LibreChat, onde um recurso adicionado ao projeto global torna-se disponível para todos os usuários sem a necessidade de uma entrada por principal.
-
 ## Camada 3: Concessões do Sistema (Capacidades de Administrador) [#layer-3-system-grants-admin-capabilities]
 
 As concessões de sistema (system grants) são uma tabela de concessão separada usada para **capacidades de nível administrativo**, respondendo a perguntas como _"Este usuário pode acessar o painel administrativo?"_ ou _"Este grupo pode gerenciar servidores MCP globalmente?"_. Elas são sempre delimitadas a um principal (usuário, grupo ou função) e a uma string de capacidade.
 
 As capacidades canônicas incluem:
 
-| Capacidade | Propósito |
+| Capacidade                           | Finalidade                                    |
 | ------------------------------------ | --------------------------------------------- |
-| `access:admin`                       | Acessar o painel administrativo |
-| `read:users` / `manage:users`        | Visualizar / modificar contas de usuário |
-| `read:groups` / `manage:groups`      | Visualizar / modificar grupos |
+| `access:admin`                       | Acessar o painel de administração             |
+| `read:users` / `manage:users`        | Visualizar / modificar contas de usuários     |
+| `read:groups` / `manage:groups`      | Visualizar / modificar grupos                 |
 | `read:roles` / `manage:roles`        | Visualizar / modificar funções personalizadas |
 | `read:configs` / `manage:configs`    | Visualizar / modificar toda a configuração do sistema |
 | `read:configs:<section>` / `manage:configs:<section>` | Visualizar / modificar uma seção de configuração de nível superior |
-| `assign:configs:{user\|group\|role}` | Atribuir perfis de substituição de configuração a principais |
-| `read:usage`                         | Visualizar o uso da plataforma e telemetria |
-| `read:agents` / `manage:agents`      | Visualizar / moderar cada agente na instância |
-| `read:prompts` / `manage:prompts`    | Visualizar / moderar cada prompt |
-| `manage:mcpservers`                  | Gerenciar servidores MCP globalmente |
+| `assign:configs:{user\|group\|role}` | Atribuir perfis de substituição de configuração a entidades |
+| `read:usage`                         | Visualizar o uso e a telemetria da plataforma |
+| `read:agents` / `manage:agents`      | Visualizar / moderar todos os agentes da instância |
+| `read:prompts` / `manage:prompts`    | Visualizar / moderar todos os prompts         |
+| `read:skills` / `manage:skills`      | Visualizar / moderar todas as habilidades     |
+| `read:sharedlinks` / `manage:sharedlinks` | Visualizar / moderar todos os links compartilhados |
+| `manage:mcpservers`                  | Gerenciar servidores MCP globalmente          |
+| `manage:code_environments`           | Registrar e revogar workers de código pertencentes à implantação |
+| `read:insights`                      | Visualizar os [Insights](/docs/features/insights) de todos os agentes |
+| `read:audit_log`                     | Listar, visualizar e exportar o log de auditoria de concessões (somente leitura; não há equivalente de gerenciamento) |
 
 As capacidades de gerenciamento implicam suas capacidades de leitura correspondentes (por exemplo, possuir `manage:users` concede automaticamente `read:users`). Isso também se aplica às seções de configuração: `manage:configs:endpoints` satisfaz `read:configs:endpoints`. Usuários com acesso de configuração apenas em nível de seção recebem respostas de configuração de administrador filtradas para as seções que podem ler; usuários sem permissão de leitura de configuração recebem `403`.
 
+`read:assistants` e `manage:assistants` também existem, mas são reservadas: nenhum middleware as aplica ainda.
+
 Um usuário `SystemRoles.ADMIN` possui implicitamente todas as capacidades; as permissões (grants) permitem que você **delegue** um subconjunto de poderes administrativos a principais não administradores sem torná-los administradores completos. O acesso à interface administrativa (admin UI) ainda requer `access:admin`.
 
-As concessões de sistema são emitidas e revogadas através do painel de administração.
+As concessões e revogações de permissões do sistema são feitas pelo [Painel de Administração](/docs/features/admin_panel).
 
 ## Principals in Depth [#principals-in-depth]
 

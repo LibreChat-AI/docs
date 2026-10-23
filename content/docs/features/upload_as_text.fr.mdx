@@ -13,7 +13,7 @@ Vous avez toujours voulu donner un PDF, un fichier de code ou une feuille de cal
 Vous joignez un fichier, LibreChat en extrait le texte, et le contenu complet est directement collé dans votre conversation. L'IA peut alors en lire chaque mot — sans plugins, sans bases de données vectorielles, ni services supplémentaires à configurer. Cela fonctionne immédiatement.
 
 <Callout type="info" title="Aucune configuration requise">
-  Upload as Text fonctionne immédiatement sur n'importe quelle instance LibreChat. Il utilise une analyse de texte intégrée — vous n'avez pas besoin d'OCR, de pipeline RAG ou de service externe pour commencer.
+  Upload as Text fonctionne immédiatement sur toute instance LibreChat. Il utilise un analyseur de documents intégré pour les formats courants ; ainsi, les fichiers texte brut, le code, les PDF, les DOCX, les tableurs et les ODT fonctionnent sans OCR, sans pipeline RAG et sans aucun service externe. Les images et certains formats bureautiques nécessitent un service supplémentaire ; consultez [Quels fichiers sont pris en charge](#which-files-are-supported).
 </Callout>
 
 ---
@@ -68,32 +68,35 @@ Les pièces jointes sous forme de texte collé suivent les mêmes règles de tai
 Lorsqu'un téléchargement est acheminé vers du texte, LibreChat ne déverse pas les octets bruts dans l'invite. Il passe par un pipeline de traitement pour extraire un texte propre et lisible :
 
 1. **Détection du type MIME** — LibreChat vérifie le type de fichier que vous avez téléchargé (PDF, image, audio, code source, etc.) en inspectant son type MIME.
-2. **Sélection de la méthode** — En fonction du type de fichier et des services disponibles, il choisit la meilleure méthode d'extraction en utilisant cette priorité :
+2. **Sélection de la méthode** : en fonction du type de fichier et des services disponibles, la méthode d'extraction est choisie dans l'ordre suivant :
 
 <Tabs items={["Ordre de priorité", "Exemples de décision"]}>
   <Tabs.Tab>
-    | Priorité | Méthode | Quand est-elle utilisée |
-|----------|--------|---------------|
-| 1ère | **OCR** | Le fichier est une image ou un document numérisé, _et_ l'OCR est configuré |
-| 2ème | **STT** (Speech-to-Text) | Le fichier est un audio, _et_ le STT est configuré |
-| 3ème | **Analyse de texte** | Le fichier correspond à un type MIME de texte connu |
-| 4ème | **Repli** | Aucune des méthodes ci-dessus n'a correspondu — tente l'analyse de texte malgré tout |
+    | Priorité | Méthode | Quand elle est utilisée |
+|----------|---------|-------------------------|
+| 1er | **OCR** | L'OCR est configuré _et_ le fichier correspond à `fileConfig.ocr.supportedMimeTypes`. Si l'OCR échoue, LibreChat se replie sur l'analyseur de documents intégré. |
+| 2e | **RAG API `/text`** | `RAG_API_URL` est défini, `fileConfig.text.supportedMimeTypes` a été restreint, et le fichier y correspond. Si la RAG API est indisponible, LibreChat se replie sur l'analyseur de documents intégré. |
+| 3e | **Analyseur de documents intégré** | Le fichier est un PDF, un DOCX, un tableur xlsx/xls/ods ou un ODT, d'une taille maximale de 15 Mo. |
+| 4e | **STT** (Speech-to-Text) | Le fichier est audio et correspond à `fileConfig.stt.supportedMimeTypes`. |
+| 5e | **Texte brut** | Le fichier correspond à `fileConfig.text.supportedMimeTypes`. Les fichiers texte et de code sont lus directement ; les autres types sont envoyés à la route `/text` de la RAG API lorsque `RAG_API_URL` est défini, et échouent sinon. |
+
+    Un fichier qui ne correspond à aucun de ces critères est rejeté comme non pris en charge pour l'analyse de texte.
   </Tabs.Tab>
   <Tabs.Tab>
     **Un fichier `.pdf` sur une instance avec OCR configuré :**
     → L'OCR se déclenche. Idéal pour les documents numérisés et les mises en page complexes.
 
     **Un `.pdf` sur une instance par défaut (sans OCR) :**
-    → L'analyse de texte le prend en charge. Fonctionne bien pour les PDF créés numériquement.
+→ L'analyseur de documents intégré le prend en charge. Il fonctionne bien pour les PDF créés numériquement.
 
     **Un fichier Python `.py` :**
-    → Analyse de texte directe. Le code source est déjà du texte — aucune conversion nécessaire.
+→ Texte brut. Le code source est déjà du texte, donc aucune conversion n'est nécessaire.
 
     **Un fichier `.mp3` sur une instance avec STT configuré :**
     → Speech-to-Text le transcrit en texte pour la conversation.
 
     **Une capture d'écran `.png` sans OCR configuré :**
-    → Utilise l'analyse de texte par défaut (résultats limités — envisagez de configurer l'OCR pour les images).
+→ Le téléversement renvoie une erreur au lieu du texte. Configurez l'OCR pour les images.
   </Tabs.Tab>
 </Tabs>
 
@@ -116,16 +119,21 @@ Lorsque vous prévisualisez ou téléchargez une pièce jointe en tant que texte
     - Scripts shell, fichiers SQL
   </Tabs.Tab>
   <Tabs.Tab>
-    L'analyse de texte gère ces éléments nativement. Si l'OCR est configuré, il prend le relais pour une meilleure précision sur les mises en page complexes.
+    Le analyseur de documents intégré gère ces formats par défaut, jusqu'à 15 Mo par fichier. Si l'OCR est configuré, il prend le relais pour une meilleure précision sur les mises en page complexes.
 
-    - **PDF** — numériques et numérisés (les PDF numérisés bénéficient de l'OCR)
-    - **Word** — `.docx`, `.doc`
+    - **PDF** : couche de texte numérique (les PDF scannés nécessitent une reconnaissance optique de caractères, ou OCR)
+    - **Mot** : `.docx` (et non l'ancien format `.doc`)
+    - **Feuilles de calcul** : `.xlsx`, `.xls`, `.ods`
+    - **Texte OpenDocument** : `.odt`
+
+    Ceux-ci nécessitent l'OCR, ou la route `/text` de l'API RAG, car l'analyseur intégré ne peut pas les lire :
+
+    - **Mot** : `.doc`
     - **PowerPoint** — `.pptx`, `.potx`, `.ppt`
-    - **Excel** — `.xlsx`, `.xls`
     - Livres **EPUB**
   </Tabs.Tab>
   <Tabs.Tab>
-    Les images **nécessitent l'OCR** pour produire du texte utile. Sans cela, les résultats seront médiocres.
+    Les images **nécessitent un OCR** pour produire du texte. Sans lui, le téléversement renvoie une erreur au lieu du texte.
 
     - JPEG, PNG, GIF, WebP
     - HEIC, HEIF (formats Apple)
@@ -220,7 +228,7 @@ fileConfig:
 
 ## Optionnel : améliorer l'extraction avec l'OCR [#optional-boosting-extraction-with-ocr]
 
-L'analyse de texte fonctionne bien pour les documents créés numériquement (PDF enregistrés depuis Word, fichiers de code, texte brut). Mais si vous téléchargez des **documents numérisés, des photos de pages ou des images contenant du texte**, l'analyseur intégré n'obtiendra pas de très bons résultats.
+Le parseur intégré fonctionne correctement pour les PDF créés numériquement, les DOCX, les feuilles de calcul, les ODT, les fichiers de code et les fichiers texte brut. En revanche, **les documents numérisés, les photos de pages, les images contenant du texte, ainsi que les formats tels que `.doc`, PowerPoint et EPUB** nécessitent une reconnaissance optique de caractères (OCR).
 
 C'est là qu'intervient l'OCR. Une fois configuré, LibreChat utilise automatiquement l'OCR pour les types de fichiers qui en bénéficient — vous n'avez rien à faire de particulier en tant qu'utilisateur.
 
@@ -256,7 +264,8 @@ Cette section est destinée aux administrateurs qui souhaitent contrôler quels 
       # Max tokens extracted from a single file before truncation
       fileTokenLimit: 100000
 
-      # Files matching these MIME patterns use OCR (if configured)
+      # Example only: files matching these MIME patterns use OCR (if configured).
+      # These are examples for narrowing or extending, not required settings.
       ocr:
         supportedMimeTypes:
           - "^image/(jpeg|gif|png|webp|heic|heif)$"
@@ -265,18 +274,19 @@ Cette section est destinée aux administrateurs qui souhaitent contrôler quels 
           - "^application/vnd\\.ms-(word|powerpoint|excel)$"
           - "^application/epub\\+zip$"
 
-      # Files matching these MIME patterns use text parsing
+      # Example only: narrowing this list sends the matching types to the RAG API /text
+      # route when RAG_API_URL is set
       text:
         supportedMimeTypes:
           - "^text/(plain|markdown|csv|json|xml|html|css|javascript|typescript|x-python|x-java|x-csharp|x-php|x-ruby|x-go|x-rust|x-kotlin|x-swift|x-scala|x-perl|x-lua|x-shell|x-sql|x-yaml|x-toml)$"
 
-      # Files matching these MIME patterns use STT (if configured)
+      # Example only: files matching these MIME patterns use STT (if configured)
       stt:
         supportedMimeTypes:
           - "^audio/(mp3|mpeg|mpeg3|wav|wave|x-wav|ogg|vorbis|mp4|x-m4a|flac|x-flac|webm)$"
     ```
 
-    **Rappel de priorité :** OCR > STT > analyse de texte > secours.
+    **Rappel de priorité :** OCR > RAG `/text` (lorsque `RAG_API_URL` est défini et que la liste de textes est restreinte) > analyseur de documents intégré > STT > texte brut.
 
     Pour la référence complète, consultez [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config).
   </Accordion>
@@ -299,10 +309,10 @@ Cette section est destinée aux administrateurs qui souhaitent contrôler quels 
   </Accordion>
   <Accordion title="Le contenu du fichier semble incorrect ou est presque vide">
     Quelques points à vérifier :
-    - **PDFs / images numérisés** — Ceux-ci nécessitent l'OCR pour extraire correctement le texte. Sans cela, l'analyseur pourrait renvoyer des données corrompues ou rien du tout. Demandez à votre administrateur de [configurer l'OCR](/docs/features/ocr).
+    - **Les PDF numérisés / images** : Ces fichiers nécessitent une reconnaissance optique de caractères (OCR) pour extraire correctement le texte. Sans elle, l'analyseur ne renvoie rien pour un PDF numérisé, et les images renvoient une erreur. Demandez à votre administrateur de [configurer l'OCR](/docs/features/ocr).
     - **Fichiers audio** — Ceux-ci nécessitent STT. Il n'y a pas de solution de repli textuelle pour l'audio.
     - **Fichiers corrompus** — Essayez d'ouvrir le fichier localement pour vous assurer qu'il n'est pas endommagé.
-    - **Format non pris en charge** — Si le type MIME ne correspond à aucun modèle configuré, LibreChat tente une analyse textuelle de secours, qui peut ne pas fonctionner pour les formats binaires.
+    - **Format non pris en charge** : L'analyseur intégré ne gère que les formats PDF, DOCX, xlsx/xls/ods et ODT (jusqu'à 15 Mo). Les formats tels que `.doc`, PowerPoint et EPUB nécessitent une reconnaissance optique de caractères (OCR) ou la route `/text` de l'API RAG. Un type MIME ne correspondant à aucun modèle configuré est rejeté.
   </Accordion>
   <Accordion title="Le téléchargement est rejeté car le type de fichier n'est pas pris en charge">
     LibreChat renvoie le type MIME rejeté dans l'erreur de téléchargement. Vérifiez les modèles [`fileConfig.endpoints.<endpoint>.supportedMimeTypes`](/docs/configuration/librechat_yaml/object_structure/file_config#supportedmimetypes-3) de l'endpoint actif et autorisez le type canonique que vous souhaitez accepter. Pour les scripts shell, utilisez `application/x-sh` ; LibreChat normalise les variantes courantes `application/x-shellscript` et `text/x-shellscript` avant d'effectuer la correspondance.
@@ -316,7 +326,7 @@ Cette section est destinée aux administrateurs qui souhaitent contrôler quels 
     - Divisez le fichier en parties plus petites et téléchargez-les séparément
   </Accordion>
   <Accordion title="Les images sont téléchargées mais l'IA ne peut pas lire le texte qu'elles contiennent">
-    Sans OCR, les images sont traitées par analyse textuelle, ce qui ne permet pas réellement de « voir » le texte dans une image. Vous devez configurer l'OCR pour que cela fonctionne. Voir [OCR for Documents](/docs/features/ocr).
+    Sans OCR, rien ne permet de lire le texte d'une image, le téléversement renvoie donc une erreur. Vous devez configurer l'OCR pour que cela fonctionne. Voir [OCR pour les documents](/docs/features/ocr).
 
     Alternativement, utilisez un **vision model** avec le téléchargement de fichiers standard — le modèle lui-même peut lire le texte dans les images.
   </Accordion>

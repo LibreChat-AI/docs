@@ -22,7 +22,7 @@ DEPLOYMENT_PLUGINS_DIR=./plugin
 DEPLOYMENT_PLUGIN_DATA_DIR=./data/plugins
 
 # Optional and disabled by default; see Command Hooks below
-DEPLOYMENT_PLUGIN_HOOKS=true
+# DEPLOYMENT_PLUGIN_HOOKS=true
 ```
 
 I percorsi relativi vengono risolti a partire dalla root del progetto LibreChat. Se la directory predefinita `./plugin` non esiste, l'avvio prosegue senza plugin. Se `DEPLOYMENT_PLUGINS_DIR` è impostata esplicitamente ma non può essere letta, l'avvio fallisce in modo che un errore di distribuzione non venga ignorato silenziosamente.
@@ -98,6 +98,14 @@ I trasporti supportati sono `stdio`, `streamable-http` e `sse`. I trasporti HTTP
 
 Per i server `stdio`, `${PLUGIN_ROOT}` e `${PLUGIN_DATA}` vengono espansi una sola volta in `args`, `env` e `cwd`; entrambi i valori vengono inoltre aggiunti all'ambiente del processo avviato. La configurazione MCP dei plugin non espande variabili arbitrarie dall'ambiente host di LibreChat. Un valore come `${OPENAI_API_KEY}` rimane letterale durante l'archiviazione nel registro e l'inizializzazione in fase di runtime. Mantieni le credenziali al di fuori dei file dei plugin e forniscile tramite un servizio autenticato appositamente creato o un altro meccanismo controllato dal deployment.
 
+LibreChat valida ogni `mcp.json` prima di registrare i suoi server:
+
+- `command` deve essere un singolo token eseguibile: un nome semplice come `node` oppure un percorso che inizia con `./` all'interno del plugin. Le stringhe di shell e i percorsi assoluti vengono rifiutati, e `${PLUGIN_ROOT}` non viene espanso in `command`.
+- `cwd` deve iniziare con `./`, `${PLUGIN_ROOT}` o `${PLUGIN_DATA}` e deve risolversi all'interno della base che indica.
+- `env` non può dichiarare `PLUGIN_ROOT` o `PLUGIN_DATA`; LibreChat li imposta.
+- I valori `url` remoti devono essere URL assoluti `http` o `https` senza informazioni utente né frammento, e devono usare `https` a meno che l'host non sia un indirizzo di loopback (come `localhost` o `127.0.0.1`).
+- Una voce di server con un campo sconosciuto viene rifiutata e ignorata. Un campo sconosciuto di primo livello, oppure un `$schema` che non corrisponde all'URL dello schema supportato `1.0.0`, disabilita MCP per l'intero plugin.
+
 Un server MCP dichiarato in `librechat.yaml` ha la precedenza su un server plugin con lo stesso nome. I nomi dei server plugin duplicati vengono ignorati e registrati nel log.
 
 ## Dati dei plugin persistenti [#persistent-plugin-data]
@@ -148,7 +156,8 @@ Dichiara gli hook in `ai.librechat/hooks/hooks.json`:
 - L'ambiente figlio contiene solo `PATH`, `HOME`, `LANG`, `LC_ALL` e `TZ` quando presenti, le tre variabili di percorso dei plugin e i nomi elencati esplicitamente in `allowedEnvVars`.
 - Il codice di uscita `0` indica successo. Il JSON scritto sullo standard output può restituire decisioni appropriate all'evento e un contesto limitato; l'output in testo semplice viene trattato solo come contesto aggiuntivo per `SessionStart` e `UserPromptSubmit`.
 - Il codice di uscita `2` blocca l'azione o la continuazione applicabile e utilizza lo standard error come motivazione. Altri codici di uscita diversi da zero vengono registrati e altrimenti ignorati.
-- LibreChat termina il processo quando l'hook viene interrotto o va in timeout. Su host POSIX, i comandi vengono eseguiti tramite Bash. I plugin per Windows devono fornire `commandWindows` o selezionare PowerShell.
+- `timeout` è espresso in secondi, un numero intero da 1 a 3600.
+- LibreChat termina il processo quando l'hook viene interrotto o scade il timeout. Sugli host POSIX, i comandi vengono eseguiti tramite `bash`, che deve essere disponibile sull'host dell'API. Sugli host Windows vengono eseguiti tramite `powershell.exe`, quindi i plugin devono fornire `commandWindows` oppure selezionare PowerShell. Se la shell non riesce ad avviarsi, LibreChat registra un avviso all'avvio e gli hook bloccanti falliscono in modalità fail closed.
 
 LibreChat traduce i nomi comuni degli strumenti Claude `Bash`, `Write`, `Edit`, `Read` e `WebSearch` e i nomi dei loro argomenti di file negli strumenti LibreChat corrispondenti. Un matcher scritto con il nome dello strumento nativo di LibreChat mantiene la forma del payload nativo.
 

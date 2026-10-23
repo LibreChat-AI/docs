@@ -81,10 +81,6 @@ readinessProbe:
 
 ## Helm Chartのインストール [#install-helm-chart]
 
-<Callout type="warning" title="Chart 2.0.16: 空のconfig map">
-v0.8.8 チャートのソースでは、`librechat.configEnv` はデフォルトで null に設定されています。ConfigMap による環境変数のオーバーライドがない場合は、values ファイル内で明示的に `{}` に設定するか、`helm install` または `helm template` に `--set-json 'librechat.configEnv={}'` を渡してください。そうしないと、テンプレート内の `dig` ルックアップが失敗する可能性があります。認証情報は名前付きの Secret に保持してください。これはレンダリング上の回避策であり、Secret の要件を無効にする理由ではありません。
-</Callout>
-
 helm chartをインストールするには、以下を実行してください：
 
 `helm install <deployment-name> oci://ghcr.io/librechat-ai/librechat-chart/librechat`
@@ -101,15 +97,54 @@ helm chartをインストールするには、以下を実行してください�
 
 デフォルトから変更したい値を設定した `values.yaml` ファイルを作成します。
 
-Helmチャートをインストールします: `helm install librechat oci://ghcr.io/librechat-ai/librechat-chart/librechat --values <values-override-filel>`
+Helm チャートをインストールします: `helm install librechat oci://ghcr.io/librechat-ai/librechat-chart/librechat --values <values-override-file>`
 
-リリースが完了し、サービスにアクセスできるようになったら、[Your First Chat](/docs/quick_start/first_chat) に従ってアカウントを登録し、モデルのAPIキーを追加して、最初のメッセージを送信してください。
+リリースが公開され、サービスに接続できるようになったら、[最初のチャット](/docs/quick_start/first_chat)の手順に従って、アカウントを作成し、モデルのAPIキーを追加して、最初のメッセージを送信してください。
 
 ## Helm Chart をアンインストールする [#uninstall-the-helm-chart]
 
 Helm Chartをアンインストールするには、`helm uninstall <deployment-name>` を実行します。
 
 例: `helm uninstall librechat`
+
+## Chart 3.x へのアップグレード [#upgrading-to-chart-3x]
+
+Chart 3.0.0では、同梱のMongoDBとRedisでデフォルトで認証が有効になります。生成されたパスワードはサブチャートのSecretに保存され、`secretKeyRef`(`MONGODB_ROOT_PASSWORD`、`REDIS_PASSWORD`)を通じてLibreChatに渡されます。また、`MONGO_URI`はDeploymentの中で組み立てられます。独自のデータベースを使用するには、`librechat.configEnv.MONGO_URI`(または`REDIS_URI`)を設定してください。従来の認証なしの動作に戻す場合にのみ、`mongodb.auth.enabled=false`または`redis.auth.enabled=false`を設定してください。カスタムのルートパスワードは`MONGO_URI`に組み込まれるため、URLセーフな文字列である必要があります。
+
+`MONGO_URI`、`REDIS_URI`、または`REDIS_PASSWORD`が`global.librechat.existingSecretName`で指定されたSecretから取得される場合は、`MONGO_URI`には`librechat.injectBundledCredentials.mongodb=false`を、`REDIS_URI`または`REDIS_PASSWORD`には`librechat.injectBundledCredentials.redis=false`を設定してください。チャートはそのSecretの内容を参照できず、生成された値がそれを上書きしてしまうためです。この2つの設定は互いに独立しています。バンドルされたMongoDBまたはRedisを引き続き使用する場合は、Secretと同じパスワードを使う必要があります。`mongodb.auth.existingSecret`または`redis.auth.existingSecret`をそのSecretに向けるか、対応する`auth`のパスワードを設定してください。そうしないと、データベースが生成されたパスワードのままとなり、LibreChatが認証に失敗します。認証情報はPodの起動時に読み込まれるため、データベースのパスワードをローテーションした後は、`kubectl rollout restart deployment/<release>-librechat`を実行して、それを読み込むすべてのDeploymentを再起動してください。
+
+### アップグレード後も生成されたパスワードを保持する [#keeping-the-generated-passwords-across-upgrades]
+
+デフォルトの設定では、サブチャートが初回インストール時にパスワードを生成します。その後のアップグレードでパスワードを再度指定しない場合、MongoDB サブチャートはアップグレードを拒否します(「PASSWORDS ERROR」)。現在の値を読み取り、`helm upgrade` を実行するたびにそれらを渡すか、`mongodb.auth.existingSecret` および `redis.auth.existingSecret` で、自分で管理する Secret を指定してください。
+
+```bash
+kubectl get secret <release>-mongodb -o jsonpath='{.data.mongodb-root-password}' | base64 -d
+helm upgrade <release> ... --set-string mongodb.auth.rootPassword=<password>
+```
+
+Redis も同様に `--set-string redis.auth.password=<password>` を指定する必要があります(`<release>-redis` Secret の `redis-password`)。`mongodb.architecture=replicaset` の場合は、レプリカセットキーも保持してください。同じ Secret から `mongodb-replica-set-key` を読み取り、`--set-string mongodb.auth.replicaSetKey=<key>` として渡します。
+
+### 認証なしのバンドル版 MongoDB からのアップグレード [#upgrading-from-an-unauthenticated-bundled-mongodb]
+
+認証がデフォルトになる前にインストールされたリリースでは、root ユーザーのいないデータボリュームが存在し、永続化されたデータはアップグレード時に再初期化されないため、`helm upgrade` の後に LibreChat が認証できなくなります。いずれかの方法を選択してください:
+
+1. 以前の動作を維持するには、`--set mongodb.auth.enabled=false` を指定します。
+2. 最初にroot ユーザーを作成します。稼働中のアップグレード前 Pod 上で `mongosh admin --eval 'db.createUser({user: "<rootUser>", pwd: "<password>", roles: ["root"]})'` を実行します(`<rootUser>` は `mongodb.auth.rootUser` の値で、デフォルトは `root` です)。その後、`--set-string mongodb.auth.rootPassword=<password>`(URL セーフな文字列)と、`mongodb.auth.rootUser` を変更した場合は同じ値を指定してアップグレードします。以降のアップグレードでも同じパスワードを使い続けてください。`mongodb.auth.rootPassword` を指定せずにアップグレードすると、まだ Secret が存在しないため、MongoDB サブチャートによって拒否されます("PASSWORDS ERROR")。
+
+チャートはレンダリング時にこのケースを検出できないため、認証が有効になっている場合、アップグレードのたびに `NOTES.txt` が通知を出力します。
+
+### Ingress TLS [#ingress-tls]
+
+Ingress はデフォルトで有効になっています。ローカル以外のインストールでは `ingress.tls`(`secretName` と `hosts`)を設定してください。`ingress.tls` のエントリでカバーされていない ingress のホストごとに、`helm install` が警告を出力します。
+
+### 管理パネルのURL [#admin-panel-url]
+
+`librechat.adminPanelUrl` を設定すると、OAuth/SSO のリダイレクトに使用される管理パネルのベース URL を指定できます。パスを含めることはできますが、末尾に `/` を付けてはいけません。詳細は [Admin Panel](/docs/features/admin_panel) を参照してください。
+
+```yaml
+librechat:
+  adminPanelUrl: https://admin.example.com/admin
+```
 
 ## 1.x から 2.x への移行 [#migrate-1x---2x]
 バージョン 2.x より前のチャートを使用していた場合、`value` 構造を更新する必要があるかもしれません。

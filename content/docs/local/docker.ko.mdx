@@ -23,11 +23,11 @@ Docker Desktop를 사용하는 경우, 컨테이너는 Docker Desktop 자체 가
 
 LibreChat를 같은 머신에서 실행 중인 모델(예: [Ollama](/docs/configuration/librechat_yaml/ai_endpoints/ollama))에 연결하는 경우, 선택한 모델에 맞게 하드웨어 사양을 준비하십시오. 모델 런타임은 LibreChat보다 훨씬 많은 메모리가 필요하며, 종종 GPU도 필요합니다.
 
-<Callout type="warn" title="Apple Silicon (M-series) Mac">
+<Callout type="warn" title="AVX 지원이 없는 CPU">
 
-Apple Silicon(M1, M2, M3, M4) 프로세서가 탑재된 Mac 컴퓨터는 LibreChat의 Docker Compose 설정에서 기본적으로 사용하는 MongoDB 이미지에 필요한 AVX 명령어를 지원하지 않습니다. M 시리즈 Mac을 사용하는 경우, MongoDB가 시작 시 충돌하게 됩니다.
+LibreChat의 기본 Docker Compose 설정에서 사용하는 MongoDB 이미지는 AVX 명령어를 지원하는 CPU가 필요합니다. AVX를 지원하지 않는 구형 x86 CPU(및 AVX를 게스트에 노출하지 않는 일부 가상 머신)에서는 MongoDB가 시작 시 충돌합니다.
 
-**수정:** `docker-compose.override.yml` 파일을 생성하여 더 오래된 호환 가능한 MongoDB 이미지를 사용하세요:
+**수정 방법:** AVX를 요구하지 않는 이전 버전의 MongoDB 이미지를 사용하려면 `docker-compose.override.yml`을 생성하세요:
 
 ```yaml filename="docker-compose.override.yml"
 services:
@@ -88,11 +88,11 @@ docker compose up -d
 
 <Callout type="info" title="단일 테넌트 배포에서 첫 번째 계정 = 관리자">
 
-범위가 지정되지 않은 단일 테넌트 배포에서는 가장 먼저 등록한 계정이 관리자 계정이 됩니다. 기본 자격 증명은 없으며, 등록 과정에서 직접 사용자 이름과 비밀번호를 생성합니다. 테넌트 범위가 지정된 배포에서는 각 테넌트의 첫 번째 사용자를 자동으로 승격하지 않으므로, 신뢰할 수 있는 관리 절차를 통해 테넌트 관리자를 프로비저닝하십시오.
+단일 테넌트 배포에서 범위가 지정되지 않은(unscoped) 경우, 처음 등록한 계정이 관리자 계정이 됩니다. 기본 자격 증명은 없으며, 등록 과정에서 사용자 이름과 비밀번호를 직접 생성합니다. 테넌트 범위가 지정된 배포에서는 각 테넌트의 첫 번째 사용자를 자동으로 관리자로 승격하지 않습니다. 대신 신뢰할 수 있는 관리 절차를 통해 테넌트 관리자를 프로비저닝하십시오.
 
 </Callout>
 
-**Register**를 클릭하여 계정을 생성한 다음, [Your First Chat](/docs/quick_start/first_chat)을 따라 모델 API 키를 추가하고 첫 메시지를 보내세요.
+**회원가입**을 클릭하여 계정을 만든 다음, [첫 번째 채팅](/docs/quick_start/first_chat)을 따라 모델 API 키를 추가하고 첫 메시지를 보내세요.
 
   </Step>
 </Steps>
@@ -136,6 +136,12 @@ docker compose down && docker compose up -d
 
 </Callout>
 
+<Callout type="info" title="업데이트 스크립트">
+
+`npm run update:docker` 스크립트는 로컬에서 빌드된 이미지를 다시 빌드하지만, 기본 `docker-compose.yml`이 사용하는 사전 빌드된 이미지는 가져오지(pull) 않습니다. 따라서 기본 설치를 업데이트하려면 아래의 수동 단계를 따르세요.
+
+</Callout>
+
 ```bash filename="Stop the running container(s)"
 docker compose down
 ```
@@ -167,16 +173,24 @@ docker compose up
 
 포트 3080에 대해 `bind: address already in use`와 같은 오류가 표시된다면, 다른 애플리케이션이 해당 포트를 사용 중인 것입니다.
 
-충돌하는 애플리케이션을 중지하거나 `docker-compose.override.yml`에서 포트를 변경하세요:
+충돌하는 애플리케이션을 중지하거나 LibreChat이 사용하는 포트를 변경하세요. 기본 `docker-compose.yml`은 `"${PORT}:${PORT}"`를 게시하며, 오버라이드 파일에 추가된 포트는 이 목록을 대체하지 않고 뒤에 덧붙여지므로 오버라이드만으로는 3080 포트를 해제할 수 없습니다.
+
+가장 간단한 해결 방법은 `.env` 파일에서 `PORT`를 설정하는 것입니다. 이렇게 하면 LibreChat이 수신하는 포트와 외부에 공개되는 포트가 모두 변경됩니다:
+
+```bash filename=".env"
+PORT=3081
+```
+
+대안으로, Docker Compose 2.24.4 이상을 사용한다면 `docker-compose.override.yml`의 게시 포트를 `!override` 태그로 교체할 수 있습니다(컨테이너는 계속 3080에서 수신합니다):
 
 ```yaml filename="docker-compose.override.yml"
 services:
   api:
-    ports:
+    ports: !override
       - "3081:3080"
 ```
 
-그런 다음 `http://localhost:3081`을 방문하세요.
+`docker compose down && docker compose up -d`로 다시 시작한 다음, 대신 `http://localhost:3081`에 접속하세요.
 
 ### 컨테이너 시작 시 충돌 발생 [#container-crashes-on-startup]
 
@@ -188,7 +202,7 @@ docker compose logs api
 
 일반적인 원인:
 
-- `librechat.yaml` 구문이 잘못되었습니다 -- [YAML Validator](/toolkit/yaml_checker)를 사용하여 유효성을 검사하세요
+- 잘못된 `librechat.yaml` 문법: [YAML 검증기](/toolkit/yaml_checker)로 검증하세요
 - `.env` 파일이 없습니다 -- 프로젝트 루트에 `.env` 파일이 있는지 확인하세요
 - Docker가 실행 중이지 않습니다 -- Docker Desktop이 열려 있고 실행 중인지 확인하세요
 

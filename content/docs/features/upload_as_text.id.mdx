@@ -13,7 +13,7 @@ Pernahkah Anda ingin memberikan PDF, file kode, atau spreadsheet ke AI dan hanya
 Anda melampirkan file, LibreChat mengekstrak teks darinya, dan konten lengkapnya langsung ditempelkan ke dalam percakapan Anda. AI kemudian dapat membaca setiap kata di dalamnya — tanpa plugin, tanpa basis data vektor, tanpa layanan tambahan untuk dikonfigurasi. Fitur ini langsung berfungsi tanpa perlu pengaturan tambahan.
 
 <Callout type="info" title="Tidak perlu pengaturan">
-  Upload as Text langsung berfungsi di setiap instance LibreChat. Fitur ini menggunakan parsing teks bawaan — Anda tidak memerlukan OCR, pipeline RAG, atau layanan eksternal apa pun untuk memulai.
+  Upload as Text berfungsi langsung pada instance LibreChat mana pun. Fitur ini menggunakan parser dokumen bawaan untuk format umum, sehingga teks biasa, kode, PDF, DOCX, spreadsheet, dan ODT dapat diproses tanpa OCR, pipeline RAG, atau layanan eksternal apa pun. Gambar dan beberapa format office memerlukan layanan tambahan; lihat [Which files are supported](#which-files-are-supported).
 </Callout>
 
 ---
@@ -68,32 +68,35 @@ Lampiran teks yang ditempel (pasted-text) mengikuti aturan ukuran file, token, d
 Saat unggahan diarahkan ke teks, LibreChat tidak membuang byte mentah ke dalam prompt. Unggahan tersebut dijalankan melalui alur pemrosesan untuk mengekstrak teks yang bersih dan dapat dibaca:
 
 1. **Deteksi tipe MIME** — LibreChat memeriksa jenis file yang Anda unggah (PDF, gambar, audio, kode sumber, dll.) dengan memeriksa tipe MIME-nya.
-2. **Pemilihan metode** — Berdasarkan jenis file dan layanan apa yang tersedia, sistem akan memilih metode ekstraksi terbaik menggunakan prioritas berikut:
+2. **Pemilihan metode**: Berdasarkan jenis file dan layanan apa saja yang tersedia, sistem memilih metode ekstraksi dengan urutan sebagai berikut:
 
 <Tabs items={["Urutan prioritas", "Contoh keputusan"]}>
   <Tabs.Tab>
     | Prioritas | Metode | Kapan digunakan |
-    |----------|--------|---------------|
-    | 1st | **OCR** | File adalah gambar atau dokumen hasil pindai, _dan_ OCR dikonfigurasi |
-    | 2nd | **STT** (Speech-to-Text) | File adalah audio, _dan_ STT dikonfigurasi |
-    | 3rd | **Text parsing** | File cocok dengan tipe MIME teks yang dikenal |
-    | 4th | **Fallback** | Tidak ada yang cocok di atas — tetap mencoba text parsing |
+|----------|--------|---------------|
+| 1 | **OCR** | OCR dikonfigurasi _dan_ file cocok dengan `fileConfig.ocr.supportedMimeTypes`. Jika OCR gagal, LibreChat akan beralih ke parser dokumen bawaan. |
+| 2 | **RAG API `/text`** | `RAG_API_URL` diatur, `fileConfig.text.supportedMimeTypes` telah dipersempit, dan file cocok dengan daftar tersebut. Jika RAG API tidak tersedia, LibreChat akan beralih ke parser dokumen bawaan. |
+| 3 | **Parser dokumen bawaan** | File berupa PDF, DOCX, spreadsheet xlsx/xls/ods, atau ODT, dengan ukuran hingga 15 MB. |
+| 4 | **STT** (Speech-to-Text) | File berupa audio dan cocok dengan `fileConfig.stt.supportedMimeTypes`. |
+| 5 | **Teks biasa** | File cocok dengan `fileConfig.text.supportedMimeTypes`. File teks dan kode dibaca langsung; tipe lainnya dikirim ke rute RAG API `/text` ketika `RAG_API_URL` diatur, dan gagal jika tidak. |
+
+    File yang tidak cocok dengan salah satu dari ini akan ditolak karena tidak didukung untuk pengolahan teks.
   </Tabs.Tab>
   <Tabs.Tab>
     **Sebuah `.pdf` pada instans dengan OCR yang dikonfigurasi:**
     → OCR akan aktif. Sangat berguna untuk dokumen hasil pindai dan tata letak yang kompleks.
 
-    **Sebuah `.pdf` pada instans default (tanpa OCR):**
-    → Penguraian teks menanganinya. Berfungsi dengan baik untuk PDF yang dibuat secara digital.
+    **Sebuah `.pdf` pada instance default (tanpa OCR):**
+    → Parser dokumen bawaan menanganinya. Berfungsi dengan baik untuk PDF yang dibuat secara digital.
 
-    **File Python `.py`:**
-    → Langsung ke penguraian teks. Kode sumber sudah berupa teks — tidak perlu konversi.
+    **Berkas `.py` Python:**
+→ Teks biasa. Kode sumber sudah berupa teks, sehingga tidak diperlukan konversi.
 
     **Sebuah `.mp3` pada instans dengan STT yang dikonfigurasi:**
     → Speech-to-Text mentranskripsikannya menjadi teks untuk percakapan tersebut.
 
-    **Sebuah tangkapan layar `.png` tanpa OCR yang dikonfigurasi:**
-    → Beralih ke penguraian teks (hasil terbatas — pertimbangkan untuk mengatur OCR untuk gambar).
+    **Tangkapan layar `.png` tanpa OCR yang dikonfigurasi:**
+→ Unggahan mengembalikan error alih-alih teks. Konfigurasikan OCR untuk gambar.
   </Tabs.Tab>
 </Tabs>
 
@@ -116,16 +119,21 @@ Saat Anda melihat pratinjau atau mengunduh lampiran Upload as Text, LibreChat me
     - Skrip shell, file SQL
   </Tabs.Tab>
   <Tabs.Tab>
-    Penguraian teks menangani hal ini secara langsung. Jika OCR dikonfigurasi, fitur ini akan mengambil alih untuk akurasi yang lebih baik pada tata letak yang kompleks.
+    Parser dokumen bawaan menangani format-format ini secara langsung, hingga 15 MB per file. Jika OCR dikonfigurasi, OCR akan mengambil alih untuk meningkatkan akurasi pada tata letak yang kompleks.
 
-    - **PDF** — digital dan hasil pindai (PDF hasil pindai mendapatkan manfaat dari OCR)
-    - **Word** — `.docx`, `.doc`
+    - **PDF**: lapisan teks digital (PDF hasil pemindaian memerlukan OCR)
+    - **Kata**: `.docx` (bukan `.doc` lama)
+    - **Spreadsheet**: `.xlsx`, `.xls`, `.ods`
+    - **Teks OpenDocument**: `.odt`
+
+    Hal-hal ini memerlukan OCR, atau rute `/text` dari RAG API, karena parser bawaan tidak dapat membacanya:
+
+    - **Kata**: `.doc`
     - **PowerPoint** — `.pptx`, `.potx`, `.ppt`
-    - **Excel** — `.xlsx`, `.xls`
     - Buku **EPUB**
   </Tabs.Tab>
   <Tabs.Tab>
-    Gambar **memerlukan OCR** untuk menghasilkan teks yang berguna. Tanpanya, hasilnya akan kurang memuaskan.
+    Gambar **memerlukan OCR** untuk menghasilkan teks. Tanpa OCR, unggahan akan mengembalikan error alih-alih teks.
 
     - JPEG, PNG, GIF, WebP
     - HEIC, HEIF (format Apple)
@@ -220,7 +228,7 @@ fileConfig:
 
 ## Opsional: meningkatkan ekstraksi dengan OCR [#optional-boosting-extraction-with-ocr]
 
-Penguraian teks berfungsi dengan baik untuk dokumen yang dibuat secara digital (PDF yang disimpan dari Word, file kode, teks biasa). Namun, jika Anda mengunggah **dokumen hasil pemindaian, foto halaman, atau gambar yang berisi teks**, pengurai bawaan tidak akan memberikan hasil yang optimal.
+Parser bawaan bekerja dengan baik untuk PDF yang dibuat secara digital, DOCX, spreadsheet, ODT, file kode, dan teks biasa. Namun, **dokumen hasil pemindaian, foto halaman, gambar yang berisi teks, serta format seperti `.doc`, PowerPoint, dan EPUB** memerlukan OCR.
 
 Di situlah peran OCR. Saat dikonfigurasi, LibreChat secara otomatis menggunakan OCR untuk jenis file yang memerlukannya — Anda tidak perlu melakukan apa pun secara berbeda sebagai pengguna.
 
@@ -256,7 +264,8 @@ Bagian ini ditujukan bagi admin yang ingin mengontrol jenis file mana yang dipro
       # Max tokens extracted from a single file before truncation
       fileTokenLimit: 100000
 
-      # Files matching these MIME patterns use OCR (if configured)
+      # Example only: files matching these MIME patterns use OCR (if configured).
+      # These are examples for narrowing or extending, not required settings.
       ocr:
         supportedMimeTypes:
           - "^image/(jpeg|gif|png|webp|heic|heif)$"
@@ -265,18 +274,19 @@ Bagian ini ditujukan bagi admin yang ingin mengontrol jenis file mana yang dipro
           - "^application/vnd\\.ms-(word|powerpoint|excel)$"
           - "^application/epub\\+zip$"
 
-      # Files matching these MIME patterns use text parsing
+      # Example only: narrowing this list sends the matching types to the RAG API /text
+      # route when RAG_API_URL is set
       text:
         supportedMimeTypes:
           - "^text/(plain|markdown|csv|json|xml|html|css|javascript|typescript|x-python|x-java|x-csharp|x-php|x-ruby|x-go|x-rust|x-kotlin|x-swift|x-scala|x-perl|x-lua|x-shell|x-sql|x-yaml|x-toml)$"
 
-      # Files matching these MIME patterns use STT (if configured)
+      # Example only: files matching these MIME patterns use STT (if configured)
       stt:
         supportedMimeTypes:
           - "^audio/(mp3|mpeg|mpeg3|wav|wave|x-wav|ogg|vorbis|mp4|x-m4a|flac|x-flac|webm)$"
     ```
 
-    **Pengingat prioritas:** OCR > STT > penguraian teks > fallback.
+    **Pengingat prioritas:** OCR > `/text` RAG (ketika `RAG_API_URL` diatur dan daftar teks dipersempit) > parser dokumen bawaan > STT > teks biasa.
 
     Untuk referensi lengkap, lihat [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config).
   </Accordion>
@@ -299,10 +309,10 @@ Bagian ini ditujukan bagi admin yang ingin mengontrol jenis file mana yang dipro
   </Accordion>
   <Accordion title="Konten file terlihat salah atau sebagian besar kosong">
     Beberapa hal untuk diperiksa:
-    - **PDF / gambar yang dipindai** — Dokumen ini memerlukan OCR untuk mengekstrak teks dengan benar. Tanpanya, parser mungkin akan menghasilkan data yang tidak terbaca atau tidak menghasilkan apa pun. Minta admin Anda untuk [mengonfigurasi OCR](/docs/features/ocr).
+    - **PDF hasil pindaian / gambar**: Dokumen ini memerlukan OCR untuk mengekstrak teks dengan benar. Tanpa OCR, parser tidak mengembalikan apa pun untuk PDF hasil pindaian, dan gambar akan menampilkan error. Mintalah admin Anda untuk [mengonfigurasi OCR](/docs/features/ocr).
     - **File audio** — Ini memerlukan STT. Tidak ada cadangan teks untuk audio.
     - **File rusak** — Coba buka file tersebut secara lokal untuk memastikan file tidak rusak.
-    - **Format tidak didukung** — Jika tipe MIME tidak cocok dengan pola apa pun yang dikonfigurasi, LibreChat akan mencoba *fallback* penguraian teks, yang mungkin tidak berfungsi untuk format biner.
+    - **Format yang tidak didukung**: Parser bawaan hanya menangani PDF, DOCX, xlsx/xls/ods, dan ODT (hingga 15 MB). Format seperti `.doc`, PowerPoint, dan EPUB memerlukan OCR atau rute `/text` pada RAG API. Tipe MIME yang tidak cocok dengan pola yang dikonfigurasi apa pun akan ditolak.
   </Accordion>
   <Accordion title="Unggahan ditolak karena jenis file tidak didukung">
     LibreChat mengembalikan tipe MIME yang ditolak dalam kesalahan unggahan. Periksa pola [`fileConfig.endpoints.<endpoint>.supportedMimeTypes`](/docs/configuration/librechat_yaml/object_structure/file_config#supportedmimetypes-3) pada endpoint yang aktif dan izinkan tipe kanonik yang ingin Anda terima. Untuk skrip shell, gunakan `application/x-sh`; LibreChat menormalisasi varian umum `application/x-shellscript` dan `text/x-shellscript` sebelum melakukan pencocokan.
@@ -316,7 +326,7 @@ Bagian ini ditujukan bagi admin yang ingin mengontrol jenis file mana yang dipro
     - Pecah file menjadi bagian-bagian yang lebih kecil dan unggah secara terpisah
   </Accordion>
   <Accordion title="Gambar berhasil diunggah tetapi AI tidak dapat membaca teks di dalamnya">
-    Tanpa OCR, gambar diproses melalui penguraian teks, yang sebenarnya tidak dapat "melihat" teks di dalam gambar. Anda perlu mengonfigurasi OCR agar fitur ini berfungsi. Lihat [OCR for Documents](/docs/features/ocr).
+    Tanpa OCR, tidak ada yang dapat membaca teks dalam gambar, sehingga unggahan akan mengembalikan error. Anda perlu mengonfigurasi OCR agar fitur ini dapat berfungsi. Lihat [OCR untuk Dokumen](/docs/features/ocr).
 
     Sebagai alternatif, gunakan **vision model** dengan unggahan file standar — model tersebut dapat membaca teks dalam gambar.
   </Accordion>

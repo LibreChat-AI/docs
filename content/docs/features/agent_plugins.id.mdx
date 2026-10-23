@@ -22,7 +22,7 @@ DEPLOYMENT_PLUGINS_DIR=./plugin
 DEPLOYMENT_PLUGIN_DATA_DIR=./data/plugins
 
 # Optional and disabled by default; see Command Hooks below
-DEPLOYMENT_PLUGIN_HOOKS=true
+# DEPLOYMENT_PLUGIN_HOOKS=true
 ```
 
 Relative paths diselesaikan dari root proyek LibreChat. Jika direktori `./plugin` default tidak ada, startup akan berlanjut tanpa plugin. Jika `DEPLOYMENT_PLUGINS_DIR` diatur secara eksplisit tetapi tidak dapat dibaca, startup akan gagal agar kesalahan deployment tidak diabaikan begitu saja.
@@ -98,6 +98,14 @@ Transport yang didukung adalah `stdio`, `streamable-http`, dan `sse`. Transport 
 
 Untuk server `stdio`, `${PLUGIN_ROOT}` dan `${PLUGIN_DATA}` diekspansi satu kali di dalam `args`, `env`, dan `cwd`; kedua nilai tersebut juga ditambahkan ke lingkungan proses yang dijalankan. Konfigurasi MCP plugin tidak mengekspansi variabel arbitrer dari lingkungan host LibreChat. Nilai seperti `${OPENAI_API_KEY}` akan tetap literal melalui penyimpanan registri dan inisialisasi runtime. Simpan kredensial di luar file plugin dan sediakan melalui layanan terautentikasi yang dibuat khusus atau mekanisme lain yang dikontrol oleh deployment.
 
+LibreChat memvalidasi setiap `mcp.json` sebelum mendaftarkan server-servernya:
+
+- `command` harus berupa satu token yang dapat dieksekusi: baik nama sederhana seperti `node` atau path yang diawali `./` di dalam plugin. String shell dan path absolut akan ditolak, dan `${PLUGIN_ROOT}` tidak akan di-expand di dalam `command`.
+- `cwd` harus diawali dengan `./`, `${PLUGIN_ROOT}`, atau `${PLUGIN_DATA}`, dan harus mengarah ke lokasi di dalam basis yang disebutkan.
+- `env` tidak boleh mendeklarasikan `PLUGIN_ROOT` atau `PLUGIN_DATA`; LibreChat yang menetapkannya.
+- Nilai `url` remote harus berupa URL absolut `http` atau `https` tanpa informasi pengguna (user information) atau fragmen (fragment), dan harus menggunakan `https` kecuali host-nya adalah alamat loopback (seperti `localhost` atau `127.0.0.1`).
+- Entri server dengan kolom yang tidak dikenal akan ditolak dan dilewati. Kolom tingkat atas yang tidak dikenal, atau `$schema` yang tidak cocok dengan URL skema `1.0.0` yang didukung, akan menonaktifkan MCP untuk seluruh plugin.
+
 Server MCP yang dideklarasikan dalam `librechat.yaml` memiliki prioritas lebih tinggi daripada server plugin dengan nama yang sama. Nama server plugin duplikat akan dilewati dan dicatat dalam log.
 
 ## Data Plugin Persisten [#persistent-plugin-data]
@@ -148,7 +156,8 @@ Deklarasikan hook di `ai.librechat/hooks/hooks.json`:
 - Lingkungan anak hanya berisi `PATH`, `HOME`, `LANG`, `LC_ALL`, dan `TZ` jika ada, tiga variabel jalur plugin, dan nama-nama yang tercantum secara eksplisit dalam `allowedEnvVars`.
 - Exit code `0` berhasil. JSON yang ditulis ke output standar dapat mengembalikan keputusan yang sesuai dengan peristiwa dan konteks terbatas; output biasa hanya diperlakukan sebagai konteks tambahan untuk `SessionStart` dan `UserPromptSubmit`.
 - Exit code `2` memblokir tindakan atau kelanjutan yang berlaku dan menggunakan kesalahan standar sebagai alasannya. Exit code bukan nol lainnya dicatat dan diabaikan.
-- LibreChat menghentikan proses saat hook dibatalkan atau mengalami timeout. Pada host POSIX, perintah dijalankan melalui Bash. Plugin Windows harus menyediakan `commandWindows` atau memilih PowerShell.
+- `timeout` dalam satuan detik, berupa bilangan bulat dari 1 hingga 3600.
+- LibreChat menghentikan proses ketika hook dibatalkan atau melewati batas waktu. Pada host POSIX, perintah dijalankan melalui `bash`, yang harus tersedia di host API. Pada host Windows, perintah dijalankan melalui `powershell.exe`, sehingga plugin harus menyediakan `commandWindows` atau memilih PowerShell. Jika shell tidak dapat dimulai, LibreChat mencatat peringatan startup dan hook yang bersifat blocking akan gagal secara tertutup (fail closed).
 
 LibreChat menerjemahkan nama alat Claude yang umum yaitu `Bash`, `Write`, `Edit`, `Read`, dan `WebSearch` serta nama argumen berkasnya ke alat LibreChat yang sesuai. Matcher yang ditulis dengan nama alat asli LibreChat akan mempertahankan bentuk payload aslinya.
 

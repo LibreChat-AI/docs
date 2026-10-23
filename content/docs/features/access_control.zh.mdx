@@ -1,18 +1,14 @@
 ---
 title: 访问控制
 icon: ShieldCheck
-description: LibreChat 的细粒度授权系统 - 可在用户、组、角色和实例级别控制谁可以使用、共享、编辑和管理 Agent、提示词、MCP 服务器以及其他资源。
+description: 'LibreChat 的细粒度授权系统:在用户、群组、角色和实例层面,控制谁可以使用、共享、编辑和管理智能体、提示词、MCP 服务器及其他资源。'
 ---
 
 # 细粒度访问控制 [#granular-access-control]
 
-LibreChat 附带了一套完整的授权系统，建立在身份验证之上。访问权限并非“全有或全无”：应用中的每个可共享实体（智能体、提示词、MCP 服务器、远程智能体、文件、对话）都有其自己的访问控制列表 (ACL)，并且每个功能都可以针对**用户**、**群组**、**角色**或**公开**进行独立启用或限制。
+LibreChat 在身份验证之上内置了完整的授权系统。访问权限并非“全有或全无”:应用中每个可共享的实体(智能体、提示词、MCP 服务器、远程智能体、技能、代码环境、共享链接)都拥有各自的访问控制列表(ACL),并且每项功能都可以针对**用户**、**群组**、**角色**或**公开**范围独立启用或限制。
 
 本页面介绍了各组件是如何协同工作的，以便您可以根据组织需求对权限进行建模，无论是适用于所有人自由共享的小型团队，还是包含同步 Entra ID 组、自定义角色和委派管理员的企业级部署。
-
-<Callout type="info" title="管理面板">
-  专用的 [**LibreChat 管理面板**](/docs/features/admin_panel) 是即将推出的 UI，用于管理 [v0.8.5](/changelog/v0.8.5) 中引入的用户、组、角色、自定义权限配置文件以及系统级授权。本页面记录了其底层模型，该模型目前已在 LibreChat 中可用。
-</Callout>
 
 ## 访问模型概览 [#the-access-model-at-a-glance]
 
@@ -99,12 +95,12 @@ LibreChat 中的每个可共享资源都有其自己的访问控制列表，独�
 - **MCP 服务器** (`mcpServer`)
 - **技能** (`skill`)，请参阅 [Skills](/docs/features/skills)
 - **远程代理** (`remoteAgent`)，适用于 [Agents API](/docs/features/agents_api)
-- **文件** (`file`)，通常继承自使用它们的相关资源
-- **Projects** (`project`)，支持继承，因此共享给项目的资源会自动继承 ACL。
+- **代码环境**(`codeEnvironment`),用于部署方自有的代码工作节点;参见 [Code Interpreter](/docs/features/code_interpreter)
+- **共享链接** (`sharedLink`),参见 [可共享链接](/docs/features/shareable_links)
 
 ### 访问角色（权限预设） [#access-roles-permission-presets]
 
-与其向最终用户公开原始权限位，共享功能为每种资源类型使用了三个命名角色：
+与其向终端用户暴露原始的权限位,共享功能为每种资源类型提供三种命名角色(共享链接仅有查看者和所有者两种角色):
 
 | 角色 | 权限位 | 被授权者可以执行的操作 |
 | ---------- | ----------------------------------------------- | ------------------------------------------------------------------- |
@@ -113,6 +109,8 @@ LibreChat 中的每个可共享资源都有其自己的访问控制列表，独�
 | **Owner**  | `VIEW` + `EDIT` + `DELETE` + `SHARE` (`0b1111`) | 完全控制：编辑、删除以及重新分享给他人 |
 
 在底层实现中，权限作为位掩码（`permBits`）存储在每个（资源，主体）对中；超集会自动处理，因此授予 Editor 权限意味着同时也授予了 Viewer 权限。
+
+第五个位 `VIEW_INSIGHTS`(`0b10000`)仅适用于智能体。持有 `VIEW` 权限的主体若同时拥有该位,即可查看该智能体的[洞察](/docs/features/insights)。它不属于 Viewer、Editor 或 Owner 预设的组成部分:只有管理员可以授予该权限,方法是在智能体的共享对话框中打开 **View insights** 开关,且该权限不能授予公共主体。
 
 ### 通过 UI 授予访问权限 [#granting-access-from-the-ui]
 
@@ -135,35 +133,38 @@ LibreChat 中的每个可共享资源都有其自己的访问控制列表，独�
 - **Owners** 拥有与原始作者相同的 UI，并且可以自由删除和重新共享。
 - **原始作者**无论 ACL 状态如何，始终保留完全控制权，且管理员可以管理实例上的任何资源。
 
-### 项目继承 [#project-inheritance]
-
-权限可以从父级 **project** 继承。当 ACL 条目被继承时，`inheritedFrom` 链接会指向源头。这就是 LibreChat 中“全局 (Global)”项目的功能实现方式，添加到全局项目中的资源无需为每个主体单独添加条目，即可供所有用户使用。
-
 ## 层级 3：系统授权（管理员功能） [#layer-3-system-grants-admin-capabilities]
 
 系统授权（System grants）是一个独立的授权表，用于**管理员级别的功能**，用于回答诸如_“该用户能否访问管理面板？”_或_“该群组能否全局管理 MCP 服务器？”_之类的问题。它们始终限定于主体（用户、群组或角色）以及一个功能字符串。
 
 规范功能包括：
 
-| 功能 | 用途 |
+| 能力 | 用途 |
 | ------------------------------------ | --------------------------------------------- |
-| `access:admin`                       | 访问管理面板的权限 |
-| `read:users` / `manage:users`        | 查看 / 修改用户账户 |
-| `read:groups` / `manage:groups`      | 查看 / 修改群组 |
-| `read:roles` / `manage:roles`        | 查看 / 修改自定义角色 |
-| `read:configs` / `manage:configs`    | 查看 / 修改所有系统配置 |
-| `read:configs:<section>` / `manage:configs:<section>` | 查看 / 修改单个顶级配置部分 |
-| `assign:configs:{user\|group\|role}` | 为主体分配配置覆盖配置文件 |
-| `read:usage`                         | 查看平台使用情况和遥测数据 |
-| `read:agents` / `manage:agents`      | 查看 / 审核实例上的所有 Agent |
-| `read:prompts` / `manage:prompts`    | 查看 / 审核所有提示词 |
-| `manage:mcpservers`                  | 全局管理 MCP 服务器 |
+| `access:admin` | 访问管理面板 |
+| `read:users` / `manage:users` | 查看 / 修改用户账户 |
+| `read:groups` / `manage:groups` | 查看 / 修改组 |
+| `read:roles` / `manage:roles` | 查看 / 修改自定义角色 |
+| `read:configs` / `manage:configs` | 查看 / 修改所有系统配置 |
+| `read:configs:<section>` / `manage:configs:<section>` | 查看 / 修改单个顶级配置节 |
+| `assign:configs:{user\|group\|role}` | 为主体分配配置覆盖方案 |
+| `read:usage` | 查看平台使用情况和遥测数据 |
+| `read:agents` / `manage:agents` | 查看 / 审核实例上的所有智能体 |
+| `read:prompts` / `manage:prompts` | 查看 / 审核所有提示词 |
+| `read:skills` / `manage:skills` | 查看 / 审核所有技能 |
+| `read:sharedlinks` / `manage:sharedlinks` | 查看 / 审核所有共享链接 |
+| `manage:mcpservers` | 全局管理 MCP 服务器 |
+| `manage:code_environments` | 注册和撤销部署所有的代码工作节点 |
+| `read:insights` | 查看每个智能体的[洞察](/docs/features/insights) |
+| `read:audit_log` | 列出、查看和导出授权审计日志(只读;没有对应的 manage 权限) |
 
 管理权限隐含了其对应的读取权限（例如，拥有 `manage:users` 会自动授予 `read:users`）。这也适用于配置部分：`manage:configs:endpoints` 满足 `read:configs:endpoints`。仅拥有部分范围配置访问权限的用户，其收到的管理配置响应将过滤为他们有权读取的部分；没有配置读取权限的用户将收到 `403` 错误。
 
+`read:assistants` 和 `manage:assistants` 也已存在,但目前为保留项:尚无中间件对其进行强制执行。
+
 `SystemRoles.ADMIN` 用户隐式拥有所有权限；授权（grants）允许您将部分管理员权限**委派**给非管理员主体，而无需将其设为完全管理员。访问管理 UI 本身仍需要 `access:admin` 权限。
 
-系统权限通过管理面板进行授予和撤销。
+系统授权通过[管理面板](/docs/features/admin_panel)进行发放和撤销。
 
 ## Principals in Depth [#principals-in-depth]
 

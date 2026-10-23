@@ -81,10 +81,6 @@ Consulta [Comprobaciones de estado de Redis](/docs/configuration/redis#health-ch
 
 ## Instalar Helm Chart [#install-helm-chart]
 
-<Callout type="warning" title="Gráfico 2.0.16: mapa de configuración vacío">
-El origen del chart v0.8.8 establece `librechat.configEnv` como null de forma predeterminada. Si no tienes anulaciones de entorno en ConfigMap, establécelo explícitamente como `{}` en tu archivo de valores, o pasa `--set-json 'librechat.configEnv={}'` a `helm install` o `helm template`; de lo contrario, las búsquedas `dig` de la plantilla pueden fallar. Mantén las credenciales en el Secret nombrado. Esta es una solución alternativa de renderizado, no una razón para deshabilitar el requisito de Secret.
-</Callout>
-
 Para instalar el helm chart, ejecuta:
 
 `helm install <deployment-name> oci://ghcr.io/librechat-ai/librechat-chart/librechat`
@@ -101,15 +97,54 @@ Al igual que otros Helm charts, existe un [values file](https://github.com/Libre
 
 Cree un archivo `values.yaml` completado con los valores que desea modificar a partir de los predeterminados.
 
-Instale el Helm chart: `helm install librechat oci://ghcr.io/librechat-ai/librechat-chart/librechat --values <values-override-filel>`
+Instala el chart de Helm: `helm install librechat oci://ghcr.io/librechat-ai/librechat-chart/librechat --values <values-override-file>`
 
-Una vez que la versión esté publicada y el servicio sea accesible, sigue [Tu primer chat](/docs/quick_start/first_chat) para registrar una cuenta, añadir una API key de modelo y enviar tu primer mensaje.
+Una vez que la versión esté activa y el servicio sea accesible, sigue [Tu primer chat](/docs/quick_start/first_chat) para crear una cuenta, añadir una clave de API de modelo y enviar tu primer mensaje.
 
 ## Desinstalar el Helm Chart [#uninstall-the-helm-chart]
 
 Para desinstalar el Helm Chart: `helm uninstall <deployment-name>`
 
 Ejemplo: `helm uninstall librechat`
+
+## Actualización a chart 3.x [#upgrading-to-chart-3x]
+
+Chart 3.0.0 habilita la autenticación en MongoDB y Redis incluidos por defecto. Sus contraseñas generadas permanecen en los Secrets del subchart y llegan a LibreChat mediante `secretKeyRef` (`MONGODB_ROOT_PASSWORD`, `REDIS_PASSWORD`), y `MONGO_URI` se ensambla en el Deployment. Para usar tu propia base de datos, establece `librechat.configEnv.MONGO_URI` (o `REDIS_URI`). Establece `mongodb.auth.enabled=false` o `redis.auth.enabled=false` solo para restaurar el comportamiento anterior sin autenticación. Las contraseñas de root personalizadas deben ser seguras para URL, porque se colocan en `MONGO_URI`.
+
+Si `MONGO_URI`, `REDIS_URI` o `REDIS_PASSWORD` provienen del Secret indicado en `global.librechat.existingSecretName`, establezca `librechat.injectBundledCredentials.mongodb=false` (para `MONGO_URI`) o `librechat.injectBundledCredentials.redis=false` (para `REDIS_URI` o `REDIS_PASSWORD`). El chart no puede ver el contenido de ese Secret, y de lo contrario los valores generados sobrescribirían el suyo. Ambas configuraciones son independientes. Si mantiene MongoDB o Redis incluidos, deben usar la misma contraseña que su Secret: apunte `mongodb.auth.existingSecret` o `redis.auth.existingSecret` a él, o establezca la contraseña correspondiente en `auth`; de lo contrario, la base de datos conserva su contraseña generada y LibreChat no podrá autenticarse. Las credenciales se leen cuando se inicia un pod, así que después de rotar la contraseña de una base de datos, reinicie cada Deployment que la lea con `kubectl rollout restart deployment/<release>-librechat`.
+
+### Manteniendo las contraseñas generadas durante las actualizaciones [#keeping-the-generated-passwords-across-upgrades]
+
+Con los valores predeterminados, los subcharts generan las contraseñas en la primera instalación, y el subchart de MongoDB rechaza las actualizaciones posteriores que no las repitan ("PASSWORDS ERROR"). Lee los valores actuales y pásalos en cada `helm upgrade`, o apunta `mongodb.auth.existingSecret` y `redis.auth.existingSecret` a Secrets que tú gestiones:
+
+```bash
+kubectl get secret <release>-mongodb -o jsonpath='{.data.mongodb-root-password}' | base64 -d
+helm upgrade <release> ... --set-string mongodb.auth.rootPassword=<password>
+```
+
+Redis necesita `--set-string redis.auth.password=<password>` de la misma manera (`redis-password` en el Secret `<release>-redis`). Con `mongodb.architecture=replicaset`, también debes conservar la clave del conjunto de réplicas: lee `mongodb-replica-set-key` del mismo Secret y pásala como `--set-string mongodb.auth.replicaSetKey=<key>`.
+
+### Actualización desde un MongoDB incluido sin autenticación [#upgrading-from-an-unauthenticated-bundled-mongodb]
+
+Las versiones instaladas antes de que la autenticación se convirtiera en la opción predeterminada tienen un volumen de datos sin usuario root, y los datos persistidos no se reinicializan durante la actualización, por lo que LibreChat no puede autenticarse después de `helm upgrade`. Elija una de las siguientes opciones:
+
+1. Mantén el comportamiento anterior: `--set mongodb.auth.enabled=false`.
+2. Crea primero el usuario root. En el pod en ejecución previo a la actualización, ejecuta `mongosh admin --eval 'db.createUser({user: "<rootUser>", pwd: "<password>", roles: ["root"]})'` (`<rootUser>` es `mongodb.auth.rootUser`, que por defecto es `root`). Después, actualiza con `--set-string mongodb.auth.rootPassword=<password>` (apta para URL) y el mismo `mongodb.auth.rootUser` si lo has cambiado. Mantén la misma contraseña en todas las actualizaciones posteriores. Una actualización sin `mongodb.auth.rootPassword` será rechazada por el subchart de MongoDB ("PASSWORDS ERROR") porque todavía no existe ningún Secret.
+
+El gráfico no puede detectar este caso en el momento de la renderización, por lo que `NOTES.txt` muestra un aviso en cada actualización con la autenticación habilitada.
+
+### Ingress TLS [#ingress-tls]
+
+El ingress está habilitado de forma predeterminada. Configura `ingress.tls` (un `secretName` y `hosts`) para cualquier instalación que no sea local; `helm install` muestra una advertencia por cada host de ingress que no esté cubierto por ninguna entrada de `ingress.tls`.
+
+### URL del panel de administración [#admin-panel-url]
+
+Establezca `librechat.adminPanelUrl` en la URL base del panel de administración que se utiliza para las redirecciones de OAuth/SSO. Puede incluir una ruta, pero no debe terminar con una `/`. Consulte [Panel de administración](/docs/features/admin_panel).
+
+```yaml
+librechat:
+  adminPanelUrl: https://admin.example.com/admin
+```
 
 ## Migrar 1.x -> 2.x [#migrate-1x---2x]
 Si utilizó el chart antes de la versión 2.x, es posible que deba actualizar la estructura de `value`.

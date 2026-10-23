@@ -11,7 +11,7 @@ PDF, 코드 파일 또는 스프레드시트를 AI에게 전달하고 단순히 
 파일을 첨부하면 LibreChat이 파일에서 텍스트를 추출하여 대화창에 전체 내용을 바로 붙여넣습니다. 그러면 AI가 해당 내용을 처음부터 끝까지 읽을 수 있습니다. 플러그인이나 벡터 데이터베이스, 추가적인 서비스 설정이 필요 없습니다. 즉시 바로 사용할 수 있습니다.
 
 <Callout type="info" title="별도의 설정이 필요하지 않습니다">
-  Upload as Text는 모든 LibreChat 인스턴스에서 즉시 작동합니다. 이 기능은 내장된 텍스트 파싱을 사용하므로, 시작하기 위해 OCR, RAG 파이프라인 또는 외부 서비스가 필요하지 않습니다.
+  "Upload as Text"는 모든 LibreChat 인스턴스에서 즉시 작동합니다. 일반적인 형식을 위한 내장 문서 파서를 사용하므로, 일반 텍스트, 코드, PDF, DOCX, 스프레드시트, ODT는 OCR, RAG 파이프라인, 또는 외부 서비스 없이도 처리됩니다. 이미지와 일부 오피스 형식은 추가 서비스가 필요합니다. 자세한 내용은 [지원되는 파일](#which-files-are-supported)을 참조하세요.
 </Callout>
 
 ---
@@ -66,32 +66,35 @@ PDF, 코드 파일 또는 스프레드시트를 AI에게 전달하고 단순히 
 업로드가 텍스트로 라우팅되면, LibreChat은 원시 바이트를 프롬프트에 그대로 덤프하지 않습니다. 대신 처리 파이프라인을 거쳐 깔끔하고 읽기 쉬운 텍스트를 추출합니다:
 
 1. **MIME type 감지** — LibreChat은 업로드한 파일의 MIME type을 검사하여 파일의 종류(PDF, 이미지, 오디오, 소스 코드 등)를 확인합니다.
-2. **메서드 선택** — 파일 유형과 사용 가능한 서비스에 따라 다음 우선순위에 맞춰 최적의 추출 메서드를 선택합니다:
+2. **메서드 선택**: 파일 유형과 사용 가능한 서비스에 따라 다음 순서로 추출 메서드를 선택합니다:
 
 <Tabs items={["우선순위", "결정 예시"]}>
   <Tabs.Tab>
-    | 우선순위 | 방식 | 사용 시점 |
-    |----------|--------|---------------|
-    | 1순위 | **OCR** | 파일이 이미지 또는 스캔된 문서이고, _그리고_ OCR이 구성된 경우 |
-    | 2순위 | **STT** (Speech-to-Text) | 파일이 오디오이고, _그리고_ STT가 구성된 경우 |
-    | 3순위 | **Text parsing** | 파일이 알려진 텍스트 MIME 유형과 일치하는 경우 |
-    | 4순위 | **Fallback** | 위 항목 중 일치하는 것이 없는 경우 — 어쨌든 텍스트 파싱을 시도함 |
+    | 우선순위 | 방법 | 사용되는 경우 |
+|----------|------|---------------|
+| 1위 | **OCR** | OCR이 구성되어 있고 파일이 `fileConfig.ocr.supportedMimeTypes`와 일치하는 경우. OCR이 실패하면 LibreChat은 내장 문서 파서로 대체합니다. |
+| 2위 | **RAG API `/text`** | `RAG_API_URL`이 설정되어 있고, `fileConfig.text.supportedMimeTypes`가 축소되어 있으며, 파일이 이에 일치하는 경우. RAG API를 사용할 수 없으면 LibreChat은 내장 문서 파서로 대체합니다. |
+| 3위 | **내장 문서 파서** | 파일이 PDF, DOCX, xlsx/xls/ods 스프레드시트 또는 ODT이며, 최대 15MB인 경우. |
+| 4위 | **STT** (음성-텍스트 변환) | 파일이 오디오이며 `fileConfig.stt.supportedMimeTypes`와 일치하는 경우. |
+| 5위 | **일반 텍스트** | 파일이 `fileConfig.text.supportedMimeTypes`와 일치하는 경우. 텍스트 및 코드 파일은 직접 읽고, 다른 유형은 `RAG_API_URL`이 설정된 경우 RAG API `/text` 경로로 전송되며, 설정되지 않은 경우 실패합니다. |
+
+    다음 중 어느 것에도 해당하지 않는 파일은 텍스트 파싱을 지원하지 않는 것으로 간주되어 거부됩니다.
   </Tabs.Tab>
   <Tabs.Tab>
     **OCR이 구성된 인스턴스의 `.pdf` 파일:**
     → OCR이 작동합니다. 스캔된 문서나 복잡한 레이아웃에 매우 유용합니다.
 
-    **기본 인스턴스에서의 `.pdf` (OCR 없음):**
-    → 텍스트 파싱이 처리합니다. 디지털 방식으로 생성된 PDF에서 잘 작동합니다.
+    **기본 인스턴스에서 `.pdf` 파일 (OCR 미사용):**
+→ 내장 문서 파서가 처리합니다. 디지털로 생성된 PDF에서 잘 작동합니다.
 
-    **`.py` Python 파일:**
-    → 텍스트 파싱으로 바로 이동합니다. 소스 코드는 이미 텍스트이므로 변환이 필요하지 않습니다.
+    **A `.py` Python file:**
+    → 일반 텍스트. 소스 코드는 이미 텍스트이므로 별도의 변환이 필요하지 않습니다.
 
     **STT가 구성된 인스턴스의 `.mp3` 파일:**
     → Speech-to-Text가 이를 대화를 위한 텍스트로 변환합니다.
 
-    **OCR이 구성되지 않은 `.png` 스크린샷:**
-    → 텍스트 파싱으로 대체됩니다(결과가 제한적임 — 이미지에 대한 OCR 설정을 고려하세요).
+    **`.png` 스크린샷이고 OCR이 구성되지 않은 경우:**
+→ 업로드 시 텍스트 대신 오류가 반환됩니다. 이미지용 OCR을 구성하세요.
   </Tabs.Tab>
 </Tabs>
 
@@ -114,16 +117,21 @@ PDF, 코드 파일 또는 스프레드시트를 AI에게 전달하고 단순히 
     - Shell 스크립트, SQL 파일
   </Tabs.Tab>
   <Tabs.Tab>
-    텍스트 파싱은 이를 기본적으로 처리합니다. OCR이 구성되어 있으면, 복잡한 레이아웃에서 더 나은 정확도를 위해 OCR이 이를 대신합니다.
+    기본 제공 문서 파서는 이러한 형식을 별도 설정 없이 처리하며, 파일당 최대 15MB까지 지원합니다. OCR이 구성되어 있으면 복잡한 레이아웃에서 더 높은 정확도를 위해 OCR이 대신 처리합니다.
 
-    - **PDF** — 디지털 및 스캔본 (스캔된 PDF는 OCR을 사용하면 더 효과적입니다)
-    - **Word** — `.docx`, `.doc`
+    - **PDF**: 디지털 텍스트 레이어 (스캔된 PDF는 OCR이 필요합니다)
+    - **단어**: `.docx` (구형 `.doc` 아님)
+    - **스프레드시트**: `.xlsx`, `.xls`, `.ods`
+    - **OpenDocument 텍스트**: `.odt`
+
+    다음 파일은 OCR 또는 RAG API의 `/text` 경로가 필요합니다. 기본 제공 파서로는 읽을 수 없기 때문입니다:
+
+    - **단어**: `.doc`
     - **PowerPoint** — `.pptx`, `.potx`, `.ppt`
-    - **Excel** — `.xlsx`, `.xls`
     - **EPUB** 도서
   </Tabs.Tab>
   <Tabs.Tab>
-    이미지는 유용한 텍스트를 생성하기 위해 **OCR이 필요합니다**. OCR이 없으면 결과가 좋지 않을 것입니다.
+    이미지는 텍스트를 추출하려면 **OCR이 필요합니다**. OCR이 없으면 업로드 시 텍스트 대신 오류가 반환됩니다.
 
     - JPEG, PNG, GIF, WebP
     - HEIC, HEIF (Apple 형식)
@@ -218,7 +226,7 @@ fileConfig:
 
 ## 선택 사항: OCR을 통한 추출 성능 향상 [#optional-boosting-extraction-with-ocr]
 
-텍스트 파싱은 디지털로 생성된 문서(Word에서 저장된 PDF, 코드 파일, 일반 텍스트)에서는 잘 작동합니다. 하지만 **스캔한 문서, 페이지 사진 또는 텍스트가 포함된 이미지**를 업로드하는 경우, 내장 파서로는 좋은 결과를 얻기 어렵습니다.
+기본 제공 파서는 디지털로 생성된 PDF, DOCX, 스프레드시트, ODT, 코드 파일, 일반 텍스트에 대해 잘 작동합니다. 하지만 **스캔한 문서, 페이지 사진, 텍스트가 포함된 이미지, 그리고 `.doc`, PowerPoint, EPUB 같은 형식**은 OCR이 필요합니다.
 
 바로 그 지점에서 OCR이 필요합니다. 설정이 완료되면 LibreChat은 OCR의 이점을 누릴 수 있는 파일 형식에 대해 자동으로 OCR을 사용합니다. 사용자는 별도로 수행해야 할 작업이 없습니다.
 
@@ -254,7 +262,8 @@ fileConfig:
       # Max tokens extracted from a single file before truncation
       fileTokenLimit: 100000
 
-      # Files matching these MIME patterns use OCR (if configured)
+      # Example only: files matching these MIME patterns use OCR (if configured).
+      # These are examples for narrowing or extending, not required settings.
       ocr:
         supportedMimeTypes:
           - "^image/(jpeg|gif|png|webp|heic|heif)$"
@@ -263,18 +272,19 @@ fileConfig:
           - "^application/vnd\\.ms-(word|powerpoint|excel)$"
           - "^application/epub\\+zip$"
 
-      # Files matching these MIME patterns use text parsing
+      # Example only: narrowing this list sends the matching types to the RAG API /text
+      # route when RAG_API_URL is set
       text:
         supportedMimeTypes:
           - "^text/(plain|markdown|csv|json|xml|html|css|javascript|typescript|x-python|x-java|x-csharp|x-php|x-ruby|x-go|x-rust|x-kotlin|x-swift|x-scala|x-perl|x-lua|x-shell|x-sql|x-yaml|x-toml)$"
 
-      # Files matching these MIME patterns use STT (if configured)
+      # Example only: files matching these MIME patterns use STT (if configured)
       stt:
         supportedMimeTypes:
           - "^audio/(mp3|mpeg|mpeg3|wav|wave|x-wav|ogg|vorbis|mp4|x-m4a|flac|x-flac|webm)$"
     ```
 
-    **우선순위 알림:** OCR > STT > 텍스트 파싱 > 폴백(fallback).
+    **우선순위 알림:** OCR > RAG `/text` (`RAG_API_URL`이 설정되고 텍스트 목록이 좁혀진 경우) > 내장 문서 파서 > STT > 일반 텍스트.
 
     전체 참조를 보려면 [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config)를 확인하세요.
   </Accordion>
@@ -297,10 +307,10 @@ fileConfig:
   </Accordion>
   <Accordion title="파일 내용이 잘못되었거나 거의 비어 있습니다">
     확인해야 할 몇 가지 사항:
-    - **스캔된 PDF / 이미지** — 텍스트를 올바르게 추출하려면 OCR이 필요합니다. OCR이 없으면 파서가 잘못된 데이터를 반환하거나 아무것도 반환하지 않을 수 있습니다. 관리자에게 [OCR 구성](/docs/features/ocr)을 요청하세요.
+    - **스캔된 PDF / 이미지**: 이러한 파일은 텍스트를 제대로 추출하기 위해 OCR이 필요합니다. OCR이 없으면 파서는 스캔된 PDF에서 아무것도 반환하지 않으며, 이미지는 오류를 반환합니다. 관리자에게 [OCR 구성](/docs/features/ocr)을 요청하세요.
     - **오디오 파일** — 이 파일들은 STT가 필요합니다. 오디오에 대한 텍스트 대체 수단은 없습니다.
     - **손상된 파일** — 파일을 로컬에서 열어 손상되지 않았는지 확인해 보세요.
-    - **지원되지 않는 형식** — MIME 유형이 구성된 패턴과 일치하지 않는 경우, LibreChat은 텍스트 파싱 폴백(fallback)을 시도하지만, 이는 바이너리 형식에서는 작동하지 않을 수 있습니다.
+    - **지원되지 않는 형식**: 내장 파서는 PDF, DOCX, xlsx/xls/ods, ODT(최대 15MB)만 처리합니다. `.doc`, PowerPoint, EPUB 같은 형식은 OCR 또는 RAG API `/text` 경로가 필요합니다. 구성된 패턴과 일치하지 않는 MIME 타입은 거부됩니다.
   </Accordion>
   <Accordion title="지원되지 않는 파일 형식으로 인해 업로드가 거부되었습니다">
     LibreChat은 업로드 오류 시 거부된 MIME 타입을 반환합니다. 활성 endpoint의 [`fileConfig.endpoints.<endpoint>.supportedMimeTypes`](/docs/configuration/librechat_yaml/object_structure/file_config#supportedmimetypes-3) 패턴을 확인하고 허용하려는 표준(canonical) 타입을 추가하세요. 셸 스크립트의 경우 `application/x-sh`를 사용하세요. LibreChat은 일치 여부를 확인하기 전에 일반적인 `application/x-shellscript` 및 `text/x-shellscript` 변형을 정규화합니다.
@@ -314,7 +324,7 @@ fileConfig:
     - 파일을 더 작은 부분으로 나누어 각각 업로드하세요.
   </Accordion>
   <Accordion title="이미지가 업로드되지만 AI가 이미지 내의 텍스트를 읽지 못함">
-    OCR이 없으면 이미지는 텍스트 파싱을 통해 처리되는데, 이는 이미지 내의 텍스트를 실제로 "볼" 수 없습니다. 이 기능이 작동하려면 OCR을 구성해야 합니다. [OCR for Documents](/docs/features/ocr)를 참조하세요.
+    OCR이 없으면 이미지 속 텍스트를 읽을 수 있는 구성 요소가 없으므로 업로드가 오류를 반환합니다. 이 기능이 작동하려면 OCR을 구성해야 합니다. [문서용 OCR](/docs/features/ocr)을 참조하세요.
 
     또는 표준 파일 업로드를 사용하여 **vision model**을 사용하세요. 모델 자체가 이미지 내의 텍스트를 읽을 수 있습니다.
   </Accordion>

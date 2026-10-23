@@ -16,18 +16,18 @@ Użyj subagentów do:
 - Przepływy pracy zespołów wieloagentowych, które powinny być wykonywane w ramach jednego delegowanego zadania
 - Dekompozycja w stylu równoległym, w której element nadrzędny koordynuje i podsumowuje
 
-## Czym subagenci różnią się od łańcucha agentów (Agent Chain) [#how-subagents-differ-from-agent-chain]
+## Czym subagenci różnią się od przekazań [#how-subagents-differ-from-handoffs]
 
-Agent Chain buduje graf wieloagentowy, w którym agenci przekazują wyniki poprzez skonfigurowane kroki łańcucha. Podagenci są tworzeni przez agenta jako wywołanie narzędzia (tool call) podczas działania.
+Przekazania (handoffs) przenoszą rozmowę z głównego agenta do wyspecjalizowanego agenta, który następnie kontynuuje wymianę. Podagenci (subagents) są uruchamiani przez agenta jako wywołanie narzędzia podczas działania, wykonują swoją pracę w izolacji i zwracają rodzicowi zwięzły wynik.
 
-- **Agent Chain**: przepływ pracy typu multi-agent na poziomie grafu
-- **Subagenci**: delegowanie czasu wykonywania z agenta nadrzędnego do odizolowanych uruchomień podrzędnych
+- **Przekazania**: rozmowa przechodzi do innego agenta
+- **Subagenci**: delegowanie w czasie wykonania z agenta nadrzędnego do izolowanych uruchomień potomnych, przy zachowaniu kontroli przez agenta nadrzędnego
 
-Oba rozwiązania mogą korzystać z istniejących agentów, ale subagenty zostały zaprojektowane z myślą o delegowaniu zadań w określonym zakresie z poziomu pętli rozumowania pojedynczego agenta.
+Obie mogą korzystać z istniejących agentów, ale subagenty są zaprojektowane do ograniczonego delegowania z wnętrza pętli rozumowania pojedynczego agenta. Starsze Łańcuchy Agentów są przestarzałe; do nowej orkiestracji używaj Handoffs lub Subagents. Zobacz [Agents](/docs/features/agents#handoffs).
 
 ## Włączanie funkcji [#enable-the-capability]
 
-Funkcja `subagents` jest domyślnie włączona. Administratorzy mogą usunąć ją z listy możliwości endpointu agents, aby wyłączyć tę funkcję.
+Możliwość `subagents` jest domyślnie włączona. Administratorzy mogą wyłączyć tę funkcję, usuwając ją z listy możliwości punktu końcowego agents. Domyślna lista możliwości to:
 
 ```yaml filename="librechat.yaml"
 endpoints:
@@ -42,19 +42,23 @@ endpoints:
       - 'actions'
       - 'context'
       - 'skills'
+      - 'memory'
+      - 'ask_user_question'
       - 'tools'
-      - 'chain'
       - 'ocr'
 ```
 
+Jeśli sam ustawisz `capabilities`, wypisz każdą zdolność, którą chcesz zachować, ponieważ Twoja lista zastępuje wartość domyślną. Wykonywanie w tle (`run_in_background`) nie znajduje się na domyślnej liście; zobacz [Detached Subagent Threads](#detached-subagent-threads).
+
 ## Konfiguracja Agenta [#configure-an-agent]
 
-W kreatorze agentów (Agent Builder) otwórz **Advanced Settings** i włącz **Subagents**.
+W Kreatorze agentów otwórz **Add tools**, wybierz **Subagents** w bibliotece narzędzi i włącz przełącznik (**Enable subagents**).
 
 Dostępne ustawienia:
 
 - **Włącz subagenty**: dodaje narzędzie do tworzenia subagentów do agenta.
 - **Allow self-spawn**: pozwala agentowi na utworzenie nowej kopii samego siebie w izolowanym kontekście. Jest to domyślnie włączone, gdy włączone są subagenty.
+- **Udostępnianie plików subagentom**: udostępnia pliki wiadomości uprawnionym subagentom działającym na pierwszym planie. Ta opcja pojawia się tylko wtedy, gdy `endpoints.agents.fileSharing.enabled` ma wartość true.
 - **Dodatkowe subagenty**: wybiera konkretne agenty, które mogą być wywoływane przez agenta nadrzędnego.
 
 Zapisane zespoły Agentów są osadzone jako `subagents.graphs` w ładunkach (payloads) tworzenia lub aktualizacji Agenta. Obecny Kreator Agentów (Agent Builder) zachowuje te definicje podczas edycji ustawień samoczynnego wyzwalania (self-spawn) oraz poszczególnych Agentów, ale nie służy do tworzenia definicji grafów. Każdy zespół nazywa ograniczony skierowany graf acykliczny, jego Agenta wejściowego oraz Agenta, którego wynik jest zwracany do rodzica:
@@ -129,7 +133,7 @@ W kolejnych turach LibreChat przechowuje wcześniejsze wywołania z dostępnych 
 
 ## Odłączone wątki subagenta [#detached-subagent-threads]
 
-Gdy `run_in_background` jest włączone dla endpointu Agents, nadrzędny Agent może odłączyć zadania podagenta i kontynuować pracę bez czekania na ich zakończenie. LibreChat utrwala każdego odłączonego potomka z prywatną linią wykonania i kanonicznym zapisem rozmowy. Wątki potomne pozostają poza normalną nawigacją i wyszukiwaniem konwersacji i nie mogą być odczytywane bezpośrednio; autoryzowany widok nadrzędny eksponuje jedynie ograniczone działania potomne.
+`run_in_background` jest opcjonalne (wymaga jawnego włączenia): dodaj je do `endpoints.agents.capabilities`, aby włączyć tę funkcję dla endpointu Agents. Po włączeniu nadrzędny Agent może przekazać pracę podagenta do wykonania w tle i kontynuować działanie bez czekania na jej zakończenie. LibreChat zapisuje każdy odłączony wątek podrzędny wraz z prywatnym śladem wykonania (execution lineage) oraz kanonicznym zapisem transkrypcji. Wątki podrzędne nie są widoczne w standardowej nawigacji po rozmowach ani w wyszukiwarce i nie można ich odczytać bezpośrednio; autoryzowany widok nadrzędny udostępnia wyłącznie ograniczoną aktywność wątków podrzędnych.
 
 Wątki podrzędne (child threads) to rekordy wykonania przeznaczone wyłącznie do odczytu. Użytkownik nie może edytować ani usuwać kanonicznego wątku podrzędnego w miejscu jego wystąpienia. W przypadku ukończonego, trwałego wątku podrzędnego typu direct-Agent, opcja **Continue in a new chat** rozgałęzia dokładnie ukończoną gałąź do oddzielnej, normalnej i edytowalnej konwersacji typu Agent, pozostawiając oryginalny wątek podrzędny ukrytym i dostępnym tylko do odczytu. Panel aktywności utrzymuje jeden aktywny edytor (composer) przez cały czas trwania uruchomienia oraz podczas dostarczania przychodzących zadań, zachowując fokus i częściowo wpisane wskazówki w trakcie ładowania widoku nowego zadania. Przesyłanie pozostaje niedostępne, dopóki zadanie nie będzie mogło przyjąć kontroli. Tekst wprowadzony po zakończeniu jest przenoszony do rozgałęzienia, a nieudane rozgałęzienie przywraca szkic w panelu. Ta akcja jest niedostępna dla uruchomionych, grafowych, anonimowych widoków typu Agent oraz widoków współdzielonych. Usunięcie elementu nadrzędnego powoduje kaskadowe usunięcie jego linii podrzędnej. Nadrzędny Agent może odpytywać, sterować, kolejkować, przerywać, anulować, zbierać i później kontynuować kanoniczny wątek podrzędny za pomocą narzędzi zadań; dzierżawy oparte na Mongo serializują te kontynuacje pomiędzy replikami API.
 

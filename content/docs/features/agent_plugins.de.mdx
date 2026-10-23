@@ -22,7 +22,7 @@ DEPLOYMENT_PLUGINS_DIR=./plugin
 DEPLOYMENT_PLUGIN_DATA_DIR=./data/plugins
 
 # Optional and disabled by default; see Command Hooks below
-DEPLOYMENT_PLUGIN_HOOKS=true
+# DEPLOYMENT_PLUGIN_HOOKS=true
 ```
 
 Relative Pfade werden ausgehend vom LibreChat-Projektstammverzeichnis aufgelöst. Wenn das Standardverzeichnis `./plugin` nicht existiert, wird der Start ohne Plugins fortgesetzt. Wenn `DEPLOYMENT_PLUGINS_DIR` explizit festgelegt, aber nicht gelesen werden kann, schlägt der Start fehl, damit ein Bereitstellungsfehler nicht stillschweigend ignoriert wird.
@@ -98,6 +98,14 @@ Unterstützte Transports sind `stdio`, `streamable-http` und `sse`. Remote-HTTP-
 
 Für `stdio`-Server werden `${PLUGIN_ROOT}` und `${PLUGIN_DATA}` einmalig in `args`, `env` und `cwd` expandiert; beide Werte werden zudem der Umgebung des gestarteten Prozesses hinzugefügt. Die MCP-Konfiguration für Plugins expandiert keine beliebigen Variablen aus der Host-Umgebung von LibreChat. Ein Wert wie `${OPENAI_API_KEY}` bleibt während der Speicherung in der Registry und der Laufzeitinitialisierung ein Literal. Bewahren Sie Anmeldedaten außerhalb von Plugin-Dateien auf und stellen Sie diese über einen speziell dafür vorgesehenen authentifizierten Dienst oder einen anderen bereitstellungsgesteuerten Mechanismus bereit.
 
+LibreChat validiert jede `mcp.json`, bevor es deren Server registriert:
+
+- `command` muss ein einzelnes ausführbares Token sein: entweder ein einfacher Name wie `node` oder ein `./`-Pfad innerhalb des Plugins. Shell-Strings und absolute Pfade werden abgelehnt, und `${PLUGIN_ROOT}` wird in `command` nicht expandiert.
+- `cwd` muss mit `./`, `${PLUGIN_ROOT}` oder `${PLUGIN_DATA}` beginnen und muss innerhalb der Basis aufgelöst werden, die es benennt.
+- `env` darf `PLUGIN_ROOT` oder `PLUGIN_DATA` nicht deklarieren; LibreChat setzt diese selbst.
+- Remote-`url`-Werte müssen absolute `http`- oder `https`-URLs sein, die keine Benutzerinformationen oder kein Fragment enthalten. Sie müssen `https` verwenden, sofern der Host nicht eine Loopback-Adresse ist (wie `localhost` oder `127.0.0.1`).
+- Ein Server-Eintrag mit einem unbekannten Feld wird abgelehnt und übersprungen. Ein unbekanntes Feld auf oberster Ebene oder ein `$schema`, das nicht der unterstützten Schema-URL `1.0.0` entspricht, deaktiviert MCP für das gesamte Plugin.
+
 Ein in `librechat.yaml` deklarierter MCP Server hat Vorrang vor einem Plugin-Server mit demselben Namen. Doppelte Plugin-Server-Namen werden übersprungen und protokolliert.
 
 ## Persistente Plugin-Daten [#persistent-plugin-data]
@@ -148,7 +156,8 @@ Deklarieren Sie Hooks unter `ai.librechat/hooks/hooks.json`:
 - Die untergeordnete Umgebung enthält nur `PATH`, `HOME`, `LANG`, `LC_ALL` und `TZ`, sofern vorhanden, die drei Plugin-Pfadvariablen sowie die Namen, die explizit in `allowedEnvVars` aufgeführt sind.
 - Exit-Code `0` bedeutet Erfolg. In die Standardausgabe geschriebenes JSON kann ereignisgerechte Entscheidungen und begrenzten Kontext zurückgeben; einfacher Text wird nur für `SessionStart` und `UserPromptSubmit` als zusätzlicher Kontext behandelt.
 - Exit-Code `2` blockiert die entsprechende Aktion oder Fortsetzung und verwendet den Standardfehler als Begründung. Andere Exit-Codes ungleich Null werden protokolliert und ansonsten ignoriert.
-- LibreChat beendet den Prozess, wenn der Hook abgebrochen wird oder ein Timeout auftritt. Auf POSIX-Hosts werden Befehle über Bash ausgeführt. Windows-Plugins müssen `commandWindows` bereitstellen oder PowerShell auswählen.
+- `timeout` ist in Sekunden angegeben, eine Ganzzahl von 1 bis 3600.
+- LibreChat beendet den Prozess, wenn der Hook abgebrochen wird oder das Zeitlimit überschritten wird. Auf POSIX-Hosts werden Befehle über `bash` ausgeführt, das auf dem API-Host verfügbar sein muss. Auf Windows-Hosts werden sie über `powershell.exe` ausgeführt, daher müssen Plugins `commandWindows` bereitstellen oder PowerShell auswählen. Wenn die Shell nicht gestartet werden kann, protokolliert LibreChat eine Startwarnung, und blockierende Hooks schlagen im abgesicherten Zustand fehl (fail closed).
 
 LibreChat übersetzt die gängigen Claude-Tool-Namen `Bash`, `Write`, `Edit`, `Read` und `WebSearch` sowie deren Datei-Argumentnamen in die entsprechenden LibreChat-Tools. Ein Matcher, der mit dem nativen Tool-Namen von LibreChat geschrieben wurde, behält die native Payload-Struktur bei.
 

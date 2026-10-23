@@ -82,10 +82,6 @@ Bu uç noktaların neler bildirdiği için [Redis sağlık kontrolleri](/docs/co
 
 ## Helm Chart Kurulumu [#install-helm-chart]
 
-<Callout type="warning" title="Chart 2.0.16: boş yapılandırma haritası">
-v0.8.8 chart kaynağı varsayılan olarak `librechat.configEnv` değerini null olarak ayarlar. Eğer herhangi bir ConfigMap ortam geçersiz kılma işleminiz yoksa, bunu values dosyanızda açıkça `{}` olarak ayarlayın veya `helm install` ya da `helm template` komutuna `--set-json 'librechat.configEnv={}'` parametresini geçin; aksi takdirde şablonun `dig` aramaları başarısız olabilir. Kimlik bilgilerini adlandırılmış Secret içinde tutun. Bu bir işleme geçici çözümüdür, Secret gereksinimini devre dışı bırakmak için bir neden değildir.
-</Callout>
-
 Helm chart'ı yüklemek için şunu çalıştırın:
 
 `helm install <deployment-name> oci://ghcr.io/librechat-ai/librechat-chart/librechat`
@@ -102,15 +98,54 @@ Diğer Helm chart'larına benzer şekilde, varsayılan ayarları özetleyen ve h
 
 Varsayılan değerlerden değiştirmek istediklerinizi içeren bir `values.yaml` dosyası oluşturun.
 
-Helm chart'ı yükleyin: `helm install librechat oci://ghcr.io/librechat-ai/librechat-chart/librechat --values <values-override-filel>`
+Helm chart'ını kurun: `helm install librechat oci://ghcr.io/librechat-ai/librechat-chart/librechat --values <values-override-file>`
 
-Sürüm yayına alınıp hizmete erişilebilir olduğunda, bir hesap oluşturmak, bir model API anahtarı eklemek ve ilk mesajınızı göndermek için [İlk Sohbetiniz](/docs/quick_start/first_chat) bölümünü takip edin.
+Sürüm yayınlandıktan ve servise erişilebildikten sonra, bir hesap oluşturmak, bir model API anahtarı eklemek ve ilk mesajınızı göndermek için [İlk Sohbetiniz](/docs/quick_start/first_chat) bölümünü takip edin.
 
 ## Helm Chart'ı Kaldırma [#uninstall-the-helm-chart]
 
 Helm Chart'ı kaldırmak için: `helm uninstall <deployment-name>`
 
 Örnek: `helm uninstall librechat`
+
+## 3.x sürümüne yükseltme [#upgrading-to-chart-3x]
+
+Chart 3.0.0, paketlenmiş MongoDB ve Redis üzerinde varsayılan olarak kimlik doğrulamayı etkinleştirir. Bunların oluşturulan parolaları alt grafik Secret'larında saklanır ve `secretKeyRef` (`MONGODB_ROOT_PASSWORD`, `REDIS_PASSWORD`) aracılığıyla LibreChat'e ulaşır; `MONGO_URI` ise Deployment içinde birleştirilir. Kendi veritabanınızı kullanmak için `librechat.configEnv.MONGO_URI` (veya `REDIS_URI`) değerini ayarlayın. `mongodb.auth.enabled=false` veya `redis.auth.enabled=false` değerlerini yalnızca eski kimlik doğrulamasız davranışı geri yüklemek için ayarlayın. Özel root parolaları `MONGO_URI` içine yerleştirildiğinden URL açısından güvenli olmalıdır.
+
+Eğer `MONGO_URI`, `REDIS_URI` veya `REDIS_PASSWORD`, `global.librechat.existingSecretName` ile adlandırılan Secret'tan geliyorsa, `librechat.injectBundledCredentials.mongodb=false` (`MONGO_URI` için) veya `librechat.injectBundledCredentials.redis=false` (`REDIS_URI` veya `REDIS_PASSWORD` için) ayarını yapın. Chart, bu Secret'ın içini göremez; aksi halde oluşturulan değerler Secret'taki değerlerin üzerine yazar. Bu iki ayar birbirinden bağımsızdır. Paketle gelen MongoDB veya Redis'i kullanmaya devam ediyorsanız, Secret'ınızdaki parolayı kullanmalıdır: `mongodb.auth.existingSecret` veya `redis.auth.existingSecret` değerini bu Secret'a yönlendirin ya da eşleşen `auth` parolasını ayarlayın. Aksi halde veritabanı oluşturulan parolasını korur ve LibreChat kimlik doğrulamasında başarısız olur. Kimlik bilgileri bir pod başladığında okunduğundan, bir veritabanı parolasını değiştirdikten sonra, bu parolayı okuyan her Deployment'ı `kubectl rollout restart deployment/<release>-librechat` komutuyla yeniden başlatın.
+
+### Güncellemeler boyunca oluşturulan parolaları koruma [#keeping-the-generated-passwords-across-upgrades]
+
+Varsayılan ayarlarla alt grafikler ilk kurulumda parolaları oluşturur ve MongoDB alt grafiği, bu parolalar yinelenmediği sonraki yükseltmeleri reddeder ("PASSWORDS ERROR"). Mevcut değerleri okuyun ve her `helm upgrade` komutunda bunları iletin veya `mongodb.auth.existingSecret` ile `redis.auth.existingSecret` değerlerini kendi yönettiğiniz Secret'lara yönlendirin:
+
+```bash
+kubectl get secret <release>-mongodb -o jsonpath='{.data.mongodb-root-password}' | base64 -d
+helm upgrade <release> ... --set-string mongodb.auth.rootPassword=<password>
+```
+
+Redis için de aynı şekilde `--set-string redis.auth.password=<password>` gerekir (`<release>-redis` Secret'ındaki `redis-password` değeri). `mongodb.architecture=replicaset` kullanılıyorsa, replica set anahtarını da korumak gerekir: `mongodb-replica-set-key` değerini aynı Secret'tan okuyup `--set-string mongodb.auth.replicaSetKey=<key>` olarak geçirin.
+
+### Kimlik doğrulaması olmayan paketlenmiş MongoDB'den yükseltme [#upgrading-from-an-unauthenticated-bundled-mongodb]
+
+Kimlik doğrulama varsayılan hale gelmeden önce kurulmuş sürümlerde, kök kullanıcısı olmayan bir veri birimi bulunur ve kalıcı veriler yükseltme sırasında yeniden başlatılmaz. Bu nedenle `helm upgrade` işleminden sonra LibreChat kimlik doğrulaması yapamaz. Bir yol seçin:
+
+1. Eski davranışı koruyun: `--set mongodb.auth.enabled=false`.
+2. Önce kök kullanıcıyı oluşturun. Çalışan yükseltme öncesi pod üzerinde, `mongosh admin --eval 'db.createUser({user: "<rootUser>", pwd: "<password>", roles: ["root"]})'` komutunu çalıştırın (`<rootUser>`, `mongodb.auth.rootUser` değeridir ve varsayılan olarak `root`tur). Ardından, `--set-string mongodb.auth.rootPassword=<password>` (URL uyumlu) ve değiştirdiyseniz aynı `mongodb.auth.rootUser` parametresiyle yükseltmeyi gerçekleştirin. Sonraki tüm yükseltmelerde aynı parolayı kullanmaya devam edin. `mongodb.auth.rootPassword` olmadan yapılan bir yükseltme, henüz bir Secret bulunmadığı için MongoDB alt grafiği tarafından reddedilir ("PASSWORDS ERROR").
+
+Grafik bu durumu render sırasında algılayamaz; bu nedenle `NOTES.txt`, kimlik doğrulama etkinleştirildiğinde her yükseltmede bir uyarı yazdırır.
+
+### Ingress TLS [#ingress-tls]
+
+Ingress varsayılan olarak etkindir. Yerel olmayan her kurulum için `ingress.tls` (bir `secretName` ve `hosts`) değerini ayarlayın; `helm install`, hiçbir `ingress.tls` girdisinin kapsamadığı her ingress host'u için bir uyarı yazdırır.
+
+### Yönetici paneli URL'si [#admin-panel-url]
+
+`librechat.adminPanelUrl` değerini, OAuth/SSO yönlendirmeleri için kullanılan yönetici paneli temel URL'sine ayarlayın. Bu değer bir yol (path) içerebilir ancak sonunda `/` karakteri bulunmamalıdır. Bkz. [Admin Panel](/docs/features/admin_panel).
+
+```yaml
+librechat:
+  adminPanelUrl: https://admin.example.com/admin
+```
 
 ## 1.x -> 2.x Sürümüne Geçiş [#migrate-1x---2x]
 Grafiği 2.x sürümünden önce kullandıysanız `value` yapısını güncellemeniz gerekebilir.

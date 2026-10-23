@@ -22,7 +22,7 @@ DEPLOYMENT_PLUGINS_DIR=./plugin
 DEPLOYMENT_PLUGIN_DATA_DIR=./data/plugins
 
 # Optional and disabled by default; see Command Hooks below
-DEPLOYMENT_PLUGIN_HOOKS=true
+# DEPLOYMENT_PLUGIN_HOOKS=true
 ```
 
 Las rutas relativas se resuelven desde la raíz del proyecto LibreChat. Si el directorio predeterminado `./plugin` no existe, el inicio continúa sin plugins. Si `DEPLOYMENT_PLUGINS_DIR` se establece explícitamente pero no se puede leer, el inicio falla para que un error de implementación no se ignore silenciosamente.
@@ -98,6 +98,14 @@ Los transportes compatibles son `stdio`, `streamable-http` y `sse`. Los transpor
 
 Para los servidores `stdio`, `${PLUGIN_ROOT}` y `${PLUGIN_DATA}` se expanden una vez en `args`, `env` y `cwd`; ambos valores también se añaden al entorno del proceso iniciado. La configuración de MCP de los plugins no expande variables arbitrarias del entorno del host de LibreChat. Un valor como `${OPENAI_API_KEY}` permanece literal a través del almacenamiento en el registro y la inicialización en tiempo de ejecución. Mantenga las credenciales fuera de los archivos de los plugins y proporciónelas a través de un servicio autenticado diseñado para tal fin u otro mecanismo controlado por la implementación.
 
+LibreChat valida cada `mcp.json` antes de registrar sus servidores:
+
+- `command` debe ser un único token ejecutable: ya sea un nombre simple como `node` o una ruta que comience con `./` dentro del plugin. Las cadenas de shell y las rutas absolutas son rechazadas, y `${PLUGIN_ROOT}` no se expande en `command`.
+- `cwd` debe comenzar con `./`, `${PLUGIN_ROOT}` o `${PLUGIN_DATA}`, y debe resolverse dentro de la base que nombra.
+- `env` no puede declarar `PLUGIN_ROOT` ni `PLUGIN_DATA`; LibreChat los establece.
+- Las URL remotas de `url` deben ser URL absolutas `http` o `https` sin información de usuario ni fragmento, y deben usar `https` a menos que el host sea una dirección de loopback (como `localhost` o `127.0.0.1`).
+- Una entrada de servidor con un campo desconocido es rechazada y omitida. Un campo desconocido de nivel superior, o un `$schema` que no coincide con la URL del esquema compatible `1.0.0`, desactiva MCP para todo el plugin.
+
 Un servidor MCP declarado en `librechat.yaml` tiene prioridad sobre un servidor de plugins con el mismo nombre. Los nombres de servidores de plugins duplicados se omiten y se registran en el log.
 
 ## Datos de plugins persistentes [#persistent-plugin-data]
@@ -148,7 +156,8 @@ Declare los hooks en `ai.librechat/hooks/hooks.json`:
 - El entorno hijo contiene solo `PATH`, `HOME`, `LANG`, `LC_ALL` y `TZ` cuando están presentes, las tres variables de ruta de los plugins y los nombres enumerados explícitamente en `allowedEnvVars`.
 - El código de salida `0` indica éxito. El JSON escrito en la salida estándar puede devolver decisiones apropiadas para el evento y contexto delimitado; la salida simple se trata solo como contexto adicional para `SessionStart` y `UserPromptSubmit`.
 - El código de salida `2` bloquea la acción o continuación correspondiente y utiliza la salida de error estándar como motivo. Otros códigos de salida distintos de cero se registran y, por lo demás, se ignoran.
-- LibreChat termina el proceso cuando el hook se aborta o agota su tiempo de espera. En hosts POSIX, los comandos se ejecutan a través de Bash. Los plugins de Windows deben proporcionar `commandWindows` o seleccionar PowerShell.
+- `timeout` está en segundos, un entero de 1 a 3600.
+- LibreChat termina el proceso cuando el hook es abortado o agota su tiempo de espera. En hosts POSIX, los comandos se ejecutan mediante `bash`, que debe estar disponible en el host de la API. En hosts Windows se ejecutan mediante `powershell.exe`, por lo que los plugins deben proporcionar `commandWindows` o seleccionar PowerShell. Si el shell no puede iniciarse, LibreChat registra una advertencia de inicio y los hooks bloqueantes fallan en modo cerrado.
 
 LibreChat traduce los nombres de herramientas comunes de Claude `Bash`, `Write`, `Edit`, `Read` y `WebSearch`, así como los nombres de sus argumentos de archivo, a las herramientas correspondientes de LibreChat. Un comparador escrito con el nombre de herramienta nativo de LibreChat mantiene la forma de carga útil nativa.
 

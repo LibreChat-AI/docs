@@ -26,11 +26,11 @@ Docker Desktop kullanıyorsanız, konteynerler kendi sanal makinesi içinde çal
 
 LibreChat'i aynı makinede çalışan modellere bağlarsanız, örneğin [Ollama](/docs/configuration/librechat_yaml/ai_endpoints/ollama), donanımı seçtiğiniz modele göre boyutlandırın. Bu model çalışma ortamı, LibreChat'ten çok daha fazla bellek ve çoğu zaman bir GPU gerektirir.
 
-<Callout type="warn" title="Apple Silicon (M-serisi) Mac'ler">
+<Callout type="warn" title="AVX desteği olmayan CPU'lar">
 
-Apple Silicon (M1, M2, M3, M4) işlemcili Mac bilgisayarlar, LibreChat'in Docker Compose kurulumunda kullanılan varsayılan MongoDB imajı için gerekli olan AVX komutlarını desteklemez. M serisi bir Mac kullanıyorsanız, MongoDB başlangıçta çökecektir.
+LibreChat'in varsayılan Docker Compose kurulumunda kullanılan MongoDB imajı, AVX komutlarını destekleyen bir CPU gerektirir. AVX desteği olmayan eski x86 CPU'larda (ve AVX'i misafir sistemine sunmayan bazı sanal makinelerde), MongoDB başlatma sırasında çöker.
 
-**Düzeltme:** Daha eski ve uyumlu bir MongoDB imajı kullanmak için bir `docker-compose.override.yml` oluşturun:
+**Düzeltme:** AVX gerektirmeyen daha eski bir MongoDB imajını kullanmak için bir `docker-compose.override.yml` dosyası oluşturun:
 
 ```yaml filename="docker-compose.override.yml"
 services:
@@ -91,11 +91,11 @@ Tarayıcınızı açın ve [http://localhost:3080](http://localhost:3080) adresi
 
 <Callout type="info" title="Tek Kiracılı Dağıtımlarda İlk Hesap = Yönetici">
 
-Kapsamlandırılmamış (unscoped) tek kiracılı bir dağıtımda, kaydettiğiniz ilk hesap yönetici hesabı olur. Varsayılan kimlik bilgileri yoktur; kayıt sırasında kendi kullanıcı adınızı ve şifrenizi oluşturursunuz. Kiracı kapsamlı (tenant-scoped) dağıtımlar, her kiracıdaki ilk kullanıcıyı otomatik olarak yükseltmez; kiracı yöneticilerini güvenilir bir idari akış aracılığıyla sağlayın.
+Kapsamsız tek kiracılı bir dağıtımda, kaydettiğiniz ilk hesap yönetici hesabı olur. Varsayılan kimlik bilgisi yoktur; kayıt sırasında kendi kullanıcı adınızı ve parolanızı oluşturursunuz. Kiracıya bağlı (tenant-scoped) dağıtımlar, her kiracıdaki ilk kullanıcıyı otomatik olarak yönetici yapmaz; kiracı yöneticilerini güvenilir bir yönetim akışı üzerinden sağlayın.
 
 </Callout>
 
-Hesabınızı oluşturmak için **Register** düğmesine tıklayın, ardından bir model API anahtarı eklemek ve ilk mesajınızı göndermek için [Your First Chat](/docs/quick_start/first_chat) bölümünü takip edin.
+Hesabınızı oluşturmak için **Sign up** seçeneğine tıklayın, ardından bir model API anahtarı ekleyip ilk mesajınızı göndermek için [Your First Chat](/docs/quick_start/first_chat) bölümünü izleyin.
 
   </Step>
 </Steps>
@@ -139,6 +139,12 @@ Ortam izinlerinize bağlı olarak komutların başına `sudo` eklemeniz gerekebi
 
 </Callout>
 
+<Callout type="info" title="Güncelleme betiği">
+
+Depo içindeki `npm run update:docker` betiği, yerel olarak oluşturulan imajları yeniden derler; ancak varsayılan `docker-compose.yml` dosyasının kullandığı önceden derlenmiş imajları çekmez. Bu nedenle varsayılan kurulumu güncellemek için aşağıdaki manuel adımları izleyin.
+
+</Callout>
+
 ```bash filename="Stop the running container(s)"
 docker compose down
 ```
@@ -170,16 +176,24 @@ docker compose up
 
 3080 numaralı bağlantı noktası için `bind: address already in use` gibi bir hata görürseniz, başka bir uygulama bu bağlantı noktasını kullanıyordur.
 
-Ya çakışan uygulamayı durdurun ya da `docker-compose.override.yml` dosyasındaki portu değiştirin:
+Çakışan uygulamayı durdurun veya LibreChat'in kullandığı portu değiştirin. Varsayılan `docker-compose.yml` dosyası `"${PORT}:${PORT}"` portunu yayımlar ve bir override dosyasına eklenen portlar bu listeye yeni eleman olarak eklenir, mevcut listenin yerini almaz. Bu nedenle yalnızca bir override dosyası kullanmak 3080 portunu serbest bırakmaz.
+
+En basit çözüm, `.env` dosyanızda `PORT` değerini ayarlamaktır; bu, hem LibreChat'in dinlediği portu hem de yayımlanan portu değiştirir:
+
+```bash filename=".env"
+PORT=3081
+```
+
+Alternatif olarak, Docker Compose 2.24.4 veya daha yeni bir sürümle, `docker-compose.override.yml` dosyasındaki yayımlanmış portu `!override` etiketiyle değiştirebilirsiniz (konteyner 3080 portunu dinlemeye devam eder):
 
 ```yaml filename="docker-compose.override.yml"
 services:
   api:
-    ports:
+    ports: !override
       - "3081:3080"
 ```
 
-Ardından `http://localhost:3081` adresini ziyaret edin.
+Yeniden başlatmak için `docker compose down && docker compose up -d` komutunu çalıştırın, ardından bunun yerine `http://localhost:3081` adresini ziyaret edin.
 
 ### Konteyner Başlangıçta Çöküyor [#container-crashes-on-startup]
 
@@ -191,7 +205,7 @@ docker compose logs api
 
 Yaygın nedenler:
 
-- Geçersiz `librechat.yaml` sözdizimi -- [YAML Validator](/toolkit/yaml_checker) ile doğrulayın
+- Geçersiz `librechat.yaml` sözdizimi: [YAML Doğrulayıcı](/toolkit/yaml_checker) ile doğrulayın
 - `.env` dosyası eksik -- `.env` dosyasının proje kök dizininde bulunduğundan emin olun
 - Docker çalışmıyor -- Docker Desktop'ın açık ve çalışır durumda olduğundan emin olun
 

@@ -14,18 +14,18 @@ Usa i subagenti per:
 - Flussi di lavoro di team multi-agente che dovrebbero essere eseguiti dietro un'unica attività delegata
 - Decomposizione in stile parallelo in cui il genitore coordina e riassume
 
-## In che modo i Subagent differiscono dalle Agent Chain [#how-subagents-differ-from-agent-chain]
+## In che modo i subagent differiscono dagli handoff [#how-subagents-differ-from-handoffs]
 
-Agent Chain costruisce un grafo multi-agente in cui gli agenti trasmettono i risultati attraverso passaggi di catena configurati. I subagenti vengono generati da un agente come chiamata di strumento durante un'esecuzione.
+I trasferimenti (handoffs) trasferiscono la conversazione da un agente principale a un agente specialista, che poi prosegue lo scambio. I subagenti vengono avviati da un agente come chiamata a uno strumento durante un'esecuzione, svolgono il loro lavoro in isolamento e restituiscono al genitore un risultato compatto.
 
-- **Agent Chain**: flusso di lavoro multi-agente a livello di grafo
-- **Subagents**: delegazione in fase di runtime da un agente genitore a esecuzioni secondarie isolate
+- **Handoffs**: la conversazione passa a un altro agente
+- **Subagents**: delegazione a runtime da un agente padre a esecuzioni figlie isolate, con l'agente padre che mantiene il controllo
 
-Entrambi possono utilizzare agenti esistenti, ma i subagent sono progettati per la delega con ambito limitato dall'interno del ciclo di ragionamento di un singolo agente.
+Entrambi possono utilizzare agenti esistenti, ma i subagenti sono progettati per la delega limitata dall'interno del ciclo di ragionamento di un singolo agente. Le catene di agenti legacy sono deprecate; utilizza gli Handoff o i Subagenti per le nuove orchestrazioni. Vedi [Agenti](/docs/features/agents#handoffs).
 
 ## Abilitare la funzionalità [#enable-the-capability]
 
-La funzionalità `subagents` è abilitata per impostazione predefinita. Gli amministratori possono rimuoverla dall'elenco delle funzionalità dell'endpoint agents per disabilitare la funzione.
+La funzionalità `subagents` è abilitata per impostazione predefinita. Gli amministratori possono rimuoverla dall'elenco delle funzionalità dell'endpoint degli agenti per disattivare la funzione. L'elenco predefinito delle funzionalità è:
 
 ```yaml filename="librechat.yaml"
 endpoints:
@@ -40,19 +40,23 @@ endpoints:
       - 'actions'
       - 'context'
       - 'skills'
+      - 'memory'
+      - 'ask_user_question'
       - 'tools'
-      - 'chain'
       - 'ocr'
 ```
 
+Se imposti tu stesso `capabilities`, elenca tutte le capacità che vuoi mantenere, perché il tuo elenco sostituisce quello predefinito. L'esecuzione in background (`run_in_background`) non è presente nell'elenco predefinito; vedi [Detached Subagent Threads](#detached-subagent-threads).
+
 ## Configurare un Agent [#configure-an-agent]
 
-Nell'Agent Builder, apri **Advanced Settings** e abilita **Subagents**.
+Nell'Agent Builder, apri **Aggiungi strumenti**, scegli **Subagents** nella libreria degli strumenti e attiva l'interruttore (**Enable subagents**).
 
 Impostazioni disponibili:
 
 - **Abilita subagent**: aggiunge lo strumento di generazione di subagent all'agente.
 - **Allow self-spawn**: consente all'agente di generare una copia fresca di se stesso in un contesto isolato. Questa opzione è abilitata per impostazione predefinita quando i subagent sono abilitati.
+- **Condividi file con i subagenti**: condivide i file del messaggio con i subagenti in primo piano autorizzati. Questa opzione compare solo quando `endpoints.agents.fileSharing.enabled` è impostato su true.
 - **Sottoagenti aggiuntivi**: seleziona gli agenti specifici che il genitore può generare.
 
 I team di Agent salvati sono incorporati come `subagents.graphs` nei payload di creazione o aggiornamento di un Agent. L'attuale Agent Builder preserva queste definizioni mentre modifichi le impostazioni di self-spawn e dei singoli Agent, ma non crea le definizioni dei grafi. Ogni team nomina un grafo aciclico diretto delimitato, il suo Agent di ingresso e l'Agent il cui risultato viene restituito al genitore:
@@ -127,7 +131,7 @@ Nei turni successivi, LibreChat mantiene le chiamate precedenti provenienti da s
 
 ## Thread di subagent scollegati [#detached-subagent-threads]
 
-Quando `run_in_background` è abilitato per l'endpoint Agents, un Agente genitore può separare il lavoro del sottoagente e continuare senza attendere il completamento. LibreChat mantiene ogni figlio separato con una linea di esecuzione privata e una trascrizione canonica. I thread figli rimangono fuori dalla normale navigazione e ricerca delle conversazioni e non possono essere letti direttamente; la vista autorizzata del genitore espone solo l'attività limitata del figlio.
+`run_in_background` è opzionale: aggiungilo a `endpoints.agents.capabilities` per abilitarlo per l'endpoint Agents. Quando è abilitato, un Agent padre può delegare il lavoro dei subagent e proseguire senza attendere il loro completamento. LibreChat salva ogni figlio in background con una lineage di esecuzione privata e una trascrizione canonica. I thread figli restano esclusi dalla navigazione normale delle conversazioni e dalla ricerca, e non possono essere letti direttamente; la vista autorizzata del padre espone solo un'attività figlio limitata.
 
 I thread figlio sono record di esecuzione in sola lettura. Un utente non può modificare o eliminare il figlio canonico direttamente. Per un figlio Agent diretto durevole completato, **Continue in a new chat** (Continua in una nuova chat) biforca l'esatto ramo completato in una conversazione Agent normale e scrivibile separata, lasciando il figlio originale nascosto e in sola lettura. Il pannello delle attività mantiene un composer montato durante l'esecuzione e attraverso le consegne di attività in arrivo, preservando il focus e le indicazioni parzialmente digitate mentre viene caricata una nuova vista attività. L'invio rimane non disponibile finché l'attività non può accettare controlli. Il testo inserito dopo la conclusione viene trasferito nella biforcazione e una biforcazione non riuscita ripristina la bozza nel pannello. Questa azione non è disponibile per le viste in esecuzione, a grafo, Agent anonimo e condivise. L'eliminazione del genitore si propaga alla sua discendenza di figli. L'Agent genitore può eseguire il polling, dirigere, accodare, interrompere, annullare, raccogliere e successivamente continuare il figlio canonico tramite i suoi strumenti di attività; i lease basati su Mongo serializzano tali continuazioni attraverso le repliche API.
 

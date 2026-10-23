@@ -13,19 +13,19 @@ OCR (Optical Character Recognition) no LibreChat é um aprimoramento opcional pa
 O recurso "Upload as Text" (do chat) funciona da mesma maneira:
 
 - Arquivos que correspondem a `fileConfig.ocr.supportedMimeTypes` usam OCR se disponível
-- Recorre à análise de texto caso o OCR não esteja configurado
+- Sem OCR, arquivos PDF, DOCX, planilhas e ODT recorrem ao [analisador de documentos integrado](#built-in-document-parser); imagens e outros tipos que o analisador não consegue ler exigem OCR
 - Especialmente útil para imagens com texto, documentos digitalizados e PDFs complexos
-- Prioridade de processamento: **OCR > STT > análise de texto**
+- Ordem de processamento: **OCR > extração de texto RAG > analisador de documentos integrado > STT > texto simples**
 - Consulte a documentação [Upload as Text](/docs/features/upload_as_text) para obter detalhes.
 
 ### Contexto de arquivo (para agentes) [#file-context-for-agents]
 
 Quando você faz upload de arquivos através da seção File Context do Agent Builder:
 
-1. O texto é extraído usando análise de texto por padrão (OCR/STT se configurado e o arquivo corresponder)
+1. O texto é extraído usando o analisador de documentos integrado ou a leitura de texto simples por padrão (OCR/STT, se configurado e se o arquivo corresponder)
 2. O texto extraído é armazenado como parte das instruções de sistema do agente
 3. O agente pode referenciar este contexto em todas as conversas
-4. **O serviço de OCR é opcional** - o recurso funciona sem ele usando análise de texto
+4. **O serviço de OCR é opcional** - o recurso funciona sem ele para arquivos de texto simples e para documentos que o analisador integrado consegue processar
 
 Arquivos enviados como "File Context" são processados para extrair texto, que é então adicionado às instruções de sistema do Agent. Isso é ideal para documentos, arquivos de código, PDFs ou imagens com texto onde você precisa que o conteúdo completo do texto seja incluído nas instruções do agent.
 
@@ -33,7 +33,7 @@ Arquivos enviados como "File Context" são processados para extrair texto, que �
 
 ## Configuração Opcional de OCR [#optional-ocr-configuration]
 
-Tanto o Agent File Context quanto o Upload as Text funcionam nativamente usando análise de texto. Para melhorar a qualidade da extração de imagens e documentos digitalizados, você pode configurar opcionalmente um serviço de OCR:
+Tanto o Agent File Context quanto o Upload as Text funcionam sem configuração adicional para arquivos de texto simples e para os tipos de documento tratados pelo analisador integrado. Para extrair texto de imagens, documentos digitalizados e outros formatos, você pode, opcionalmente, configurar um serviço de OCR:
 
 ```yaml
 # librechat.yaml
@@ -50,9 +50,20 @@ ocr:
   mistralModel: "mistral-ocr-latest"
 ```
 
-**Nota:** A capacidade `context` está habilitada por padrão. Você só precisa configurar o OCR (a capacidade `ocr`) se desejar uma qualidade de extração aprimorada para imagens e documentos digitalizados.
+**Nota:** A capacidade `context` está habilitada por padrão, assim como `ocr` na lista de capacidades padrão. Se você definir uma lista personalizada em `endpoints.agents.capabilities` que omita `ocr` enquanto o OCR estiver configurado, os uploads que correspondam aos tipos MIME de OCR falham com a mensagem "OCR capability is not enabled for Agents".
 
 As conexões de OCR bloqueiam destinos privados, loopback, link-local e de metadados de nuvem por padrão. Para um serviço de OCR privado confiável, adicione seu host e porta privados exatos em [`ocr.allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/ocr#allowedaddresses). Esta é uma exceção à proteção contra SSRF, portanto, liste apenas a infraestrutura que você controla.
+
+## Analisador de Documentos Integrado [#built-in-document-parser]
+
+Quando nenhum serviço de OCR processa um arquivo, o File Context e o Upload as Text do agente utilizam uma estratégia integrada chamada `document_parser`. Ela também serve como fallback caso um serviço de OCR configurado falhe. Ela processa apenas:
+
+- PDF (apenas camada de texto, sem reconhecimento de imagem)
+- DOCX (não o `.doc` legado)
+- Planilhas: xlsx, xls e ods
+- ODT
+
+Arquivos maiores que 15 MB são rejeitados pelo analisador, e um documento sem texto extraível retorna um erro. Arquivos do PowerPoint, `.doc`, EPUB e imagens exigem um serviço de OCR (ou a rota de texto da API RAG, veja [Upload como Texto](/docs/features/upload_as_text)).
 
 ## Visão geral das capacidades de OCR [#overview-of-ocr-capabilities]
 
@@ -167,9 +178,9 @@ ocr:
 3. Baixe o arquivo de chave JSON da conta de serviço
 4. Defina a variável de ambiente `GOOGLE_SERVICE_KEY_FILE` usando um dos métodos suportados
 
-### 4. OCR Personalizado (Planejado) [#4-custom-ocr-planned]
+### 4. OCR personalizado (não implementado) [#4-custom-ocr-not-implemented]
 
-O suporte para provedores de OCR personalizados e estratégias definidas pelo usuário está planejado para versões futuras.
+`custom_ocr` aparece como um valor na lista de estratégias, mas o LibreChat não possui nenhuma implementação por trás dele. O suporte a provedores de OCR personalizados e a estratégias definidas pelo usuário está previsto para versões futuras.
 
 ### 5. Fazer upload de arquivos para o provedor (Direto) [#5-upload-files-to-provider-direct]
 
@@ -218,7 +229,7 @@ fileConfig:
 
 Arquivos que correspondem a esses padrões usarão OCR quando:
 - Enviado para o contexto de arquivo do agente (sempre, se o OCR estiver configurado)
-- Enviado como texto no chat (se o OCR estiver configurado; caso contrário, recorre à análise de texto)
+- Enviado como texto no chat (se o OCR estiver configurado; caso contrário, aplica-se o analisador de documentos integrado ou a leitura de texto simples, quando suportado pelo arquivo)
 
 Para mais detalhes sobre a configuração de processamento de arquivos, consulte [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config).
 

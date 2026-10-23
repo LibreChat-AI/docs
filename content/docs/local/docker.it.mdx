@@ -25,11 +25,11 @@ Se utilizzi Docker Desktop, esso esegue i container all'interno di una propria m
 
 Se colleghi LibreChat a modelli in esecuzione sulla stessa macchina, ad esempio [Ollama](/docs/configuration/librechat_yaml/ai_endpoints/ollama), dimensiona l'hardware in base al modello che scegli. Il runtime del modello richiede molta più memoria, e spesso una GPU, rispetto a LibreChat.
 
-<Callout type="warn" title="Mac con Apple Silicon (serie M)">
+<Callout type="warn" title="CPU senza supporto AVX">
 
-I computer Mac con processori Apple Silicon (M1, M2, M3, M4) non supportano le istruzioni AVX, richieste dall'immagine MongoDB predefinita utilizzata nella configurazione Docker Compose di LibreChat. Se utilizzi un Mac della serie M, MongoDB andrà in crash all'avvio.
+L'immagine MongoDB utilizzata dalla configurazione Docker Compose predefinita di LibreChat richiede una CPU con istruzioni AVX. Sulle CPU x86 più datate prive di AVX (e su alcune macchine virtuali che non espongono AVX al sistema ospite), MongoDB si arresta in modo anomalo all'avvio.
 
-**Correzione:** Crea un `docker-compose.override.yml` per utilizzare un'immagine MongoDB più vecchia e compatibile:
+**Correzione:** Crea un file `docker-compose.override.yml` per utilizzare un'immagine MongoDB più vecchia che non richiede AVX:
 
 ```yaml filename="docker-compose.override.yml"
 services:
@@ -90,11 +90,11 @@ Apri il tuo browser e visita [http://localhost:3080](http://localhost:3080). Dov
 
 <Callout type="info" title="Il primo account = Admin nelle distribuzioni Single-Tenant">
 
-In un deployment single-tenant non limitato (unscoped), il primo account che registri diventa l'account amministratore. Non esistono credenziali predefinite: crei il tuo nome utente e la tua password durante la registrazione. I deployment tenant-scoped non promuovono automaticamente il primo utente in ogni tenant; è necessario fornire gli amministratori del tenant tramite un flusso amministrativo attendibile.
+In un deployment single-tenant senza ambito, il primo account che registri diventa l'account amministratore. Non esistono credenziali predefinite; crei il tuo nome utente e la tua password durante la registrazione. I deployment con ambito per tenant non promuovono automaticamente il primo utente di ciascun tenant; gli amministratori dei tenant vanno configurati tramite un flusso amministrativo attendibile.
 
 </Callout>
 
-Fai clic su **Register** per creare il tuo account, quindi segui [Your First Chat](/docs/quick_start/first_chat) per aggiungere una API key del modello e inviare il tuo primo messaggio.
+Clicca su **Sign up** per creare il tuo account, poi segui [Your First Chat](/docs/quick_start/first_chat) per aggiungere una chiave API del modello e inviare il tuo primo messaggio.
 
   </Step>
 </Steps>
@@ -138,6 +138,12 @@ Potrebbe essere necessario anteporre `sudo` ai comandi in base ai permessi del p
 
 </Callout>
 
+<Callout type="info" title="Script di aggiornamento">
+
+Lo script `npm run update:docker` del repository ricostruisce le immagini compilate localmente, ma non effettua il pull delle immagini precompilate utilizzate dal `docker-compose.yml` predefinito; per aggiornare un'installazione predefinita, segui quindi i passaggi manuali descritti di seguito.
+
+</Callout>
+
 ```bash filename="Stop the running container(s)"
 docker compose down
 ```
@@ -169,16 +175,24 @@ docker compose up
 
 Se visualizzi un errore come `bind: address already in use` per la porta 3080, significa che un'altra applicazione sta utilizzando quella porta.
 
-O interrompi l'applicazione in conflitto, o cambia la porta in `docker-compose.override.yml`:
+Interrompi l'applicazione in conflitto oppure modifica la porta utilizzata da LibreChat. Il file `docker-compose.yml` predefinito pubblica `"${PORT}:${PORT}"`, e le porte aggiunte in un file di override vengono aggiunte a questo elenco invece di sostituirlo; quindi un override da solo non libera la porta 3080.
+
+La soluzione più semplice è impostare `PORT` nel file `.env`, che modifica sia la porta su cui ascolta LibreChat sia la porta pubblicata:
+
+```bash filename=".env"
+PORT=3081
+```
+
+In alternativa, con Docker Compose 2.24.4 o successivo, sostituisci la porta pubblicata in `docker-compose.override.yml` con il tag `!override` (il container continua ad ascoltare sulla porta 3080):
 
 ```yaml filename="docker-compose.override.yml"
 services:
   api:
-    ports:
+    ports: !override
       - "3081:3080"
 ```
 
-Quindi visita `http://localhost:3081` invece.
+Riavvia con `docker compose down && docker compose up -d`, quindi visita invece `http://localhost:3081`.
 
 ### Il container si arresta all'avvio [#container-crashes-on-startup]
 
@@ -190,7 +204,7 @@ docker compose logs api
 
 Cause comuni:
 
-- Sintassi di `librechat.yaml` non valida -- convalida con il [YAML Validator](/toolkit/yaml_checker)
+- Sintassi `librechat.yaml` non valida: convalida con il [YAML Validator](/toolkit/yaml_checker)
 - File `.env` mancante -- assicurati che `.env` esista nella root del progetto
 - Docker non è in esecuzione -- assicurati che Docker Desktop sia aperto e in esecuzione
 

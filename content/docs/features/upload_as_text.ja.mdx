@@ -11,7 +11,7 @@ PDF、コードファイル、またはスプレッドシートをAIに渡して
 ファイルを添付すると、LibreChatがそのファイルからテキストを抽出し、その内容全体が会話に直接貼り付けられます。AIはプラグインやベクトルデータベース、追加のサービス設定を必要とすることなく、その内容をすべて読み取ることができます。箱から出してすぐに動作します。
 
 <Callout type="info" title="セットアップ不要">
-  Upload as Textは、あらゆるLibreChatインスタンスですぐに動作します。組み込みのテキスト解析を使用するため、OCR、RAGパイプライン、または外部サービスを必要とせずに開始できます。
+  「Upload as Text」は、どの LibreChat インスタンスでもすぐに動作します。一般的な形式には組み込みのドキュメントパーサーを使用するため、プレーンテキスト、コード、PDF、DOCX、スプレッドシート、ODT は、OCR、RAG パイプライン、または外部サービスを必要とせずに処理できます。画像および一部のオフィス形式には追加のサービスが必要です。詳細は[サポートされているファイル](#which-files-are-supported)を参照してください。
 </Callout>
 
 ---
@@ -66,32 +66,35 @@ PDF、コードファイル、またはスプレッドシートをAIに渡して
 アップロードがテキストとしてルーティングされる際、LibreChatは生のバイトデータをそのままプロンプトに投入することはありません。クリーンで読み取り可能なテキストを抽出するために、処理パイプラインを実行します：
 
 1. **MIME type detection** — LibreChatは、アップロードされたファイルの種類（PDF、画像、音声、ソースコードなど）をMIMEタイプを検査することで確認します。
-2. **メソッドの選択** — ファイルの種類と利用可能なサービスに基づいて、以下の優先順位で最適な抽出メソッドを選択します。
+2. **メソッドの選択**: ファイルの種類と利用可能なサービスに基づき、次の順序で抽出メソッドを選択します:
 
 <Tabs items={["優先順位", "決定の例"]}>
   <Tabs.Tab>
-    | 優先度 | メソッド | 使用されるタイミング |
-    |----------|--------|---------------|
-    | 1番目 | **OCR** | ファイルが画像またはスキャンされたドキュメントであり、_かつ_ OCRが設定されている場合 |
-    | 2番目 | **STT** (Speech-to-Text) | ファイルが音声であり、_かつ_ STTが設定されている場合 |
-    | 3番目 | **テキスト解析** | ファイルが既知のテキストMIMEタイプと一致する場合 |
-    | 4番目 | **フォールバック** | 上記のいずれにも一致しない場合 — とにかくテキスト解析を試みる |
+    | 優先度 | 方式 | 使用されるタイミング |
+|----------|--------|---------------|
+| 1番目 | **OCR** | OCRが設定されており _かつ_ ファイルが `fileConfig.ocr.supportedMimeTypes` に一致する場合。OCRが失敗した場合、LibreChatは組み込みのドキュメントパーサーにフォールバックします。 |
+| 2番目 | **RAG API `/text`** | `RAG_API_URL` が設定されており、`fileConfig.text.supportedMimeTypes` が絞り込まれていて、ファイルがそれに一致する場合。RAG APIが利用できない場合、LibreChatは組み込みのドキュメントパーサーにフォールバックします。 |
+| 3番目 | **組み込みドキュメントパーサー** | ファイルがPDF、DOCX、xlsx/xls/odsスプレッドシート、またはODTで、15 MBまでのもの。 |
+| 4番目 | **STT**（音声からテキストへの変換） | ファイルが音声で、`fileConfig.stt.supportedMimeTypes` に一致する場合。 |
+| 5番目 | **プレーンテキスト** | ファイルが `fileConfig.text.supportedMimeTypes` に一致する場合。テキストファイルおよびコードファイルは直接読み込まれます。その他の種類は、`RAG_API_URL` が設定されている場合はRAG API `/text` ルートに送信され、設定されていない場合は失敗します。 |
+
+    どれにも一致しないファイルは、テキスト解析でサポートされていないものとして拒否されます。
   </Tabs.Tab>
   <Tabs.Tab>
     **OCRが設定されたインスタンス上の `.pdf` ファイル:**
     → OCRが実行されます。スキャンされたドキュメントや複雑なレイアウトに最適です。
 
-    **デフォルトインスタンス上の `.pdf`（OCRなし）：**
-    → テキスト解析で処理されます。デジタル作成されたPDFに対しては良好に動作します。
+    **デフォルトのインスタンス（OCRなし）での `.pdf`：**
+→ 組み込みのドキュメントパーサーが処理します。デジタルで作成された PDF に対してうまく動作します。
 
     **`.py` Python ファイル:**
-    → 直接テキスト解析へ。ソースコードはすでにテキストであるため、変換は不要です。
+    → プレーンテキスト。ソースコードはすでにテキストなので、変換は不要です。
 
     **STTが設定されたインスタンス上の `.mp3` ファイル:**
     → Speech-to-Text（音声認識）機能により、会話用のテキストに書き起こされます。
 
-    **OCRが設定されていない `.png` スクリーンショット:**
-    → テキスト解析にフォールバックします（結果は限定的です。画像用にOCRを設定することを検討してください）。
+    **OCRが設定されていない状態で `.png` のスクリーンショットをアップロードした場合:**
+→ アップロードはテキストではなくエラーを返します。画像用のOCRを設定してください。
   </Tabs.Tab>
 </Tabs>
 
@@ -114,16 +117,21 @@ Upload as Text（テキストとしてアップロード）の添付ファイル
     - シェルスクリプト、SQLファイル
   </Tabs.Tab>
   <Tabs.Tab>
-    テキスト解析はこれらを標準で処理します。OCRが設定されている場合は、複雑なレイアウトに対してより高い精度を実現するためにOCRが処理を引き継ぎます。
+    組み込みのドキュメントパーサーは、これらの形式を標準で処理でき、ファイルあたり最大15 MBまで対応します。OCRが設定されている場合は、複雑なレイアウトに対してより高い精度を得るためにOCRが処理を引き継ぎます。
 
-    - **PDF** — デジタルおよびスキャン済み（スキャン済みのPDFはOCRを利用すると効果的です）
-    - **Word** — `.docx`, `.doc`
+    - **PDF**: デジタルテキストレイヤー(スキャンされたPDFにはOCRが必要です)
+    - **単語**: `.docx`(レガシーの `.doc` ではない)
+    - **スプレッドシート**: `.xlsx`, `.xls`, `.ods`
+    - **OpenDocument text**: `.odt`
+
+    これらは、組み込みのパーサーでは読み取れないため、OCR、またはRAG APIの `/text` ルートが必要です:
+
+    - **Word**: `.doc`
     - **PowerPoint** — `.pptx`, `.potx`, `.ppt`
-    - **Excel** — `.xlsx`, `.xls`
     - **EPUB** ブック
   </Tabs.Tab>
   <Tabs.Tab>
-    画像から有用なテキストを生成するには **OCRが必要** です。これがない場合、結果の精度は低くなります。
+    画像からテキストを取得するには**OCR**が必要です。OCRがない場合、アップロードはテキストではなくエラーを返します。
 
     - JPEG、PNG、GIF、WebP
     - HEIC、HEIF（Apple形式）
@@ -218,7 +226,7 @@ fileConfig:
 
 ## オプション: OCRによる抽出の強化 [#optional-boosting-extraction-with-ocr]
 
-テキスト解析は、デジタル作成されたドキュメント（Wordから保存されたPDF、コードファイル、プレーンテキスト）では問題なく動作します。しかし、**スキャンされたドキュメント、ページの写真、またはテキストを含む画像**をアップロードする場合、組み込みのパーサーでは良好な結果が得られません。
+組み込みのパーサーは、デジタルで作成された PDF、DOCX、スプレッドシート、ODT、コードファイル、プレーンテキストに対してはうまく動作します。しかし、**スキャンされた文書、ページの写真、テキストを含む画像、および `.doc`、PowerPoint、EPUB などの形式**には OCR が必要です。
 
 そこでOCRの出番です。設定が完了すると、LibreChatはOCRの恩恵を受けるファイルタイプに対して自動的にOCRを使用します。ユーザー側で特別な操作を行う必要はありません。
 
@@ -254,7 +262,8 @@ fileConfig:
       # Max tokens extracted from a single file before truncation
       fileTokenLimit: 100000
 
-      # Files matching these MIME patterns use OCR (if configured)
+      # Example only: files matching these MIME patterns use OCR (if configured).
+      # These are examples for narrowing or extending, not required settings.
       ocr:
         supportedMimeTypes:
           - "^image/(jpeg|gif|png|webp|heic|heif)$"
@@ -263,18 +272,19 @@ fileConfig:
           - "^application/vnd\\.ms-(word|powerpoint|excel)$"
           - "^application/epub\\+zip$"
 
-      # Files matching these MIME patterns use text parsing
+      # Example only: narrowing this list sends the matching types to the RAG API /text
+      # route when RAG_API_URL is set
       text:
         supportedMimeTypes:
           - "^text/(plain|markdown|csv|json|xml|html|css|javascript|typescript|x-python|x-java|x-csharp|x-php|x-ruby|x-go|x-rust|x-kotlin|x-swift|x-scala|x-perl|x-lua|x-shell|x-sql|x-yaml|x-toml)$"
 
-      # Files matching these MIME patterns use STT (if configured)
+      # Example only: files matching these MIME patterns use STT (if configured)
       stt:
         supportedMimeTypes:
           - "^audio/(mp3|mpeg|mpeg3|wav|wave|x-wav|ogg|vorbis|mp4|x-m4a|flac|x-flac|webm)$"
     ```
 
-    **優先順位の注意:** OCR > STT > テキスト解析 > フォールバック。
+    **優先順位の注意:** OCR > RAG `/text`（`RAG_API_URL` が設定されており、テキストリストが絞り込まれている場合） > 組み込みのドキュメントパーサー > STT > プレーンテキスト。
 
     完全なリファレンスについては、[File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config) を参照してください。
   </Accordion>
@@ -297,10 +307,10 @@ fileConfig:
   </Accordion>
   <Accordion title="ファイルの内容が正しくないか、ほとんど空です">
     確認すべき事項がいくつかあります：
-    - **スキャンされたPDF / 画像** — これらを適切にテキスト抽出するにはOCRが必要です。OCRがない場合、パーサーはゴミデータや何も返さない可能性があります。管理者に[OCRの設定](/docs/features/ocr)を依頼してください。
+    - **スキャンされたPDF・画像**: 正しくテキストを抽出するにはOCRが必要です。OCRがない場合、スキャンされたPDFではパーサーが何も返さず、画像ではエラーが返されます。管理者に[OCRを設定](/docs/features/ocr)するよう依頼してください。
     - **Audio files** — これらにはSTTが必要です。音声に対するテキストのフォールバックはありません。
     - **破損したファイル** — ファイルが破損していないことを確認するために、ローカルで開いてみてください。
-    - **サポートされていない形式** — MIMEタイプが設定されたパターンと一致しない場合、LibreChatはテキスト解析によるフォールバックを試みますが、バイナリ形式では機能しない可能性があります。
+    - **非対応フォーマット**: 組み込みパーサーが処理できるのは PDF、DOCX、xlsx/xls/ods、ODT のみです(最大 15 MB)。`.doc`、PowerPoint、EPUB などの形式には、OCR または RAG API の `/text` ルートが必要です。設定されたどのパターンにも一致しない MIME タイプは拒否されます。
   </Accordion>
   <Accordion title="サポートされていないファイル形式のため、アップロードが拒否されました">
     LibreChatは、アップロードエラー時に拒否されたMIMEタイプを返します。アクティブなendpointの[`fileConfig.endpoints.<endpoint>.supportedMimeTypes`](/docs/configuration/librechat_yaml/object_structure/file_config#supportedmimetypes-3)パターンを確認し、許可したい正規のタイプを許可してください。シェルスクリプトの場合は `application/x-sh` を使用してください。LibreChatは、一般的な `application/x-shellscript` および `text/x-shellscript` のバリエーションを照合前に正規化します。
@@ -314,7 +324,7 @@ fileConfig:
     - ファイルを小さなパーツに分割し、個別にアップロードしてください。
   </Accordion>
   <Accordion title="画像はアップロードされますが、AIがその中のテキストを読み取れません">
-    OCRがない場合、画像はテキスト解析を通じて処理されますが、これでは画像内のテキストを実際に「見る」ことはできません。これを機能させるにはOCRの設定が必要です。[OCR for Documents](/docs/features/ocr) を参照してください。
+    OCRが設定されていない場合、画像内のテキストを読み取る手段がないため、アップロードはエラーを返します。これを機能させるには、OCRの設定が必要です。詳細は[ドキュメント用OCR](/docs/features/ocr)を参照してください。
 
     あるいは、標準のファイルアップロード機能を使用して**ビジョンモデル**を利用してください。モデル自体が画像内のテキストを読み取ることができます。
   </Accordion>

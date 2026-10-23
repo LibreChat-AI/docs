@@ -2,21 +2,17 @@
 title: Contrôle d'accès
 icon: ShieldCheck
 description: >-
-  Système d'autorisation granulaire de LibreChat - contrôlez qui peut utiliser,
-  partager, modifier et gérer les agents, les prompts, les serveurs MCP et
-  d'autres ressources au niveau de l'utilisateur, du groupe, du rôle et de
-  l'instance.
+  Le système d'autorisation granulaire de LibreChat : contrôlez qui peut
+  utiliser, partager, modifier et gérer les agents, les prompts, les serveurs
+  MCP et les autres ressources au niveau de l'utilisateur, du groupe, du rôle et
+  de l'instance.
 ---
 
 # Contrôle d'accès granulaire [#granular-access-control]
 
-LibreChat est fourni avec un système d'autorisation complet en plus de l'authentification. L'accès n'est pas « tout ou rien » : chaque entité partageable dans l'application (agents, prompts, serveurs MCP, agents distants, fichiers, conversations) possède sa propre liste de contrôle d'accès (ACL), et chaque fonctionnalité peut être activée ou restreinte indépendamment par **utilisateur**, **groupe**, **rôle** ou **publiquement**.
+LibreChat est livré avec un système complet d'autorisation qui s'ajoute à l'authentification. L'accès n'est pas « tout ou rien » : chaque entité partageable de l'application (agents, prompts, serveurs MCP, agents distants, compétences, environnements de code, liens partagés) dispose de sa propre liste de contrôle d'accès (ACL), et chaque fonctionnalité peut être activée ou restreinte indépendamment par **utilisateur**, par **groupe**, par **rôle** ou **publiquement**.
 
 Cette page explique comment les différents éléments s'articulent afin que vous puissiez modéliser les permissions en fonction de votre organisation, qu'il s'agisse d'une petite équipe où tout le monde partage librement ou d'un déploiement en entreprise avec des groupes Entra ID synchronisés, des rôles personnalisés et des administrateurs délégués.
-
-<Callout type="info" title="Panneau d'administration">
-  Un [**Panneau d'administration LibreChat**](/docs/features/admin_panel) dédié est l'interface utilisateur à venir pour la gestion des utilisateurs, des groupes, des rôles, des profils d'autorisations personnalisés et des droits à l'échelle du système introduits dans la [v0.8.5](/changelog/v0.8.5). Cette page documente le modèle sous-jacent, qui est disponible dès aujourd'hui dans LibreChat lui-même.
-</Callout>
 
 ## Aperçu du modèle d'accès [#the-access-model-at-a-glance]
 
@@ -103,12 +99,12 @@ Les ACL de ressources s'appliquent actuellement à :
 - **Serveurs MCP** (`mcpServer`)
 - **Skills** (`skill`), voir [Skills](/docs/features/skills)
 - **Agents distants** (`remoteAgent`), pour l'[API Agents](/docs/features/agents_api)
-- **Fichiers** (`file`), généralement hérités de la ressource qui les utilise
-- **Projets** (`project`), prend en charge l'héritage afin que les ressources partagées avec un projet héritent automatiquement des ACL
+- **Environnements de code** (`codeEnvironment`), pour les workers de code gérés par le déploiement ; voir [Interpréteur de code](/docs/features/code_interpreter)
+- **Liens partagés** (`sharedLink`), voir [Liens partageables](/docs/features/shareable_links)
 
 ### Rôles d'accès (Préréglages de permissions) [#access-roles-permission-presets]
 
-Plutôt que d'exposer des bits de permission bruts aux utilisateurs finaux, le partage utilise trois rôles nommés par type de ressource :
+Plutôt que d'exposer les bits de permission bruts aux utilisateurs finaux, le partage repose sur trois rôles nommés par type de ressource (les liens partagés ne disposent que des rôles Viewer et Owner) :
 
 | Rôle       | Bits de permission                              | Ce que le bénéficiaire peut faire                                   |
 | ---------- | ----------------------------------------------- | ------------------------------------------------------------------- |
@@ -117,6 +113,8 @@ Plutôt que d'exposer des bits de permission bruts aux utilisateurs finaux, le p
 | **Owner**  | `VIEW` + `EDIT` + `DELETE` + `SHARE` (`0b1111`) | Contrôle total : modifier, supprimer et repartager avec d'autres    |
 
 Sous le capot, les permissions sont stockées sous forme de masque binaire (`permBits`) pour chaque paire (ressource, principal) ; les sur-ensembles sont gérés automatiquement, ainsi l'octroi du rôle Editor implique celui de Viewer.
+
+Un cinquième bit, `VIEW_INSIGHTS` (`0b10000`), s'applique uniquement aux agents. Il permet à un principal qui détient également `VIEW` de consulter les [Insights](/docs/features/insights) de cet agent. Il ne fait pas partie des préréglages Viewer, Editor ou Owner : seuls les administrateurs peuvent l'accorder, via le bouton **View insights** dans la boîte de dialogue de partage d'un agent, et il ne peut pas être attribué au principal public.
 
 ### Accorder l'accès depuis l'interface utilisateur [#granting-access-from-the-ui]
 
@@ -139,10 +137,6 @@ Sous le capot, les permissions sont stockées sous forme de masque binaire (`per
 - Les **Owners** disposent de la même interface utilisateur que l'auteur original et peuvent supprimer et repartager librement.
 - **L'auteur original** conserve toujours un contrôle total, quel que soit l'état de l'ACL, et les administrateurs peuvent gérer n'importe quelle ressource sur l'instance.
 
-### Héritage de projet [#project-inheritance]
-
-Les permissions peuvent être héritées d'un **project** parent. Lorsqu'une entrée ACL est héritée, le lien `inheritedFrom` pointe vers la source. C'est ce qui alimente le projet « Global » dans LibreChat, où une ressource ajoutée au projet global devient disponible pour tous les utilisateurs sans avoir besoin d'une entrée par principal.
-
 ## Couche 3 : Octroi de privilèges système (Capacités d'administration) [#layer-3-system-grants-admin-capabilities]
 
 Les octrois système (system grants) sont une table d'octrois distincte utilisée pour les **capacités de niveau administrateur**, répondant à des questions telles que _"Cet utilisateur peut-il accéder au panneau d'administration ?"_ ou _"Ce groupe peut-il gérer les serveurs MCP globalement ?"_. Ils sont toujours limités à un principal (utilisateur, groupe ou rôle) et à une chaîne de caractères de capacité.
@@ -151,23 +145,30 @@ Les capacités canoniques incluent :
 
 | Capacité | Objectif |
 | ------------------------------------ | --------------------------------------------- |
-| `access:admin`                       | Accéder au panneau d'administration |
-| `read:users` / `manage:users`        | Voir / modifier les comptes utilisateurs |
-| `read:groups` / `manage:groups`      | Voir / modifier les groupes |
-| `read:roles` / `manage:roles`        | Voir / modifier les rôles personnalisés |
-| `read:configs` / `manage:configs`    | Voir / modifier toute la configuration système |
-| `read:configs:<section>` / `manage:configs:<section>` | Voir / modifier une section de configuration de haut niveau |
-| `assign:configs:{user\|group\|role}` | Assigner des profils de remplacement de configuration aux principaux |
-| `read:usage`                         | Voir l'utilisation de la plateforme et la télémétrie |
-| `read:agents` / `manage:agents`      | Voir / modérer chaque agent sur l'instance |
-| `read:prompts` / `manage:prompts`    | Voir / modérer chaque prompt |
-| `manage:mcpservers`                  | Gérer les serveurs MCP globalement |
+| `access:admin` | Accéder au panneau d'administration |
+| `read:users` / `manage:users` | Consulter / modifier les comptes utilisateurs |
+| `read:groups` / `manage:groups` | Consulter / modifier les groupes |
+| `read:roles` / `manage:roles` | Consulter / modifier les rôles personnalisés |
+| `read:configs` / `manage:configs` | Consulter / modifier l'ensemble de la configuration système |
+| `read:configs:<section>` / `manage:configs:<section>` | Consulter / modifier une section de configuration de premier niveau |
+| `assign:configs:{user\|group\|role}` | Attribuer des profils de surcharge de configuration à des entités |
+| `read:usage` | Consulter l'utilisation de la plateforme et la télémétrie |
+| `read:agents` / `manage:agents` | Consulter / modérer tous les agents de l'instance |
+| `read:prompts` / `manage:prompts` | Consulter / modérer tous les prompts |
+| `read:skills` / `manage:skills` | Consulter / modérer toutes les compétences |
+| `read:sharedlinks` / `manage:sharedlinks` | Consulter / modérer tous les liens partagés |
+| `manage:mcpservers` | Gérer les serveurs MCP globalement |
+| `manage:code_environments` | Enregistrer et révoquer les workers de code détenus par le déploiement |
+| `read:insights` | Consulter les [Insights](/docs/features/insights) de chaque agent |
+| `read:audit_log` | Lister, consulter et exporter le journal d'audit des autorisations (lecture seule ; il n'existe pas de équivalent en écriture) |
 
 Les capacités de gestion impliquent leurs capacités de lecture correspondantes (par exemple, détenir `manage:users` accorde automatiquement `read:users`). Cela s'applique également aux sections de configuration : `manage:configs:endpoints` satisfait `read:configs:endpoints`. Les utilisateurs disposant uniquement d'un accès en lecture à une section de configuration reçoivent des réponses de configuration administrateur filtrées selon les sections qu'ils sont autorisés à lire ; les utilisateurs sans droit de lecture de configuration reçoivent une erreur `403`.
 
+`read:assistants` et `manage:assistants` existent également mais sont réservés : aucun middleware ne les applique pour l'instant.
+
 Un utilisateur `SystemRoles.ADMIN` détient implicitement toutes les capacités ; les autorisations (grants) vous permettent de **déléguer** un sous-ensemble de pouvoirs d'administration à des principaux non-administrateurs sans en faire des administrateurs complets. L'accès à l'interface utilisateur d'administration elle-même nécessite toujours `access:admin`.
 
-Les octrois de privilèges système sont délivrés et révoqués via le panneau d'administration.
+Les autorisations système sont accordées et révoquées via le [Panneau d'administration](/docs/features/admin_panel).
 
 ## Principes en profondeur [#principals-in-depth]
 

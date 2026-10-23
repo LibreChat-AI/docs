@@ -22,7 +22,7 @@ DEPLOYMENT_PLUGINS_DIR=./plugin
 DEPLOYMENT_PLUGIN_DATA_DIR=./data/plugins
 
 # Optional and disabled by default; see Command Hooks below
-DEPLOYMENT_PLUGIN_HOOKS=true
+# DEPLOYMENT_PLUGIN_HOOKS=true
 ```
 
 Ścieżki względne są rozwiązywane względem katalogu głównego projektu LibreChat. Jeśli domyślny katalog `./plugin` nie istnieje, uruchamianie jest kontynuowane bez wtyczek. Jeśli `DEPLOYMENT_PLUGINS_DIR` zostanie ustawione jawnie, ale nie będzie można go odczytać, uruchamianie zakończy się niepowodzeniem, aby błąd wdrożenia nie został zignorowany.
@@ -98,6 +98,14 @@ Obsługiwane transporty to `stdio`, `streamable-http` oraz `sse`. Zdalne transpo
 
 W przypadku serwerów `stdio`, `${PLUGIN_ROOT}` oraz `${PLUGIN_DATA}` są rozwijane jednokrotnie w `args`, `env` oraz `cwd`; obie wartości są również dodawane do środowiska uruchomionego procesu. Konfiguracja MCP wtyczek nie rozwija dowolnych zmiennych ze środowiska hosta LibreChat. Wartość taka jak `${OPENAI_API_KEY}` pozostaje dosłowna podczas przechowywania w rejestrze i inicjalizacji środowiska uruchomieniowego. Przechowuj dane uwierzytelniające poza plikami wtyczek i dostarczaj je za pośrednictwem dedykowanej usługi uwierzytelnionej lub innego mechanizmu kontrolowanego przez wdrożenie.
 
+LibreChat waliduje każdy `mcp.json` przed rejestracją jego serwerów:
+
+- `command` musi być pojedynczym tokenem wykonywalnym: albo samą nazwą, na przykład `node`, albo ścieżką `./` wewnątrz wtyczki. Ciągi poleceń powłoki i ścieżki bezwzględne są odrzucane, a `${PLUGIN_ROOT}` nie jest rozwijane w `command`.
+- `cwd` musi zaczynać się od `./`, `${PLUGIN_ROOT}` lub `${PLUGIN_DATA}` i musi wskazywać ścieżkę znajdującą się wewnątrz bazy, na którą wskazuje.
+- `env` nie może deklarować `PLUGIN_ROOT` ani `PLUGIN_DATA`; LibreChat ustawia je samodzielnie.
+- Wartości `url` dla zdalnych serwerów muszą być bezwzględnymi adresami URL `http` lub `https`, bez informacji o użytkowniku i bez fragmentu, oraz muszą używać `https`, chyba że host jest adresem pętli zwrotnej (np. `localhost` lub `127.0.0.1`).
+- Wpis serwera zawierający nieznane pole jest odrzucany i pomijany. Nieznane pole najwyższego poziomu lub `$schema`, które nie odpowiada obsługiwanemu adresowi schematu `1.0.0`, wyłącza MCP dla całej wtyczki.
+
 Serwer MCP zadeklarowany w `librechat.yaml` ma pierwszeństwo przed serwerem wtyczek o tej samej nazwie. Zduplikowane nazwy serwerów wtyczek są pomijane i logowane.
 
 ## Trwałe dane wtyczek [#persistent-plugin-data]
@@ -148,7 +156,8 @@ Zadeklaruj hooki w `ai.librechat/hooks/hooks.json`:
 - Środowisko potomne zawiera tylko `PATH`, `HOME`, `LANG`, `LC_ALL` oraz `TZ` (jeśli są obecne), trzy zmienne ścieżek wtyczek oraz nazwy jawnie wymienione w `allowedEnvVars`.
 - Kod wyjścia `0` oznacza sukces. JSON zapisany na standardowe wyjście może zwracać decyzje odpowiednie dla zdarzenia oraz ograniczony kontekst; zwykły tekst jest traktowany jako dodatkowy kontekst tylko dla `SessionStart` oraz `UserPromptSubmit`.
 - Kod wyjścia `2` blokuje odpowiednią akcję lub kontynuację i wykorzystuje standardowe wyjście błędów jako powód. Inne niezerowe kody wyjścia są logowane i poza tym ignorowane.
-- LibreChat kończy proces, gdy hook zostanie przerwany lub przekroczy limit czasu. Na hostach POSIX polecenia są uruchamiane przez Bash. Wtyczki dla Windows muszą dostarczyć `commandWindows` lub wybrać PowerShell.
+- `timeout` jest wyrażony w sekundach, jako liczba całkowita od 1 do 3600.
+- LibreChat kończy proces, gdy hook zostanie przerwany lub przekroczy limit czasu. Na hostach POSIX polecenia są uruchamiane przez `bash`, który musi być dostępny na hoście API. Na hostach Windows polecenia są uruchamiane przez `powershell.exe`, dlatego wtyczki muszą udostępniać `commandWindows` lub wybrać PowerShell. Jeśli powłoki nie da się uruchomić, LibreChat zapisuje ostrzeżenie podczas startu, a blokujące hooki kończą się z błędem (fail closed).
 
 LibreChat tłumaczy powszechne nazwy narzędzi Claude, takie jak `Bash`, `Write`, `Edit`, `Read` oraz `WebSearch`, wraz z nazwami ich argumentów plików, na odpowiadające im narzędzia LibreChat. Dopasowanie napisane przy użyciu natywnej nazwy narzędzia LibreChat zachowuje natywny kształt ładunku (payload).
 

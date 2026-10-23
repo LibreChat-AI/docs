@@ -25,11 +25,11 @@ Nếu bạn sử dụng Docker Desktop, ứng dụng này chạy các container 
 
 Nếu bạn kết nối LibreChat với các mô hình chạy trên cùng một máy, chẳng hạn như [Ollama](/docs/configuration/librechat_yaml/ai_endpoints/ollama), hãy chọn cấu hình phần cứng phù hợp với mô hình bạn sử dụng. Môi trường chạy mô hình đó cần bộ nhớ lớn hơn nhiều, và thường cần GPU, so với LibreChat.
 
-<Callout type="warn" title="Máy Mac Apple Silicon (dòng M)">
+<Callout type="warn" title="CPU không hỗ trợ AVX">
 
-Các máy tính Mac sử dụng bộ vi xử lý Apple Silicon (M1, M2, M3, M4) không hỗ trợ tập lệnh AVX, vốn là yêu cầu bắt buộc đối với image MongoDB mặc định được sử dụng trong thiết lập Docker Compose của LibreChat. Nếu bạn đang sử dụng máy Mac dòng M, MongoDB sẽ bị treo khi khởi động.
+Image MongoDB được sử dụng trong cấu hình Docker Compose mặc định của LibreChat yêu cầu CPU hỗ trợ các lệnh AVX. Trên các CPU x86 đời cũ không có AVX (và trên một số máy ảo không cung cấp AVX cho hệ khách), MongoDB sẽ bị lỗi và dừng ngay khi khởi động.
 
-**Sửa lỗi:** Tạo một `docker-compose.override.yml` để sử dụng image MongoDB cũ hơn và tương thích:
+**Cách khắc phục:** Tạo tệp `docker-compose.override.yml` để sử dụng phiên bản image MongoDB cũ hơn không yêu cầu AVX:
 
 ```yaml filename="docker-compose.override.yml"
 services:
@@ -90,11 +90,11 @@ Mở trình duyệt của bạn và truy cập [http://localhost:3080](http://lo
 
 <Callout type="info" title="Tài khoản đầu tiên = Quản trị viên trong triển khai Single-Tenant">
 
-Trong triển khai đơn thuê (single-tenant) không giới hạn phạm vi, tài khoản đầu tiên bạn đăng ký sẽ trở thành tài khoản quản trị viên. Không có thông tin đăng nhập mặc định nào -- bạn tự tạo tên người dùng và mật khẩu của riêng mình trong quá trình đăng ký. Các triển khai có giới hạn phạm vi thuê (tenant-scoped) không tự động nâng quyền cho người dùng đầu tiên trong mỗi tenant; hãy cấp quyền quản trị viên tenant thông qua một quy trình quản trị đáng tin cậy.
+Trong một triển khai single-tenant không có phạm vi (unscoped), tài khoản đầu tiên bạn đăng ký sẽ trở thành tài khoản quản trị viên (admin). Không có thông tin đăng nhập mặc định; bạn tự tạo tên người dùng và mật khẩu của mình trong quá trình đăng ký. Các triển khai có phạm vi theo tenant (tenant-scoped) không tự động nâng quyền người dùng đầu tiên trong mỗi tenant; hãy cấp quyền quản trị viên tenant thông qua một luồng quản trị đáng tin cậy.
 
 </Callout>
 
-Nhấp vào **Register** để tạo tài khoản của bạn, sau đó làm theo [Your First Chat](/docs/quick_start/first_chat) để thêm API key của model và gửi tin nhắn đầu tiên.
+Nhấp vào **Sign up** để tạo tài khoản của bạn, sau đó làm theo [Your First Chat](/docs/quick_start/first_chat) để thêm khóa API của mô hình và gửi tin nhắn đầu tiên.
 
   </Step>
 </Steps>
@@ -138,6 +138,12 @@ Bạn có thể cần thêm tiền tố `sudo` vào các lệnh tùy theo quyề
 
 </Callout>
 
+<Callout type="info" title="Script cập nhật">
+
+Script `npm run update:docker` của repository sẽ build lại các image được build cục bộ, nhưng không pull các image dựng sẵn mà `docker-compose.yml` mặc định sử dụng. Vì vậy, để cập nhật một bản cài đặt mặc định, hãy làm theo các bước thủ công bên dưới.
+
+</Callout>
+
 ```bash filename="Stop the running container(s)"
 docker compose down
 ```
@@ -169,16 +175,24 @@ docker compose up
 
 Nếu bạn thấy lỗi như `bind: address already in use` cho cổng 3080, thì một ứng dụng khác đang sử dụng cổng đó.
 
-Hoặc dừng ứng dụng đang xung đột, hoặc thay đổi cổng trong `docker-compose.override.yml`:
+Hoặc dừng ứng dụng đang xung đột, hoặc thay đổi cổng mà LibreChat sử dụng. Tệp `docker-compose.yml` mặc định công bố `"${PORT}:${PORT}"`, và các cổng được thêm trong tệp ghi đè (override) sẽ được nối thêm vào danh sách đó thay vì thay thế nó, nên chỉ riêng tệp ghi đè không đủ để giải phóng cổng 3080.
+
+Cách đơn giản nhất là đặt `PORT` trong tệp `.env` của bạn, việc này sẽ thay đổi cả cổng mà LibreChat lắng nghe lẫn cổng được công bố.
+
+```bash filename=".env"
+PORT=3081
+```
+
+Ngoài ra, với Docker Compose 2.24.4 trở lên, hãy thay thế cổng được publish trong `docker-compose.override.yml` bằng thẻ `!override` (container vẫn lắng nghe trên 3080):
 
 ```yaml filename="docker-compose.override.yml"
 services:
   api:
-    ports:
+    ports: !override
       - "3081:3080"
 ```
 
-Sau đó hãy truy cập `http://localhost:3081` thay thế.
+Khởi động lại bằng `docker compose down && docker compose up -d`, sau đó truy cập `http://localhost:3081` thay thế.
 
 ### Container bị treo khi khởi động [#container-crashes-on-startup]
 
@@ -190,7 +204,7 @@ docker compose logs api
 
 Các nguyên nhân phổ biến:
 
-- Cú pháp `librechat.yaml` không hợp lệ -- hãy xác thực bằng [YAML Validator](/toolkit/yaml_checker)
+- Cú pháp `librechat.yaml` không hợp lệ: hãy kiểm tra bằng [YAML Validator](/toolkit/yaml_checker)
 - Thiếu tệp `.env` -- hãy đảm bảo `.env` tồn tại trong thư mục gốc của dự án
 - Docker không chạy -- hãy đảm bảo Docker Desktop đã được mở và đang chạy
 

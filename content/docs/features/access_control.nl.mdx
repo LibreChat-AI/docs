@@ -2,20 +2,16 @@
 title: Toegangscontrole
 icon: ShieldCheck
 description: >-
-  LibreChat's granulaire autorisatiesysteem - bepaal wie agents, prompts, MCP
-  servers en andere resources kan gebruiken, delen, bewerken en beheren op
-  gebruikers-, groeps-, rollen- en instatieniveau.
+  LibreChat's granulaire autorisatiesysteem: bepaal wie agents, prompts,
+  MCP-servers en andere resources kan gebruiken, delen, bewerken en beheren, op
+  het niveau van gebruiker, groep, rol en instantie.
 ---
 
 # Granular Access Control [#granular-access-control]
 
-LibreChat wordt geleverd met een volledig autorisatiesysteem bovenop de authenticatie. Toegang is niet "alles-of-niets": elke deelbare entiteit in de app (agents, prompts, MCP servers, remote agents, bestanden, conversaties) heeft zijn eigen Access Control List (ACL), en elke functie kan onafhankelijk worden ingeschakeld of beperkt per **gebruiker**, **groep**, **rol**, of **openbaar**.
+LibreChat wordt geleverd met een volledig autorisatiesysteem bovenop authenticatie. Toegang is niet "alles-of-niets": elke deelbare entiteit in de app (agents, prompts, MCP-servers, externe agents, skills, codeomgevingen, gedeelde links) heeft zijn eigen Access Control List (ACL), en elke functie kan onafhankelijk worden ingeschakeld of beperkt per **gebruiker**, **groep**, **rol**, of **publiekelijk**.
 
 Deze pagina legt uit hoe de onderdelen in elkaar grijpen, zodat je machtigingen kunt modelleren die aansluiten bij jouw organisatie: van een klein team waar iedereen vrijelijk deelt, tot een enterprise-implementatie met gesynchroniseerde Entra ID-groepen, aangepaste rollen en gedelegeerde beheerders.
-
-<Callout type="info" title="Beheerderspaneel">
-  Een toegewijd [**LibreChat Admin Panel**](/docs/features/admin_panel) is de aankomende UI voor het beheren van gebruikers, groepen, rollen, aangepaste permissieprofielen en systeembrede toekenningen die zijn geïntroduceerd in [v0.8.5](/changelog/v0.8.5). Deze pagina documenteert het onderliggende model, dat vandaag de dag al beschikbaar is in LibreChat zelf.
-</Callout>
 
 ## Het toegangsmodel in een oogopslag [#the-access-model-at-a-glance]
 
@@ -102,12 +98,12 @@ Resource ACLs zijn momenteel van toepassing op:
 - **MCP Servers** (`mcpServer`)
 - **Skills** (`skill`), zie [Skills](/docs/features/skills)
 - **Remote Agents** (`remoteAgent`), voor de [Agents API](/docs/features/agents_api)
-- **Bestanden** (`file`), doorgaans overgenomen van de resource die ze gebruikt
-- **Projects** (`project`), ondersteunt overerving, zodat resources die met een project worden gedeeld automatisch ACL's overerven
+- **Codeomgevingen** (`codeEnvironment`), voor door de implementatie beheerde codewerkers; zie [Code Interpreter](/docs/features/code_interpreter)
+- **Gedeelde Links** (`sharedLink`), zie [Deelbare Links](/docs/features/shareable_links)
 
 ### Toegangsrollen (Toestemmingsvoorinstellingen) [#access-roles-permission-presets]
 
-In plaats van onbewerkte permissiebits bloot te stellen aan eindgebruikers, gebruikt delen drie benoemde rollen per resourcetype:
+Liever dan ruwe rechtenbits aan eindgebruikers bloot te stellen, gebruikt delen drie benoemde rollen per resourcetype (gedeelde links hebben alleen Viewer en Owner):
 
 | Rol | Permissiebits | Wat de ontvanger kan doen |
 | ---------- | ----------------------------------------------- | ------------------------------------------------------------------- |
@@ -116,6 +112,8 @@ In plaats van onbewerkte permissiebits bloot te stellen aan eindgebruikers, gebr
 | **Owner**  | `VIEW` + `EDIT` + `DELETE` + `SHARE` (`0b1111`) | Volledige controle: bewerken, verwijderen en opnieuw delen met anderen |
 
 Onder de motorkap worden rechten opgeslagen als een bitmask (`permBits`) voor elk (resource, principal) paar; supersets worden automatisch afgehandeld, dus het verlenen van Editor-rechten impliceert ook Viewer-rechten.
+
+Een vijfde bit, `VIEW_INSIGHTS` (`0b10000`), geldt alleen voor agents. Hiermee kan een principal die ook `VIEW` bezit de [Insights](/docs/features/insights) van die agent bekijken. Deze bit maakt geen deel uit van de Viewer-, Editor- of Owner-presets: alleen beheerders kunnen hem toekennen, via de schakelaar **View insights** in het deelvenster van een agent, en hij kan niet worden toegekend aan de publieke principal.
 
 ### Toegang verlenen vanuit de UI [#granting-access-from-the-ui]
 
@@ -138,35 +136,38 @@ Onder de motorkap worden rechten opgeslagen als een bitmask (`permBits`) voor el
 - **Eigenaren** hebben dezelfde UI als de oorspronkelijke auteur en kunnen vrijelijk verwijderen en opnieuw delen.
 - **De oorspronkelijke auteur** behoudt altijd volledige controle, ongeacht de ACL-status, en beheerders kunnen elke resource op de instance beheren.
 
-### Project Erfenis [#project-inheritance]
-
-Rechten kunnen worden overgeërfd van een bovenliggend **project**. Wanneer een ACL-vermelding wordt overgeërfd, verwijst de `inheritedFrom` link terug naar de bron. Dit is wat het "Global" project in LibreChat aandrijft, waarbij een resource die aan het globale project is toegevoegd, beschikbaar wordt voor alle gebruikers zonder dat er een vermelding per principal nodig is.
-
 ## Laag 3: Systeemtoelatingen (Beheerdersmogelijkheden) [#layer-3-system-grants-admin-capabilities]
 
 Systeemtoelatingen zijn een afzonderlijke toelatingstabel die wordt gebruikt voor **beheerdersmogelijkheden**, waarmee vragen worden beantwoord zoals _"Kan deze gebruiker het beheerderspaneel openen?"_ of _"Kan deze groep MCP-servers wereldwijd beheren?"_. Ze zijn altijd gekoppeld aan een principal (gebruiker, groep of rol) en een capability-string.
 
 De canonieke mogelijkheden omvatten:
 
-| Mogelijkheid                           | Doel                                          |
+| Capaciteit                           | Doel                                          |
 | ------------------------------------ | --------------------------------------------- |
-| `access:admin`                       | Toegang krijgen tot het admin-paneel          |
+| `access:admin`                       | Toegang krijgen tot het beheerderspaneel      |
 | `read:users` / `manage:users`        | Gebruikersaccounts bekijken / wijzigen        |
 | `read:groups` / `manage:groups`      | Groepen bekijken / wijzigen                   |
 | `read:roles` / `manage:roles`        | Aangepaste rollen bekijken / wijzigen         |
 | `read:configs` / `manage:configs`    | Alle systeemconfiguratie bekijken / wijzigen  |
 | `read:configs:<section>` / `manage:configs:<section>` | Eén configuratiesectie op het hoogste niveau bekijken / wijzigen |
-| `assign:configs:{user\|group\|role}` | Configuratie-override profielen toewijzen aan principals |
+| `assign:configs:{user\|group\|role}` | Configuratie-overschrijvingsprofielen toewijzen aan principals |
 | `read:usage`                         | Platformgebruik en telemetrie bekijken        |
 | `read:agents` / `manage:agents`      | Elke agent op de instantie bekijken / modereren |
 | `read:prompts` / `manage:prompts`    | Elke prompt bekijken / modereren              |
-| `manage:mcpservers`                  | MCP servers wereldwijd beheren                |
+| `read:skills` / `manage:skills`      | Elke skill bekijken / modereren               |
+| `read:sharedlinks` / `manage:sharedlinks` | Elke gedeelde link bekijken / modereren  |
+| `manage:mcpservers`                  | MCP-servers globaal beheren                   |
+| `manage:code_environments`           | Door de implementatie beheerde codewerkers inschrijven en intrekken |
+| `read:insights`                      | [Insights](/docs/features/insights) voor elke agent bekijken |
+| `read:audit_log`                     | Het auditlogboek van toegekende rechten weergeven, bekijken en exporteren (alleen-lezen; er bestaat geen manage-tegenhanger) |
 
 Manage-mogelijkheden impliceren hun bijbehorende read-mogelijkheid (bijv. het bezitten van `manage:users` verleent automatisch `read:users`). Dit geldt ook voor configuratiesecties: `manage:configs:endpoints` voldoet aan `read:configs:endpoints`. Gebruikers met alleen configuratietoegang op sectieniveau ontvangen admin-configuratieantwoorden die gefilterd zijn op de secties die zij kunnen lezen; gebruikers zonder config-read-toegang ontvangen een `403`.
 
+`read:assistants` en `manage:assistants` bestaan ook, maar zijn gereserveerd: er handhaaft nog geen middleware deze.
+
 Een `SystemRoles.ADMIN` gebruiker beschikt impliciet over alle mogelijkheden; met grants kun je een subset van admin-bevoegdheden **delegeren** aan niet-admin principals zonder ze volledige admin-rechten te geven. Toegang tot de admin UI zelf vereist nog steeds `access:admin`.
 
-Systeemtoelatingen worden verleend en ingetrokken via het beheerderspaneel.
+Systeemrechten worden toegekend en ingetrokken via het [Beheerpaneel](/docs/features/admin_panel).
 
 ## Principals in de diepte [#principals-in-depth]
 

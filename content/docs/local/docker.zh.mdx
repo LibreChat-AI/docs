@@ -23,11 +23,11 @@ LibreChat 的容器至少需要 1 GiB 内存和 1 vCPU,与服务器上的[最低
 
 如果您将 LibreChat 连接到在同一台机器上运行的模型,例如 [Ollama](/docs/configuration/librechat_yaml/ai_endpoints/ollama),请根据您所选模型来配置硬件。该模型运行时所需的内存远多于 LibreChat 本身,通常还需要 GPU。
 
-<Callout type="warn" title="Apple Silicon (M系列) Mac">
+<Callout type="warn" title="不支持 AVX 的 CPU">
 
-搭载 Apple Silicon (M1, M2, M3, M4) 处理器的 Mac 电脑不支持 AVX 指令集，而 LibreChat 的 Docker Compose 设置中所使用的默认 MongoDB 镜像需要该指令集。如果您使用的是 M 系列芯片的 Mac，MongoDB 将会在启动时崩溃。
+LibreChat 默认 Docker Compose 配置中使用的 MongoDB 镜像需要 CPU 支持 AVX 指令集。在不支持 AVX 的旧款 x86 CPU 上(以及某些未向虚拟机客户机暴露 AVX 的虚拟机上),MongoDB 会在启动时崩溃。
 
-**修复：** 创建一个 `docker-compose.override.yml` 以使用较旧且兼容的 MongoDB 镜像：
+**修复方法：** 创建 `docker-compose.override.yml` 文件，使用不需要 AVX 指令集的旧版 MongoDB 镜像：
 
 ```yaml filename="docker-compose.override.yml"
 services:
@@ -88,11 +88,11 @@ docker compose up -d
 
 <Callout type="info" title="单租户部署中的第一个账户即为管理员">
 
-在非作用域的单租户部署中，您注册的第一个账户将成为管理员账户。系统没有默认凭据——您需要在注册过程中自行创建用户名和密码。租户作用域部署不会自动提升每个租户中的第一个用户；请通过受信任的管理流程来配置租户管理员。
+在未限定范围的单租户部署中,你注册的第一个账户将成为管理员账户。系统不存在默认凭据;你在注册时自行创建用户名和密码。限定租户范围的部署不会自动将每个租户中的第一个用户提升为管理员;请通过受信任的管理流程来设置租户管理员。
 
 </Callout>
 
-点击 **Register** 创建您的账户，然后按照 [Your First Chat](/docs/quick_start/first_chat) 的说明添加模型 API 密钥并发送您的第一条消息。
+点击 **Sign up** 创建您的账户,然后按照 [Your First Chat](/docs/quick_start/first_chat) 的指引添加模型 API 密钥并发送您的第一条消息。
 
   </Step>
 </Steps>
@@ -136,6 +136,12 @@ docker compose down && docker compose up -d
 
 </Callout>
 
+<Callout type="info" title="更新脚本">
+
+仓库中的 `npm run update:docker` 脚本会重新构建本地构建的镜像,但不会拉取默认 `docker-compose.yml` 所使用的预构建镜像,因此请按照以下手动步骤更新默认安装。
+
+</Callout>
+
 ```bash filename="Stop the running container(s)"
 docker compose down
 ```
@@ -167,16 +173,24 @@ docker compose up
 
 如果您看到类似 `bind: address already in use` 且涉及端口 3080 的错误，说明另一个应用程序正在占用该端口。
 
-请停止冲突的应用程序，或在 `docker-compose.override.yml` 中更改端口：
+要么停止冲突的应用程序,要么更改 LibreChat 使用的端口。默认的 `docker-compose.yml` 会发布 `"${PORT}:${PORT}"`,而在覆盖文件中添加的端口会追加到该列表中,而不是替换它,因此仅使用覆盖文件并不能释放端口 3080。
+
+最简单的解决方法是在 `.env` 文件中设置 `PORT`,这会同时更改 LibreChat 监听的端口和对外发布的端口:
+
+```bash filename=".env"
+PORT=3081
+```
+
+或者,如果使用 Docker Compose 2.24.4 或更高版本,可以在 `docker-compose.override.yml` 中使用 `!override` 标签替换已发布的端口(容器仍监听 3080):
 
 ```yaml filename="docker-compose.override.yml"
 services:
   api:
-    ports:
+    ports: !override
       - "3081:3080"
 ```
 
-然后访问 `http://localhost:3081` 即可。
+使用 `docker compose down && docker compose up -d` 重新启动,然后改为访问 `http://localhost:3081`。
 
 ### 容器启动时崩溃 [#container-crashes-on-startup]
 
@@ -188,7 +202,7 @@ docker compose logs api
 
 常见原因：
 
-- `librechat.yaml` 语法无效 -- 请使用 [YAML Validator](/toolkit/yaml_checker) 进行验证
+- 无效的 `librechat.yaml` 语法:请使用 [YAML 验证器](/toolkit/yaml_checker) 进行验证
 - 缺少 `.env` 文件 —— 请确保项目根目录下存在 `.env` 文件
 - Docker 未运行 -- 请确保 Docker Desktop 已打开并正在运行
 

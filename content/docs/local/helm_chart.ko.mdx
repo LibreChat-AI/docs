@@ -81,10 +81,6 @@ readinessProbe:
 
 ## Helm Chart 설치 [#install-helm-chart]
 
-<Callout type="warning" title="Chart 2.0.16: 빈 config map">
-v0.8.8 차트 소스는 기본적으로 `librechat.configEnv`를 null로 설정합니다. ConfigMap 환경 재정의가 없는 경우, values 파일에서 이를 `{}`로 명시적으로 설정하거나 `helm install` 또는 `helm template`에 `--set-json 'librechat.configEnv={}'`를 전달하십시오. 그렇지 않으면 템플릿의 `dig` 조회가 실패할 수 있습니다. 자격 증명은 지정된 Secret에 보관하십시오. 이는 렌더링을 위한 우회 방법일 뿐, Secret 요구 사항을 비활성화할 이유가 아닙니다.
-</Callout>
-
 helm chart를 설치하려면 다음을 실행하세요:
 
 `helm install <deployment-name> oci://ghcr.io/librechat-ai/librechat-chart/librechat`
@@ -101,15 +97,54 @@ helm chart를 설치하려면 다음을 실행하세요:
 
 기본값에서 수정하려는 값들로 채워진 `values.yaml` 파일을 생성하세요.
 
-Helm 차트 설치: `helm install librechat oci://ghcr.io/librechat-ai/librechat-chart/librechat --values <values-override-filel>`
+Helm 차트를 설치합니다: `helm install librechat oci://ghcr.io/librechat-ai/librechat-chart/librechat --values <values-override-file>`
 
-릴리스가 완료되고 서비스에 접속할 수 있게 되면, [첫 채팅 시작하기](/docs/quick_start/first_chat)를 따라 계정을 등록하고, 모델 API 키를 추가한 뒤 첫 메시지를 보내보세요.
+릴리스가 배포되어 서비스에 접속할 수 있게 되면, [첫 채팅](/docs/quick_start/first_chat)을 따라 계정을 만들고, 모델 API 키를 추가한 뒤 첫 메시지를 보내 보세요.
 
 ## Helm Chart 제거하기 [#uninstall-the-helm-chart]
 
 Helm Chart를 제거하려면 다음 명령어를 실행하세요: `helm uninstall <deployment-name>`
 
 예시: `helm uninstall librechat`
+
+## Chart 3.x로 업그레이드 [#upgrading-to-chart-3x]
+
+Chart 3.0.0부터 번들된 MongoDB와 Redis에서 인증이 기본적으로 활성화됩니다. 생성된 비밀번호는 서브차트 Secret에 보관되며 `secretKeyRef`(`MONGODB_ROOT_PASSWORD`, `REDIS_PASSWORD`)를 통해 LibreChat에 전달되고, `MONGO_URI`는 Deployment에서 조합됩니다. 자체 데이터베이스를 사용하려면 `librechat.configEnv.MONGO_URI`(또는 `REDIS_URI`)를 설정하세요. 이전의 인증되지 않은 동작으로 되돌리려면 `mongodb.auth.enabled=false` 또는 `redis.auth.enabled=false`를 설정하세요. 사용자 지정 root 비밀번호는 `MONGO_URI`에 포함되므로 URL-safe 문자여야 합니다.
+
+만약 `MONGO_URI`, `REDIS_URI` 또는 `REDIS_PASSWORD`가 `global.librechat.existingSecretName`으로 지정된 Secret에서 가져온다면, `librechat.injectBundledCredentials.mongodb=false`(`MONGO_URI`의 경우) 또는 `librechat.injectBundledCredentials.redis=false`(`REDIS_URI` 또는 `REDIS_PASSWORD`의 경우)로 설정하십시오. 차트는 해당 Secret의 내부를 볼 수 없으며, 그렇지 않으면 생성된 값이 Secret의 값을 덮어쓰게 됩니다. 이 두 설정은 서로 독립적입니다. 번들로 제공되는 MongoDB 또는 Redis를 계속 사용하려면, 해당 데이터베이스가 Secret과 동일한 비밀번호를 사용해야 합니다. 이를 위해 `mongodb.auth.existingSecret` 또는 `redis.auth.existingSecret`이 해당 Secret을 가리키도록 하거나, 일치하는 `auth` 비밀번호를 설정하십시오. 그렇지 않으면 데이터베이스가 자동 생성된 비밀번호를 유지하여 LibreChat의 인증에 실패합니다. 자격 증명은 파드가 시작될 때 읽히므로, 데이터베이스 비밀번호를 교체한 후에는 `kubectl rollout restart deployment/<release>-librechat` 명령으로 이를 읽는 모든 Deployment를 재시작하십시오.
+
+### 업그레이드 후에도 생성된 비밀번호 유지하기 [#keeping-the-generated-passwords-across-upgrades]
+
+기본값을 사용하면 서브차트가 최초 설치 시 비밀번호를 생성하며, MongoDB 서브차트는 이후 업그레이드 시 이 비밀번호를 다시 전달하지 않으면 업그레이드를 거부합니다("PASSWORDS ERROR"). 현재 값을 읽어서 `helm upgrade`를 실행할 때마다 전달하거나, `mongodb.auth.existingSecret` 및 `redis.auth.existingSecret`이 직접 관리하는 Secret을 가리키도록 설정하세요.
+
+```bash
+kubectl get secret <release>-mongodb -o jsonpath='{.data.mongodb-root-password}' | base64 -d
+helm upgrade <release> ... --set-string mongodb.auth.rootPassword=<password>
+```
+
+Redis도 같은 방식으로 `--set-string redis.auth.password=<password>`를 전달해야 합니다(`<release>-redis` Secret의 `redis-password`). `mongodb.architecture=replicaset`을 사용하는 경우, 같은 Secret에서 `mongodb-replica-set-key`를 읽어 `--set-string mongodb.auth.replicaSetKey=<key>`로 함께 전달하여 레플리카 셋 키를 유지해야 합니다.
+
+### 인증되지 않은 내장 MongoDB에서 업그레이드하기 [#upgrading-from-an-unauthenticated-bundled-mongodb]
+
+이전에 인증이 기본값이 되기 전에 설치된 릴리스는 root 사용자가 없는 데이터 볼륨을 가지고 있으며, 저장된 데이터는 업그레이드 시 다시 초기화되지 않으므로 `helm upgrade` 이후 LibreChat이 인증할 수 없습니다. 다음 중 하나의 방법을 선택하십시오:
+
+1. 기존 동작을 유지하세요: `--set mongodb.auth.enabled=false`.
+2. 먼저 root 사용자를 생성하세요. 실행 중인 업그레이드 전 pod에서 `mongosh admin --eval 'db.createUser({user: "<rootUser>", pwd: "<password>", roles: ["root"]})'`를 실행합니다(`<rootUser>`는 `mongodb.auth.rootUser`이며, 기본값은 `root`입니다). 그런 다음 `--set-string mongodb.auth.rootPassword=<password>`(URL-safe 문자만 사용)와, 변경한 경우 동일한 `mongodb.auth.rootUser`를 지정하여 업그레이드합니다. 이후의 모든 업그레이드에서도 같은 비밀번호를 유지하세요. `mongodb.auth.rootPassword` 없이 업그레이드하면 Secret이 아직 존재하지 않으므로 MongoDB 서브차트에서 "PASSWORDS ERROR"와 함께 거부됩니다.
+
+차트는 렌더링 시점에 이 경우를 감지할 수 없으므로, 인증이 활성화된 상태에서 업그레이드할 때마다 `NOTES.txt`가 알림을 출력합니다.
+
+### Ingress TLS [#ingress-tls]
+
+Ingress는 기본적으로 활성화되어 있습니다. 로컬이 아닌 설치에는 `ingress.tls`(`secretName`과 `hosts`)를 설정하십시오. `helm install`은 `ingress.tls` 항목이 적용되지 않는 ingress 호스트마다 경고를 출력합니다.
+
+### 관리자 패널 URL [#admin-panel-url]
+
+`librechat.adminPanelUrl`을 OAuth/SSO 리디렉션에 사용되는 관리자 패널 기본 URL로 설정합니다. 경로를 포함할 수 있지만 끝에 `/`로 끝나면 안 됩니다. [관리자 패널](/docs/features/admin_panel)을 참고하세요.
+
+```yaml
+librechat:
+  adminPanelUrl: https://admin.example.com/admin
+```
 
 ## 1.x -> 2.x 마이그레이션 [#migrate-1x---2x]
 2.x 버전 이전의 차트를 사용했다면 `value` 구조를 업데이트해야 할 수도 있습니다.

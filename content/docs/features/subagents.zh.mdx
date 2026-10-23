@@ -14,18 +14,18 @@ Subagents 允许 LibreChat Agent 衍生出一个独立的子运行（child run�
 - 应在单个委托任务后执行的多智能体团队工作流
 - 并行式分解，由父级进行协调和总结
 
-## Subagents 与 Agent Chain 的区别 [#how-subagents-differ-from-agent-chain]
+## Subagents 与 Handoffs 的区别 [#how-subagents-differ-from-handoffs]
 
-Agent Chain 构建了一个多智能体图，其中智能体通过配置的链步骤传递结果。子智能体由智能体在运行期间作为工具调用生成。
+交接(Handoffs)会将对话从主代理转移给专业代理,由该专业代理继续后续交流。子代理(Subagents)则是在一次运行过程中由代理以工具调用的方式生成,它们在独立环境中完成工作,并将精简的结果返回给父代理。
 
-- **Agent Chain**: 图级多智能体工作流
-- **Subagents**：从父智能体到独立子运行的运行时委派
+- **Handoffs**：对话转交给另一个智能体
+- **子代理(Subagents)**:由父代理在运行时委派任务给隔离的子运行实例,父代理始终保持对流程的控制
 
-两者都可以使用现有的 agents，但 subagents 旨在从单个 agent 的推理循环内部进行范围受限的委派。
+两者都可以使用现有的智能体,但子智能体专为在单个智能体的推理循环内部进行有范围的委派而设计。旧版智能体链(Legacy Agent Chains)已弃用;新的编排请使用 Handoffs 或 Subagents。参见 [智能体](/docs/features/agents#handoffs)。
 
 ## 启用该功能 [#enable-the-capability]
 
-`subagents` 功能默认处于启用状态。管理员可以将其从 agents endpoint 功能列表中移除以禁用该功能。
+`subagents` 功能默认启用。管理员可以从 agents 端点的功能列表中移除它来禁用该功能。默认的功能列表如下:
 
 ```yaml filename="librechat.yaml"
 endpoints:
@@ -40,19 +40,23 @@ endpoints:
       - 'actions'
       - 'context'
       - 'skills'
+      - 'memory'
+      - 'ask_user_question'
       - 'tools'
-      - 'chain'
       - 'ocr'
 ```
 
+如果你自行设置 `capabilities`,请列出你希望保留的所有能力,因为你的列表会替换默认列表。后台执行(`run_in_background`)不在默认列表中,请参阅[分离的子代理线程](#detached-subagent-threads)。
+
 ## 配置 Agent [#configure-an-agent]
 
-在 Agent Builder 中，打开 **Advanced Settings** 并启用 **Subagents**。
+在 Agent Builder 中,打开 **Add tools**,在工具库中选择 **Subagents**,然后打开启用开关(**Enable subagents**)。
 
 可用设置：
 
 - **启用子代理 (subagents)**：将子代理生成工具添加到代理中。
 - **Allow self-spawn**：允许智能体在隔离的上下文中生成自身的全新副本。当启用子智能体（subagents）时，此功能默认开启。
+- **与子代理共享文件**:将消息中的文件与已授权的前台子代理共享。仅当 `endpoints.agents.fileSharing.enabled` 为 true 时才会显示此选项。
 - **Additional subagents**：选择父代理可以生成的特定代理。
 
 已保存的 Agent 团队作为 `subagents.graphs` 嵌入在 Agent 创建或更新的负载中。当前的 Agent Builder 在您编辑自生成（self-spawn）和单个 Agent 设置时会保留这些定义，但它不会创建图定义。每个团队都命名了一个有界有向无环图、其入口 Agent 以及结果返回给父级的 Agent：
@@ -127,7 +131,7 @@ modelSpecs:
 
 ## 分离式子代理线程 (Detached Subagent Threads) [#detached-subagent-threads]
 
-当为 Agents endpoint 启用 `run_in_background` 时，父级 Agent 可以分离子 Agent 的工作并继续执行，而无需等待其完成。LibreChat 会持久化每个分离的子进程，并保留私有的执行谱系和规范的转录内容。子线程不会出现在正常的对话导航和搜索中，也无法被直接读取；授权的父级视图仅展示受限的子活动。
+`run_in_background` 为可选启用功能:将其添加到 `endpoints.agents.capabilities` 中即可为 Agents 端点启用。启用后,父 Agent 可以分离子 Agent 的工作并继续执行,无需等待其完成。LibreChat 会为每个分离的子任务持久化私有的执行谱系(execution lineage)和规范化的对话记录(canonical transcript)。子线程不会出现在常规的对话导航和搜索中,也无法被直接读取;经授权的父视图仅展示有限的子任务活动信息。
 
 子线程是只读的执行记录。用户无法在原位编辑或删除规范的子线程。对于已完成的持久化直接 Agent 子线程，**Continue in a new chat**（在新的对话中继续）会将已完成的分支精确分叉为一个独立的、可写的 Agent 对话，同时保留原始子线程为隐藏且只读的状态。活动面板在整个运行期间以及跨传入的任务交付过程中保持一个编辑器挂载，从而在加载新任务视图时保留焦点和未输入完成的指导内容。在任务能够接受控制之前，提交功能保持不可用。结算后输入的文本会被带入分叉中，如果分叉失败，则会恢复面板中的草稿。此操作对于正在运行的、图形化的、匿名 Agent 的以及共享的视图不可用。删除父线程会级联删除其子线程谱系。父 Agent 可以通过其任务工具轮询、引导、排队、中断、取消、收集并稍后继续规范的子线程；基于 Mongo 的租约会在 API 副本之间序列化这些延续操作。
 

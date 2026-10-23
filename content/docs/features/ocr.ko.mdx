@@ -11,19 +11,19 @@ LibreChat의 OCR (Optical Character Recognition)은 파일에서 텍스트를 �
 (채팅에서) "Upload as Text" 기능도 동일한 방식으로 작동합니다:
 
 - `fileConfig.ocr.supportedMimeTypes`와 일치하는 파일은 사용 가능한 경우 OCR을 사용합니다.
-- OCR이 구성되지 않은 경우 텍스트 파싱으로 대체합니다
+- OCR이 없으면 PDF, DOCX, 스프레드시트, ODT 파일은 [내장 문서 파서](#built-in-document-parser)로 대체되며, 이미지 및 파서가 읽을 수 없는 기타 파일 형식은 OCR이 필요합니다.
 - 텍스트가 포함된 이미지, 스캔된 문서, 복잡한 PDF에 특히 유용합니다
-- 처리 우선순위: **OCR > STT > 텍스트 파싱**
+- 처리 순서: **OCR > RAG 텍스트 추출 > 내장 문서 파서 > STT > 일반 텍스트**
 - 자세한 내용은 [Upload as Text](/docs/features/upload_as_text) 문서를 참조하세요.
 
 ### 파일 컨텍스트 (에이전트용) [#file-context-for-agents]
 
 Agent Builder의 File Context 섹션을 통해 파일을 업로드할 때:
 
-1. 기본적으로 텍스트 파싱을 사용하여 텍스트가 추출됩니다(설정되어 있고 파일이 일치하는 경우 OCR/STT 사용).
+1. 기본적으로 내장 문서 파서 또는 일반 텍스트 읽기를 사용하여 텍스트를 추출합니다(설정되어 있고 파일이 해당되는 경우 OCR/STT 사용).
 2. 추출된 텍스트는 에이전트의 시스템 지침의 일부로 저장됩니다.
 3. 에이전트는 모든 대화에서 이 컨텍스트를 참조할 수 있습니다.
-4. **OCR 서비스는 선택 사항입니다** - 이 기능은 OCR 없이 텍스트 파싱을 사용하여 작동합니다.
+4. **OCR 서비스는 선택 사항입니다** - 일반 텍스트 파일과 기본 내장 파서가 처리할 수 있는 문서의 경우 OCR 서비스 없이도 이 기능이 작동합니다.
 
 "File Context"로 업로드된 파일은 텍스트를 추출하도록 처리되며, 추출된 텍스트는 Agent의 시스템 지침에 추가됩니다. 이는 에이전트의 지침에 전체 텍스트 내용을 포함해야 하는 문서, 코드 파일, PDF 또는 텍스트가 포함된 이미지에 이상적입니다.
 
@@ -31,7 +31,7 @@ Agent Builder의 File Context 섹션을 통해 파일을 업로드할 때:
 
 ## 선택적 OCR 설정 [#optional-ocr-configuration]
 
-Agent File Context와 Upload as Text는 모두 텍스트 파싱을 사용하여 즉시 작동합니다. 이미지 및 스캔된 문서의 추출 품질을 향상하려면 선택적으로 OCR 서비스를 구성할 수 있습니다.
+Agent File Context와 Upload as Text는 일반 텍스트 파일과 기본 제공 파서가 처리하는 문서 형식에 대해 별도의 설정 없이 바로 동작합니다. 이미지, 스캔한 문서 및 기타 형식에서 텍스트를 추출하려면 선택적으로 OCR 서비스를 구성할 수 있습니다:
 
 ```yaml
 # librechat.yaml
@@ -48,9 +48,20 @@ ocr:
   mistralModel: "mistral-ocr-latest"
 ```
 
-**참고:** `context` 기능은 기본적으로 활성화되어 있습니다. 이미지 및 스캔된 문서에 대해 향상된 추출 품질을 원할 경우에만 OCR(`ocr` 기능)을 구성하면 됩니다.
+**참고:** `context` 기능은 기본적으로 활성화되어 있으며, 기본 기능 목록에서는 `ocr`도 활성화되어 있습니다. OCR이 구성되어 있는 상태에서 `endpoints.agents.capabilities` 목록을 직접 설정하면서 `ocr`을 빼면, OCR MIME 유형과 일치하는 업로드는 "OCR capability is not enabled for Agents" 오류와 함께 실패합니다.
 
 OCR 연결은 기본적으로 사설, 루프백, 링크 로컬 및 클라우드 메타데이터 대상을 차단합니다. 신뢰할 수 있는 사설 OCR 서비스를 사용하려면 해당 서비스의 정확한 사설 호스트와 포트를 [`ocr.allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/ocr#allowedaddresses)에 추가하십시오. 이는 SSRF 보호에 대한 예외 사항이므로, 귀하가 직접 제어하는 인프라만 나열하십시오.
+
+## 내장 문서 파서 [#built-in-document-parser]
+
+OCR 서비스가 파일을 처리하지 않을 때, 에이전트의 File Context와 Upload as Text는 기본 제공되는 `document_parser` 전략을 사용합니다. 이 전략은 구성된 OCR 서비스가 실패했을 때의 대체(fallback) 수단으로도 동작합니다. 다음 형식만 처리합니다:
+
+- PDF (텍스트 레이어만, 이미지 인식 없음)
+- DOCX(레거시 `.doc` 제외)
+- 스프레드시트: xlsx, xls, ods
+- ODT
+
+15 MB를 초과하는 파일은 파서에서 거부되며, 추출 가능한 텍스트가 없는 문서는 오류를 반환합니다. PowerPoint 파일, `.doc`, EPUB, 이미지는 OCR 서비스(또는 RAG API 텍스트 경로, [Upload as Text](/docs/features/upload_as_text) 참조)가 필요합니다.
 
 ## OCR 기능 개요 [#overview-of-ocr-capabilities]
 
@@ -165,9 +176,9 @@ ocr:
 3. 서비스 계정 JSON 키 파일을 다운로드하세요
 4. 지원되는 방법 중 하나를 사용하여 `GOOGLE_SERVICE_KEY_FILE` 환경 변수를 설정하세요.
 
-### 4. 사용자 지정 OCR (계획 중) [#4-custom-ocr-planned]
+### 4. Custom OCR (구현되지 않음) [#4-custom-ocr-not-implemented]
 
-사용자 지정 OCR 공급자 및 사용자 정의 전략에 대한 지원은 향후 릴리스에서 계획되어 있습니다.
+`custom_ocr`은 전략 목록에 값으로 나타나지만, LibreChat에는 이에 대한 구현이 없습니다. 사용자 지정 OCR 공급자 및 사용자 정의 전략에 대한 지원은 향후 릴리스에서 추가될 예정입니다.
 
 ### 5. 공급자에게 파일 업로드 (직접) [#5-upload-files-to-provider-direct]
 
@@ -216,7 +227,7 @@ fileConfig:
 
 다음 패턴과 일치하는 파일은 다음과 같은 경우 OCR을 사용합니다:
 - 에이전트 파일 컨텍스트에 업로드됨 (OCR이 구성된 경우 항상)
-- 채팅에서 텍스트로 업로드됨 (OCR이 구성된 경우; 그렇지 않으면 텍스트 파싱으로 대체됨)
+- 채팅에 텍스트로 업로드됨 (OCR이 구성된 경우; 그렇지 않은 경우 지원되는 파일에 한해 내장 문서 파서 또는 일반 텍스트 읽기가 적용됨)
 
 파일 처리 구성에 대한 자세한 내용은 [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config)를 참조하세요.
 

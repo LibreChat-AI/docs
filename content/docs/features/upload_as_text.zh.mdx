@@ -11,7 +11,7 @@ description: 上传支持的文件，让 LibreChat 自动路由或提取其内�
 您上传一个文件，LibreChat 会从中提取文本，并将全部内容直接粘贴到您的对话中。AI 随后即可阅读其中的每一个字——无需插件、无需向量数据库，也无需配置额外的服务。它开箱即用。
 
 <Callout type="info" title="无需任何设置">
-  “Upload as Text”功能可在任何 LibreChat 实例上立即使用。它使用内置的文本解析功能——你无需 OCR、RAG 管道或任何外部服务即可开始使用。
+  使用“以文本形式上传”可以在任何 LibreChat 实例上立即使用。它内置了通用格式的文档解析器,因此纯文本、代码、PDF、DOCX、电子表格和 ODT 文件无需 OCR、RAG 管道或任何外部服务即可处理。图片和部分办公格式则需要额外的服务;请参阅[支持哪些文件](#which-files-are-supported)。
 </Callout>
 
 ---
@@ -66,32 +66,35 @@ description: 上传支持的文件，让 LibreChat 自动路由或提取其内�
 当上传内容被路由至文本处理时，LibreChat 不会将原始字节直接转储到提示词中。它会通过一个处理流水线来提取清晰、可读的文本：
 
 1. **MIME type detection** — LibreChat 通过检查文件的 MIME 类型来识别您上传的文件种类（PDF、图像、音频、源代码等）。
-2. **方法选择** — 根据文件类型和可用的服务，它会使用以下优先级选择最佳提取方法：
+2. **方法选择**:系统会根据文件类型和可用服务,按以下顺序选择提取方法:
 
 <Tabs items={["优先级顺序", "决策示例"]}>
   <Tabs.Tab>
     | 优先级 | 方法 | 使用场景 |
     |----------|--------|---------------|
-    | 第一 | **OCR** | 文件为图像或扫描文档，_且_已配置 OCR |
-    | 第二 | **STT** (语音转文字) | 文件为音频，_且_已配置 STT |
-    | 第三 | **文本解析** | 文件匹配已知的文本 MIME 类型 |
-    | 第四 | **回退** | 以上均不匹配 — 仍尝试进行文本解析 |
+    | 第1 | **OCR** | 已配置 OCR _且_ 文件符合 `fileConfig.ocr.supportedMimeTypes`。如果 OCR 失败,LibreChat 会回退到内置文档解析器。 |
+    | 第2 | **RAG API `/text`** | 已设置 `RAG_API_URL`,`fileConfig.text.supportedMimeTypes` 已缩小范围,且文件符合该范围。如果 RAG API 不可用,LibreChat 会回退到内置文档解析器。 |
+    | 第3 | **内置文档解析器** | 文件为 PDF、DOCX、xlsx/xls/ods 电子表格或 ODT,大小最大为 15 MB。 |
+    | 第4 | **STT**(语音转文本) | 文件为音频且符合 `fileConfig.stt.supportedMimeTypes`。 |
+    | 第5 | **纯文本** | 文件符合 `fileConfig.text.supportedMimeTypes`。文本和代码文件直接读取;其他类型在设置了 `RAG_API_URL` 时发送到 RAG API `/text` 路由,否则失败。 |
+
+    一个与以上任何一项都不匹配的文件，将被视为不支持文本解析而被拒绝。
   </Tabs.Tab>
   <Tabs.Tab>
     **在配置了 OCR 的实例上使用 `.pdf`：**
     → OCR 将会启动。非常适合扫描文档和复杂布局。
 
-    **在默认实例上的 `.pdf` 文件（无 OCR）：**
-    → 由文本解析处理。对于数字生成的 PDF 文件效果良好。
+    **默认实例中的 `.pdf` 文件（未启用 OCR）：**
+    → 内置文档解析器会处理该文件。对于数字生成的 PDF 效果良好。
 
-    **一个 `.py` Python 文件：**
-    → 直接进行文本解析。源代码本身就是文本——无需转换。
+    **一个 `.py` Python 文件:**
+→ 纯文本。源代码本身就是文本,因此无需转换。
 
     **在配置了 STT 的实例上使用 `.mp3` 文件：**
     → Speech-to-Text 会将其转录为对话文本。
 
-    **一张未配置 OCR 的 `.png` 截图：**
-    → 回退到文本解析（结果有限 —— 请考虑为图像设置 OCR）。
+    **一个未配置 OCR 的 `.png` 截图:**
+→ 上传会返回错误而不是文本。请为图片配置 OCR。
   </Tabs.Tab>
 </Tabs>
 
@@ -114,16 +117,21 @@ description: 上传支持的文件，让 LibreChat 自动路由或提取其内�
     - Shell 脚本, SQL 文件
   </Tabs.Tab>
   <Tabs.Tab>
-    文本解析开箱即用地处理这些内容。如果配置了 OCR，它将接管处理过程，以在复杂布局上获得更高的准确性。
+    内置的文档解析器开箱即用，可处理这些文件，单个文件最大支持 15 MB。若已配置 OCR，则由其接管处理，以在复杂版式上获得更高的准确率。
 
-    - **PDF** — 数字版和扫描版（扫描版 PDF 可通过 OCR 获得更好的效果）
-    - **Word** — `.docx`, `.doc`
+    - **PDF**:数字文本层(扫描版 PDF 需要 OCR)
+    - **Word**：`.docx`（不支持旧版 `.doc`）
+    - **电子表格**:`.xlsx`、`.xls`、`.ods`
+    - **OpenDocument 文本**: `.odt`
+
+    这些文件需要 OCR,或使用 RAG API 的 `/text` 路由,因为内置解析器无法读取它们:
+
+    - **Word**: `.doc`
     - **PowerPoint** — `.pptx`, `.potx`, `.ppt`
-    - **Excel** — `.xlsx`, `.xls`
     - **EPUB** 电子书
   </Tabs.Tab>
   <Tabs.Tab>
-    图像**需要 OCR** 才能生成有用的文本。如果没有它，结果将会很差。
+    图片**需要 OCR** 才能生成文本。如果未启用 OCR,上传时将返回错误,而不是文本。
 
     - JPEG, PNG, GIF, WebP
     - HEIC, HEIF (Apple 格式)
@@ -218,7 +226,7 @@ fileConfig:
 
 ## 可选：使用 OCR 增强提取效果 [#optional-boosting-extraction-with-ocr]
 
-文本解析对于数字创建的文档（从 Word 保存的 PDF、代码文件、纯文本）效果良好。但如果您上传的是**扫描文档、页面照片或带有文字的图像**，内置解析器的效果将不尽如人意。
+内置解析器可以很好地处理数字化创建的 PDF、DOCX、电子表格、ODT、代码文件和纯文本。但**扫描文档、页面照片、包含文字的图片，以及 `.doc`、PowerPoint 和 EPUB 等格式**则需要使用 OCR 处理。
 
 这就是 OCR 发挥作用的地方。配置完成后，LibreChat 会自动对适用的文件类型使用 OCR——作为用户，你无需进行任何额外操作。
 
@@ -254,7 +262,8 @@ fileConfig:
       # Max tokens extracted from a single file before truncation
       fileTokenLimit: 100000
 
-      # Files matching these MIME patterns use OCR (if configured)
+      # Example only: files matching these MIME patterns use OCR (if configured).
+      # These are examples for narrowing or extending, not required settings.
       ocr:
         supportedMimeTypes:
           - "^image/(jpeg|gif|png|webp|heic|heif)$"
@@ -263,18 +272,19 @@ fileConfig:
           - "^application/vnd\\.ms-(word|powerpoint|excel)$"
           - "^application/epub\\+zip$"
 
-      # Files matching these MIME patterns use text parsing
+      # Example only: narrowing this list sends the matching types to the RAG API /text
+      # route when RAG_API_URL is set
       text:
         supportedMimeTypes:
           - "^text/(plain|markdown|csv|json|xml|html|css|javascript|typescript|x-python|x-java|x-csharp|x-php|x-ruby|x-go|x-rust|x-kotlin|x-swift|x-scala|x-perl|x-lua|x-shell|x-sql|x-yaml|x-toml)$"
 
-      # Files matching these MIME patterns use STT (if configured)
+      # Example only: files matching these MIME patterns use STT (if configured)
       stt:
         supportedMimeTypes:
           - "^audio/(mp3|mpeg|mpeg3|wav|wave|x-wav|ogg|vorbis|mp4|x-m4a|flac|x-flac|webm)$"
     ```
 
-    **优先级提醒：** OCR > STT > 文本解析 > 回退 (fallback)。
+    **优先级提醒:** OCR > RAG `/text`(当设置了 `RAG_API_URL` 且文本列表已缩小范围时)> 内置文档解析器 > STT > 纯文本。
 
     有关完整参考，请参阅 [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config)。
   </Accordion>
@@ -297,10 +307,10 @@ fileConfig:
   </Accordion>
   <Accordion title="文件内容看起来不正确或大部分为空">
     需要检查的几点：
-    - **扫描版 PDF / 图片** — 这些文件需要 OCR 才能正确提取文本。如果没有 OCR，解析器可能会返回乱码或空结果。请联系您的管理员[配置 OCR](/docs/features/ocr)。
+    - **扫描版 PDF / 图片**:这些文件需要 OCR 才能正确提取文本。若未启用 OCR,解析器将无法从扫描版 PDF 中返回任何内容,图片则会返回错误。请联系管理员[配置 OCR](/docs/features/ocr)。
     - **音频文件** — 这些文件需要 STT。音频没有文本回退方案。
     - **文件损坏** — 尝试在本地打开文件，以确保其未损坏。
-    - **不支持的格式** — 如果 MIME 类型与任何已配置的模式不匹配，LibreChat 会尝试回退到文本解析，这对于二进制格式可能无法正常工作。
+    - **不支持的格式**:内置解析器仅处理 PDF、DOCX、xlsx/xls/ods 和 ODT(最大 15 MB)。`.doc`、PowerPoint 和 EPUB 等格式需要使用 OCR 或 RAG API 的 `/text` 路由。与任何已配置模式都不匹配的 MIME 类型将被拒绝。
   </Accordion>
   <Accordion title="上传因文件类型不受支持而被拒绝">
     LibreChat 会在上传错误中返回被拒绝的 MIME 类型。请检查当前活跃 endpoint 的 [`fileConfig.endpoints.<endpoint>.supportedMimeTypes`](/docs/configuration/librechat_yaml/object_structure/file_config#supportedmimetypes-3) 模式，并允许你打算接受的规范类型。对于 shell 脚本，请使用 `application/x-sh`；LibreChat 会在匹配前将常见的 `application/x-shellscript` 和 `text/x-shellscript` 变体进行标准化处理。
@@ -314,7 +324,7 @@ fileConfig:
     - 将文件拆分为较小的部分并分别上传
   </Accordion>
   <Accordion title="图片已上传但 AI 无法读取其中的文字">
-    如果没有 OCR，图像将通过文本解析进行处理，这实际上无法“看到”图像中的文本。你需要配置 OCR 才能实现此功能。请参阅 [OCR for Documents](/docs/features/ocr)。
+    如果没有 OCR,就无法读取图片中的文字,因此上传会返回错误。必须配置 OCR 才能使其正常工作。请参阅 [文档 OCR](/docs/features/ocr)。
 
     或者，使用带有标准文件上传功能的 **vision model** —— 模型本身即可读取图像中的文本。
   </Accordion>

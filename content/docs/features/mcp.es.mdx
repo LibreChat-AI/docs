@@ -168,13 +168,15 @@ Su nuevo servidor MCP también está disponible en el Agent Builder, donde puede
 
 #### Variables de credenciales para servidores creados en la UI [#credential-variables-for-ui-created-servers]
 
-Al agregar un servidor MCP a través de la interfaz de usuario, puede requerir que los usuarios proporcionen sus propias claves de API. En la sección Authentication del cuadro de diálogo MCP Server Builder, seleccione "API Key" y marque **"User provides key"**. Elija el formato de encabezado (Bearer, Basic o Custom) y guarde el servidor.
+Al agregar un servidor MCP a través de la interfaz, puedes exigir que los usuarios proporcionen sus propias claves de API. En la sección de Autenticación del cuadro de diálogo MCP Server Builder, selecciona **API Key** y marca **Each user provides their own key**. Elige el formato del encabezado (Bearer, Basic o Custom) y guarda el servidor.
+
+Las opciones de autenticación son **None (Auto-detect)**, **API Key**, **OAuth** y **On-Behalf-Of (OBO)**. OBO aparece únicamente para los usuarios que pueden configurarlo, lo cual controla un administrador mediante [`interface.mcpServers.configureObo`](/docs/configuration/librechat_yaml/object_structure/interface#mcpservers). OBO requiere autenticación OpenID Connect, como Entra ID, y debes establecer los scopes que se solicitarán al servidor de destino.
 
 Detrás de escena, LibreChat crea una entrada `customUserVars` vinculada al destino llamada `MCP_API_KEY_<hash>` y configura el encabezado de autenticación correspondiente. El nombre se gestiona automáticamente; los usuarios siguen ingresando su clave en el cuadro de diálogo de selección de herramientas MCP o en el panel de configuración de MCP. Los servidores existentes pueden conservar el nombre heredado `MCP_API_KEY` mientras su límite de solicitud permanezca sin cambios. Esto utiliza la misma interfaz de usuario de entrada de claves que las [`customUserVars` definidas en YAML](#user-provided-credentials).
 
 Cambiar la URL (incluyendo la ruta o consulta), proxy, transporte, formato de autorización, encabezado de autenticación personalizado o cliente/destino OAuth configurado de un servidor creado en la interfaz de usuario requiere que cada usuario ingrese una clave para el nuevo límite. Las claves guardadas antiguas no se reenvían a ese destino de reemplazo. Las ediciones cosméticas, las URLs normalizadas equivalentes y las ediciones de URL de salida que solo afectan a fragmentos conservan la clave existente. Los servidores compartidos solo pueden resolver variables de credenciales declaradas por su configuración actual, por lo que un editor no puede hacer referencia a un nombre generado anteriormente para recuperar una clave previa. No se necesita una migración masiva de credenciales. Actualice **cada réplica de API**, incluidas las réplicas que atienden solicitudes de edición de servidor, antes de confiar en esta protección; un escritor más antiguo aún puede recrear una configuración sin límites.
 
-Cuando se configura una clave de API de administrador o de usuario, LibreChat trata el servidor como autenticado mediante clave de API y omite la detección automática de OAuth. Una configuración explícita de OAuth sigue teniendo prioridad. Si un servidor con clave de API creada desde la interfaz de usuario fue guardado por una versión anterior de LibreChat y permanece bloqueado en **OAuth Required**, edite y guarde el servidor una vez para que sus metadatos de conexión almacenados se actualicen.
+Cuando se configura una clave de API de administrador o de usuario, LibreChat trata el servidor como autenticado mediante clave de API y omite la detección automática de OAuth. Una configuración explícita de OAuth sigue teniendo prioridad. Si un servidor con clave de API creado desde la interfaz fue guardado por una versión anterior de LibreChat y permanece atascado en **Needs Auth**, edite el servidor y guárdelo una vez para que se actualicen sus metadatos de conexión almacenados.
 
 <Callout type="warning">
 Por seguridad, los servidores MCP creados desde la interfaz de usuario (con origen en la base de datos) **solo** pueden resolver marcadores de posición `customUserVars` (`{{VAR_NAME}}`). Las variables de entorno del lado del servidor (`${ENV_VAR}`), los campos del perfil de usuario (`{{LIBRECHAT_USER_*}}`) y los tokens OIDC (`{{LIBRECHAT_OPENID_*}}`) están bloqueados intencionalmente para evitar el acceso no autorizado a secretos del servidor o a los datos de otros usuarios. Para obtener compatibilidad total con marcadores de posición, configure el servidor en `librechat.yaml` en su lugar.
@@ -235,12 +237,12 @@ LibreChat muestra iconos de estado dinámicos que indican el estado actual de ca
 
 **Tipos de estado:**
 
-- **Conectado** (engranaje verde): El servidor está conectado y tiene customUserVars configurables
-- **OAuth Required** (llave ámbar): El servidor requiere autenticación OAuth
-- **Desconectado** (enchufe naranja): La conexión con el servidor falló o se perdió
-- **Inicializando** (cargador azul): El servidor se está iniciando o reconectando
-- **Error** (triángulo rojo): El servidor encontró un error
-- **Cancelando** (x roja): El flujo de OAuth está siendo cancelado
+- **Conectado**: El servidor está conectado. Si define `customUserVars`, un botón de clave le permite configurarlas.
+- **Conectando** e **Inicializando**: Se muestra un indicador de carga mientras el servidor se conecta o se inicia. Cuando un flujo de OAuth puede cancelarse, al pasar el cursor sobre el indicador aparece un control para cancelar.
+- **Requiere autenticación**: El servidor está desconectado y requiere autenticación OAuth.
+- **Desconectado** y **Error**: La conexión falló o se perdió. Un botón de conexión (icono de enchufe) te permite volver a intentarlo.
+- **Bajo demanda**: El servidor solo se conecta mientras atiende una solicitud, por lo que no hay una conexión persistente que mostrar.
+- **Desconocido**: Aún no hay ningún estado disponible.
 
 ### Cancelar OAuth desde el diálogo de herramientas del agente [#cancelling-oauth-from-the-agent-tool-dialog]
 
@@ -284,11 +286,15 @@ LibreChat clasifica las respuestas HTTP transmitibles (Streamable) a partir del 
 
 ### Visibilidad del panel de configuración de MCP [#mcp-settings-panel-visibility]
 
-El panel de configuración de MCP aparece en la barra lateral derecha cuando LibreChat detecta servidores MCP que podrían requerir la intervención del usuario durante su inicialización. El panel será visible cuando cualquier servidor configurado cumpla con uno de estos criterios:
+El panel de configuración de MCP aparece en la barra lateral derecha cuando el usuario tiene acceso `USE` a los servidores MCP y al menos un servidor MCP está disponible para él, o cuando el usuario tiene acceso `CREATE` a los servidores MCP. Los servidores que requieren la entrada del usuario, como aquellos con `customUserVars`, OAuth o `startup: false`, se inicializan desde este panel.
 
-- **Variables de usuario personalizadas**: El servidor tiene `customUserVars` definidas, las cuales pueden contener credenciales proporcionadas por el usuario
-- **Autenticación OAuth**: Se detecta que el servidor requiere autenticación OAuth durante el inicio
-- **Inicialización manual**: El servidor tiene configurado `startup: false`, lo que requiere una inicialización manual
+### Aplicaciones MCP [#mcp-apps]
+
+Los servidores MCP pueden devolver interfaces interactivas (MCP Apps) junto con los resultados de las herramientas. Cuando las MCP Apps están habilitadas, un resultado de herramienta que incluye una app muestra un control **Open app** (Abrir app), y **Close app** (Cerrar app) la oculta nuevamente. Las apps se renderizan dentro de un marco aislado (sandbox), y la cantidad de apps abiertas al mismo tiempo está limitada: cierra otra app antes de abrir una nueva.
+
+Una aplicación no puede actuar por su cuenta. Cuando solicita llamar a una herramienta, LibreChat muestra **¿Ejecutar herramienta desde la aplicación?**, y cuando solicita publicar un mensaje, **¿Enviar mensaje desde la aplicación?**. Enviar un mensaje inicia una respuesta del modelo en la conversación actual, por lo que es posible que se utilicen el agente seleccionado y sus herramientas. La aplicación solo puede continuar después de que apruebes la solicitud. Las MCP Apps no se pueden ver en conversaciones compartidas.
+
+Los administradores habilitan las apps con [`mcpSettings.apps`](/docs/configuration/librechat_yaml/object_structure/mcp_settings#apps) y configuran el sandbox con [`mcpAppSandbox`](/docs/configuration/librechat_yaml/object_structure/mcp_app_sandbox).
 
 ## Características específicas de LibreChat [#librechat-specific-features]
 
@@ -430,6 +436,8 @@ mcpServers:
 ### Autenticación OAuth [#oauth-authentication]
 
 LibreChat admite la autenticación OAuth para servidores MCP, siguiendo la recomendación de Anthropic para conexiones MCP seguras. OAuth proporciona una forma estandarizada y segura de autenticarse sin almacenar credenciales de larga duración.
+
+Por defecto, LibreChat pide al usuario que inicie sesión cuando comienza un turno de conversación. Para los servidores cuyas herramientas se difieren, [`oauthPrompt: on_use`](/docs/configuration/librechat_yaml/object_structure/mcp_servers#oauthprompt) retrasa la solicitud de inicio de sesión hasta que el agente llama por primera vez a una de las herramientas del servidor.
 
 #### Flujos de OAuth compatibles [#supported-oauth-flows]
 
