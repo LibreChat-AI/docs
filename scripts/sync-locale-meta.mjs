@@ -38,33 +38,42 @@ function sectionPages(pages) {
  * URL; anything without a translation keeps its English label.
  */
 export function syncLocalePages(englishPages, localePages = []) {
+  const englishSections = sectionPages(englishPages)
   const localeSections = sectionPages(localePages)
+  // Strongest overlap first, so a split section cannot take the heading of
+  // the section that kept most of the original pages.
+  const candidates = englishSections.flatMap((english, englishIndex) =>
+    localeSections.map((locale, localeIndex) => ({
+      english,
+      locale,
+      englishIndex,
+      localeIndex,
+      shared: [...locale.pages].filter((page) => english.pages.has(page)).length,
+    })),
+  )
+  candidates.sort(
+    (a, b) =>
+      b.shared - a.shared || a.englishIndex - b.englishIndex || a.localeIndex - b.localeIndex,
+  )
   const translatedSeparators = new Map()
-  for (const { separator, pages } of sectionPages(englishPages)) {
-    let best = null
-    let bestShared = 0
-    for (const section of localeSections) {
-      if (section.used) {
-        continue
-      }
-      const shared = [...section.pages].filter((page) => pages.has(page)).length
-      if (shared > bestShared) {
-        best = section
-        bestShared = shared
-      }
+  const usedLocale = new Set()
+  for (const { english, locale, shared } of candidates) {
+    if (shared === 0 || translatedSeparators.has(english) || usedLocale.has(locale)) {
+      continue
     }
-    if (best) {
-      best.used = true
-      translatedSeparators.set(separator, best.separator)
-    }
+    translatedSeparators.set(english, locale.separator)
+    usedLocale.add(locale)
   }
+  const separatorByIndex = englishSections.map((section) => translatedSeparators.get(section))
   const localeLinks = new Map(
     localePages.filter(linkTarget).map((entry) => [linkTarget(entry), entry]),
   )
 
+  let sectionIndex = -1
   return englishPages.map((entry) => {
     if (SEPARATOR_PATTERN.test(entry)) {
-      return translatedSeparators.get(entry) ?? entry
+      sectionIndex += 1
+      return separatorByIndex[sectionIndex] ?? entry
     }
 
     const target = linkTarget(entry)

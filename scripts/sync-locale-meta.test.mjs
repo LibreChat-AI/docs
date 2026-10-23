@@ -39,6 +39,12 @@ describe('syncLocalePages', () => {
     ])
   })
 
+  it('gives a split section the heading of the part that kept most pages', () => {
+    expect(
+      syncLocalePages(['---New---', 'a', '---Core---', 'b', 'c'], ['---Kern---', 'a', 'b', 'c']),
+    ).toEqual(['---New---', 'a', '---Kern---', 'b', 'c'])
+  })
+
   it('reuses translated link labels by URL', () => {
     expect(
       syncLocalePages(
