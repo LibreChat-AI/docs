@@ -78,6 +78,8 @@ description: >-
 
 値は負ではない安全な整数である必要があります。無効な値は無視されます。ヘッダータイムアウトとリクエストタイムアウトの両方が有効な場合、LibreChatはヘッダータイムアウトがリクエストタイムアウトよりも大きい場合に、ヘッダータイムアウトをリクエストタイムアウトの値に制限します。Nodeは30秒ごとの接続スイープでヘッダーとリクエストの有効期限を確認するため、`30000`未満の値はミリ秒単位の精度で強制されるわけではありません。Bunは現在これらの設定を受け入れますが、強制はしません。APIサーバーがBunで実行されている場合、LibreChatは警告をログに記録します。
 
+`.env.example` の `NODE_MAX_OLD_SPACE_SIZE` は Docker のビルド引数であり、実行時のヒープサイズは変更されません。Node.js のヒープ上限を設定するには `NODE_OPTIONS` を使用してください。例: `NODE_OPTIONS="--max-old-space-size=6144"`
+
 ### Trust proxy [#trust-proxy]
 
 Expressアプリケーションから最大でnホップ離れたアドレスを使用します。
@@ -385,7 +387,7 @@ LibreChatには組み込みの中央ロギング機能があります。詳細�
 
 #### ログファイル [#log-files]
 
-- デバッグログはデフォルトで有効になっており、開発において非常に重要です。
+- `DEBUG_LOGGING=true` の場合にのみデバッグログファイルが書き込まれます。これは開発時および問題を報告する際に推奨される設定です。
 - 問題を報告するには、エラーを再現した上で `./api/logs/debug-%DATE%.log` からログを取得し、**[LibreChat GitHub Issues](https://github.com/LibreChat-AI/LibreChat/issues)** に提出してください。
 - エラーログも同じ場所に保存されます。
 
@@ -393,7 +395,7 @@ LibreChatには組み込みの中央ロギング機能があります。詳細�
 
 <OptionTable
   options={[
-    ['DEBUG_LOGGING', 'boolean', 'デバッグログを有効に保つ。', 'DEBUG_LOGGING=true'],
+    ['DEBUG_LOGGING', 'boolean', 'ファイルへデバッグログを書き込みます。デバッグログファイルは、この値が true の場合にのみ作成されます。', 'DEBUG_LOGGING=true'],
     [
       'DEBUG_CONSOLE',
       'boolean',
@@ -423,6 +425,18 @@ LibreChatには組み込みの中央ロギング機能があります。詳細�
       'number',
       'JSONコンソール/stdoutログ内の文字列値の切り捨てサイズを設定します。デフォルト: 255。',
       '# CONSOLE_JSON_STRING_LENGTH=255',
+    ],
+    [
+      'DEBUG_MESSAGE_LENGTH',
+      'number',
+      'デバッグログメッセージが切り詰められるまでの最大長です。デフォルト: 150。',
+      '# DEBUG_MESSAGE_LENGTH=150',
+    ],
+    [
+      'LOG_REDACTION_MAX_NODES',
+      'number',
+      '1つのログレコードでマスク(リダクト)できる値の最大数(オブジェクトおよび文字列は長さに応じて重み付け)です。この上限を超えた残りの部分は置き換えられ、非常に幅の広いペイロードによってログ記録が停止しないようにします。デフォルト: 5000。',
+      '# LOG_REDACTION_MAX_NODES=5000',
     ],
     [
       'LIBRECHAT_LOG_DIR',
@@ -486,7 +500,7 @@ LibreChatには組み込みの中央ロギング機能があります。詳細�
     ['LANGFUSE_FANOUT_CENTRAL_BASE_URL', 'string', 'ゲートウェイで使用される中央のLangfuseベースURL。', '# LANGFUSE_FANOUT_CENTRAL_BASE_URL=https://cloud.langfuse.com'],
     ['LANGFUSE_FANOUT_CENTRAL_AUTH_HEADER', 'string', '中央トレースおよびメディアエクスポート用の完全なBasic認証ヘッダー。', '# LANGFUSE_FANOUT_CENTRAL_AUTH_HEADER=Basic <base64-public-colon-secret>'],
     ['LANGFUSE_FANOUT_CENTRAL_MEDIA_EXPORT_DISABLED', 'boolean', '中央トレースを無効にせずに、中央メディアのファンアウトを無効にします。', '# LANGFUSE_FANOUT_CENTRAL_MEDIA_EXPORT_DISABLED=false'],
-    ['LANGFUSE_FANOUT_TENANT_DESTINATIONS', 'string', '起動時に許可される、カンマ区切りの宛先キーとベースURLのマッピング。', '# LANGFUSE_FANOUT_TENANT_DESTINATIONS=eu=https://cloud.langfuse.com,us=https://us.cloud.langfuse.com'],
+    ['LANGFUSE_FANOUT_TENANT_DESTINATIONS', 'string', '起動時に許可される、カンマ区切りの宛先キーとベースURLのマッピング。', '# LANGFUSE_FANOUT_TENANT_DESTINATIONS=eu=https://cloud.langfuse.com,us=https://us.cloud.langfuse.com,jp=https://jp.cloud.langfuse.com'],
     ['LANGFUSE_FANOUT_TRACE_DESTINATION_KEYS', 'string', 'コレクターのルーティング設定でサポートされている宛先キー。', '# LANGFUSE_FANOUT_TRACE_DESTINATION_KEYS=eu,us,jp'],
     ['LANGFUSE_FANOUT_PUBLIC_URL', 'string', '使い捨てのメディアアップロードURLを作成するために使用されるゲートウェイのベースURL。', '# LANGFUSE_FANOUT_PUBLIC_URL=http://langfuse-fanout-collector:4318'],
     ['LANGFUSE_FANOUT_TRACE_COLLECTOR_URL', 'string', '内部ゲートウェイ・ツー・コレクター・トレース endpoint', '# LANGFUSE_FANOUT_TRACE_COLLECTOR_URL=http://langfuse-fanout-otel:4319'],
@@ -669,16 +683,46 @@ LibreChatは、ブラウザのReal User Monitoring (RUM) テレメトリをHyper
       '# RUM_PROXY_TIMEOUT_MS=10000',
     ],
     [
+      'RUM_PROXY_BODY_LIMIT',
+      'string',
+      'プロキシが受け入れるリクエストボディの最大サイズ。認証とレート制限の後にのみ解析されます。デフォルト: 3mb。',
+      '# RUM_PROXY_BODY_LIMIT=3mb',
+    ],
+    [
+      'RUM_PROXY_USER_MAX',
+      'number',
+      '認証済みユーザーごとのRUM_PROXY_USER_WINDOWにおける最大テレメトリリクエスト数。デフォルト: 240。',
+      '# RUM_PROXY_USER_MAX=240',
+    ],
+    [
+      'RUM_PROXY_USER_WINDOW',
+      'number',
+      'RUM_PROXY_USER_MAXの時間枠（分単位）。デフォルト: 1。',
+      '# RUM_PROXY_USER_WINDOW=1',
+    ],
+    [
       'RUM_TRACE_PROPAGATION_TARGETS',
       'string',
       'traceparentヘッダーを受け取るべき、カンマ区切りのファーストパーティHTTPSオリジンまたはURL。',
       '# RUM_TRACE_PROPAGATION_TARGETS=https://api.example.com',
     ],
     [
+      'RUM_SESSION_REPLAY_ENABLED',
+      'boolean',
+      'ブラウザのセッションリプレイを有効にします。リプレイでは、機密性の高いプロンプト、レスポンス、ペイロードが収集される可能性があります。librechat.yaml で telemetry.rum.sessionReplay.enabled に設定された値が優先されます。デフォルト: false。',
+      '# RUM_SESSION_REPLAY_ENABLED=false',
+    ],
+    [
       'RUM_DISABLE_REPLAY',
       'boolean',
-      'ブラウザのセッションリプレイを無効にします。デフォルト: true。',
+      'ブラウザセッションリプレイ用のレガシースイッチ。RUM_SESSION_REPLAY_ENABLED が未設定の場合にのみ使用されます。明示的に false に設定されない限り、リプレイは無効のままです。RUM_SESSION_REPLAY_ENABLED の使用を推奨します。',
       '# RUM_DISABLE_REPLAY=true',
+    ],
+    [
+      'RUM_CLIENT_LOGS',
+      'boolean',
+      'ブラウザクライアントのロガーの警告とエラーをOTLPログとしてエクスポートします。プロキシモードでのみ適用されます。デフォルト: false。',
+      '# RUM_CLIENT_LOGS=false',
     ],
     [
       'RUM_CONSOLE_CAPTURE',
@@ -822,7 +866,7 @@ LibreChatは、起動時に直下のサブディレクトリから実験的なAg
       'ENDPOINTS',
       'string',
       '利用可能なendpointのカンマ区切りリスト。',
-      '# ENDPOINTS=openAI,agents,assistants,gptPlugins,azureOpenAI,google,anthropic,bingAI,custom',
+      '# ENDPOINTS=openAI,assistants,azureOpenAI,google,anthropic',
     ],
     [
       'PROXY',
@@ -982,7 +1026,7 @@ Web検索機能により、LibreChat内でインターネット検索が可能�
       'ANTHROPIC_MODELS',
       'string',
       '使用するAnthropicモデルのカンマ区切りリスト。',
-      '# ANTHROPIC_MODELS=claude-fable-5-1,claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,claude-opus-4-6,claude-opus-4-20250514,claude-3-7-sonnet-20250219,claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022',
+      '# ANTHROPIC_MODELS=claude-fable-5-1,claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,claude-opus-4-6,claude-opus-4-20250514,claude-3-7-sonnet-20250219,claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022,claude-3-opus-20240229,claude-3-sonnet-20240229,claude-3-haiku-20240307',
     ],
     [
       'ANTHROPIC_REVERSE_PROXY',
@@ -991,17 +1035,13 @@ Web検索機能により、LibreChat内でインターネット検索が可能�
       '# ANTHROPIC_REVERSE_PROXY=',
     ],
     [
-      'ANTHROPIC_TITLE_MODEL',
+      'ANTHROPIC_VERSION',
       'string',
-      '非推奨: Anthropicでタイトル生成に使用するモデル。',
-      '# ANTHROPIC_TITLE_MODEL=claude-3-haiku-20240307',
+      'Anthropicモデル一覧の取得時に送信される anthropic-version ヘッダーの値。デフォルト: 2023-06-01。',
+      '# ANTHROPIC_VERSION=2023-06-01',
     ],
   ]}
 />
-
-- `ANTHROPIC_TITLE_MODEL` は現在非推奨となっており、将来のバージョンで削除される予定です。代わりに `librechat.yaml` 設定内の [`titleModel` エンドポイント設定](/docs/configuration/librechat_yaml/object_structure/shared_endpoint_settings#titlemodel) を使用してください。
-
-> **注:** Anthropic endpoint と互換性がある必要があります。また、Claude 2 および Claude 3 モデルがこのタスクに最適であり、`claude-3-haiku` モデルが最も安価です。
 
 Claude Fable 5.1 および Fable 5 は、デフォルトの Anthropic モデルリストに含まれています。Fable/Mythos クラスのモデルは、LibreChat において最新の Anthropic の動作を使用します。これには、1M のコンテキスト、適応型思考（adaptive thinking）のサポート、プロンプトキャッシングのサポート、および要約または省略された推論出力を処理するための `thinkingDisplay` が含まれます。
 
@@ -1071,10 +1111,16 @@ Google Cloud Vertex AI経由でAnthropic Claudeモデルを使用することも
       '# BEDROCK_AWS_BEARER_TOKEN=your_bedrock_api_key',
     ],
     [
+      'BEDROCK_REVERSE_PROXY',
+      'string',
+      'Host of a reverse proxy for Bedrock API calls, without the https:// scheme. Works with or without PROXY.',
+      '# BEDROCK_REVERSE_PROXY=bedrock-proxy.example.com',
+    ],
+    [
       'BEDROCK_AWS_MODELS',
       'string',
       'BedrockモデルIDのカンマ区切りリスト。省略した場合は、サポートされている既知の全モデルが含まれます。',
-      '# BEDROCK_AWS_MODELS=global.anthropic.claude-fable-5-1,global.anthropic.claude-fable-5,global.anthropic.claude-opus-5,global.anthropic.claude-opus-4-8,global.anthropic.claude-opus-4-7,global.anthropic.claude-sonnet-5,global.anthropic.claude-sonnet-4-6,meta.llama3-1-8b-instruct-v1:0',
+      '# BEDROCK_AWS_MODELS=global.anthropic.claude-fable-5-1,global.anthropic.claude-fable-5,global.anthropic.claude-opus-5,global.anthropic.claude-opus-4-8,global.anthropic.claude-opus-4-7,global.anthropic.claude-sonnet-5,global.anthropic.claude-sonnet-4-6,global.anthropic.claude-opus-4-6-v1,global.anthropic.claude-haiku-4-5-20251001-v1:0,meta.llama3-1-8b-instruct-v1:0',
     ],
   ]}
 />
@@ -1082,29 +1128,6 @@ Google Cloud Vertex AI経由でAnthropic Claudeモデルを使用することも
 > **注:** アクセスキーを省略すると、デフォルトの AWS 認証情報チェーン（環境変数、SSO 認証情報、共有認証情報ファイル、または EC2/ECS インスタンスメタデータサービス）が使用されます。詳細は [AWS Bedrock Setup](/docs/configuration/pre_configured_ai/bedrock) を参照してください。
 
 Bedrock上のClaude Fable/Mythosクラスのモデルは、推論プロファイル専用です。`global.anthropic.claude-fable-5-1` のようなプロファイルIDを使用し、呼び出す前にBedrockコンソールまたはData Retention APIで必要なAnthropicデータ共有設定を有効にしてください。
-
-### BingAI [#bingai]
-
-Bing（Sydney、ジェイルブレイク、Bing Image Creatorにも使用）
-
-<OptionTable
-  options={[
-    [
-      'BINGAI_TOKEN',
-      'string',
-      'Bingアクセストークン。無効にする場合は空欄にしてください。ユーザーがWebUIから独自のトークンを提供できるようにするには、"user_provided" に設定できます。',
-      'BINGAI_TOKEN=user_provided',
-    ],
-    [
-      'BINGAI_HOST',
-      'string',
-      'BingホストURL。デフォルトのサーバーを使用する場合はコメントアウトしたままにしてください。',
-      '# BINGAI_HOST=https://cn.bing.com',
-    ],
-  ]}
-/>
-
-注: "user_provided" のままにして、WebUIからトークンを入力することを推奨します。
 
 ### Google [#google]
 
@@ -1122,7 +1145,13 @@ Bing（Sydney、ジェイルブレイク、Bing Image Creatorにも使用）
       'GOOGLE_SERVICE_KEY_FILE',
       'string',
       'GoogleサービスアカウントのJSONキーファイルへのパス、取得元のURL、または文字列化されたJSON。Vertex AI認証（OCR機能など）に使用されます。',
-      'GOOGLE_SERVICE_KEY_FILE=/path/to/auth.json',
+      'GOOGLE_SERVICE_KEY_FILE=/path/to/service-account.json',
+    ],
+    [
+      'GOOGLE_CLOUD_PROJECT',
+      'string',
+      'Vertex AI 用の Google Cloud プロジェクト ID。VERTEX_PROJECT_ID の次に確認されます。その後のフォールバックとして、GCLOUD_PROJECT、GOOGLE_PROJECT_ID の順に使用されます。',
+      '# GOOGLE_CLOUD_PROJECT=your-project-id',
     ],
     ['GOOGLE_REVERSE_PROXY', 'string', 'GoogleリバースプロキシURL', 'GOOGLE_REVERSE_PROXY='],
     [
@@ -1135,19 +1164,19 @@ Bing（Sydney、ジェイルブレイク、Bing Image Creatorにも使用）
       'GOOGLE_MODELS',
       'string',
       '利用可能なGemini API Googleモデル（カンマ区切り）。',
-      'GOOGLE_MODELS=gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-2.0-flash-lite',
+      'GOOGLE_MODELS=gemini-4-argon,gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-2.0-flash-lite',
     ],
     [
       'GOOGLE_MODELS',
       'string',
       '利用可能なVertex AI Googleモデル（カンマ区切り）。',
-      'GOOGLE_MODELS=gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash-001,gemini-2.0-flash-lite-001',
+      'GOOGLE_MODELS=gemini-4-argon,gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash-001,gemini-2.0-flash-lite-001',
     ],
     [
       'GOOGLE_TITLE_MODEL',
       'string',
       '非推奨: Googleでのタイトル生成に使用されるモデル。',
-      'GOOGLE_TITLE_MODEL=gemini-pro',
+      'GOOGLE_TITLE_MODEL=gemini-2.0-flash-lite-001',
     ],
     [
       'GOOGLE_LOC',
@@ -1170,37 +1199,39 @@ Bing（Sydney、ジェイルブレイク、Bing Image Creatorにも使用）
     [
       'GOOGLE_SAFETY_SEXUALLY_EXPLICIT',
       'string',
-      '性的に露骨なコンテンツに対する安全設定。オプションは BLOCK_ALL、BLOCK_ONLY_HIGH、WARN_ONLY、OFF です。',
+      '性的に露骨なコンテンツに対する安全設定です。選択肢は BLOCK_NONE、BLOCK_ONLY_HIGH、BLOCK_MEDIUM_AND_ABOVE、BLOCK_LOW_AND_ABOVE です。',
       'GOOGLE_SAFETY_SEXUALLY_EXPLICIT=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_HATE_SPEECH',
       'string',
-      'ヘイトスピーチコンテンツに対する安全設定。オプションは BLOCK_ALL、BLOCK_ONLY_HIGH、WARN_ONLY、OFF です。',
+      'ヘイトスピーチコンテンツの安全性設定。選択肢は BLOCK_NONE、BLOCK_ONLY_HIGH、BLOCK_MEDIUM_AND_ABOVE、BLOCK_LOW_AND_ABOVE です。',
       'GOOGLE_SAFETY_HATE_SPEECH=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_HARASSMENT',
       'string',
-      'ハラスメントコンテンツに対する安全設定。オプションは BLOCK_ALL、BLOCK_ONLY_HIGH、WARN_ONLY、OFF です。',
+      'ハラスメントコンテンツに対する安全性設定。選択肢は BLOCK_NONE、BLOCK_ONLY_HIGH、BLOCK_MEDIUM_AND_ABOVE、BLOCK_LOW_AND_ABOVE です。',
       'GOOGLE_SAFETY_HARASSMENT=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_DANGEROUS_CONTENT',
       'string',
-      '危険なコンテンツに対する安全設定。オプションは BLOCK_ALL、BLOCK_ONLY_HIGH、WARN_ONLY、OFF です。',
+      '危険なコンテンツに対する安全設定です。選択肢は BLOCK_NONE、BLOCK_ONLY_HIGH、BLOCK_MEDIUM_AND_ABOVE、BLOCK_LOW_AND_ABOVE です。',
       'GOOGLE_SAFETY_DANGEROUS_CONTENT=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_CIVIC_INTEGRITY',
       'string',
-      '市民の誠実性に関するコンテンツの安全性設定。オプションは BLOCK_ALL、BLOCK_ONLY_HIGH、WARN_ONLY、OFF です。',
+      '市民の誠実性に関するコンテンツの安全設定。オプションは BLOCK_NONE、BLOCK_ONLY_HIGH、BLOCK_MEDIUM_AND_ABOVE、BLOCK_LOW_AND_ABOVE です。',
       '# GOOGLE_SAFETY_CIVIC_INTEGRITY=BLOCK_ONLY_HIGH',
     ],
   ]}
 />
 
 利用可能なモデルをカンマ区切りで指定します（**スペースは含めないでください**）。最初に指定したモデルがデフォルトになります。空欄にするかコメントアウトすると、内部設定が使用されます。
+
+`GOOGLE_SAFETY_*` 変数が未設定の場合、プロバイダーのデフォルト値が使用されます(市民的誠実性については `BLOCK_NONE`)。また、Gemini 2.0、`gemini-1.5-flash-8b`、experimental、LearnLM のモデルには `BLOCK_NONE` が適用されます。安全性設定を完全に省略するには、`GOOGLE_EXCLUDE_SAFETY_SETTINGS=true` を設定してください。
 
 - `GOOGLE_TITLE_MODEL` は現在非推奨となっており、将来のバージョンで削除される予定です。代わりに `librechat.yaml` 設定内の [`titleModel` Endpoint Setting](/docs/configuration/librechat_yaml/object_structure/shared_endpoint_settings#titlemodel) を使用してください。
 
@@ -1249,7 +1280,7 @@ Gemini Image Generationは、Gemini APIとVertex AIの両方をサポートす�
       'OPENAI_MODELS',
       'string',
       '利用可能なモデルをカンマ区切りで指定します（スペースは含めないでください）。最初のモデルがデフォルトになります。内部設定を使用する場合は、コメントアウトしたままにしてください。',
-      '# OPENAI_MODELS=gpt-5,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini,gpt-4.1,gpt-4.1-mini,gpt-4.1-nano,o3-mini,o1-pro,o1,gpt-4o,gpt-4o-mini',
+      '# OPENAI_MODELS=gpt-6-astra,gpt-6.1-sol,gpt-6-sol,gpt-6-luna,gpt-5.6,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.5-pro,chat-latest,gpt-5.4,gpt-5.4-pro,gpt-5.4-mini,gpt-5.4-nano,gpt-5.3-codex,gpt-5.2,gpt-5,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini,gpt-4.1,gpt-4.1-mini,gpt-4.1-nano,o3-mini,o1-pro,o1,gpt-4o,gpt-4o-mini',
     ],
     ['DEBUG_OPENAI', 'boolean', 'OpenAI endpointのデバッグモードを有効にします。', 'DEBUG_OPENAI=false'],
     [
@@ -1262,7 +1293,7 @@ Gemini Image Generationは、Gemini APIとVertex AIの両方をサポートす�
       'OPENAI_SUMMARY_MODEL',
       'string',
       'OpenAIの要約に使用されるモデル。',
-      '# OPENAI_SUMMARY_MODEL=gpt-3.5-turbo',
+      '# OPENAI_SUMMARY_MODEL=gpt-4o-mini',
     ],
     [
       'OPENAI_FORCE_PROMPT',
@@ -1286,7 +1317,7 @@ Gemini Image Generationは、Gemini APIとVertex AIの両方をサポートす�
       'OPENAI_TITLE_MODEL',
       'string',
       '非推奨: OpenAIのタイトル生成に使用されるモデル。',
-      '# OPENAI_TITLE_MODEL=gpt-3.5-turbo',
+      '# OPENAI_TITLE_MODEL=gpt-4o-mini',
     ],
   ]}
 />
@@ -1310,7 +1341,7 @@ Gemini Image Generationは、Gemini APIとVertex AIの両方をサポートす�
       'ASSISTANTS_MODELS',
       'string',
       '利用可能なモデルをカンマ区切りで指定します（スペースは含めないでください）。最初に入力したモデルがデフォルトになります。空欄にすると内部設定が使用されます。',
-      '# ASSISTANTS_MODELS=gpt-3.5-turbo-0125,gpt-3.5-turbo-16k-0613,gpt-3.5-turbo-16k,gpt-3.5-turbo,gpt-4,gpt-4-0314,gpt-4-32k-0314,gpt-4-0613,gpt-3.5-turbo-0613,gpt-3.5-turbo-1106,gpt-4-0125-preview,gpt-4-turbo-preview,gpt-4-1106-preview',
+      '# ASSISTANTS_MODELS=gpt-4o,gpt-4o-mini,gpt-3.5-turbo-0125,gpt-3.5-turbo-16k-0613,gpt-3.5-turbo-16k,gpt-3.5-turbo,gpt-4,gpt-4-0314,gpt-4-32k-0314,gpt-4-0613,gpt-3.5-turbo-0613,gpt-3.5-turbo-1106,gpt-4-0125-preview,gpt-4-turbo-preview,gpt-4-1106-preview',
     ],
     [
       'ASSISTANTS_BASE_URL',
@@ -1322,6 +1353,75 @@ Gemini Image Generationは、Gemini APIとVertex AIの両方をサポートす�
 />
 
 注: 利用可能なモデルをカンマ区切り（スペースなし）でカスタマイズできます。最初のモデルがデフォルトになります。空欄にするかコメントアウトすると、内部設定が使用されます。
+
+### レガシー Azure OpenAI 変数(非推奨) [#legacy-azure-openai-variables-deprecated]
+
+これらの変数は、`librechat.yaml` を使用せずに単一の Azure OpenAI デプロイを構成します。これらは非推奨です。複数のグループ、モデル、デプロイに対応している `librechat.yaml` 内の[Azure OpenAI 構成](/docs/configuration/librechat_yaml/ai_endpoints/azure)を代わりに使用してください。
+
+<OptionTable
+  options={[
+    [
+      'AZURE_API_KEY',
+      'string',
+      'Azure OpenAI APIキー。AZURE_OPENAI_API_KEYが未設定の場合に読み込まれます。user_providedに設定すると、ユーザーが自身のキーを入力できるようになります。',
+      '# AZURE_API_KEY=',
+    ],
+    [
+      'AZURE_OPENAI_API_INSTANCE_NAME',
+      'string',
+      'Azure OpenAI リソース (インスタンス) 名',
+      '# AZURE_OPENAI_API_INSTANCE_NAME=',
+    ],
+    [
+      'AZURE_OPENAI_API_DEPLOYMENT_NAME',
+      'string',
+      'Azure OpenAI デプロイ名',
+      '# AZURE_OPENAI_API_DEPLOYMENT_NAME=',
+    ],
+    [
+      'AZURE_OPENAI_API_VERSION',
+      'string',
+      'Azure OpenAI API バージョン',
+      '# AZURE_OPENAI_API_VERSION=',
+    ],
+    [
+      'AZURE_OPENAI_BASEURL',
+      'string',
+      'Azure OpenAI エンドポイント用のカスタムベース URL',
+      '# AZURE_OPENAI_BASEURL=',
+    ],
+    [
+      'AZURE_OPENAI_DEFAULT_MODEL',
+      'string',
+      'Azure OpenAI エンドポイントのデフォルトモデル。',
+      '# AZURE_OPENAI_DEFAULT_MODEL=gpt-3.5-turbo',
+    ],
+    [
+      'AZURE_USE_MODEL_AS_DEPLOYMENT_NAME',
+      'boolean',
+      '選択したモデル名をデプロイ名として使用します。',
+      '# AZURE_USE_MODEL_AS_DEPLOYMENT_NAME=TRUE',
+    ],
+    [
+      'AZURE_OPENAI_MODELS',
+      'string',
+      'Azureの OpenAI モデルのカンマ区切りリスト（スペースなし）。',
+      '# AZURE_OPENAI_MODELS=gpt-3.5-turbo,gpt-4',
+    ],
+    [
+      'AZURE_ASSISTANTS_API_KEY',
+      'string',
+      'Azure Assistants endpoint 用の API キー。user_provided に設定すると、ユーザーが自分のキーを入力できるようになります。',
+      '# AZURE_ASSISTANTS_API_KEY=',
+    ],
+    [
+      'AZURE_ASSISTANTS_BASE_URL',
+      'string',
+      'Azure Assistants エンドポイントのベース URL。',
+      '# AZURE_ASSISTANTS_BASE_URL=',
+    ],
+  ]}
+/>
 
 ### Tavily [#tavily]
 
@@ -1402,6 +1502,18 @@ APIキーの取得はこちら: **https://api.traversaal.ai/dashboard**
       'サーバーサイドのリモートファイルダウンロードにおける最大サイズ（バイト単位）。デフォルト: 536870912 (512 MiB)。',
       '# REMOTE_FILE_FETCH_MAX_BYTES=536870912',
     ],
+    [
+      'FILE_RETENTION_SWEEP_INTERVAL_MS',
+      'number',
+      '期限切れのファイルを削除するスイープ処理の実行間隔（ミリ秒）です。0に設定するとスイープを無効にします。デフォルト: 3600000（1時間）。',
+      '# FILE_RETENTION_SWEEP_INTERVAL_MS=3600000',
+    ],
+    [
+      'FILE_RETENTION_SWEEP_MAX_ATTEMPTS',
+      'number',
+      '連続して削除に失敗した後、期限切れのファイルを通常のバックオフで再試行する代わりに30日間保留する回数。大量のバックログを処理する場合は、この値を下げてください。デフォルト: 10',
+      '# FILE_RETENTION_SWEEP_MAX_ATTEMPTS=10',
+    ],
   ]}
 />
 
@@ -1424,8 +1536,8 @@ Code Interpreter APIは、コードの実行とファイルの管理を行うた
     [
       'CODE_ENVIRONMENT_DECISION_VERSION',
       'number',
-      '不変かつ会話が所有するCode-environmentの決定をアドバタイズします。すべてのAPIレプリカがサポートした後にのみ、プロトコルバージョン1を有効にしてください。',
-      '# CODE_ENVIRONMENT_DECISION_VERSION=1',
+      '会話に紐づく不変のコード環境決定プロトコル(バージョン1)を制御します。このプロトコルはデフォルトで通知され、チャットごとのマシン選択はこれに依存します。レガシーパスを維持するには0に設定します。たとえば、プロトコルバージョン1より前のAPIレプリカがまだ稼働している間に使用します。0を設定すると、チャットごとのマシン選択も無効になるため、すべてのエージェントは固定されたマシン上で動作し続けます。',
+      '# CODE_ENVIRONMENT_DECISION_VERSION=0',
     ],
     [
       'LIBRECHAT_CODE_BASEURL',
@@ -1474,6 +1586,30 @@ Code Interpreter APIは、コードの実行とファイルの管理を行うた
       'number',
       'セルフサービスコードワーカーペアリングのレート制限ウィンドウ（分単位）。デフォルト: 60。',
       '# CODE_ENVIRONMENT_PAIRING_USER_WINDOW=60',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_USER_MAX',
+      'number',
+      'ユーザーごとのコード環境ステータスリクエストの最大数（CODE_ENVIRONMENT_STATUS_USER_WINDOW内）。デフォルト: 120。',
+      '# CODE_ENVIRONMENT_STATUS_USER_MAX=120',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_USER_WINDOW',
+      'number',
+      'CODE_ENVIRONMENT_STATUS_USER_MAX の時間枠（分）。デフォルト: 1。',
+      '# CODE_ENVIRONMENT_STATUS_USER_WINDOW=1',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_IP_MAX',
+      'number',
+      'IPアドレスごとのコード環境ステータスリクエストの最大数(CODE_ENVIRONMENT_STATUS_IP_WINDOW内)。デフォルト: 300。',
+      '# CODE_ENVIRONMENT_STATUS_IP_MAX=300',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_IP_WINDOW',
+      'number',
+      'CODE_ENVIRONMENT_STATUS_IP_MAX の時間枠（分単位）。デフォルト: 1。',
+      '# CODE_ENVIRONMENT_STATUS_IP_WINDOW=1',
     ],
   ]}
 />
@@ -1654,6 +1790,12 @@ Artifactsは、HTML/JSコードを安全にレンダリングするためにCode
       'Artifactsで使用されるSandpack用のカスタムバンドラーURLを指定します',
       'SANDPACK_BUNDLER_URL=your-bundler-url',
     ],
+    [
+      'SANDPACK_STATIC_BUNDLER_URL',
+      'string',
+      '静的アーティファクトテンプレート(HTML、Markdown、コード、テキスト、Officeプレビュー)に使用されるカスタムバンドラーのURL。セルフホスティングの場合は、SANDPACK_BUNDLER_URLと合わせて設定してください。',
+      'SANDPACK_STATIC_BUNDLER_URL=your-static-bundler-url',
+    ],
   ]}
 />
 
@@ -1813,6 +1955,12 @@ Speech-to-Text (STT) および Text-to-Speech (TTS) サービスを設定しま�
       '共有チャットで参照されるスナップショットファイル。閲覧者は共有リンクを通じてそれらをプレビューまたはダウンロードできます。設定されている場合、interface.sharedLinks.snapshotFiles を上書きします。',
       'SHARED_LINKS_SNAPSHOT_FILES=true',
     ],
+    [
+      'SHARED_LINKS_AUTO_MIGRATE',
+      'boolean',
+      '明示的な共有リンク権限の移行で見落とされた従来の共有リンクを、初回アクセス時に移行するフォールバック機能です。未設定の場合は有効になります。無効にするには false に設定してください。',
+      '# SHARED_LINKS_AUTO_MIGRATE=true',
+    ],
     ['SHARE_IP_MAX', 'number', 'IPウィンドウ期間中におけるIPあたりの共有リンク取得の最大回数。デフォルト: 100。', '# SHARE_IP_MAX=100'],
     ['SHARE_IP_WINDOW', 'number', '共有リンクのIPレート制限ウィンドウ（分単位）。デフォルト: 1。', '# SHARE_IP_WINDOW=1'],
     ['SHARE_USER_MAX', 'number', 'ユーザーウィンドウ期間中に認証済みユーザーが共有リンクを取得できる最大回数。デフォルト: 60。', '# SHARE_USER_MAX=60'],
@@ -1897,13 +2045,41 @@ LibreChatは認証済みのAgent Events APIを公開していますが、認証�
     [
       'ENABLE_INSIGHTS',
       'boolean',
-      '必要な権限を持つ管理者が、MongoDBベースのInsightsダッシュボードを利用できるようにします。デフォルト: false。',
+      'MongoDB ベースの Insights ダッシュボードを有効にします。デフォルト: false。',
       'ENABLE_INSIGHTS=false',
     ],
   ]}
 />
 
-有効にすると、Insightsは`ADMIN`ロールに加え、`access:admin`および`read:insights`権限を持つアカウントにのみ制限されます。クエリはテナント単位でスコープされ、永続化されたアクティビティメトリクスと最近の会話メタデータを公開します。メトリクスの定義とアクセス権の詳細については、[Admin Insights](/docs/features/insights)を参照してください。
+有効にすると、管理者および `read:insights` 権限を持つアカウントはすべてのエージェントを確認でき、その他のユーザーは **View insights** を付与されたエージェントのみを確認できます。クエリはテナント単位でスコープされ、永続化されたアクティビティメトリクスと最近の会話のメタデータを表示します。メトリクスの定義とアクセスの詳細については、[Admin Insights](/docs/features/insights) を参照してください。
+
+### 監査ログ [#audit-log]
+
+<OptionTable
+  options={[
+    [
+      'AUDIT_LOG_FAIL_CLOSED',
+      'boolean',
+      'システムの権限付与とリソース共有は、有効になる前に監査されます。true に設定すると、監査できない権限付与または権限拡大の変更は失敗し、何も変更されません。取り消しは監査の停止によってブロックされることはありません。false に設定すると、すべての変更を適用し、監査の失敗はログに記録するだけになります。デフォルト: システムの権限付与、リソース共有、監査ログのエクスポート、コードペアリングについては true。管理者の設定上書き、グループ、ロールの変更は、この値が正確に true に設定されている場合にのみフェイルクローズ（安全側で失敗）します。未設定の場合は、変更を適用し、監査の失敗をログに記録します。',
+      '# AUDIT_LOG_FAIL_CLOSED=true',
+    ],
+  ]}
+/>
+
+### Config Override 環境変数の参照 [#config-override-environment-references]
+
+管理 API を通じて書き込まれる設定オーバーライド（ロール、グループ、ユーザープロファイル、およびベースプロファイル）は、`librechat.yaml` ですでに参照されている `${ENV_VAR}` 名、`OPENAI_API_KEY` や `ANTHROPIC_API_KEY` などの組み込みエンドポイント認証情報、そして以下に挙げる名前のみを参照できます。それ以外の参照は書き込み時に拒否され、実行時には何にも解決されません。`interface` および `modelSpecs` セクション、ならびに以下のプロンプトフィールドでは参照のチェックは行われず、記述されたとおりに使用されます。対象となるのは、各エンドポイントの `titlePrompt`、`titlePromptTemplate`、`activityPrompt`、`activityPhasePrompt` および `reasoningLabelPrompt`、`summarization.prompt` および `summarization.updatePrompt`、`memory.agent.instructions`、そして `webSearch.firecrawlOptions.changeTrackingOptions.prompt` です。これら以外の場所にあるプロンプトキーはチェックされます。オーバーライドの階層構造については、[管理パネル](/docs/features/admin_panel) を参照してください。
+
+<OptionTable
+  options={[
+    [
+      'CONFIG_OVERRIDE_ENV_ALLOWLIST',
+      'string',
+      'admin config overrides が参照できる追加の環境変数名のカンマ区切りまたはスペース区切りのリスト。',
+      '# CONFIG_OVERRIDE_ENV_ALLOWLIST=MY_GATEWAY_KEY,MY_GATEWAY_URL',
+    ],
+  ]}
+/>
 
 ### エージェント会話コントロール [#agent-conversation-controls]
 
@@ -2274,6 +2450,12 @@ LibreChatは、メールのリクエストと、そのメールから取得し�
       '# EMAIL_CHANGE_VIOLATION_SCORE=1',
     ],
     [
+      'EMAIL_CHANGE_SUBMISSION_IP_VIOLATION_SCORE',
+      'integer',
+      'メールアドレス変更の確認リンクを開く回数が、IPアドレスごとの上限を超えた場合のスコア。デフォルト: 1。',
+      '# EMAIL_CHANGE_SUBMISSION_IP_VIOLATION_SCORE=1',
+    ],
+    [
       'TWO_FACTOR_TEMP_VIOLATION_SCORE',
       'integer',
       '二要素認証コードの試行回数制限を超えた場合のスコア。デフォルトは LOGIN_VIOLATION_SCORE です。',
@@ -2404,18 +2586,12 @@ LibreChatは、メールのリクエストと、そのメールから取得し�
 
 > 注: これらは `librechat.yaml` の `rateLimits.conversationsImport` セクションからも設定可能です。`librechat.yaml` で設定された値は、環境変数よりも優先されます。
 
-> 注: 両方の制限機能を利用することも可能ですが、デフォルトではIPによる制限のみが適用されます。
+> 注意: IP 制限とユーザー制限は常に有効です。以下の `MAX` 変数と `WINDOW` 変数で調整できます。
 
 ##### IP Limiter: [#ip-limiter-1]
 
 <OptionTable
   options={[
-    [
-      'LIMIT_IMPORT_IP',
-      'boolean',
-      '`IMPORT_IP_WINDOW` ごとに1つのIPが実行できる会話インポートの回数を制限するかどうか。',
-      'LIMIT_IMPORT_IP=true',
-    ],
     [
       'IMPORT_IP_MAX',
       'integer',
@@ -2426,7 +2602,7 @@ LibreChatは、メールのリクエストと、そのメールから取得し�
       'IMPORT_IP_WINDOW',
       'integer',
       '`IMPORT_IP_MAX` インポートの期間を分単位で決定します。',
-      'IMPORT_IP_WINDOW=1',
+      'IMPORT_IP_WINDOW=15',
     ],
   ]}
 />
@@ -2435,12 +2611,6 @@ LibreChatは、メールのリクエストと、そのメールから取得し�
 
 <OptionTable
   options={[
-    [
-      'LIMIT_IMPORT_USER',
-      'boolean',
-      '`IMPORT_USER_WINDOW` ごとにユーザーが実行できる会話インポートの回数を制限するかどうか。',
-      'LIMIT_IMPORT_USER=false',
-    ],
     [
       'IMPORT_USER_MAX',
       'integer',
@@ -2451,7 +2621,7 @@ LibreChatは、メールのリクエストと、そのメールから取得し�
       'IMPORT_USER_WINDOW',
       'integer',
       '`IMPORT_USER_MAX` インポートの時間枠を分単位で指定します。',
-      'IMPORT_USER_WINDOW=1',
+      'IMPORT_USER_WINDOW=15',
     ],
   ]}
 />
@@ -2460,18 +2630,12 @@ LibreChatは、メールのリクエストと、そのメールから取得し�
 
 ユーザーが会話をフォークできる頻度を制限し、悪用を防ぎます。
 
-> 注: 両方の制限機能を利用することも可能ですが、デフォルトではIPによる制限のみが適用されます。
+> 注意: IP 制限とユーザー制限は常に有効です。以下の `MAX` 変数と `WINDOW` 変数で調整できます。
 
 ##### IP Limiter: [#ip-limiter-2]
 
 <OptionTable
   options={[
-    [
-      'LIMIT_FORK_IP',
-      'boolean',
-      'IPアドレスごとに `FORK_IP_WINDOW` 内で作成できる会話フォークの数を制限するかどうか。',
-      'LIMIT_FORK_IP=true',
-    ],
     [
       'FORK_IP_MAX',
       'integer',
@@ -2491,12 +2655,6 @@ LibreChatは、メールのリクエストと、そのメールから取得し�
 
 <OptionTable
   options={[
-    [
-      'LIMIT_FORK_USER',
-      'boolean',
-      '`FORK_USER_WINDOW` ごとにユーザーが作成できる会話フォークの数を制限するかどうか。',
-      'LIMIT_FORK_USER=false',
-    ],
     [
       'FORK_USER_MAX',
       'integer',
@@ -2755,6 +2913,12 @@ LibreChatは、メールのリクエストと、そのメールから取得し�
       'ENFORCE_TWO_FACTOR_AUTHENTICATION=false',
     ],
     [
+      'TWO_FACTOR_BACKUP_CODE_FORMAT',
+      'string',
+      '新たに発行される二要素認証のリカバリーコードの形式：強力（128ビット、ソルトあり）またはレガシー（32ビット、ソルトなし）。デフォルトは強力。レガシーは、強力なコードを読み取れない旧バックエンドがまだ稼働している間に限り、ローリングアップグレード中にすべてのレプリカで使用します。既存のレガシーコードは、ユーザーが再生成するまで引き続き使用できます。',
+      '# TWO_FACTOR_BACKUP_CODE_FORMAT=strong',
+    ],
+    [
       'MIN_PASSWORD_LENGTH',
       'number',
       'ユーザー認証の最小パスワード長。LDAP認証を使用する場合、LDAPサーバー側でパスワードポリシーが管理されるため、ローカルのパスワード検証をバイパスするにはこれを1に設定することをお勧めします。',
@@ -3010,6 +3174,30 @@ LibreChatは、メールのリクエストと、そのメールから取得し�
       'OPENID_AUDIENCE=https://api.librechat.com',
     ],
     [
+      'OPENID_REFRESH_AUDIENCE',
+      'string',
+      'OpenID のリフレッシュトークンリクエストで使用する audience パラメータです。Auth0 のカスタム API など一部のプロバイダーでは、リフレッシュ時に意図したアクセストークンの audience を維持するためにこの値が必要です。通常は OPENID_AUDIENCE と一致します。',
+      'OPENID_REFRESH_AUDIENCE=',
+    ],
+    [
+      'OPENID_AVATAR_AUTHORIZED_ORIGINS',
+      'string',
+      'カンマまたは空白で区切られた追加のオリジンです。プロフィール画像を取得する際に、LibreChat はこれらのオリジンにユーザーのアクセストークンを送信します。発行者(issuer)および userinfo エンドポイントのオリジンは、常に許可されます。',
+      '# OPENID_AVATAR_AUTHORIZED_ORIGINS=https://avatars.example.com',
+    ],
+    [
+      'OPENID_DISCOVERY_RETRY_ATTEMPTS',
+      'number',
+      '起動時のディスカバリー試行回数(0〜100)。0に設定すると、バックグラウンドでの再試行のみを使用します。デフォルト: 1。librechat.yaml の registration.openidDiscovery.startupAttempts が優先されます。',
+      '# OPENID_DISCOVERY_RETRY_ATTEMPTS=1',
+    ],
+    [
+      'OPENID_DISCOVERY_RETRY_DELAY_MS',
+      'number',
+      '起動時およびバックグラウンドでのディスカバリー再試行の間隔（ミリ秒）。100から3600000まで指定可能。デフォルト: 5000。librechat.yaml の registration.openidDiscovery.retryDelayMs が優先されます。',
+      '# OPENID_DISCOVERY_RETRY_DELAY_MS=5000',
+    ],
+    [
       'OPENID_REQUIRED_ROLE',
       'string',
       '検証に必要なロール。単一のロール、またはカンマ区切りで複数のロールを指定できます。複数のロールが指定された場合、ユーザーはいずれかのロール（OR論理）を持っている必要があります。',
@@ -3206,14 +3394,14 @@ LibreChatは、ユーザー認証状態を管理するために、OpenID Connect
     [
       'OPENID_JWKS_URL_CACHE_ENABLED',
       'boolean',
-      '署名キー検証結果のキャッシュを有効にする。',
+      '署名キーの検証結果のキャッシュを有効にします。未設定の場合は有効になります。true 以外の値を設定すると無効になります。',
       'OPENID_JWKS_URL_CACHE_ENABLED=true',
     ],
     [
       'OPENID_JWKS_URL_CACHE_TIME',
       'number',
-      'キャッシュの有効期間（ミリ秒単位）（デフォルト: 600000 ms / 10分）',
-      'OPENID_JWKS_URL_CACHE_TIME=600000',
+      'キャッシュ期間（ミリ秒）。デフォルト: 60000（1分）。',
+      'OPENID_JWKS_URL_CACHE_TIME=60000',
     ],
     [
       'OPENID_ON_BEHALF_FLOW_FOR_USERINFO_REQUIRED',
@@ -3475,8 +3663,8 @@ OpenID が有効な場合、SAML 認証は自動的に無効になります。
     ],
     [
       'LDAP_TLS_REJECT_UNAUTHORIZED',
-      'string',
-      'LDAP TLS検証',
+      'boolean',
+      'LDAP_CA_CERT_PATHに対してLDAPサーバー証明書を検証するかどうか。LDAP_CA_CERT_PATHが設定されている場合にのみ適用されます。その場合、未設定のままだと証明書の検証が無効になるため、trueに設定してください。LDAP_CA_CERT_PATHがない場合は、Node.jsのデフォルトの検証が適用されます。',
       'LDAP_TLS_REJECT_UNAUTHORIZED=true',
     ],
     [
@@ -3716,7 +3904,7 @@ Mailgunが設定されていない場合、LibreChatはSMTP設定にフォール
     [
       'AZURE_STORAGE_PUBLIC_ACCESS',
       'boolean',
-      'BLOBのパブリックアクセスを有効にします。デフォルト: false。',
+      'アップロードされたBlobを一般公開で読み取り可能にします。デフォルト: true。Blobを非公開にするには false に設定します。',
       'AZURE_STORAGE_PUBLIC_ACCESS=false',
     ],
     [
@@ -3851,6 +4039,12 @@ LibreChatがインラインプレビュー抽出をスキップしてダウン�
       'コード実行アーティファクトのインラインプレビュー（DOCX、XLSX、CSV、PPTX、POTX、テキスト、PDF形式のファイルなど）におけるソースファイルの最大サイズ（バイト単位）。デフォルト：2097152（2 MiB）。レンダリングされたHTMLプレビューには別途上限が設けられているため、非常にリッチなファイルは、この値以下であってもプレビューがスキップされる場合があります。',
       '# FILE_PREVIEW_MAX_EXTRACT_BYTES=2097152',
     ],
+    [
+      'OFFICE_PREVIEW_DISABLE_CDN',
+      'boolean',
+      'エアギャップ環境やフィルタリングされたネットワークでは true に設定します。DOCX のプレビューを cdn.jsdelivr.net からレンダラーを読み込む代わりにサーバー側でレンダリングします。true、1、yes を指定できます。デフォルト: false。',
+      '# OFFICE_PREVIEW_DISABLE_CDN=true',
+    ],
   ]}
 />
 
@@ -3889,8 +4083,8 @@ LibreChatがインラインプレビュー抽出をスキップしてダウン�
     [
       'MCP_CONNECTION_CHECK_TTL',
       'number',
-      '高コストな検証を避けるため、このミリ秒数だけ接続ステータスのチェックをキャッシュします。',
-      'MCP_CONNECTION_CHECK_TTL=30000',
+      '接続ステータスの確認結果を、この時間（ミリ秒）の間キャッシュして高コストな検証を回避します。デフォルト: 60000。',
+      'MCP_CONNECTION_CHECK_TTL=60000',
     ],
     [
       'MCP_TOOLS_LIST_MAX_PAGES',
@@ -3915,6 +4109,117 @@ LibreChatがインラインプレビュー抽出をスキップしてダウン�
       'number',
       'GET以外のストリーミング可能なHTTP MCPレスポンスにおいて、1つのSSE行で許可される最大バイト数。0に設定すると無効になります。デフォルト：5242880 (5 MiB)。',
       '# MCP_STREAMABLE_HTTP_MAX_LINE_BYTES=5242880',
+    ],
+    [
+      'MCP_TOOLS_LIST_MAX_TOOLS',
+      'number',
+      'ページ分割された tools/list レスポンスから保持するツールの最大総数。最小値は 1 に制限されます。デフォルト: 1000。',
+      '# MCP_TOOLS_LIST_MAX_TOOLS=1000',
+    ],
+    [
+      'MCP_TOOLS_LIST_MAX_BYTES',
+      'number',
+      'ページネーションされた tools/list レスポンスから保持される JSON の概算最大バイト数。最小値は 1 に制限されます。デフォルト: 5242880 (5 MiB)。',
+      '# MCP_TOOLS_LIST_MAX_BYTES=5242880',
+    ],
+    [
+      'MCP_TOOLS_LIST_TIMEOUT_MS',
+      'number',
+      'ページネーションされた tools/list の検出に許容される最大経過時間（ミリ秒）。最小値は 1 に制限されます。デフォルト: 30000。',
+      '# MCP_TOOLS_LIST_TIMEOUT_MS=30000',
+    ],
+    [
+      'MCP_USER_CONNECTION_IDLE_TIMEOUT',
+      'number',
+      'MCP接続がアイドル状態のままこの時間(ミリ秒)を超えると、ユーザーごとのMCP接続は切断されます。デフォルト: 900000(15分)。',
+      '# MCP_USER_CONNECTION_IDLE_TIMEOUT=900000',
+    ],
+    [
+      'MCP_REGISTRY_CACHE_TTL',
+      'number',
+      'MCPサーバーレジストリキャッシュのTTL(ミリ秒)。複数インスタンスで実行している場合、インスタンス間の古いデータの残存時間は、この値の最大2倍に達することがあります。0に設定するとローカルスナップショットが無効になり、すべての読み取りがRedisに対して行われます。デフォルト: 5000。',
+      '# MCP_REGISTRY_CACHE_TTL=5000',
+    ],
+    [
+      'MCP_INIT_TIMEOUT_MS',
+      'number',
+      '起動時に MCP サーバーが初期化を完了するまでに許容される時間（ミリ秒）。デフォルト: 30000。',
+      '# MCP_INIT_TIMEOUT_MS=30000',
+    ],
+    [
+      'MCP_INIT_FOLLOWER_RETRY_MS',
+      'number',
+      'マルチインスタンス構成において、リーダーインスタンスがMCPサーバーの初期化を完了したかどうかを、リーダー以外のインスタンスが確認する間隔(ミリ秒)。デフォルト: 3000。',
+      '# MCP_INIT_FOLLOWER_RETRY_MS=3000',
+    ],
+    [
+      'MCP_INIT_FOLLOWER_MAX_WAIT_MS',
+      'number',
+      'リーダーではないインスタンスが、リーダーによるMCP初期化の完了を待つ最大時間(ミリ秒)です。待機しない場合は0に設定します。デフォルト: MCP_INIT_TIMEOUT_MS と MCP_INIT_FOLLOWER_RETRY_MS の合計。',
+      '# MCP_INIT_FOLLOWER_MAX_WAIT_MS=33000',
+    ],
+    [
+      'MCP_IMAGE_DATA_MAX_BYTES',
+      'number',
+      'MCPツールの結果に含まれるインライン画像データの最大サイズ（バイト単位）。これを超える結果は拒否されます。リモート画像URLはカウントされません。デフォルト: 10485760（10 MiB）。',
+      '# MCP_IMAGE_DATA_MAX_BYTES=10485760',
+    ],
+    [
+      'MCP_SANDBOX_FRAME_ANCESTORS',
+      'string',
+      'MCPアプリのサンドボックスフレームの埋め込みを許可するオリジンのカンマ区切りリスト。未設定の場合、埋め込みは拒否されます(frame-ancestors none)。',
+      '# MCP_SANDBOX_FRAME_ANCESTORS=https://chat.example.com',
+    ],
+  ]}
+/>
+
+#### MCP接続サーキットブレーカー [#mcp-connection-circuit-breaker]
+
+LibreChat limits how often it reconnects to an MCP server so that a failing or flapping server cannot trigger a reconnect storm. Two independent checks apply. The cycle breaker trips after `MCP_CB_MAX_CYCLES` connect and disconnect cycles within `MCP_CB_CYCLE_WINDOW_MS`, then refuses new connection attempts for `MCP_CB_CYCLE_COOLDOWN_MS`. The failure backoff starts once `MCP_CB_MAX_FAILED_ROUNDS` consecutive failed connection rounds occur within `MCP_CB_FAILED_WINDOW_MS`; retries then wait an exponentially growing delay that starts at `MCP_CB_BASE_BACKOFF_MS` and is capped at `MCP_CB_MAX_BACKOFF_MS`.
+
+<OptionTable
+  options={[
+    [
+      'MCP_CB_MAX_CYCLES',
+      'number',
+      '接続と切断のサイクルを、ブレーカーが作動するまでにサイクルウィンドウ内で許容する回数。デフォルト: 7。',
+      '# MCP_CB_MAX_CYCLES=7',
+    ],
+    [
+      'MCP_CB_CYCLE_WINDOW_MS',
+      'number',
+      'サイクルを計数するためのスライディングウィンドウ（ミリ秒）。デフォルト: 45000。',
+      '# MCP_CB_CYCLE_WINDOW_MS=45000',
+    ],
+    [
+      'MCP_CB_CYCLE_COOLDOWN_MS',
+      'number',
+      'サイクルブレーカーが作動した後のクールダウン時間(ミリ秒)。デフォルト: 15000。',
+      '# MCP_CB_CYCLE_COOLDOWN_MS=15000',
+    ],
+    [
+      'MCP_CB_MAX_FAILED_ROUNDS',
+      'number',
+      '接続失敗が連続して許容される回数（バックオフが開始されるまで）。デフォルト: 3。',
+      '# MCP_CB_MAX_FAILED_ROUNDS=3',
+    ],
+    [
+      'MCP_CB_FAILED_WINDOW_MS',
+      'number',
+      '失敗ラウンドをカウントするためのスライディングウィンドウ(ミリ秒)。デフォルト: 120000。',
+      '# MCP_CB_FAILED_WINDOW_MS=120000',
+    ],
+    [
+      'MCP_CB_BASE_BACKOFF_MS',
+      'number',
+      '失敗ラウンドのしきい値に達した後のバックオフの基本時間（ミリ秒）。デフォルト: 30000。',
+      '# MCP_CB_BASE_BACKOFF_MS=30000',
+    ],
+    [
+      'MCP_CB_MAX_BACKOFF_MS',
+      'number',
+      '指数バックオフの最大バックオフ時間（ミリ秒）。デフォルト: 300000。',
+      '# MCP_CB_MAX_BACKOFF_MS=300000',
     ],
   ]}
 />
@@ -3972,13 +4277,13 @@ Redisは、LibreChatに大幅なパフォーマンスの向上をもたらし、
     [
       'REDIS_USERNAME',
       'string',
-      '認証用のRedisユーザー名。URIと両方指定された場合は、URI内のユーザー名よりも優先されます。',
+      'Redis認証用のユーザー名。REDIS_URIにユーザー名が含まれていない場合にのみ使用されます。URI内にユーザー名がある場合はそちらが優先されます。',
       '# REDIS_USERNAME=your_redis_username',
     ],
     [
       'REDIS_PASSWORD',
       'string',
-      '認証用のRedisパスワード。両方が指定されている場合、URI内のパスワードよりも優先されます。',
+      'Redis認証用のパスワード。REDIS_URIにパスワードが含まれていない場合にのみ使用されます。URI内にパスワードが指定されている場合は、そちらが優先されます。',
       '# REDIS_PASSWORD=your_redis_password',
     ],
     [
@@ -4034,6 +4339,48 @@ Redisは、LibreChatに大幅なパフォーマンスの向上をもたらし、
       'number',
       'ioredisソケットのTCP keepaliveアイドル遅延（ミリ秒単位）。デフォルトは10000。0に設定するとカーネルのデフォルト値が使用されます。',
       '# REDIS_KEEP_ALIVE=10000',
+    ],
+    [
+      'REDIS_CONNECT_TIMEOUT',
+      'number',
+      '接続タイムアウト(ミリ秒)。デフォルト: 10000。',
+      '# REDIS_CONNECT_TIMEOUT=10000',
+    ],
+    [
+      'REDIS_RETRY_MAX_ATTEMPTS',
+      'number',
+      '再接続の最大試行回数。無制限に試行する場合は 0 に設定します。デフォルト: 10。',
+      '# REDIS_RETRY_MAX_ATTEMPTS=10',
+    ],
+    [
+      'REDIS_RETRY_MAX_DELAY',
+      'number',
+      '再接続試行の最大遅延時間(ミリ秒)。デフォルト: 3000。',
+      '# REDIS_RETRY_MAX_DELAY=3000',
+    ],
+    [
+      'REDIS_ENABLE_OFFLINE_QUEUE',
+      'boolean',
+      '接続が切断されている間もコマンドを即座に失敗させるのではなく、キューに入れます。デフォルト: true。',
+      '# REDIS_ENABLE_OFFLINE_QUEUE=true',
+    ],
+    [
+      'REDIS_SCAN_COUNT',
+      'number',
+      'Redis SCAN操作でパターンによりキーをスキャンする際のCOUNTヒント。値が大きいほど往復回数は減りますが、呼び出しごとのメモリ使用量と待機時間が増加します。デフォルト: 1000。',
+      '# REDIS_SCAN_COUNT=1000',
+    ],
+    [
+      'REDIS_DELETE_CHUNK_SIZE',
+      'number',
+      'Redis DEL操作における1バッチあたりの削除キー数です。クラスターモードでは、キーはこのサイズの並列チャンクごとに個別に削除されます。値を小さくするとメモリ使用量は減りますが、ラウンドトリップ回数が増えます。デフォルト: 1000。',
+      '# REDIS_DELETE_CHUNK_SIZE=1000',
+    ],
+    [
+      'STREAM_KEEP_COMPLETED_JOBS',
+      'boolean',
+      '完了した生成ストリームジョブを、生成終了時に削除せず保持します。デフォルト: false。',
+      '# STREAM_KEEP_COMPLETED_JOBS=false',
     ],
     [
       'FORCED_IN_MEMORY_CACHE_NAMESPACES',

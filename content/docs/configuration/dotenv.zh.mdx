@@ -76,6 +76,8 @@ description: 配置应用程序环境的综合指南，使用 `.env` 文件。�
 
 值必须是非负的安全整数；无效值将被忽略。当同时启用标头超时和请求超时时，如果标头超时设置高于请求超时，LibreChat 会将其限制为请求超时值。Node 会在 30 秒的连接扫描中检查标头和请求是否过期，因此低于 `30000` 的值不会以精确的毫秒精度执行。Bun 目前接受这些设置但不强制执行；当 API 服务器在 Bun 下运行时，LibreChat 会记录一条警告。
 
+`.env.example` 中的 `NODE_MAX_OLD_SPACE_SIZE` 是 Docker 构建参数，不会在运行时更改堆内存大小。若要设置 Node.js 的堆内存上限，请使用 `NODE_OPTIONS`，例如 `NODE_OPTIONS="--max-old-space-size=6144"`。
+
 ### Trust proxy [#trust-proxy]
 
 使用距离 Express 应用程序最多 n 跳的地址。
@@ -383,7 +385,7 @@ LibreChat 具有内置的中央日志记录功能，更多信息请参阅 [Loggi
 
 #### 日志文件 [#log-files]
 
-- 调试日志默认处于启用状态，这对开发至关重要。
+- 调试日志文件仅在 `DEBUG_LOGGING=true` 时写入,建议在开发环境中以及报告问题时启用。
 - 若要报告问题，请复现错误并提交来自 `./api/logs/debug-%DATE%.log` 的日志至：**[LibreChat GitHub Issues](https://github.com/LibreChat-AI/LibreChat/issues)**
 - 错误日志存储在相同的位置。
 
@@ -391,7 +393,7 @@ LibreChat 具有内置的中央日志记录功能，更多信息请参阅 [Loggi
 
 <OptionTable
   options={[
-    ['DEBUG_LOGGING', 'boolean', '保持调试日志处于活动状态。', 'DEBUG_LOGGING=true'],
+    ['DEBUG_LOGGING', 'boolean', '将调试日志写入文件。仅当此项为 true 时才会创建调试日志文件。', 'DEBUG_LOGGING=true'],
     [
       'DEBUG_CONSOLE',
       'boolean',
@@ -421,6 +423,18 @@ LibreChat 具有内置的中央日志记录功能，更多信息请参阅 [Loggi
       'number',
       '配置 JSON 控制台/stdout 日志中字符串值的截断长度。默认值：255。',
       '# CONSOLE_JSON_STRING_LENGTH=255',
+    ],
+    [
+      'DEBUG_MESSAGE_LENGTH',
+      'number',
+      '调试日志消息在被截断之前的最大长度。默认值:150。',
+      '# DEBUG_MESSAGE_LENGTH=150',
+    ],
+    [
+      'LOG_REDACTION_MAX_NODES',
+      'number',
+      '一条日志记录中可进行脱敏处理的最大值数量(对象,以及按长度加权计算的字符串)。超出部分将被替换,以防止超宽的数据负载阻塞日志记录。默认值:5000。',
+      '# LOG_REDACTION_MAX_NODES=5000',
     ],
     [
       'LIBRECHAT_LOG_DIR',
@@ -484,7 +498,7 @@ LibreChat 具有内置的中央日志记录功能，更多信息请参阅 [Loggi
     ['LANGFUSE_FANOUT_CENTRAL_BASE_URL', 'string', '网关使用的中央 Langfuse 基础 URL。', '# LANGFUSE_FANOUT_CENTRAL_BASE_URL=https://cloud.langfuse.com'],
     ['LANGFUSE_FANOUT_CENTRAL_AUTH_HEADER', 'string', '用于中央追踪和媒体导出的完整 Basic 授权标头。', '# LANGFUSE_FANOUT_CENTRAL_AUTH_HEADER=Basic <base64-public-colon-secret>'],
     ['LANGFUSE_FANOUT_CENTRAL_MEDIA_EXPORT_DISABLED', 'boolean', '在不禁用中心追踪的情况下禁用中心媒体扇出。', '# LANGFUSE_FANOUT_CENTRAL_MEDIA_EXPORT_DISABLED=false'],
-    ['LANGFUSE_FANOUT_TENANT_DESTINATIONS', 'string', '启动时允许使用的以逗号分隔的目标键和基础 URL 映射。', '# LANGFUSE_FANOUT_TENANT_DESTINATIONS=eu=https://cloud.langfuse.com,us=https://us.cloud.langfuse.com'],
+    ['LANGFUSE_FANOUT_TENANT_DESTINATIONS', 'string', '启动时允许使用的以逗号分隔的目标键和基础 URL 映射。', '# LANGFUSE_FANOUT_TENANT_DESTINATIONS=eu=https://cloud.langfuse.com,us=https://us.cloud.langfuse.com,jp=https://jp.cloud.langfuse.com'],
     ['LANGFUSE_FANOUT_TRACE_DESTINATION_KEYS', 'string', '收集器路由配置支持的目标键。', '# LANGFUSE_FANOUT_TRACE_DESTINATION_KEYS=eu,us,jp'],
     ['LANGFUSE_FANOUT_PUBLIC_URL', 'string', '用于创建一次性媒体上传 URL 的网关基础 URL。', '# LANGFUSE_FANOUT_PUBLIC_URL=http://langfuse-fanout-collector:4318'],
     ['LANGFUSE_FANOUT_TRACE_COLLECTOR_URL', 'string', '内部网关到收集器的追踪 endpoint。', '# LANGFUSE_FANOUT_TRACE_COLLECTOR_URL=http://langfuse-fanout-otel:4319'],
@@ -667,16 +681,46 @@ LibreChat 可以将浏览器真实用户监控 (RUM) 遥测数据发布到兼容
       '# RUM_PROXY_TIMEOUT_MS=10000',
     ],
     [
+      'RUM_PROXY_BODY_LIMIT',
+      'string',
+      '代理服务器接受的最大请求体大小,仅在身份验证和速率限制之后解析。默认值:3mb。',
+      '# RUM_PROXY_BODY_LIMIT=3mb',
+    ],
+    [
+      'RUM_PROXY_USER_MAX',
+      'number',
+      '每个已认证用户在 RUM_PROXY_USER_WINDOW 时间窗口内的最大遥测请求数。默认值:240。',
+      '# RUM_PROXY_USER_MAX=240',
+    ],
+    [
+      'RUM_PROXY_USER_WINDOW',
+      'number',
+      '用于 RUM_PROXY_USER_MAX 的时间窗口(以分钟为单位)。默认值:1。',
+      '# RUM_PROXY_USER_WINDOW=1',
+    ],
+    [
       'RUM_TRACE_PROPAGATION_TARGETS',
       'string',
       '以逗号分隔的应接收 traceparent 标头的第一方 HTTPS 源或 URL。',
       '# RUM_TRACE_PROPAGATION_TARGETS=https://api.example.com',
     ],
     [
+      'RUM_SESSION_REPLAY_ENABLED',
+      'boolean',
+      '启用浏览器会话回放。回放可能会收集敏感的提示词、响应或负载。在 librechat.yaml 中为 telemetry.rum.sessionReplay.enabled 设置的值优先生效。默认值:false。',
+      '# RUM_SESSION_REPLAY_ENABLED=false',
+    ],
+    [
       'RUM_DISABLE_REPLAY',
       'boolean',
-      '禁用浏览器会话重放。默认值：true。',
+      '用于浏览器会话回放的旧版开关,仅在未设置 RUM_SESSION_REPLAY_ENABLED 时使用。除非明确设置为 false,否则回放保持关闭。建议优先使用 RUM_SESSION_REPLAY_ENABLED。',
       '# RUM_DISABLE_REPLAY=true',
+    ],
+    [
+      'RUM_CLIENT_LOGS',
+      'boolean',
+      '在代理模式下，将浏览器客户端日志的警告和错误以 OTLP 日志形式导出。默认值：false。',
+      '# RUM_CLIENT_LOGS=false',
     ],
     [
       'RUM_CONSOLE_CAPTURE',
@@ -820,7 +864,7 @@ LibreChat 可以在启动时从直接子目录中加载实验性的 Agent Plugin
       'ENDPOINTS',
       'string',
       '以逗号分隔的可用 endpoint 列表。',
-      '# ENDPOINTS=openAI,agents,assistants,gptPlugins,azureOpenAI,google,anthropic,bingAI,custom',
+      '# ENDPOINTS=openAI,assistants,azureOpenAI,google,anthropic',
     ],
     [
       'PROXY',
@@ -980,7 +1024,7 @@ LibreChat 可以在启动时从直接子目录中加载实验性的 Agent Plugin
       'ANTHROPIC_MODELS',
       'string',
       '要使用的 Anthropic 模型列表，以逗号分隔。',
-      '# ANTHROPIC_MODELS=claude-fable-5-1,claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,claude-opus-4-6,claude-opus-4-20250514,claude-3-7-sonnet-20250219,claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022',
+      '# ANTHROPIC_MODELS=claude-fable-5-1,claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,claude-opus-4-6,claude-opus-4-20250514,claude-3-7-sonnet-20250219,claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022,claude-3-opus-20240229,claude-3-sonnet-20240229,claude-3-haiku-20240307',
     ],
     [
       'ANTHROPIC_REVERSE_PROXY',
@@ -989,17 +1033,13 @@ LibreChat 可以在启动时从直接子目录中加载实验性的 Agent Plugin
       '# ANTHROPIC_REVERSE_PROXY=',
     ],
     [
-      'ANTHROPIC_TITLE_MODEL',
+      'ANTHROPIC_VERSION',
       'string',
-      '已弃用：用于 Anthropic 标题生成的模型。',
-      '# ANTHROPIC_TITLE_MODEL=claude-3-haiku-20240307',
+      '用于获取 Anthropic 模型列表时发送的 anthropic-version 请求头的值。默认值:2023-06-01。',
+      '# ANTHROPIC_VERSION=2023-06-01',
     ],
   ]}
 />
-
-- `ANTHROPIC_TITLE_MODEL` 现已弃用，并将在未来版本中移除。请改用 `librechat.yaml` 配置文件中的 [`titleModel` 端点设置](/docs/configuration/librechat_yaml/object_structure/shared_endpoint_settings#titlemodel)。
-
-> **注意：** 必须与 Anthropic endpoint 兼容。此外，Claude 2 和 Claude 3 模型在此任务中表现最佳，其中 `claude-3-haiku` 模型最为经济实惠。
 
 Claude Fable 5.1 和 Fable 5 已包含在默认的 Anthropic 模型列表中。Fable/Mythos 类模型在 LibreChat 中使用现代 Anthropic 行为：支持 1M 上下文、自适应思维（adaptive thinking）支持、提示词缓存（prompt caching）支持，以及用于汇总或省略推理输出的 `thinkingDisplay` 处理。
 
@@ -1069,10 +1109,16 @@ Claude Fable 5.1 和 Fable 5 已包含在默认的 Anthropic 模型列表中。F
       '# BEDROCK_AWS_BEARER_TOKEN=your_bedrock_api_key',
     ],
     [
+      'BEDROCK_REVERSE_PROXY',
+      'string',
+      '用于 Bedrock API 调用的反向代理主机（不含 https:// 协议头），有无 PROXY 均可使用。',
+      '# BEDROCK_REVERSE_PROXY=bedrock-proxy.example.com',
+    ],
+    [
       'BEDROCK_AWS_MODELS',
       'string',
       '以逗号分隔的 Bedrock 模型 ID 列表。如果省略，则包含所有已知的受支持模型。',
-      '# BEDROCK_AWS_MODELS=global.anthropic.claude-fable-5-1,global.anthropic.claude-fable-5,global.anthropic.claude-opus-5,global.anthropic.claude-opus-4-8,global.anthropic.claude-opus-4-7,global.anthropic.claude-sonnet-5,global.anthropic.claude-sonnet-4-6,meta.llama3-1-8b-instruct-v1:0',
+      '# BEDROCK_AWS_MODELS=global.anthropic.claude-fable-5-1,global.anthropic.claude-fable-5,global.anthropic.claude-opus-5,global.anthropic.claude-opus-4-8,global.anthropic.claude-opus-4-7,global.anthropic.claude-sonnet-5,global.anthropic.claude-sonnet-4-6,global.anthropic.claude-opus-4-6-v1,global.anthropic.claude-haiku-4-5-20251001-v1:0,meta.llama3-1-8b-instruct-v1:0',
     ],
   ]}
 />
@@ -1080,29 +1126,6 @@ Claude Fable 5.1 和 Fable 5 已包含在默认的 Anthropic 模型列表中。F
 > **注意：** 您可以省略访问密钥以使用默认的 AWS 凭证链（环境变量、SSO 凭证、共享凭证文件或 EC2/ECS 实例元数据服务）。有关更多详细信息，请参阅 [AWS Bedrock Setup](/docs/configuration/pre_configured_ai/bedrock)。
 
 Bedrock 上的 Claude Fable/Mythos 类模型仅支持推理配置文件（inference-profile）。请使用类似 `global.anthropic.claude-fable-5-1` 的配置文件 ID，并在调用它们之前在 Bedrock 控制台或数据保留 API（Data Retention API）中启用所需的 Anthropic 数据共享设置。
-
-### BingAI [#bingai]
-
-Bing，也用于 Sydney、越狱以及 Bing Image Creator
-
-<OptionTable
-  options={[
-    [
-      'BINGAI_TOKEN',
-      'string',
-      'Bing 访问令牌。留空则禁用。可设置为 "user_provided"，允许用户从 WebUI 提供自己的令牌。',
-      'BINGAI_TOKEN=user_provided',
-    ],
-    [
-      'BINGAI_HOST',
-      'string',
-      'Bing 主机 URL。保持注释状态以使用默认服务器。',
-      '# BINGAI_HOST=https://cn.bing.com',
-    ],
-  ]}
-/>
-
-注意：建议将其保留为 "user_provided" 并从 WebUI 提供令牌。
 
 ### Google [#google]
 
@@ -1120,7 +1143,13 @@ Bing，也用于 Sydney、越狱以及 Bing Image Creator
       'GOOGLE_SERVICE_KEY_FILE',
       'string',
       'Google 服务账号 JSON 密钥文件的路径、获取该文件的 URL，或字符串化的 JSON。用于 Vertex AI 身份验证（例如 OCR 功能）。',
-      'GOOGLE_SERVICE_KEY_FILE=/path/to/auth.json',
+      'GOOGLE_SERVICE_KEY_FILE=/path/to/service-account.json',
+    ],
+    [
+      'GOOGLE_CLOUD_PROJECT',
+      'string',
+      '用于 Vertex AI 的 Google Cloud 项目 ID。依次检查 VERTEX_PROJECT_ID 之后,再依次回退到 GCLOUD_PROJECT 和 GOOGLE_PROJECT_ID。',
+      '# GOOGLE_CLOUD_PROJECT=your-project-id',
     ],
     ['GOOGLE_REVERSE_PROXY', 'string', 'Google 反向代理 URL。', 'GOOGLE_REVERSE_PROXY='],
     [
@@ -1133,19 +1162,19 @@ Bing，也用于 Sydney、越狱以及 Bing Image Creator
       'GOOGLE_MODELS',
       'string',
       '可用的 Gemini API Google 模型，以逗号分隔。',
-      'GOOGLE_MODELS=gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-2.0-flash-lite',
+      'GOOGLE_MODELS=gemini-4-argon,gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-2.0-flash-lite',
     ],
     [
       'GOOGLE_MODELS',
       'string',
       '可用的 Vertex AI Google 模型，以逗号分隔。',
-      'GOOGLE_MODELS=gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash-001,gemini-2.0-flash-lite-001',
+      'GOOGLE_MODELS=gemini-4-argon,gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash-001,gemini-2.0-flash-lite-001',
     ],
     [
       'GOOGLE_TITLE_MODEL',
       'string',
       '已弃用：用于 Google 标题生成的模型。',
-      'GOOGLE_TITLE_MODEL=gemini-pro',
+      'GOOGLE_TITLE_MODEL=gemini-2.0-flash-lite-001',
     ],
     [
       'GOOGLE_LOC',
@@ -1168,37 +1197,39 @@ Bing，也用于 Sydney、越狱以及 Bing Image Creator
     [
       'GOOGLE_SAFETY_SEXUALLY_EXPLICIT',
       'string',
-      '针对性露骨内容的安全设置。选项包括 BLOCK_ALL、BLOCK_ONLY_HIGH、WARN_ONLY 和 OFF。',
+      '针对色情内容的安全设置。可选值为 BLOCK_NONE、BLOCK_ONLY_HIGH、BLOCK_MEDIUM_AND_ABOVE 和 BLOCK_LOW_AND_ABOVE。',
       'GOOGLE_SAFETY_SEXUALLY_EXPLICIT=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_HATE_SPEECH',
       'string',
-      '针对仇恨言论内容的安全设置。选项包括 BLOCK_ALL、BLOCK_ONLY_HIGH、WARN_ONLY 和 OFF。',
+      '仇恨言论内容的安全设置。可选值为 BLOCK_NONE、BLOCK_ONLY_HIGH、BLOCK_MEDIUM_AND_ABOVE 和 BLOCK_LOW_AND_ABOVE。',
       'GOOGLE_SAFETY_HATE_SPEECH=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_HARASSMENT',
       'string',
-      '针对骚扰内容的安全设置。选项包括 BLOCK_ALL、BLOCK_ONLY_HIGH、WARN_ONLY 和 OFF。',
+      '用于骚扰内容的安全设置。可选值为 BLOCK_NONE、BLOCK_ONLY_HIGH、BLOCK_MEDIUM_AND_ABOVE 和 BLOCK_LOW_AND_ABOVE。',
       'GOOGLE_SAFETY_HARASSMENT=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_DANGEROUS_CONTENT',
       'string',
-      '危险内容的安全设置。选项包括 BLOCK_ALL、BLOCK_ONLY_HIGH、WARN_ONLY 和 OFF。',
+      '危险内容的安全设置。可选值为 BLOCK_NONE、BLOCK_ONLY_HIGH、BLOCK_MEDIUM_AND_ABOVE 和 BLOCK_LOW_AND_ABOVE。',
       'GOOGLE_SAFETY_DANGEROUS_CONTENT=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_CIVIC_INTEGRITY',
       'string',
-      '公民诚信内容的安全性设置。选项包括 BLOCK_ALL、BLOCK_ONLY_HIGH、WARN_ONLY 和 OFF。',
+      '公民诚信内容的安全设置。可选值为 BLOCK_NONE、BLOCK_ONLY_HIGH、BLOCK_MEDIUM_AND_ABOVE 和 BLOCK_LOW_AND_ABOVE。',
       '# GOOGLE_SAFETY_CIVIC_INTEGRITY=BLOCK_ONLY_HIGH',
     ],
   ]}
 />
 
 自定义可用模型，以逗号分隔，**不要包含空格**。第一个模型将作为默认模型。留空或注释掉该项以使用内部设置。
+
+当未设置 `GOOGLE_SAFETY_*` 变量时,将使用提供商的默认值(对于 civic integrity 为 `BLOCK_NONE`),并且 Gemini 2.0、`gemini-1.5-flash-8b`、实验性模型以及 LearnLM 模型都会接收 `BLOCK_NONE`。设置 `GOOGLE_EXCLUDE_SAFETY_SETTINGS=true` 可完全省略安全设置。
 
 - `GOOGLE_TITLE_MODEL` 现已弃用，并将在未来版本中移除。请改用 `librechat.yaml` 配置文件中的 [`titleModel` Endpoint Setting](/docs/configuration/librechat_yaml/object_structure/shared_endpoint_settings#titlemodel)。
 
@@ -1247,7 +1278,7 @@ Gemini Image Generation 是一个适用于 Agents 的工具，同时支持 Gemin
       'OPENAI_MODELS',
       'string',
       '自定义可用模型，以逗号分隔，不要包含空格。第一个模型将作为默认模型。保持注释状态以使用内部设置。',
-      '# OPENAI_MODELS=gpt-5,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini,gpt-4.1,gpt-4.1-mini,gpt-4.1-nano,o3-mini,o1-pro,o1,gpt-4o,gpt-4o-mini',
+      '# OPENAI_MODELS=gpt-6-astra,gpt-6.1-sol,gpt-6-sol,gpt-6-luna,gpt-5.6,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.5-pro,chat-latest,gpt-5.4,gpt-5.4-pro,gpt-5.4-mini,gpt-5.4-nano,gpt-5.3-codex,gpt-5.2,gpt-5,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini,gpt-4.1,gpt-4.1-mini,gpt-4.1-nano,o3-mini,o1-pro,o1,gpt-4o,gpt-4o-mini',
     ],
     ['DEBUG_OPENAI', 'boolean', '启用 OpenAI endpoint 的调试模式。', 'DEBUG_OPENAI=false'],
     [
@@ -1260,7 +1291,7 @@ Gemini Image Generation 是一个适用于 Agents 的工具，同时支持 Gemin
       'OPENAI_SUMMARY_MODEL',
       'string',
       '用于 OpenAI 摘要的模型。',
-      '# OPENAI_SUMMARY_MODEL=gpt-3.5-turbo',
+      '# OPENAI_SUMMARY_MODEL=gpt-4o-mini',
     ],
     [
       'OPENAI_FORCE_PROMPT',
@@ -1284,7 +1315,7 @@ Gemini Image Generation 是一个适用于 Agents 的工具，同时支持 Gemin
       'OPENAI_TITLE_MODEL',
       'string',
       '已弃用：用于 OpenAI 标题生成的模型。',
-      '# OPENAI_TITLE_MODEL=gpt-3.5-turbo',
+      '# OPENAI_TITLE_MODEL=gpt-4o-mini',
     ],
   ]}
 />
@@ -1308,7 +1339,7 @@ Gemini Image Generation 是一个适用于 Agents 的工具，同时支持 Gemin
       'ASSISTANTS_MODELS',
       'string',
       '自定义可用模型，以逗号分隔，不要包含空格。第一个模型将作为默认值。留空则使用内部设置。',
-      '# ASSISTANTS_MODELS=gpt-3.5-turbo-0125,gpt-3.5-turbo-16k-0613,gpt-3.5-turbo-16k,gpt-3.5-turbo,gpt-4,gpt-4-0314,gpt-4-32k-0314,gpt-4-0613,gpt-3.5-turbo-0613,gpt-3.5-turbo-1106,gpt-4-0125-preview,gpt-4-turbo-preview,gpt-4-1106-preview',
+      '# ASSISTANTS_MODELS=gpt-4o,gpt-4o-mini,gpt-3.5-turbo-0125,gpt-3.5-turbo-16k-0613,gpt-3.5-turbo-16k,gpt-3.5-turbo,gpt-4,gpt-4-0314,gpt-4-32k-0314,gpt-4-0613,gpt-3.5-turbo-0613,gpt-3.5-turbo-1106,gpt-4-0125-preview,gpt-4-turbo-preview,gpt-4-1106-preview',
     ],
     [
       'ASSISTANTS_BASE_URL',
@@ -1320,6 +1351,75 @@ Gemini Image Generation 是一个适用于 Agents 的工具，同时支持 Gemin
 />
 
 注意：您可以自定义可用模型，以逗号分隔，且不含空格。第一个模型将作为默认模型。留空或注释掉该项以使用内部设置。
+
+### Legacy Azure OpenAI 变量(已弃用) [#legacy-azure-openai-variables-deprecated]
+
+这些变量用于在不使用 `librechat.yaml` 的情况下配置单个 Azure OpenAI 部署。它们已被弃用。请改用 `librechat.yaml` 中的 [Azure OpenAI 配置](/docs/configuration/librechat_yaml/ai_endpoints/azure),该配置支持多个分组、模型和部署。
+
+<OptionTable
+  options={[
+    [
+      'AZURE_API_KEY',
+      'string',
+      'Azure OpenAI API 密钥。未设置时将读取 AZURE_OPENAI_API_KEY。设置为 user_provided 可让用户输入自己的密钥。',
+      '# AZURE_API_KEY=',
+    ],
+    [
+      'AZURE_OPENAI_API_INSTANCE_NAME',
+      'string',
+      'Azure OpenAI 资源(实例)名称。',
+      '# AZURE_OPENAI_API_INSTANCE_NAME=',
+    ],
+    [
+      'AZURE_OPENAI_API_DEPLOYMENT_NAME',
+      'string',
+      'Azure OpenAI 部署名称',
+      '# AZURE_OPENAI_API_DEPLOYMENT_NAME=',
+    ],
+    [
+      'AZURE_OPENAI_API_VERSION',
+      'string',
+      'Azure OpenAI API 版本。',
+      '# AZURE_OPENAI_API_VERSION=',
+    ],
+    [
+      'AZURE_OPENAI_BASEURL',
+      'string',
+      '为 Azure OpenAI endpoint 设置自定义基础 URL。',
+      '# AZURE_OPENAI_BASEURL=',
+    ],
+    [
+      'AZURE_OPENAI_DEFAULT_MODEL',
+      'string',
+      'Azure OpenAI 端点的默认模型。',
+      '# AZURE_OPENAI_DEFAULT_MODEL=gpt-3.5-turbo',
+    ],
+    [
+      'AZURE_USE_MODEL_AS_DEPLOYMENT_NAME',
+      'boolean',
+      '将选定的模型名称用作部署名称。',
+      '# AZURE_USE_MODEL_AS_DEPLOYMENT_NAME=TRUE',
+    ],
+    [
+      'AZURE_OPENAI_MODELS',
+      'string',
+      '以逗号分隔的 Azure OpenAI 模型列表,不含空格。',
+      '# AZURE_OPENAI_MODELS=gpt-3.5-turbo,gpt-4',
+    ],
+    [
+      'AZURE_ASSISTANTS_API_KEY',
+      'string',
+      'Azure Assistants 端点的 API 密钥。设置为 user_provided 可让用户输入自己的密钥。',
+      '# AZURE_ASSISTANTS_API_KEY=',
+    ],
+    [
+      'AZURE_ASSISTANTS_BASE_URL',
+      'string',
+      'Azure Assistants 端点的基础 URL。',
+      '# AZURE_ASSISTANTS_BASE_URL=',
+    ],
+  ]}
+/>
 
 ### Tavily [#tavily]
 
@@ -1400,6 +1500,18 @@ Gemini Image Generation 是一个适用于 Agents 的工具，同时支持 Gemin
       '服务器端远程文件下载的最大字节数。默认值：536870912 (512 MiB)。',
       '# REMOTE_FILE_FETCH_MAX_BYTES=536870912',
     ],
+    [
+      'FILE_RETENTION_SWEEP_INTERVAL_MS',
+      'number',
+      '清除已过期文件的扫描间隔（毫秒）。设置为 0 可禁用扫描。默认值：3600000（1 小时）。',
+      '# FILE_RETENTION_SWEEP_INTERVAL_MS=3600000',
+    ],
+    [
+      'FILE_RETENTION_SWEEP_MAX_ATTEMPTS',
+      'number',
+      '在连续删除失败达到此次数后,过期文件将被暂停 30 天,而不是按常规退避策略重试。处理大量积压时可调低此值。默认值:10。',
+      '# FILE_RETENTION_SWEEP_MAX_ATTEMPTS=10',
+    ],
   ]}
 />
 
@@ -1422,8 +1534,8 @@ Code Interpreter API 提供了一个用于执行代码和管理文件的安全�
     [
       'CODE_ENVIRONMENT_DECISION_VERSION',
       'number',
-      '发布不可变且归属于对话的 Code-environment 决策。仅在每个 API 副本都支持后，才启用协议版本 1。',
-      '# CODE_ENVIRONMENT_DECISION_VERSION=1',
+      '控制不可变、由对话所有的代码环境决策协议（版本 1）。该协议默认公布，且每个对话的机器选择依赖于它。设置为 0 可保留旧版路径，例如在仍有早于协议版本 1 的 API 副本运行期间。设为 0 也会关闭每个对话的机器选择，因此每个智能体都固定在其既定机器上。',
+      '# CODE_ENVIRONMENT_DECISION_VERSION=0',
     ],
     [
       'LIBRECHAT_CODE_BASEURL',
@@ -1472,6 +1584,30 @@ Code Interpreter API 提供了一个用于执行代码和管理文件的安全�
       'number',
       '自助式 code-worker 配对速率限制窗口（以分钟为单位）。默认值：60。',
       '# CODE_ENVIRONMENT_PAIRING_USER_WINDOW=60',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_USER_MAX',
+      'number',
+      '每个用户在 CODE_ENVIRONMENT_STATUS_USER_WINDOW 时间窗口内允许的最大代码环境状态请求数。默认值:120。',
+      '# CODE_ENVIRONMENT_STATUS_USER_MAX=120',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_USER_WINDOW',
+      'number',
+      'Window in minutes for CODE_ENVIRONMENT_STATUS_USER_MAX. 默认值:1。',
+      '# CODE_ENVIRONMENT_STATUS_USER_WINDOW=1',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_IP_MAX',
+      'number',
+      '每个 IP 在 CODE_ENVIRONMENT_STATUS_IP_WINDOW 时间窗口内允许的最大代码环境状态请求数。默认值:300。',
+      '# CODE_ENVIRONMENT_STATUS_IP_MAX=300',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_IP_WINDOW',
+      'number',
+      '用于 CODE_ENVIRONMENT_STATUS_IP_MAX 的时间窗口(以分钟为单位)。默认值:1。',
+      '# CODE_ENVIRONMENT_STATUS_IP_WINDOW=1',
     ],
   ]}
 />
@@ -1652,6 +1788,12 @@ Artifacts 利用 CodeSandbox 库来安全地渲染 HTML/JS 代码。默认情况
       '指定用于 Artifacts 的 Sandpack 自定义打包器 URL',
       'SANDPACK_BUNDLER_URL=your-bundler-url',
     ],
+    [
+      'SANDPACK_STATIC_BUNDLER_URL',
+      'string',
+      '用于静态制品模板(HTML、Markdown、代码、文本及 Office 预览)的自定义打包器 URL。自行托管时,请与 SANDPACK_BUNDLER_URL 一同设置。',
+      'SANDPACK_STATIC_BUNDLER_URL=your-static-bundler-url',
+    ],
   ]}
 />
 
@@ -1811,6 +1953,12 @@ Artifacts 利用 CodeSandbox 库来安全地渲染 HTML/JS 代码。默认情况
       '共享聊天引用的快照文件，以便查看者可以通过共享链接预览或下载它们。设置后将覆盖 interface.sharedLinks.snapshotFiles。',
       'SHARED_LINKS_SNAPSHOT_FILES=true',
     ],
+    [
+      'SHARED_LINKS_AUTO_MIGRATE',
+      'boolean',
+      '当首次访问时,用于迁移未被显式共享链接权限迁移覆盖的旧版共享链接的回退机制。未设置时默认启用;设置为 false 可禁用。',
+      '# SHARED_LINKS_AUTO_MIGRATE=true',
+    ],
     ['SHARE_IP_MAX', 'number', '在 IP 时间窗口内每个 IP 允许的最大共享链接检索次数。默认值：100。', '# SHARE_IP_MAX=100'],
     ['SHARE_IP_WINDOW', 'number', '共享链接 IP 速率限制窗口（以分钟为单位）。默认值：1。', '# SHARE_IP_WINDOW=1'],
     ['SHARE_USER_MAX', 'number', '在用户窗口期间，每位已认证用户允许的最大共享链接检索次数。默认值：60。', '# SHARE_USER_MAX=60'],
@@ -1895,13 +2043,41 @@ LibreChat 公开了一个经过身份验证的 Agent Events API；它不会公�
     [
       'ENABLE_INSIGHTS',
       'boolean',
-      '为具有所需权限的管理员启用基于 MongoDB 的 Insights 仪表板。默认值：false。',
+      '启用基于 MongoDB 的 Insights 仪表板。默认值:false。',
       'ENABLE_INSIGHTS=false',
     ],
   ]}
 />
 
-启用后，Insights 仅限于拥有 `ADMIN` 角色以及 `access:admin` 和 `read:insights` 权限的账户使用。查询范围限定在租户内，并会公开持久化的活动指标和最近的对话元数据。有关指标定义和访问详情，请参阅 [Admin Insights](/docs/features/insights)。
+当启用后,拥有 `read:insights` 权限的管理员和账户可以查看每一个 Agent,其他用户则只能查看被授予 **View insights** 权限的 Agent。查询按租户范围限定,并展示已持久化的活动指标和近期对话元数据。有关指标定义和访问详情,请参阅 [Admin Insights](/docs/features/insights)。
+
+### 审计日志 [#audit-log]
+
+<OptionTable
+  options={[
+    [
+      'AUDIT_LOG_FAIL_CLOSED',
+      'boolean',
+      '系统授权和资源共享在生效前会经过审计。设置为 true 时，如果某项授权或权限扩大的变更无法完成审计，则该变更失败，且不会有任何改动。撤销操作永远不会因审计服务中断而被阻止。设置为 false 时，所有变更仍会被应用，审计失败仅记录日志。默认值：系统授权、资源共享、审计日志导出和代码配对均为 true。管理员配置覆盖、用户组和角色变更仅在该值被明确设置为 true 时才会在审计失败时关闭（失败即拒绝）；未设置时，这些变更仍会应用，并记录审计失败日志。',
+      '# AUDIT_LOG_FAIL_CLOSED=true',
+    ],
+  ]}
+/>
+
+### 配置覆盖环境变量引用 [#config-override-environment-references]
+
+通过管理 API 写入的配置覆盖（角色、组和用户配置文件以及基础配置文件）只能引用 `librechat.yaml` 中已引用的 `${ENV_VAR}` 变量名、内置端点凭据（如 `OPENAI_API_KEY` 和 `ANTHROPIC_API_KEY`），以及下列列出的变量名。任何其他引用在写入时都会被拒绝，并且在运行时解析为空。在 `interface` 和 `modelSpecs` 部分，以及以下提示字段中，不会检查引用，这些内容将按原样使用：各端点的 `titlePrompt`、`titlePromptTemplate`、`activityPrompt`、`activityPhasePrompt` 和 `reasoningLabelPrompt`，`summarization.prompt` 和 `summarization.updatePrompt`，`memory.agent.instructions`，以及 `webSearch.firecrawlOptions.changeTrackingOptions.prompt`。其他位置的提示键都会进行检查。有关覆盖项如何分层的说明，请参阅[管理面板](/docs/features/admin_panel)。
+
+<OptionTable
+  options={[
+    [
+      'CONFIG_OVERRIDE_ENV_ALLOWLIST',
+      'string',
+      '用于指定管理员配置覆盖项可引用的额外环境变量名称列表,以英文逗号或空格分隔。',
+      '# CONFIG_OVERRIDE_ENV_ALLOWLIST=MY_GATEWAY_KEY,MY_GATEWAY_URL',
+    ],
+  ]}
+/>
 
 ### 智能体对话控制 [#agent-conversation-controls]
 
@@ -2272,6 +2448,12 @@ LibreChat 对请求电子邮件和提交该邮件中的令牌（token）分别�
       '# EMAIL_CHANGE_VIOLATION_SCORE=1',
     ],
     [
+      'EMAIL_CHANGE_SUBMISSION_IP_VIOLATION_SCORE',
+      'integer',
+      '为超出每个IP邮箱变更验证链接打开次数限制的分数。默认值:1。',
+      '# EMAIL_CHANGE_SUBMISSION_IP_VIOLATION_SCORE=1',
+    ],
+    [
       'TWO_FACTOR_TEMP_VIOLATION_SCORE',
       'integer',
       '超过双重验证码尝试次数限制的评分。默认为 LOGIN_VIOLATION_SCORE。',
@@ -2402,18 +2584,12 @@ LibreChat 对请求电子邮件和提交该邮件中的令牌（token）分别�
 
 > 注意：这些也可以通过 `librechat.yaml` 中的 `rateLimits.conversationsImport` 部分进行配置。在 `librechat.yaml` 中设置的值优先级高于环境变量。
 
-> 注意：您可以同时使用这两种限制器，但默认情况下仅按 IP 进行限制。
+> 注意:IP 和用户两种限流器始终处于启用状态。可通过下方的 `MAX` 和 `WINDOW` 变量调整它们。
 
 ##### IP 限制器： [#ip-limiter-1]
 
 <OptionTable
   options={[
-    [
-      'LIMIT_IMPORT_IP',
-      'boolean',
-      '是否限制每个 IP 在 `IMPORT_IP_WINDOW` 时间窗口内可以执行的对话导入次数。',
-      'LIMIT_IMPORT_IP=true',
-    ],
     [
       'IMPORT_IP_MAX',
       'integer',
@@ -2424,7 +2600,7 @@ LibreChat 对请求电子邮件和提交该邮件中的令牌（token）分别�
       'IMPORT_IP_WINDOW',
       'integer',
       '以分钟为单位，确定 `IMPORT_IP_MAX` 导入的时间窗口。',
-      'IMPORT_IP_WINDOW=1',
+      'IMPORT_IP_WINDOW=15',
     ],
   ]}
 />
@@ -2433,12 +2609,6 @@ LibreChat 对请求电子邮件和提交该邮件中的令牌（token）分别�
 
 <OptionTable
   options={[
-    [
-      'LIMIT_IMPORT_USER',
-      'boolean',
-      '是否限制用户在每个 `IMPORT_USER_WINDOW` 内可以执行的对话导入次数。',
-      'LIMIT_IMPORT_USER=false',
-    ],
     [
       'IMPORT_USER_MAX',
       'integer',
@@ -2449,7 +2619,7 @@ LibreChat 对请求电子邮件和提交该邮件中的令牌（token）分别�
       'IMPORT_USER_WINDOW',
       'integer',
       '以分钟为单位，确定 `IMPORT_USER_MAX` 导入的时间窗口。',
-      'IMPORT_USER_WINDOW=1',
+      'IMPORT_USER_WINDOW=15',
     ],
   ]}
 />
@@ -2458,18 +2628,12 @@ LibreChat 对请求电子邮件和提交该邮件中的令牌（token）分别�
 
 限制用户分叉对话的频率，以防止滥用。
 
-> 注意：您可以同时使用这两种限制器，但默认情况下仅按 IP 进行限制。
+> 注意:IP 和用户两种限流器始终处于启用状态。可通过下方的 `MAX` 和 `WINDOW` 变量调整它们。
 
 ##### IP 限制器： [#ip-limiter-2]
 
 <OptionTable
   options={[
-    [
-      'LIMIT_FORK_IP',
-      'boolean',
-      '是否限制每个 IP 在 `FORK_IP_WINDOW` 内可以创建的对话分支数量。',
-      'LIMIT_FORK_IP=true',
-    ],
     [
       'FORK_IP_MAX',
       'integer',
@@ -2489,12 +2653,6 @@ LibreChat 对请求电子邮件和提交该邮件中的令牌（token）分别�
 
 <OptionTable
   options={[
-    [
-      'LIMIT_FORK_USER',
-      'boolean',
-      '是否限制用户在 `FORK_USER_WINDOW` 时间内可以创建的对话分支数量。',
-      'LIMIT_FORK_USER=false',
-    ],
     [
       'FORK_USER_MAX',
       'integer',
@@ -2753,6 +2911,12 @@ LibreChat 对请求电子邮件和提交该邮件中的令牌（token）分别�
       'ENFORCE_TWO_FACTOR_AUTHENTICATION=false',
     ],
     [
+      'TWO_FACTOR_BACKUP_CODE_FORMAT',
+      'string',
+      '新发放的双因素恢复码格式：强（128 位，加盐）或旧版（32 位，未加盐）。默认值：强。仅在滚动升级期间使用旧版，需在每个副本上设置，且仍在运行无法读取强恢复码的旧版后端时使用。现有的旧版恢复码在用户重新生成之前仍然有效。',
+      '# TWO_FACTOR_BACKUP_CODE_FORMAT=strong',
+    ],
+    [
       'MIN_PASSWORD_LENGTH',
       'number',
       '用户身份验证的最小密码长度。使用 LDAP 身份验证时，您可能需要将其设置为 1 以绕过本地密码验证，因为 LDAP 服务器会处理其自身的密码策略。',
@@ -3008,6 +3172,30 @@ LibreChat 对请求电子邮件和提交该邮件中的令牌（token）分别�
       'OPENID_AUDIENCE=https://api.librechat.com',
     ],
     [
+      'OPENID_REFRESH_AUDIENCE',
+      'string',
+      'OpenID 刷新令牌请求的受众参数。某些提供商（例如 Auth0 自定义 API）要求在刷新期间保留预期的访问令牌受众。通常与 OPENID_AUDIENCE 一致。',
+      'OPENID_REFRESH_AUDIENCE=',
+    ],
+    [
+      'OPENID_AVATAR_AUTHORIZED_ORIGINS',
+      'string',
+      '除颁发者(issuer)和 userinfo 端点的源之外,LibreChat 在获取用户头像时会向这些额外的源发送用户访问令牌。这些源之间可用逗号或空白字符分隔。颁发者和 userinfo 端点的源始终被授权。',
+      '# OPENID_AVATAR_AUTHORIZED_ORIGINS=https://avatars.example.com',
+    ],
+    [
+      'OPENID_DISCOVERY_RETRY_ATTEMPTS',
+      'number',
+      '启动期间的发现尝试次数,范围为 0 到 100。设置为 0 时仅使用后台重试。默认值:1。librechat.yaml 中的 registration.openidDiscovery.startupAttempts 优先生效。',
+      '# OPENID_DISCOVERY_RETRY_ATTEMPTS=1',
+    ],
+    [
+      'OPENID_DISCOVERY_RETRY_DELAY_MS',
+      'number',
+      '启动与后台发现重试之间的延迟时间(毫秒),范围为 100 到 3600000。默认值:5000。librechat.yaml 中的 registration.openidDiscovery.retryDelayMs 优先级更高。',
+      '# OPENID_DISCOVERY_RETRY_DELAY_MS=5000',
+    ],
+    [
       'OPENID_REQUIRED_ROLE',
       'string',
       '用于验证所需的角色。支持单个角色或多个以逗号分隔的角色。当指定多个角色时，用户只需具备其中任意一个角色即可（“或”逻辑）。',
@@ -3204,14 +3392,14 @@ LibreChat 支持重用由您的 OpenID Connect 提供商（如 Azure Entra ID �
     [
       'OPENID_JWKS_URL_CACHE_ENABLED',
       'boolean',
-      '启用签名密钥验证结果的缓存。',
+      '启用对签名密钥验证结果的缓存。未设置时默认启用;除 true 以外的任何值都会禁用该功能。',
       'OPENID_JWKS_URL_CACHE_ENABLED=true',
     ],
     [
       'OPENID_JWKS_URL_CACHE_TIME',
       'number',
-      '缓存持续时间（以毫秒为单位，默认值：600000 毫秒 / 10 分钟）。',
-      'OPENID_JWKS_URL_CACHE_TIME=600000',
+      '缓存持续时间（毫秒）。默认值：60000（1 分钟）。',
+      'OPENID_JWKS_URL_CACHE_TIME=60000',
     ],
     [
       'OPENID_ON_BEHALF_FLOW_FOR_USERINFO_REQUIRED',
@@ -3473,8 +3661,8 @@ LibreChat 支持与 SharePoint Online 和 OneDrive for Business 的直接集成�
     ],
     [
       'LDAP_TLS_REJECT_UNAUTHORIZED',
-      'string',
-      'LDAP TLS 验证',
+      'boolean',
+      '是否根据 LDAP_CA_CERT_PATH 验证 LDAP 服务器证书。仅在设置了 LDAP_CA_CERT_PATH 时适用:在这种情况下,若不设置此项,则会禁用证书验证,因此应将其设为 true。若未设置 LDAP_CA_CERT_PATH,则应用 Node.js 的默认验证行为。',
       'LDAP_TLS_REJECT_UNAUTHORIZED=true',
     ],
     [
@@ -3714,7 +3902,7 @@ LibreChat 支持与 SharePoint Online 和 OneDrive for Business 的直接集成�
     [
       'AZURE_STORAGE_PUBLIC_ACCESS',
       'boolean',
-      '启用 blob 的公共访问权限。默认值：false。',
+      '将上传的 blob 设置为公开可读。默认值:true;设置为 false 可使 blob 保持私有。',
       'AZURE_STORAGE_PUBLIC_ACCESS=false',
     ],
     [
@@ -3849,6 +4037,12 @@ LibreChat 支持使用 Google Tag Manager 进行分析。你需要在 LibreChat 
       '用于代码执行工件内联预览的源文件最大字节数，包括 DOCX、XLSX、CSV、PPTX、POTX、文本和 PDF 类文件。默认值：2097152 (2 MiB)。渲染后的 HTML 预览仍有单独的上限，因此即使文件大小低于此值，内容非常丰富的文件也可能跳过预览。',
       '# FILE_PREVIEW_MAX_EXTRACT_BYTES=2097152',
     ],
+    [
+      'OFFICE_PREVIEW_DISABLE_CDN',
+      'boolean',
+      '在离线或受限网络中,将此项设为 true 可在服务器端渲染 DOCX 预览,而不是从 cdn.jsdelivr.net 加载渲染器。接受 true、1 或 yes。默认值:false。',
+      '# OFFICE_PREVIEW_DISABLE_CDN=true',
+    ],
   ]}
 />
 
@@ -3887,8 +4081,8 @@ LibreChat 支持使用 Google Tag Manager 进行分析。你需要在 LibreChat 
     [
       'MCP_CONNECTION_CHECK_TTL',
       'number',
-      '缓存连接状态检查的毫秒数，以避免昂贵的验证操作。',
-      'MCP_CONNECTION_CHECK_TTL=30000',
+      '为避免高开销的验证操作,将连接状态检查结果缓存此毫秒数。默认值:60000。',
+      'MCP_CONNECTION_CHECK_TTL=60000',
     ],
     [
       'MCP_TOOLS_LIST_MAX_PAGES',
@@ -3913,6 +4107,117 @@ LibreChat 支持使用 Google Tag Manager 进行分析。你需要在 LibreChat 
       'number',
       '非 GET 可流式传输 HTTP MCP 响应中单行 SSE 允许的最大字节数。设置为 0 则禁用。默认值：5242880 (5 MiB)。',
       '# MCP_STREAMABLE_HTTP_MAX_LINE_BYTES=5242880',
+    ],
+    [
+      'MCP_TOOLS_LIST_MAX_TOOLS',
+      'number',
+      '从分页的 tools/list 响应中保留的工具总数上限。最小值限制为 1。默认值:1000。',
+      '# MCP_TOOLS_LIST_MAX_TOOLS=1000',
+    ],
+    [
+      'MCP_TOOLS_LIST_MAX_BYTES',
+      'number',
+      '分页 tools/list 响应中保留的最大近似 JSON 字节数。最小值限制为 1。默认值:5242880(5 MiB)。',
+      '# MCP_TOOLS_LIST_MAX_BYTES=5242880',
+    ],
+    [
+      'MCP_TOOLS_LIST_TIMEOUT_MS',
+      'number',
+      '用于分页 tools/list 发现的最大耗时(毫秒)。最小值限制为 1。默认值:30000。',
+      '# MCP_TOOLS_LIST_TIMEOUT_MS=30000',
+    ],
+    [
+      'MCP_USER_CONNECTION_IDLE_TIMEOUT',
+      'number',
+      '每个用户的 MCP 连接在空闲多少毫秒后断开。默认值:900000(15 分钟)。',
+      '# MCP_USER_CONNECTION_IDLE_TIMEOUT=900000',
+    ],
+    [
+      'MCP_REGISTRY_CACHE_TTL',
+      'number',
+      '用于 MCP 服务器注册表缓存的 TTL(生存时间,单位为毫秒)。在多实例部署下,跨实例的数据陈旧时间可能达到该值的两倍。设置为 0 可禁用本地快照,使每次读取都直接访问 Redis。默认值:5000。',
+      '# MCP_REGISTRY_CACHE_TTL=5000',
+    ],
+    [
+      'MCP_INIT_TIMEOUT_MS',
+      'number',
+      'MCP 服务器在启动时完成初始化所允许的时间(毫秒)。默认值:30000。',
+      '# MCP_INIT_TIMEOUT_MS=30000',
+    ],
+    [
+      'MCP_INIT_FOLLOWER_RETRY_MS',
+      'number',
+      '在多实例部署中,非领导者实例检查领导者是否完成 MCP 服务器初始化的时间间隔(毫秒)。默认值:3000。',
+      '# MCP_INIT_FOLLOWER_RETRY_MS=3000',
+    ],
+    [
+      'MCP_INIT_FOLLOWER_MAX_WAIT_MS',
+      'number',
+      '非领导者实例等待领导者完成 MCP 初始化的最长时间(毫秒)。设置为 0 表示不等待。默认值:MCP_INIT_TIMEOUT_MS 加上 MCP_INIT_FOLLOWER_RETRY_MS。',
+      '# MCP_INIT_FOLLOWER_MAX_WAIT_MS=33000',
+    ],
+    [
+      'MCP_IMAGE_DATA_MAX_BYTES',
+      'number',
+      'MCP 工具结果中内联图像数据的最大字节数。超过此大小的结果将被拒绝;远程图像 URL 不计入其中。默认值:10485760(10 MiB)。',
+      '# MCP_IMAGE_DATA_MAX_BYTES=10485760',
+    ],
+    [
+      'MCP_SANDBOX_FRAME_ANCESTORS',
+      'string',
+      '允许嵌入 MCP 应用沙箱框架的逗号分隔来源。未设置时,禁止嵌入(frame-ancestors none)。',
+      '# MCP_SANDBOX_FRAME_ANCESTORS=https://chat.example.com',
+    ],
+  ]}
+/>
+
+#### MCP 连接熔断器 [#mcp-connection-circuit-breaker]
+
+LibreChat 会限制其重新连接 MCP 服务器的频率,防止故障或时断时续的服务器引发重连风暴。系统设有两项相互独立的检查。循环熔断器会在 `MCP_CB_CYCLE_WINDOW_MS` 时间窗口内发生 `MCP_CB_MAX_CYCLES` 次连接与断开循环后触发,此后在 `MCP_CB_CYCLE_COOLDOWN_MS` 时长内拒绝新的连接尝试。失败退避机制则在 `MCP_CB_FAILED_WINDOW_MS` 时间窗口内出现 `MCP_CB_MAX_FAILED_ROUNDS` 次连续连接失败轮次后启动;此后的重试将等待一段呈指数增长的延迟,该延迟从 `MCP_CB_BASE_BACKOFF_MS` 开始,并以 `MCP_CB_MAX_BACKOFF_MS` 为上限。
+
+<OptionTable
+  options={[
+    [
+      'MCP_CB_MAX_CYCLES',
+      'number',
+      '在熔断器触发之前，允许在周期窗口内发生的连接与断开循环次数。默认值：7。',
+      '# MCP_CB_MAX_CYCLES=7',
+    ],
+    [
+      'MCP_CB_CYCLE_WINDOW_MS',
+      'number',
+      '滑动窗口时长（毫秒），用于统计周期次数。默认值：45000。',
+      '# MCP_CB_CYCLE_WINDOW_MS=45000',
+    ],
+    [
+      'MCP_CB_CYCLE_COOLDOWN_MS',
+      'number',
+      '在循环中断器触发后的冷却时间（毫秒）。默认值：15000。',
+      '# MCP_CB_CYCLE_COOLDOWN_MS=15000',
+    ],
+    [
+      'MCP_CB_MAX_FAILED_ROUNDS',
+      'number',
+      '连续失败的连接轮次在开始退避之前允许的次数。默认值:3。',
+      '# MCP_CB_MAX_FAILED_ROUNDS=3',
+    ],
+    [
+      'MCP_CB_FAILED_WINDOW_MS',
+      'number',
+      '滑动窗口时长(毫秒),用于统计失败的轮次。默认值:120000。',
+      '# MCP_CB_FAILED_WINDOW_MS=120000',
+    ],
+    [
+      'MCP_CB_BASE_BACKOFF_MS',
+      'number',
+      '失败轮次阈值达到后的基础退避时间（毫秒）。默认值：30000。',
+      '# MCP_CB_BASE_BACKOFF_MS=30000',
+    ],
+    [
+      'MCP_CB_MAX_BACKOFF_MS',
+      'number',
+      '指数退避的最大退避时间(毫秒)。默认值:300000。',
+      '# MCP_CB_MAX_BACKOFF_MS=300000',
     ],
   ]}
 />
@@ -3970,13 +4275,13 @@ Redis 为 LibreChat 提供了显著的性能提升，并实现了水平扩展能
     [
       'REDIS_USERNAME',
       'string',
-      '用于身份验证的 Redis 用户名。如果同时提供了 URI 中的用户名，此项将覆盖它。',
+      'Redis 身份验证用户名。仅当 REDIS_URI 中没有用户名时使用;URI 中的用户名优先。',
       '# REDIS_USERNAME=your_redis_username',
     ],
     [
       'REDIS_PASSWORD',
       'string',
-      '用于身份验证的 Redis 密码。如果同时提供，此项将覆盖 URI 中的密码。',
+      '用于身份验证的 Redis 密码。仅当 REDIS_URI 中没有密码时使用;URI 中的密码优先。',
       '# REDIS_PASSWORD=your_redis_password',
     ],
     [
@@ -4032,6 +4337,48 @@ Redis 为 LibreChat 提供了显著的性能提升，并实现了水平扩展能
       'number',
       'ioredis 套接字的 TCP keepalive 空闲延迟（以毫秒为单位）。默认值：10000；设置为 0 则使用内核默认值。',
       '# REDIS_KEEP_ALIVE=10000',
+    ],
+    [
+      'REDIS_CONNECT_TIMEOUT',
+      'number',
+      '连接超时时间(毫秒)。默认值:10000。',
+      '# REDIS_CONNECT_TIMEOUT=10000',
+    ],
+    [
+      'REDIS_RETRY_MAX_ATTEMPTS',
+      'number',
+      '最大重连尝试次数。设置为 0 表示无限次尝试。默认值:10。',
+      '# REDIS_RETRY_MAX_ATTEMPTS=10',
+    ],
+    [
+      'REDIS_RETRY_MAX_DELAY',
+      'number',
+      '两次重连尝试之间的最大延迟时间(毫秒)。默认值:3000。',
+      '# REDIS_RETRY_MAX_DELAY=3000',
+    ],
+    [
+      'REDIS_ENABLE_OFFLINE_QUEUE',
+      'boolean',
+      '在连接断开期间将命令排队,而不是立即失败。默认值:true。',
+      '# REDIS_ENABLE_OFFLINE_QUEUE=true',
+    ],
+    [
+      'REDIS_SCAN_COUNT',
+      'number',
+      '用于按模式扫描键的 Redis SCAN 操作的 COUNT 提示值。较大的值可减少往返次数，但会增加每次调用的内存占用和延迟。默认值：1000。',
+      '# REDIS_SCAN_COUNT=1000',
+    ],
+    [
+      'REDIS_DELETE_CHUNK_SIZE',
+      'number',
+      'Redis DEL 操作中每批删除的键数量。在集群模式下,键会以此大小的块为单位并行逐个删除。较小的值可减少内存占用,但会增加往返次数。默认值:1000。',
+      '# REDIS_DELETE_CHUNK_SIZE=1000',
+    ],
+    [
+      'STREAM_KEEP_COMPLETED_JOBS',
+      'boolean',
+      '完成生成后保留流式生成任务,而不是在生成结束时将其删除。默认值:false。',
+      '# STREAM_KEEP_COMPLETED_JOBS=false',
     ],
     [
       'FORCED_IN_MEMORY_CACHE_NAMESPACES',

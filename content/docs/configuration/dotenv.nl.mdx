@@ -80,6 +80,8 @@ Deze optionele waarden configureren de Node.js HTTP-server. Laat ze oningesteld 
 
 Waarden moeten niet-negatieve veilige gehele getallen zijn; ongeldige waarden worden genegeerd. Wanneer zowel header- als request-timeouts zijn ingeschakeld, beperkt LibreChat de header-timeout tot de request-timeout als deze hoger is. Node controleert het verlopen van headers en requests tijdens een verbinding-sweep van 30 seconden, dus waarden onder `30000` worden niet met exacte millisecondenprecisie afgedwongen. Bun accepteert deze instellingen momenteel wel, maar dwingt ze niet af; LibreChat logt een waarschuwing wanneer de API-server onder Bun draait.
 
+`NODE_MAX_OLD_SPACE_SIZE` in `.env.example` is een Docker build-argument en wijzigt de heap-grootte niet tijdens runtime. Om de heap-limiet van Node.js in te stellen, gebruik je `NODE_OPTIONS`, bijvoorbeeld `NODE_OPTIONS="--max-old-space-size=6144"`.
+
 ### Trust proxy [#trust-proxy]
 
 Gebruik het adres dat zich op maximaal n hops afstand van de Express-applicatie bevindt.
@@ -387,7 +389,7 @@ LibreChat heeft ingebouwde centrale logging, zie [Logging System](/docs/configur
 
 #### Logbestanden [#log-files]
 
-- Debug logging is standaard ingeschakeld en cruciaal voor ontwikkeling.
+- Debuglogbestanden worden alleen geschreven wanneer `DEBUG_LOGGING=true` is ingesteld, wat wordt aanbevolen voor ontwikkeling en bij het melden van problemen.
 - Om problemen te melden, reproduceer de fout en dien logs in vanuit `./api/logs/debug-%DATE%.log` op: **[LibreChat GitHub Issues](https://github.com/LibreChat-AI/LibreChat/issues)**
 - Foutlogboeken worden op dezelfde locatie opgeslagen.
 
@@ -395,7 +397,7 @@ LibreChat heeft ingebouwde centrale logging, zie [Logging System](/docs/configur
 
 <OptionTable
   options={[
-    ['DEBUG_LOGGING', 'boolean', 'Houd debug-logs actief.', 'DEBUG_LOGGING=true'],
+    ['DEBUG_LOGGING', 'boolean', 'Schrijf debuglogboeken naar bestand. Debuglogbestanden worden alleen aangemaakt wanneer dit op true staat.', 'DEBUG_LOGGING=true'],
     [
       'DEBUG_CONSOLE',
       'boolean',
@@ -425,6 +427,18 @@ LibreChat heeft ingebouwde centrale logging, zie [Logging System](/docs/configur
       'number',
       'Configureer de afkappingsgrootte voor stringwaarden in JSON console/stdout-logs. Standaard: 255.',
       '# CONSOLE_JSON_STRING_LENGTH=255',
+    ],
+    [
+      'DEBUG_MESSAGE_LENGTH',
+      'number',
+      'Maximale lengte van een debuglogbericht voordat het wordt afgekapt. Standaard: 150.',
+      '# DEBUG_MESSAGE_LENGTH=150',
+    ],
+    [
+      'LOG_REDACTION_MAX_NODES',
+      'number',
+      'Maximaal aantal waarden (objecten en strings gewogen naar lengte) dat één logrecord mag redigeren voordat de rest wordt vervangen, zodat zeer brede payloads het loggen niet kunnen blokkeren. Standaard: 5000.',
+      '# LOG_REDACTION_MAX_NODES=5000',
     ],
     [
       'LIBRECHAT_LOG_DIR',
@@ -488,7 +502,7 @@ Gebruik de standaard Langfuse-variabelen voor één centraal observability-proje
     ['LANGFUSE_FANOUT_CENTRAL_BASE_URL', 'string', 'Centrale Langfuse base URL gebruikt door de gateway.', '# LANGFUSE_FANOUT_CENTRAL_BASE_URL=https://cloud.langfuse.com'],
     ['LANGFUSE_FANOUT_CENTRAL_AUTH_HEADER', 'string', 'Volledige Basic authorization-header voor centrale trace en media-export.', '# LANGFUSE_FANOUT_CENTRAL_AUTH_HEADER=Basic <base64-public-colon-secret>'],
     ['LANGFUSE_FANOUT_CENTRAL_MEDIA_EXPORT_DISABLED', 'boolean', 'Schakel centrale media-fanout uit zonder centrale traces uit te schakelen.', '# LANGFUSE_FANOUT_CENTRAL_MEDIA_EXPORT_DISABLED=false'],
-    ['LANGFUSE_FANOUT_TENANT_DESTINATIONS', 'string', 'Door komma\'s gescheiden toewijzingen van bestemmingssleutels en basis-URL\'s toegestaan bij het opstarten.', '# LANGFUSE_FANOUT_TENANT_DESTINATIONS=eu=https://cloud.langfuse.com,us=https://us.cloud.langfuse.com'],
+    ['LANGFUSE_FANOUT_TENANT_DESTINATIONS', 'string', 'Door komma\'s gescheiden toewijzingen van bestemmingssleutels en basis-URL\'s toegestaan bij het opstarten.', '# LANGFUSE_FANOUT_TENANT_DESTINATIONS=eu=https://cloud.langfuse.com,us=https://us.cloud.langfuse.com,jp=https://jp.cloud.langfuse.com'],
     ['LANGFUSE_FANOUT_TRACE_DESTINATION_KEYS', 'string', 'Bestemmingssleutels ondersteund door de collector-routeringsconfiguratie.', '# LANGFUSE_FANOUT_TRACE_DESTINATION_KEYS=eu,us,jp'],
     ['LANGFUSE_FANOUT_PUBLIC_URL', 'string', 'Gateway-basis-URL die wordt gebruikt voor het aanmaken van eenmalige media-upload-URL\'s.', '# LANGFUSE_FANOUT_PUBLIC_URL=http://langfuse-fanout-collector:4318'],
     ['LANGFUSE_FANOUT_TRACE_COLLECTOR_URL', 'string', 'Interne gateway-naar-collector trace endpoint.', '# LANGFUSE_FANOUT_TRACE_COLLECTOR_URL=http://langfuse-fanout-otel:4319'],
@@ -671,16 +685,46 @@ LibreChat kan browser Real User Monitoring (RUM) telemetrie publiceren naar Hype
       '# RUM_PROXY_TIMEOUT_MS=10000',
     ],
     [
+      'RUM_PROXY_BODY_LIMIT',
+      'string',
+      'Maximale grootte van de aanvraagbody die door de proxy wordt geaccepteerd, pas na authenticatie en rate limiting geparseerd. Standaard: 3mb.',
+      '# RUM_PROXY_BODY_LIMIT=3mb',
+    ],
+    [
+      'RUM_PROXY_USER_MAX',
+      'number',
+      'Maximale telemetrieverzoeken per geauthenticeerde gebruiker in RUM_PROXY_USER_WINDOW. Standaard: 240.',
+      '# RUM_PROXY_USER_MAX=240',
+    ],
+    [
+      'RUM_PROXY_USER_WINDOW',
+      'number',
+      'Tijdvenster in minuten voor RUM_PROXY_USER_MAX. Standaard: 1.',
+      '# RUM_PROXY_USER_WINDOW=1',
+    ],
+    [
       'RUM_TRACE_PROPAGATION_TARGETS',
       'string',
       'Door komma\'s gescheiden first-party HTTPS-origins of URL\'s die traceparent-headers moeten ontvangen.',
       '# RUM_TRACE_PROPAGATION_TARGETS=https://api.example.com',
     ],
     [
+      'RUM_SESSION_REPLAY_ENABLED',
+      'boolean',
+      'Schakel browsersessie-replay in. Replay kan gevoelige prompts, antwoorden of payloads verzamelen. Een waarde die is ingesteld voor telemetry.rum.sessionReplay.enabled in librechat.yaml heeft voorrang. Standaard: false.',
+      '# RUM_SESSION_REPLAY_ENABLED=false',
+    ],
+    [
       'RUM_DISABLE_REPLAY',
       'boolean',
-      'Schakel browser-sessie-replay uit. Standaard: true.',
+      'Verouderde schakelaar voor browsersessie-replay, alleen gebruikt wanneer RUM_SESSION_REPLAY_ENABLED niet is ingesteld. Replay blijft uitgeschakeld tenzij dit expliciet op false is gezet. Gebruik bij voorkeur RUM_SESSION_REPLAY_ENABLED.',
       '# RUM_DISABLE_REPLAY=true',
+    ],
+    [
+      'RUM_CLIENT_LOGS',
+      'boolean',
+      'Exporteer browserclient-logwaarschuwingen en -fouten als OTLP-logs. Geldt alleen in proxymodus. Standaard: false.',
+      '# RUM_CLIENT_LOGS=false',
     ],
     [
       'RUM_CONSOLE_CAPTURE',
@@ -823,7 +867,7 @@ Verwijder het commentaarteken voor `ENDPOINTS` om de beschikbare endpoints in Li
       'ENDPOINTS',
       'string',
       'Door komma\'s gescheiden lijst van beschikbare endpoints.',
-      '# ENDPOINTS=openAI,agents,assistants,gptPlugins,azureOpenAI,google,anthropic,bingAI,custom',
+      '# ENDPOINTS=openAI,assistants,azureOpenAI,google,anthropic',
     ],
     [
       'PROXY',
@@ -983,7 +1027,7 @@ zie: [Anthropic Endpoint](/docs/configuration/pre_configured_ai/anthropic)
       'ANTHROPIC_MODELS',
       'string',
       'Door komma\'s gescheiden lijst met te gebruiken Anthropic-modellen.',
-      '# ANTHROPIC_MODELS=claude-fable-5-1,claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,claude-opus-4-6,claude-opus-4-20250514,claude-3-7-sonnet-20250219,claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022',
+      '# ANTHROPIC_MODELS=claude-fable-5-1,claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,claude-opus-4-6,claude-opus-4-20250514,claude-3-7-sonnet-20250219,claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022,claude-3-opus-20240229,claude-3-sonnet-20240229,claude-3-haiku-20240307',
     ],
     [
       'ANTHROPIC_REVERSE_PROXY',
@@ -992,17 +1036,13 @@ zie: [Anthropic Endpoint](/docs/configuration/pre_configured_ai/anthropic)
       '# ANTHROPIC_REVERSE_PROXY=',
     ],
     [
-      'ANTHROPIC_TITLE_MODEL',
+      'ANTHROPIC_VERSION',
       'string',
-      'VEROUDERD: Model om te gebruiken voor titels met Anthropic.',
-      '# ANTHROPIC_TITLE_MODEL=claude-3-haiku-20240307',
+      'Waarde van de anthropic-version-header die wordt verzonden bij het ophalen van de Anthropic-modellenlijst. Standaard: 2023-06-01.',
+      '# ANTHROPIC_VERSION=2023-06-01',
     ],
   ]}
 />
-
-- `ANTHROPIC_TITLE_MODEL` is nu verouderd en zal in toekomstige versies worden verwijderd. Gebruik in plaats daarvan de [`titleModel` Endpoint Setting](/docs/configuration/librechat_yaml/object_structure/shared_endpoint_settings#titlemodel) in de `librechat.yaml` configuratie.
-
-> **Let op:** Moet compatibel zijn met de Anthropic endpoint. Bovendien presteren Claude 2 en Claude 3 modellen het best bij deze taak, waarbij `claude-3-haiku` modellen het goedkoopst zijn.
 
 Claude Fable 5.1 en Fable 5 zijn opgenomen in de standaard Anthropic model-lijst. Fable/Mythos-klasse modellen gebruiken het moderne Anthropic-gedrag in LibreChat: 1M context, ondersteuning voor adaptief denken, ondersteuning voor prompt caching en `thinkingDisplay`-afhandeling voor samengevatte of weggelaten redeneeroutput.
 
@@ -1072,10 +1112,16 @@ Zie: [AWS Bedrock Setup](/docs/configuration/pre_configured_ai/bedrock)
       '# BEDROCK_AWS_BEARER_TOKEN=your_bedrock_api_key',
     ],
     [
+      'BEDROCK_REVERSE_PROXY',
+      'string',
+      'Host van een reverse proxy voor Bedrock API-aanroepen, zonder het https:// schema. Werkt met of zonder PROXY.',
+      '# BEDROCK_REVERSE_PROXY=bedrock-proxy.example.com',
+    ],
+    [
       'BEDROCK_AWS_MODELS',
       'string',
       'Door komma\'s gescheiden lijst van Bedrock model-ID\'s. Indien weggelaten, worden alle bekende ondersteunde modellen opgenomen.',
-      '# BEDROCK_AWS_MODELS=global.anthropic.claude-fable-5-1,global.anthropic.claude-fable-5,global.anthropic.claude-opus-5,global.anthropic.claude-opus-4-8,global.anthropic.claude-opus-4-7,global.anthropic.claude-sonnet-5,global.anthropic.claude-sonnet-4-6,meta.llama3-1-8b-instruct-v1:0',
+      '# BEDROCK_AWS_MODELS=global.anthropic.claude-fable-5-1,global.anthropic.claude-fable-5,global.anthropic.claude-opus-5,global.anthropic.claude-opus-4-8,global.anthropic.claude-opus-4-7,global.anthropic.claude-sonnet-5,global.anthropic.claude-sonnet-4-6,global.anthropic.claude-opus-4-6-v1,global.anthropic.claude-haiku-4-5-20251001-v1:0,meta.llama3-1-8b-instruct-v1:0',
     ],
   ]}
 />
@@ -1083,29 +1129,6 @@ Zie: [AWS Bedrock Setup](/docs/configuration/pre_configured_ai/bedrock)
 > **Let op:** Je kunt de toegangssleutels weglaten om de standaard AWS-referentieketen te gebruiken (omgevingsvariabelen, SSO-referenties, gedeelde referentiebestanden of EC2/ECS Instance Metadata Service). Zie [AWS Bedrock Setup](/docs/configuration/pre_configured_ai/bedrock) voor meer details.
 
 Claude Fable/Mythos-class modellen op Bedrock zijn uitsluitend voor inference-profile. Gebruik een profile ID zoals `global.anthropic.claude-fable-5-1` en schakel de vereiste Anthropic data sharing-instelling in de Bedrock console of via de Data Retention API in voordat je ze aanroept.
-
-### BingAI [#bingai]
-
-Bing, ook gebruikt voor Sydney, jailbreak en Bing Image Creator
-
-<OptionTable
-  options={[
-    [
-      'BINGAI_TOKEN',
-      'string',
-      'Bing access token. Laat leeg om uit te schakelen. Kan worden ingesteld op "user_provided" om gebruikers in staat te stellen hun eigen token op te geven via de WebUI.',
-      'BINGAI_TOKEN=user_provided',
-    ],
-    [
-      'BINGAI_HOST',
-      'string',
-      'Bing host-URL. Laat deze uitgeschakeld om de standaardserver te gebruiken.',
-      '# BINGAI_HOST=https://cn.bing.com',
-    ],
-  ]}
-/>
-
-Let op: Het wordt aanbevolen om dit op "user_provided" te laten staan en het token via de WebUI op te geven.
 
 ### Google [#google]
 
@@ -1123,7 +1146,13 @@ Volg deze instructies om het [Google Endpoint](/docs/configuration/pre_configure
       'GOOGLE_SERVICE_KEY_FILE',
       'string',
       'Pad naar het JSON-sleutelbestand van het Google-serviceaccount, de URL om dit op te halen, of een string-versie van de JSON. Wordt gebruikt voor Vertex AI-authenticatie (bijv. OCR-functies).',
-      'GOOGLE_SERVICE_KEY_FILE=/path/to/auth.json',
+      'GOOGLE_SERVICE_KEY_FILE=/path/to/service-account.json',
+    ],
+    [
+      'GOOGLE_CLOUD_PROJECT',
+      'string',
+      'Google Cloud-project-ID voor Vertex AI. Wordt gecontroleerd na VERTEX_PROJECT_ID; GCLOUD_PROJECT en GOOGLE_PROJECT_ID worden in die volgorde als verdere fallbacks gebruikt.',
+      '# GOOGLE_CLOUD_PROJECT=your-project-id',
     ],
     ['GOOGLE_REVERSE_PROXY', 'string', 'Google reverse proxy URL.', 'GOOGLE_REVERSE_PROXY='],
     [
@@ -1136,19 +1165,19 @@ Volg deze instructies om het [Google Endpoint](/docs/configuration/pre_configure
       'GOOGLE_MODELS',
       'string',
       'Beschikbare Gemini API Google-modellen, gescheiden door komma\'s.',
-      'GOOGLE_MODELS=gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-2.0-flash-lite',
+      'GOOGLE_MODELS=gemini-4-argon,gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-2.0-flash-lite',
     ],
     [
       'GOOGLE_MODELS',
       'string',
       'Beschikbare Vertex AI Google-modellen, gescheiden door komma\'s.',
-      'GOOGLE_MODELS=gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash-001,gemini-2.0-flash-lite-001',
+      'GOOGLE_MODELS=gemini-4-argon,gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash-001,gemini-2.0-flash-lite-001',
     ],
     [
       'GOOGLE_TITLE_MODEL',
       'string',
       'VEROUDERD: Het model dat wordt gebruikt voor titels met Google.',
-      'GOOGLE_TITLE_MODEL=gemini-pro',
+      'GOOGLE_TITLE_MODEL=gemini-2.0-flash-lite-001',
     ],
     [
       'GOOGLE_LOC',
@@ -1171,37 +1200,39 @@ Volg deze instructies om het [Google Endpoint](/docs/configuration/pre_configure
     [
       'GOOGLE_SAFETY_SEXUALLY_EXPLICIT',
       'string',
-      'Veiligheidsinstelling voor seksueel expliciete inhoud. Opties zijn BLOCK_ALL, BLOCK_ONLY_HIGH, WARN_ONLY en OFF.',
+      'Veiligheidsinstelling voor seksueel expliciete inhoud. Opties zijn BLOCK_NONE, BLOCK_ONLY_HIGH, BLOCK_MEDIUM_AND_ABOVE en BLOCK_LOW_AND_ABOVE.',
       'GOOGLE_SAFETY_SEXUALLY_EXPLICIT=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_HATE_SPEECH',
       'string',
-      'Veiligheidsinstelling voor haatzaaiende inhoud. Opties zijn BLOCK_ALL, BLOCK_ONLY_HIGH, WARN_ONLY en OFF.',
+      'Veiligheidsinstelling voor haatdragende inhoud. Opties zijn BLOCK_NONE, BLOCK_ONLY_HIGH, BLOCK_MEDIUM_AND_ABOVE en BLOCK_LOW_AND_ABOVE.',
       'GOOGLE_SAFETY_HATE_SPEECH=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_HARASSMENT',
       'string',
-      'Veiligheidsinstelling voor intimidatie-inhoud. Opties zijn BLOCK_ALL, BLOCK_ONLY_HIGH, WARN_ONLY en OFF.',
+      'Veiligheidsinstelling voor intimiderende inhoud. Opties zijn BLOCK_NONE, BLOCK_ONLY_HIGH, BLOCK_MEDIUM_AND_ABOVE en BLOCK_LOW_AND_ABOVE.',
       'GOOGLE_SAFETY_HARASSMENT=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_DANGEROUS_CONTENT',
       'string',
-      'Veiligheidsinstelling voor gevaarlijke inhoud. Opties zijn BLOCK_ALL, BLOCK_ONLY_HIGH, WARN_ONLY en OFF.',
+      'Veiligheidsinstelling voor gevaarlijke inhoud. Opties zijn BLOCK_NONE, BLOCK_ONLY_HIGH, BLOCK_MEDIUM_AND_ABOVE en BLOCK_LOW_AND_ABOVE.',
       'GOOGLE_SAFETY_DANGEROUS_CONTENT=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_CIVIC_INTEGRITY',
       'string',
-      'Veiligheidsinstelling voor inhoud over burgerlijke integriteit. Opties zijn BLOCK_ALL, BLOCK_ONLY_HIGH, WARN_ONLY en OFF.',
+      'Veiligheidsinstelling voor inhoud over burgerlijke integriteit. Opties zijn BLOCK_NONE, BLOCK_ONLY_HIGH, BLOCK_MEDIUM_AND_ABOVE en BLOCK_LOW_AND_ABOVE.',
       '# GOOGLE_SAFETY_CIVIC_INTEGRITY=BLOCK_ONLY_HIGH',
     ],
   ]}
 />
 
 Pas de beschikbare modellen aan, gescheiden door komma's, **zonder spaties**. De eerste zal de standaard zijn. Laat het leeg of geef het als commentaar op om de interne instellingen te gebruiken.
+
+Wanneer een `GOOGLE_SAFETY_*`-variabele niet is ingesteld, wordt de standaardinstelling van de provider gebruikt (`BLOCK_NONE` voor civic integrity), en ontvangen Gemini 2.0-, `gemini-1.5-flash-8b`-, experimentele en LearnLM-modellen `BLOCK_NONE`. Stel `GOOGLE_EXCLUDE_SAFETY_SETTINGS=true` in om veiligheidsinstellingen volledig weg te laten.
 
 - `GOOGLE_TITLE_MODEL` is nu verouderd en zal in toekomstige versies worden verwijderd. Gebruik in plaats daarvan de [`titleModel` Endpoint Setting](/docs/configuration/librechat_yaml/object_structure/shared_endpoint_settings#titlemodel) in de `librechat.yaml` configuratie.
 
@@ -1250,7 +1281,7 @@ Zie: [OpenAI Setup](/docs/configuration/pre_configured_ai/openai)
       'OPENAI_MODELS',
       'string',
       'Pas de beschikbare modellen aan, gescheiden door komma\'s, zonder spaties. De eerste zal de standaard zijn. Laat uitgeschakeld (met commentaar) om de interne instellingen te gebruiken.',
-      '# OPENAI_MODELS=gpt-5,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini,gpt-4.1,gpt-4.1-mini,gpt-4.1-nano,o3-mini,o1-pro,o1,gpt-4o,gpt-4o-mini',
+      '# OPENAI_MODELS=gpt-6-astra,gpt-6.1-sol,gpt-6-sol,gpt-6-luna,gpt-5.6,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.5-pro,chat-latest,gpt-5.4,gpt-5.4-pro,gpt-5.4-mini,gpt-5.4-nano,gpt-5.3-codex,gpt-5.2,gpt-5,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini,gpt-4.1,gpt-4.1-mini,gpt-4.1-nano,o3-mini,o1-pro,o1,gpt-4o,gpt-4o-mini',
     ],
     ['DEBUG_OPENAI', 'boolean', 'Schakel de debug-modus in voor de OpenAI endpoint.', 'DEBUG_OPENAI=false'],
     [
@@ -1263,7 +1294,7 @@ Zie: [OpenAI Setup](/docs/configuration/pre_configured_ai/openai)
       'OPENAI_SUMMARY_MODEL',
       'string',
       'Het model dat wordt gebruikt voor OpenAI-samenvattingen.',
-      '# OPENAI_SUMMARY_MODEL=gpt-3.5-turbo',
+      '# OPENAI_SUMMARY_MODEL=gpt-4o-mini',
     ],
     [
       'OPENAI_FORCE_PROMPT',
@@ -1287,7 +1318,7 @@ Zie: [OpenAI Setup](/docs/configuration/pre_configured_ai/openai)
       'OPENAI_TITLE_MODEL',
       'string',
       'VEROUDERD: Het model dat wordt gebruikt voor OpenAI-titels.',
-      '# OPENAI_TITLE_MODEL=gpt-3.5-turbo',
+      '# OPENAI_TITLE_MODEL=gpt-4o-mini',
     ],
   ]}
 />
@@ -1311,7 +1342,7 @@ Zie: [Assistants Setup](/docs/configuration/pre_configured_ai/assistants)
       'ASSISTANTS_MODELS',
       'string',
       'Pas de beschikbare modellen aan, gescheiden door komma\'s, zonder spaties. De eerste zal de standaard zijn. Laat leeg om de interne instellingen te gebruiken.',
-      '# ASSISTANTS_MODELS=gpt-3.5-turbo-0125,gpt-3.5-turbo-16k-0613,gpt-3.5-turbo-16k,gpt-3.5-turbo,gpt-4,gpt-4-0314,gpt-4-32k-0314,gpt-4-0613,gpt-3.5-turbo-0613,gpt-3.5-turbo-1106,gpt-4-0125-preview,gpt-4-turbo-preview,gpt-4-1106-preview',
+      '# ASSISTANTS_MODELS=gpt-4o,gpt-4o-mini,gpt-3.5-turbo-0125,gpt-3.5-turbo-16k-0613,gpt-3.5-turbo-16k,gpt-3.5-turbo,gpt-4,gpt-4-0314,gpt-4-32k-0314,gpt-4-0613,gpt-3.5-turbo-0613,gpt-3.5-turbo-1106,gpt-4-0125-preview,gpt-4-turbo-preview,gpt-4-1106-preview',
     ],
     [
       'ASSISTANTS_BASE_URL',
@@ -1323,6 +1354,75 @@ Zie: [Assistants Setup](/docs/configuration/pre_configured_ai/assistants)
 />
 
 Let op: Je kunt de beschikbare modellen aanpassen, gescheiden door komma's, zonder spaties. De eerste zal de standaard zijn. Laat het leeg of becommentarieerd om de interne instellingen te gebruiken.
+
+### Verouderde Azure OpenAI-variabelen (verouderd) [#legacy-azure-openai-variables-deprecated]
+
+Deze variabelen configureren één enkele Azure OpenAI-implementatie zonder `librechat.yaml`. Ze zijn verouderd. Gebruik in plaats daarvan de [Azure OpenAI-configuratie](/docs/configuration/librechat_yaml/ai_endpoints/azure) in `librechat.yaml`, die meerdere groepen, modellen en implementaties ondersteunt.
+
+<OptionTable
+  options={[
+    [
+      'AZURE_API_KEY',
+      'string',
+      'Azure OpenAI API-sleutel. AZURE_OPENAI_API_KEY wordt gelezen wanneer dit niet is ingesteld. Stel in op user_provided zodat gebruikers hun eigen sleutel kunnen invoeren.',
+      '# AZURE_API_KEY=',
+    ],
+    [
+      'AZURE_OPENAI_API_INSTANCE_NAME',
+      'string',
+      'Azure OpenAI-resourcenaam (instantie)',
+      '# AZURE_OPENAI_API_INSTANCE_NAME=',
+    ],
+    [
+      'AZURE_OPENAI_API_DEPLOYMENT_NAME',
+      'string',
+      'Azure OpenAI deployment-naam',
+      '# AZURE_OPENAI_API_DEPLOYMENT_NAME=',
+    ],
+    [
+      'AZURE_OPENAI_API_VERSION',
+      'string',
+      'Azure OpenAI API-versie.',
+      '# AZURE_OPENAI_API_VERSION=',
+    ],
+    [
+      'AZURE_OPENAI_BASEURL',
+      'string',
+      'Aangepaste basis-URL voor het Azure OpenAI-endpoint.',
+      '# AZURE_OPENAI_BASEURL=',
+    ],
+    [
+      'AZURE_OPENAI_DEFAULT_MODEL',
+      'string',
+      'Standaardmodel voor het Azure OpenAI endpoint.',
+      '# AZURE_OPENAI_DEFAULT_MODEL=gpt-3.5-turbo',
+    ],
+    [
+      'AZURE_USE_MODEL_AS_DEPLOYMENT_NAME',
+      'boolean',
+      'Gebruik de geselecteerde modelnaam als de deploymentnaam.',
+      '# AZURE_USE_MODEL_AS_DEPLOYMENT_NAME=TRUE',
+    ],
+    [
+      'AZURE_OPENAI_MODELS',
+      'string',
+      'Kommagescheiden lijst van Azure OpenAI-modellen, zonder spaties.',
+      '# AZURE_OPENAI_MODELS=gpt-3.5-turbo,gpt-4',
+    ],
+    [
+      'AZURE_ASSISTANTS_API_KEY',
+      'string',
+      'API-sleutel voor het Azure Assistants-endpoint. Stel in op user_provided om gebruikers hun eigen sleutel te laten invoeren.',
+      '# AZURE_ASSISTANTS_API_KEY=',
+    ],
+    [
+      'AZURE_ASSISTANTS_BASE_URL',
+      'string',
+      'Basis-URL voor het Azure Assistants-endpoint.',
+      '# AZURE_ASSISTANTS_BASE_URL=',
+    ],
+  ]}
+/>
 
 ### Tavily [#tavily]
 
@@ -1403,6 +1503,18 @@ Zie gedetailleerde instructies hier: **[OpenWeather](/docs/configuration/tools/o
       'Maximale grootte in bytes voor server-side remote bestanddownloads. Standaard: 536870912 (512 MiB).',
       '# REMOTE_FILE_FETCH_MAX_BYTES=536870912',
     ],
+    [
+      'FILE_RETENTION_SWEEP_INTERVAL_MS',
+      'number',
+      'Interval in milliseconden tussen opschoningen die verlopen bestanden verwijderen. Stel in op 0 om de opschoning uit te schakelen. Standaard: 3600000 (1 uur).',
+      '# FILE_RETENTION_SWEEP_INTERVAL_MS=3600000',
+    ],
+    [
+      'FILE_RETENTION_SWEEP_MAX_ATTEMPTS',
+      'number',
+      'Opeenvolgende mislukte verwijderingen waarna een verlopen bestand 30 dagen wordt geparkeerd in plaats van opnieuw te worden geprobeerd volgens de normale backoff. Verlaag deze waarde bij het verwerken van een grote achterstand. Standaard: 10.',
+      '# FILE_RETENTION_SWEEP_MAX_ATTEMPTS=10',
+    ],
   ]}
 />
 
@@ -1425,8 +1537,8 @@ De Code Interpreter API biedt een veilige omgeving voor het uitvoeren van code e
     [
       'CODE_ENVIRONMENT_DECISION_VERSION',
       'number',
-      'Adverteert onveranderlijke, door conversaties beheerde Code-environment beslissingen. Schakel protocolversie 1 pas in nadat elke API-replica dit ondersteunt.',
-      '# CODE_ENVIRONMENT_DECISION_VERSION=1',
+      'Bepaalt het onveranderlijke, aan het gesprek gekoppelde beslissingsprotocol voor de Code-omgeving (versie 1), dat standaard wordt geadverteerd en waarvan de keuze van de machine per chat afhankelijk is. Stel in op 0 om het verouderde pad te behouden, bijvoorbeeld zolang API-replica\'s die dateren van vóór protocolversie 1 nog draaien. 0 schakelt ook de keuze van de machine per chat uit, zodat elke agent op zijn vaste machine blijft.',
+      '# CODE_ENVIRONMENT_DECISION_VERSION=0',
     ],
     [
       'LIBRECHAT_CODE_BASEURL',
@@ -1475,6 +1587,30 @@ De Code Interpreter API biedt een veilige omgeving voor het uitvoeren van code e
       'number',
       'Self-service code-worker pairing rate-limit window in minuten. Standaard: 60.',
       '# CODE_ENVIRONMENT_PAIRING_USER_WINDOW=60',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_USER_MAX',
+      'number',
+      'Maximaal aantal statusverzoeken voor de codeomgeving per gebruiker in CODE_ENVIRONMENT_STATUS_USER_WINDOW. Standaard: 120.',
+      '# CODE_ENVIRONMENT_STATUS_USER_MAX=120',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_USER_WINDOW',
+      'number',
+      'Venster in minuten voor CODE_ENVIRONMENT_STATUS_USER_MAX. Standaard: 1.',
+      '# CODE_ENVIRONMENT_STATUS_USER_WINDOW=1',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_IP_MAX',
+      'number',
+      'Maximaal aantal verzoeken voor de status van de codeomgeving per IP in CODE_ENVIRONMENT_STATUS_IP_WINDOW. Standaard: 300.',
+      '# CODE_ENVIRONMENT_STATUS_IP_MAX=300',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_IP_WINDOW',
+      'number',
+      'Tijdvenster in minuten voor CODE_ENVIRONMENT_STATUS_IP_MAX. Standaard: 1.',
+      '# CODE_ENVIRONMENT_STATUS_IP_WINDOW=1',
     ],
   ]}
 />
@@ -1655,6 +1791,12 @@ Voor meer informatie, inclusief kant-en-klare container-images voor self-hosting
       'Specificeert een aangepaste bundler-URL voor Sandpack, gebruikt door Artifacts',
       'SANDPACK_BUNDLER_URL=your-bundler-url',
     ],
+    [
+      'SANDPACK_STATIC_BUNDLER_URL',
+      'string',
+      'Aangepaste bundler-URL die wordt gebruikt voor statische artefactsjablonen (HTML-, Markdown-, code-, tekst- en kantoordocumentvoorvertoningen). Bij zelfhosting stel je deze in naast SANDPACK_BUNDLER_URL.',
+      'SANDPACK_STATIC_BUNDLER_URL=your-static-bundler-url',
+    ],
   ]}
 />
 
@@ -1814,6 +1956,12 @@ Configureer de functionaliteit voor gedeelde gesprekslinks.
       'Snapshot-bestanden waarnaar wordt verwezen door een gedeelde chat, zodat kijkers ze kunnen bekijken of downloaden via de gedeelde link. Overschrijft interface.sharedLinks.snapshotFiles wanneer ingesteld.',
       'SHARED_LINKS_SNAPSHOT_FILES=true',
     ],
+    [
+      'SHARED_LINKS_AUTO_MIGRATE',
+      'boolean',
+      'Terugvaloptie die verouderde gedeelde links migreert die niet zijn opgepikt door de expliciete migratie van gedeelde-linkrechten, wanneer ze voor het eerst worden geopend. Ingeschakeld wanneer niet ingesteld; stel in op false om uit te schakelen.',
+      '# SHARED_LINKS_AUTO_MIGRATE=true',
+    ],
     ['SHARE_IP_MAX', 'number', 'Maximaal aantal gedeelde-link-opvragingen per IP tijdens het IP-venster. Standaard: 100.', '# SHARE_IP_MAX=100'],
     ['SHARE_IP_WINDOW', 'number', 'IP-snelheidslimietvenster voor gedeelde links in minuten. Standaard: 1.', '# SHARE_IP_WINDOW=1'],
     ['SHARE_USER_MAX', 'number', 'Maximaal aantal ophaalacties van gedeelde links per geauthenticeerde gebruiker tijdens het gebruikersvenster. Standaard: 60.', '# SHARE_USER_MAX=60'],
@@ -1898,13 +2046,41 @@ Deze sectie bevat de configuratie voor:
     [
       'ENABLE_INSIGHTS',
       'boolean',
-      'Schakelt het door MongoDB ondersteunde Insights-dashboard in voor beheerders met de vereiste rechten. Standaard: false.',
+      'Schakelt het op MongoDB gebaseerde Insights-dashboard in. Standaard: false.',
       'ENABLE_INSIGHTS=false',
     ],
   ]}
 />
 
-Wanneer ingeschakeld, blijft Insights beperkt tot accounts met de `ADMIN` rol plus `access:admin` en `read:insights`. Query's zijn tenant-scoped en leggen persistente activiteitsstatistieken en recente metadata van gesprekken bloot. Zie [Admin Insights](/docs/features/insights) voor definities van statistieken en details over toegang.
+Wanneer ingeschakeld, kunnen beheerders en accounts met de `read:insights`-capaciteit elke Agent bekijken, en andere gebruikers alleen de Agents waarvoor zij het recht **View insights** hebben gekregen. Query's zijn beperkt tot de tenant en tonen opgeslagen activiteitsstatistieken en metadata van recente gesprekken. Zie [Admin Insights](/docs/features/insights) voor definities van statistieken en details over toegang.
+
+### Auditlogboek [#audit-log]
+
+<OptionTable
+  options={[
+    [
+      'AUDIT_LOG_FAIL_CLOSED',
+      'boolean',
+      'Systeemtoekenningen en het delen van bronnen worden vóór inwerkingtreding gecontroleerd. Bij true mislukt een toekenning of een uitbreiding van rechten die niet gecontroleerd kan worden, en verandert er niets. Intrekkingen worden nooit geblokkeerd door een storing in de controle. Stel in op false om toch elke wijziging door te voeren en alleen controlefouten te registreren. Standaard: true voor systeemtoekenningen, het delen van bronnen, exports van het auditlogboek en code-koppeling. Wijzigingen in beheerdersconfiguratie-overschrijvingen, groepen en rollen mislukken alleen bij een gesloten status wanneer dit exact op true is ingesteld; wanneer dit niet is ingesteld, worden ze toegepast en wordt de controlefout geregistreerd.',
+      '# AUDIT_LOG_FAIL_CLOSED=true',
+    ],
+  ]}
+/>
+
+### Config Override Omgevingsverwijzingen [#config-override-environment-references]
+
+Configuratie-overschrijvingen die via de admin-API worden geschreven (rol-, groeps- en gebruikersprofielen en het Base-profiel) mogen alleen verwijzen naar de `${ENV_VAR}`-namen die `librechat.yaml` al gebruikt, de ingebouwde endpoint-credentials (zoals `OPENAI_API_KEY` en `ANTHROPIC_API_KEY`), en de hieronder vermelde namen. Elke andere verwijzing wordt bij het schrijven geweigerd en levert tijdens runtime niets op. Verwijzingen worden niet gecontroleerd in de secties `interface` en `modelSpecs` of in deze prompt-velden, die zoals geschreven worden gebruikt: de `titlePrompt`, `titlePromptTemplate`, `activityPrompt`, `activityPhasePrompt` en `reasoningLabelPrompt` van elk endpoint, `summarization.prompt` en `summarization.updatePrompt`, `memory.agent.instructions` en `webSearch.firecrawlOptions.changeTrackingOptions.prompt`. Prompt-sleutels op andere plaatsen worden wel gecontroleerd. Zie [Admin Panel](/docs/features/admin_panel) voor hoe overschrijvingen in lagen worden toegepast.
+
+<OptionTable
+  options={[
+    [
+      'CONFIG_OVERRIDE_ENV_ALLOWLIST',
+      'string',
+      'Kommagescheiden of spatiegescheiden lijst met extra namen van omgevingsvariabelen waarnaar admin-configuratieoverschrijvingen mogen verwijzen.',
+      '# CONFIG_OVERRIDE_ENV_ALLOWLIST=MY_GATEWAY_KEY,MY_GATEWAY_URL',
+    ],
+  ]}
+/>
 
 ### Agent-gespreksbediening [#agent-conversation-controls]
 
@@ -2275,6 +2451,12 @@ Beperkt [email address change](/docs/configuration/authentication/email#email-ad
       '# EMAIL_CHANGE_VIOLATION_SCORE=1',
     ],
     [
+      'EMAIL_CHANGE_SUBMISSION_IP_VIOLATION_SCORE',
+      'integer',
+      'Score voor het overschrijden van de limiet per IP-adres op het openen van verificatielinks voor e-mailwijzigingen. Standaard: 1.',
+      '# EMAIL_CHANGE_SUBMISSION_IP_VIOLATION_SCORE=1',
+    ],
+    [
       'TWO_FACTOR_TEMP_VIOLATION_SCORE',
       'integer',
       'Score voor het overschrijden van de limiet voor het aantal pogingen met de tweefactorcode. Standaard ingesteld op LOGIN_VIOLATION_SCORE.',
@@ -2405,18 +2587,12 @@ Beperkt hoe vaak gebruikers gesprekken kunnen importeren om misbruik te voorkome
 
 > Let op: Deze kunnen ook worden geconfigureerd via `librechat.yaml` in de sectie `rateLimits.conversationsImport`. Een waarde die is ingesteld in `librechat.yaml` krijgt voorrang op de omgevingsvariabele.
 
-> Let op: Je kunt beide limiters gebruiken, maar de standaardinstelling is om alleen op IP te limiteren.
+> Let op: zowel de IP- als de gebruikerslimieten zijn altijd actief. Pas ze aan met de variabelen `MAX` en `WINDOW` hieronder.
 
 ##### IP Limiter: [#ip-limiter-1]
 
 <OptionTable
   options={[
-    [
-      'LIMIT_IMPORT_IP',
-      'boolean',
-      'Of het aantal conversatie-imports dat een IP kan uitvoeren per `IMPORT_IP_WINDOW` moet worden beperkt.',
-      'LIMIT_IMPORT_IP=true',
-    ],
     [
       'IMPORT_IP_MAX',
       'integer',
@@ -2427,7 +2603,7 @@ Beperkt hoe vaak gebruikers gesprekken kunnen importeren om misbruik te voorkome
       'IMPORT_IP_WINDOW',
       'integer',
       'Bepaalt in minuten het tijdsvenster voor `IMPORT_IP_MAX` imports.',
-      'IMPORT_IP_WINDOW=1',
+      'IMPORT_IP_WINDOW=15',
     ],
   ]}
 />
@@ -2436,12 +2612,6 @@ Beperkt hoe vaak gebruikers gesprekken kunnen importeren om misbruik te voorkome
 
 <OptionTable
   options={[
-    [
-      'LIMIT_IMPORT_USER',
-      'boolean',
-      'Of het aantal gespreksimportaties dat een gebruiker per `IMPORT_USER_WINDOW` mag uitvoeren, moet worden beperkt.',
-      'LIMIT_IMPORT_USER=false',
-    ],
     [
       'IMPORT_USER_MAX',
       'integer',
@@ -2452,7 +2622,7 @@ Beperkt hoe vaak gebruikers gesprekken kunnen importeren om misbruik te voorkome
       'IMPORT_USER_WINDOW',
       'integer',
       'Bepaalt in minuten het tijdsbestek voor `IMPORT_USER_MAX` imports.',
-      'IMPORT_USER_WINDOW=1',
+      'IMPORT_USER_WINDOW=15',
     ],
   ]}
 />
@@ -2461,18 +2631,12 @@ Beperkt hoe vaak gebruikers gesprekken kunnen importeren om misbruik te voorkome
 
 Beperkt hoe vaak gebruikers conversaties kunnen forken om misbruik te voorkomen.
 
-> Let op: Je kunt beide limiters gebruiken, maar de standaardinstelling is om alleen op IP te limiteren.
+> Let op: zowel de IP- als de gebruikerslimieten zijn altijd actief. Pas ze aan met de variabelen `MAX` en `WINDOW` hieronder.
 
 ##### IP Limiter: [#ip-limiter-2]
 
 <OptionTable
   options={[
-    [
-      'LIMIT_FORK_IP',
-      'boolean',
-      'Of het aantal conversatie-forks dat een IP kan aanmaken per `FORK_IP_WINDOW` moet worden beperkt.',
-      'LIMIT_FORK_IP=true',
-    ],
     [
       'FORK_IP_MAX',
       'integer',
@@ -2492,12 +2656,6 @@ Beperkt hoe vaak gebruikers conversaties kunnen forken om misbruik te voorkomen.
 
 <OptionTable
   options={[
-    [
-      'LIMIT_FORK_USER',
-      'boolean',
-      'Of het aantal gespreks-forks dat een gebruiker per `FORK_USER_WINDOW` kan aanmaken, moet worden beperkt.',
-      'LIMIT_FORK_USER=false',
-    ],
     [
       'FORK_USER_MAX',
       'integer',
@@ -2756,6 +2914,12 @@ zie: **[Authenticatiesysteem](/docs/configuration/authentication)**
       'ENFORCE_TWO_FACTOR_AUTHENTICATION=false',
     ],
     [
+      'TWO_FACTOR_BACKUP_CODE_FORMAT',
+      'string',
+      'Indeling van nieuw uitgegeven tweefactorherstelcodes: sterk (128-bit, gezouten) of verouderd (32-bit, ongezouten). Standaard: sterk. Gebruik verouderd alleen tijdens een geleidelijke upgrade, op elke replica, zolang oudere backends die sterke codes niet kunnen lezen nog draaien. Bestaande verouderde codes blijven werken totdat de gebruiker ze opnieuw genereert.',
+      '# TWO_FACTOR_BACKUP_CODE_FORMAT=strong',
+    ],
+    [
       'MIN_PASSWORD_LENGTH',
       'number',
       'Minimale wachtwoordlengte voor gebruikersauthenticatie. Bij gebruik van LDAP-authenticatie kun je dit instellen op 1 om lokale wachtwoordvalidatie te omzeilen, aangezien LDAP-servers hun eigen wachtwoordbeleid beheren.',
@@ -3011,6 +3175,30 @@ Voor meer informatie:
       'OPENID_AUDIENCE=https://api.librechat.com',
     ],
     [
+      'OPENID_REFRESH_AUDIENCE',
+      'string',
+      'Doelgroepparameter voor OpenID-aanvragen om een refresh-token te vernieuwen. Sommige providers, zoals Auth0 custom APIs, vereisen deze om de bedoelde audience van het access-token te behouden tijdens het vernieuwen. Komt meestal overeen met OPENID_AUDIENCE.',
+      'OPENID_REFRESH_AUDIENCE=',
+    ],
+    [
+      'OPENID_AVATAR_AUTHORIZED_ORIGINS',
+      'string',
+      'Aanvullende oorsprongen, gescheiden door komma\'s of witruimte, waarnaar LibreChat het toegangstoken van de gebruiker verzendt bij het ophalen van de profielfoto. De oorsprongen van de issuer en het userinfo-eindpunt zijn altijd geautoriseerd.',
+      '# OPENID_AVATAR_AUTHORIZED_ORIGINS=https://avatars.example.com',
+    ],
+    [
+      'OPENID_DISCOVERY_RETRY_ATTEMPTS',
+      'number',
+      'Ontdekkingspogingen tijdens het opstarten, van 0 tot 100. Stel in op 0 om alleen achtergrondpogingen te gebruiken. Standaard: 1. registration.openidDiscovery.startupAttempts in librechat.yaml heeft voorrang.',
+      '# OPENID_DISCOVERY_RETRY_ATTEMPTS=1',
+    ],
+    [
+      'OPENID_DISCOVERY_RETRY_DELAY_MS',
+      'number',
+      'Vertraging in milliseconden tussen opstart- en achtergrondpogingen voor detectie, van 100 tot 3600000. Standaard: 5000. registration.openidDiscovery.retryDelayMs in librechat.yaml heeft voorrang.',
+      '# OPENID_DISCOVERY_RETRY_DELAY_MS=5000',
+    ],
+    [
       'OPENID_REQUIRED_ROLE',
       'string',
       'De vereiste rol(len) voor validatie. Ondersteunt een enkele rol of meerdere door komma\'s gescheiden rollen. Wanneer meerdere rollen zijn opgegeven, heeft de gebruiker EEN van de opgegeven rollen nodig (OF-logica).',
@@ -3207,14 +3395,14 @@ LibreChat ondersteunt het hergebruik van access en refresh tokens die zijn uitge
     [
       'OPENID_JWKS_URL_CACHE_ENABLED',
       'boolean',
-      'Schakel caching van verificatieresultaten van de ondertekeningssleutel in.',
+      'Schakel caching van verificatieresultaten van signing keys in. Ingeschakeld wanneer niet ingesteld; elke waarde anders dan true schakelt het uit.',
       'OPENID_JWKS_URL_CACHE_ENABLED=true',
     ],
     [
       'OPENID_JWKS_URL_CACHE_TIME',
       'number',
-      'Cacheduur in milliseconden (standaard: 600000 ms / 10 minuten).',
-      'OPENID_JWKS_URL_CACHE_TIME=600000',
+      'Cachduur in milliseconden. Standaard: 60000 (1 minuut).',
+      'OPENID_JWKS_URL_CACHE_TIME=60000',
     ],
     [
       'OPENID_ON_BEHALF_FLOW_FOR_USERINFO_REQUIRED',
@@ -3475,8 +3663,8 @@ Voor meer informatie: **[LDAP/AD Authentication](/docs/configuration/authenticat
     ],
     [
       'LDAP_TLS_REJECT_UNAUTHORIZED',
-      'string',
-      'LDAP TLS-verificatie',
+      'boolean',
+      'Of het LDAP-servercertificaat gecontroleerd moet worden aan de hand van LDAP_CA_CERT_PATH. Dit geldt alleen wanneer LDAP_CA_CERT_PATH is ingesteld: in dat geval schakelt het niet instellen ervan de certificaatverificatie uit, dus stel het in op true. Zonder LDAP_CA_CERT_PATH geldt de standaardverificatie van Node.js.',
       'LDAP_TLS_REJECT_UNAUTHORIZED=true',
     ],
     [
@@ -3716,7 +3904,7 @@ Zie: **[Azure Blob Storage CDN Configuration](/docs/configuration/cdn/azure)**
     [
       'AZURE_STORAGE_PUBLIC_ACCESS',
       'boolean',
-      'Schakel openbare toegang voor blobs in. Standaard: false.',
+      'Maak geüploade blobs openbaar leesbaar. Standaard: true; zet dit op false om blobs privé te houden.',
       'AZURE_STORAGE_PUBLIC_ACCESS=false',
     ],
     [
@@ -3851,6 +4039,12 @@ Bepaal hoe groot gegenereerde bestanden mogen zijn voordat LibreChat de extracti
       'Maximale bronbestandsgrootte in bytes voor inline previews van code-execution artefacten, inclusief DOCX, XLSX, CSV, PPTX, POTX, tekst- en PDF-achtige bestanden. Standaard: 2097152 (2 MiB). Gerenderde HTML-previews hebben nog steeds een aparte limiet, dus zeer uitgebreide bestanden kunnen de preview overslaan, zelfs onder deze waarde.',
       '# FILE_PREVIEW_MAX_EXTRACT_BYTES=2097152',
     ],
+    [
+      'OFFICE_PREVIEW_DISABLE_CDN',
+      'boolean',
+      'Render DOCX-previews op de server in plaats van een renderer te laden van cdn.jsdelivr.net. Stel in op true op air-gapped of gefilterde netwerken. Accepteert true, 1 of yes. Standaard: false.',
+      '# OFFICE_PREVIEW_DISABLE_CDN=true',
+    ],
   ]}
 />
 
@@ -3889,8 +4083,8 @@ Configureer MCP-instellingen voor verbeterd serverbeheer en OAuth-ondersteuning.
     [
       'MCP_CONNECTION_CHECK_TTL',
       'number',
-      'Cache de verbindingsstatuscontroles voor dit aantal milliseconden om dure verificatie te voorkomen.',
-      'MCP_CONNECTION_CHECK_TTL=30000',
+      'Cache-verbindingsstatuscontroles gedurende dit aantal milliseconden om kostbare verificatie te vermijden. Standaard: 60000.',
+      'MCP_CONNECTION_CHECK_TTL=60000',
     ],
     [
       'MCP_TOOLS_LIST_MAX_PAGES',
@@ -3915,6 +4109,117 @@ Configureer MCP-instellingen voor verbeterd serverbeheer en OAuth-ondersteuning.
       'number',
       'Maximaal aantal bytes toegestaan in één SSE-regel voor niet-GET streamable HTTP MCP-antwoorden. Stel in op 0 om uit te schakelen. Standaard: 5242880 (5 MiB).',
       '# MCP_STREAMABLE_HTTP_MAX_LINE_BYTES=5242880',
+    ],
+    [
+      'MCP_TOOLS_LIST_MAX_TOOLS',
+      'number',
+      'Maximaal totaal aantal tools dat wordt behouden uit gepagineerde tools/list-antwoorden. Begrensd op een minimum van 1. Standaard: 1000.',
+      '# MCP_TOOLS_LIST_MAX_TOOLS=1000',
+    ],
+    [
+      'MCP_TOOLS_LIST_MAX_BYTES',
+      'number',
+      'Maximaal geschatte JSON-bytes die behouden blijven uit gepagineerde tools/list-antwoorden. Begrensd tot een minimum van 1. Standaard: 5242880 (5 MiB).',
+      '# MCP_TOOLS_LIST_MAX_BYTES=5242880',
+    ],
+    [
+      'MCP_TOOLS_LIST_TIMEOUT_MS',
+      'number',
+      'Maximale verstreken tijd in milliseconden voor gepagineerde tools/list-detectie. Begrensd tot een minimum van 1. Standaard: 30000.',
+      '# MCP_TOOLS_LIST_TIMEOUT_MS=30000',
+    ],
+    [
+      'MCP_USER_CONNECTION_IDLE_TIMEOUT',
+      'number',
+      'Inactiviteitstijd in milliseconden waarna MCP-verbindingen per gebruiker worden verbroken. Standaard: 900000 (15 minuten).',
+      '# MCP_USER_CONNECTION_IDLE_TIMEOUT=900000',
+    ],
+    [
+      'MCP_REGISTRY_CACHE_TTL',
+      'number',
+      'TTL in milliseconden voor de MCP-serverregistercaches. Bij meerdere instanties kan de verouderde data tussen instanties oplopen tot tweemaal deze waarde. Stel in op 0 om de lokale snapshot uit te schakelen, zodat elke lezing naar Redis gaat. Standaard: 5000.',
+      '# MCP_REGISTRY_CACHE_TTL=5000',
+    ],
+    [
+      'MCP_INIT_TIMEOUT_MS',
+      'number',
+      'Tijd in milliseconden die MCP-servers krijgen om te initialiseren bij het opstarten. Standaard: 30000.',
+      '# MCP_INIT_TIMEOUT_MS=30000',
+    ],
+    [
+      'MCP_INIT_FOLLOWER_RETRY_MS',
+      'number',
+      'In implementaties met meerdere instanties, hoe vaak niet-leiderinstanties controleren of de leider de initialisatie van MCP-servers heeft voltooid, in milliseconden. Standaard: 3000.',
+      '# MCP_INIT_FOLLOWER_RETRY_MS=3000',
+    ],
+    [
+      'MCP_INIT_FOLLOWER_MAX_WAIT_MS',
+      'number',
+      'Maximale tijd in milliseconden die een niet-leider-instantie wacht tot de leider de MCP-initialisatie heeft voltooid. Stel in op 0 om niet te wachten. Standaard: MCP_INIT_TIMEOUT_MS plus MCP_INIT_FOLLOWER_RETRY_MS.',
+      '# MCP_INIT_FOLLOWER_MAX_WAIT_MS=33000',
+    ],
+    [
+      'MCP_IMAGE_DATA_MAX_BYTES',
+      'number',
+      'Maximale grootte in bytes van inline afbeeldingsdata in een MCP-toolresultaat. Grotere resultaten worden geweigerd; externe afbeeldings-URL\'s worden niet meegeteld. Standaard: 10485760 (10 MiB).',
+      '# MCP_IMAGE_DATA_MAX_BYTES=10485760',
+    ],
+    [
+      'MCP_SANDBOX_FRAME_ANCESTORS',
+      'string',
+      'Kommagescheiden lijst van oorsprongen die het MCP-app-sandboxframe mogen insluiten. Wanneer niet ingesteld, is insluiten geweigerd (frame-ancestors none).',
+      '# MCP_SANDBOX_FRAME_ANCESTORS=https://chat.example.com',
+    ],
+  ]}
+/>
+
+#### MCP-verbindingscircuitbreaker [#mcp-connection-circuit-breaker]
+
+LibreChat beperkt hoe vaak het opnieuw verbinding maakt met een MCP-server, zodat een falende of wisselvallige server geen reconnect-storm kan veroorzaken. Er gelden twee onafhankelijke controles. De cycle breaker grijpt in zodra `MCP_CB_MAX_CYCLES` verbind- en verbreekcycli binnen `MCP_CB_CYCLE_WINDOW_MS` hebben plaatsgevonden; daarna weigert hij nieuwe verbindingspogingen gedurende `MCP_CB_CYCLE_COOLDOWN_MS`. De failure backoff begint zodra `MCP_CB_MAX_FAILED_ROUNDS` opeenvolgende mislukte verbindingsrondes binnen `MCP_CB_FAILED_WINDOW_MS` hebben plaatsgevonden; nieuwe pogingen wachten vervolgens een exponentieel toenemende vertraging, die begint bij `MCP_CB_BASE_BACKOFF_MS` en is begrensd tot `MCP_CB_MAX_BACKOFF_MS`.
+
+<OptionTable
+  options={[
+    [
+      'MCP_CB_MAX_CYCLES',
+      'number',
+      'Verbind- en verbreekcycli die binnen het cyclusvenster zijn toegestaan voordat de onderbreker activeert. Standaard: 7.',
+      '# MCP_CB_MAX_CYCLES=7',
+    ],
+    [
+      'MCP_CB_CYCLE_WINDOW_MS',
+      'number',
+      'Glijdend venster in milliseconden voor het tellen van cycli. Standaard: 45000.',
+      '# MCP_CB_CYCLE_WINDOW_MS=45000',
+    ],
+    [
+      'MCP_CB_CYCLE_COOLDOWN_MS',
+      'number',
+      'Cooldown in milliseconden nadat de cyclusonderbreker is geactiveerd. Standaard: 15000.',
+      '# MCP_CB_CYCLE_COOLDOWN_MS=15000',
+    ],
+    [
+      'MCP_CB_MAX_FAILED_ROUNDS',
+      'number',
+      'Opeenvolgende mislukte verbindingsrondes die zijn toegestaan voordat backoff begint. Standaard: 3.',
+      '# MCP_CB_MAX_FAILED_ROUNDS=3',
+    ],
+    [
+      'MCP_CB_FAILED_WINDOW_MS',
+      'number',
+      'Schuifvenster in milliseconden voor het tellen van mislukte rondes. Standaard: 120000.',
+      '# MCP_CB_FAILED_WINDOW_MS=120000',
+    ],
+    [
+      'MCP_CB_BASE_BACKOFF_MS',
+      'number',
+      'Basis-backoff in milliseconden zodra de drempel voor mislukte rondes is bereikt. Standaard: 30000.',
+      '# MCP_CB_BASE_BACKOFF_MS=30000',
+    ],
+    [
+      'MCP_CB_MAX_BACKOFF_MS',
+      'number',
+      'Maximale wachttijd in milliseconden voor exponentiële backoff. Standaard: 300000.',
+      '# MCP_CB_MAX_BACKOFF_MS=300000',
     ],
   ]}
 />
@@ -3972,13 +4277,13 @@ Voor gedetailleerde configuratie en voorbeelden, zie: **[Redis Configuration Gui
     [
       'REDIS_USERNAME',
       'string',
-      'Redis-gebruikersnaam voor authenticatie. Overschrijft de gebruikersnaam in de URI indien beide zijn opgegeven.',
+      'Redis-gebruikersnaam voor authenticatie. Wordt alleen gebruikt wanneer REDIS_URI geen gebruikersnaam bevat; een gebruikersnaam in de URI heeft voorrang.',
       '# REDIS_USERNAME=your_redis_username',
     ],
     [
       'REDIS_PASSWORD',
       'string',
-      'Redis-wachtwoord voor authenticatie. Overschrijft het wachtwoord in de URI als beide zijn opgegeven.',
+      'Redis-wachtwoord voor authenticatie. Wordt alleen gebruikt wanneer REDIS_URI geen wachtwoord bevat; een wachtwoord in de URI heeft voorrang.',
       '# REDIS_PASSWORD=your_redis_password',
     ],
     [
@@ -4034,6 +4339,48 @@ Voor gedetailleerde configuratie en voorbeelden, zie: **[Redis Configuration Gui
       'number',
       'TCP keepalive idle-vertraging in milliseconden voor ioredis-sockets. Standaard: 10000; instellen op 0 voor de kernel-standaard.',
       '# REDIS_KEEP_ALIVE=10000',
+    ],
+    [
+      'REDIS_CONNECT_TIMEOUT',
+      'number',
+      'Verbindingstime-out in milliseconden. Standaard: 10000.',
+      '# REDIS_CONNECT_TIMEOUT=10000',
+    ],
+    [
+      'REDIS_RETRY_MAX_ATTEMPTS',
+      'number',
+      'Maximaal aantal herverbindingspogingen. Stel in op 0 voor onbeperkte pogingen. Standaard: 10.',
+      '# REDIS_RETRY_MAX_ATTEMPTS=10',
+    ],
+    [
+      'REDIS_RETRY_MAX_DELAY',
+      'number',
+      'Maximale vertraging tussen herverbindingspogingen in milliseconden. Standaard: 3000.',
+      '# REDIS_RETRY_MAX_DELAY=3000',
+    ],
+    [
+      'REDIS_ENABLE_OFFLINE_QUEUE',
+      'boolean',
+      'Commando\'s in de wachtrij plaatsen terwijl de verbinding is verbroken in plaats van ze meteen te laten mislukken. Standaard: true.',
+      '# REDIS_ENABLE_OFFLINE_QUEUE=true',
+    ],
+    [
+      'REDIS_SCAN_COUNT',
+      'number',
+      'COUNT-hint voor Redis SCAN-bewerkingen bij het scannen van sleutels op patroon. Hogere waarden verminderen het aantal heen-en-weer-verzoeken, maar verhogen het geheugengebruik en de latentie per aanroep. Standaard: 1000.',
+      '# REDIS_SCAN_COUNT=1000',
+    ],
+    [
+      'REDIS_DELETE_CHUNK_SIZE',
+      'number',
+      'Aantal sleutels dat per batch wordt verwijderd bij Redis DEL-bewerkingen. In clustermodus worden sleutels afzonderlijk en parallel verwijderd in blokken van deze grootte. Lagere waarden verminderen het geheugengebruik, maar verhogen het aantal heen-en-weer verzoeken. Standaard: 1000.',
+      '# REDIS_DELETE_CHUNK_SIZE=1000',
+    ],
+    [
+      'STREAM_KEEP_COMPLETED_JOBS',
+      'boolean',
+      'Houd voltooide generatiestreamtaken bewaard in plaats van ze te verwijderen wanneer de generatie is afgerond. Standaard: false.',
+      '# STREAM_KEEP_COMPLETED_JOBS=false',
     ],
     [
       'FORCED_IN_MEMORY_CACHE_NAMESPACES',

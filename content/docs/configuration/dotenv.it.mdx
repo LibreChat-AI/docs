@@ -80,6 +80,8 @@ Questi valori opzionali configurano il server HTTP Node.js. Lasciali non imposta
 
 I valori devono essere interi sicuri non negativi; i valori non validi vengono ignorati. Quando sia il timeout dell'header che quello della richiesta sono abilitati, LibreChat limita il timeout dell'header a quello della richiesta se quest'ultimo è inferiore. Node verifica la scadenza dell'header e della richiesta durante una scansione delle connessioni ogni 30 secondi, pertanto i valori inferiori a `30000` non vengono applicati con una precisione al millisecondo esatto. Bun attualmente accetta queste impostazioni ma non le applica; LibreChat registra un avviso quando il server API viene eseguito con Bun.
 
+`NODE_MAX_OLD_SPACE_SIZE` in `.env.example` è un argomento di build di Docker e non modifica la dimensione dello heap a runtime. Per impostare il limite dello heap di Node.js, usa `NODE_OPTIONS`, ad esempio `NODE_OPTIONS="--max-old-space-size=6144"`.
+
 ### Trust proxy [#trust-proxy]
 
 Utilizza l'indirizzo che si trova al massimo a n salti di distanza dall'applicazione Express.
@@ -387,7 +389,7 @@ LibreChat dispone di un sistema di logging centrale integrato; consulta [Logging
 
 #### File di log [#log-files]
 
-- Il debug logging è abilitato per impostazione predefinita ed è fondamentale per lo sviluppo.
+- I file di log di debug vengono scritti solo quando `DEBUG_LOGGING=true`, impostazione consigliata durante lo sviluppo e quando si segnalano problemi.
 - Per segnalare problemi, riproduci l'errore e invia i log da `./api/logs/debug-%DATE%.log` su: **[LibreChat GitHub Issues](https://github.com/LibreChat-AI/LibreChat/issues)**
 - I log di errore sono archiviati nella stessa posizione.
 
@@ -395,7 +397,7 @@ LibreChat dispone di un sistema di logging centrale integrato; consulta [Logging
 
 <OptionTable
   options={[
-    ['DEBUG_LOGGING', 'boolean', 'Mantieni attivi i log di debug.', 'DEBUG_LOGGING=true'],
+    ['DEBUG_LOGGING', 'boolean', 'Scrivi i log di debug su file. I file di log di debug vengono creati solo quando questo valore è true.', 'DEBUG_LOGGING=true'],
     [
       'DEBUG_CONSOLE',
       'boolean',
@@ -425,6 +427,18 @@ LibreChat dispone di un sistema di logging centrale integrato; consulta [Logging
       'number',
       'Configura la dimensione di troncamento per i valori stringa nei log della console/stdout JSON. Predefinito: 255.',
       '# CONSOLE_JSON_STRING_LENGTH=255',
+    ],
+    [
+      'DEBUG_MESSAGE_LENGTH',
+      'number',
+      'Lunghezza massima di un messaggio di log di debug prima che venga troncato. Predefinito: 150.',
+      '# DEBUG_MESSAGE_LENGTH=150',
+    ],
+    [
+      'LOG_REDACTION_MAX_NODES',
+      'number',
+      'Numero massimo di valori (oggetti e stringhe ponderate in base alla lunghezza) che un singolo record di log può oscurare prima che il resto venga sostituito, in modo che payload molto estesi non possano bloccare la registrazione dei log. Valore predefinito: 5000.',
+      '# LOG_REDACTION_MAX_NODES=5000',
     ],
     [
       'LIBRECHAT_LOG_DIR',
@@ -488,7 +502,7 @@ Utilizza le variabili standard di Langfuse per un progetto di osservabilità cen
     ['LANGFUSE_FANOUT_CENTRAL_BASE_URL', 'string', 'URL di base centrale di Langfuse utilizzato dal gateway.', '# LANGFUSE_FANOUT_CENTRAL_BASE_URL=https://cloud.langfuse.com'],
     ['LANGFUSE_FANOUT_CENTRAL_AUTH_HEADER', 'string', 'Intestazione di autorizzazione Basic completa per la traccia centrale e l\'esportazione di file multimediali.', '# LANGFUSE_FANOUT_CENTRAL_AUTH_HEADER=Basic <base64-public-colon-secret>'],
     ['LANGFUSE_FANOUT_CENTRAL_MEDIA_EXPORT_DISABLED', 'boolean', 'Disabilita il fanout multimediale centrale senza disabilitare le tracce centrali.', '# LANGFUSE_FANOUT_CENTRAL_MEDIA_EXPORT_DISABLED=false'],
-    ['LANGFUSE_FANOUT_TENANT_DESTINATIONS', 'string', 'Mappature di chiavi di destinazione e URL di base separate da virgole consentite all\'avvio.', '# LANGFUSE_FANOUT_TENANT_DESTINATIONS=eu=https://cloud.langfuse.com,us=https://us.cloud.langfuse.com'],
+    ['LANGFUSE_FANOUT_TENANT_DESTINATIONS', 'string', 'Mappature di chiavi di destinazione e URL di base separate da virgole consentite all\'avvio.', '# LANGFUSE_FANOUT_TENANT_DESTINATIONS=eu=https://cloud.langfuse.com,us=https://us.cloud.langfuse.com,jp=https://jp.cloud.langfuse.com'],
     ['LANGFUSE_FANOUT_TRACE_DESTINATION_KEYS', 'string', 'Chiavi di destinazione supportate dalla configurazione di routing del collector.', '# LANGFUSE_FANOUT_TRACE_DESTINATION_KEYS=eu,us,jp'],
     ['LANGFUSE_FANOUT_PUBLIC_URL', 'string', 'URL base del gateway utilizzato per creare URL di caricamento multimediale una tantum.', '# LANGFUSE_FANOUT_PUBLIC_URL=http://langfuse-fanout-collector:4318'],
     ['LANGFUSE_FANOUT_TRACE_COLLECTOR_URL', 'string', 'Endpoint di tracciamento interno da gateway a collector.', '# LANGFUSE_FANOUT_TRACE_COLLECTOR_URL=http://langfuse-fanout-otel:4319'],
@@ -671,16 +685,46 @@ LibreChat può pubblicare la telemetria Real User Monitoring (RUM) del browser v
       '# RUM_PROXY_TIMEOUT_MS=10000',
     ],
     [
+      'RUM_PROXY_BODY_LIMIT',
+      'string',
+      'Dimensione massima del corpo della richiesta accettata dal proxy, analizzata solo dopo l\'autenticazione e la limitazione della frequenza. Predefinito: 3mb.',
+      '# RUM_PROXY_BODY_LIMIT=3mb',
+    ],
+    [
+      'RUM_PROXY_USER_MAX',
+      'number',
+      'Numero massimo di richieste di telemetria per utente autenticato in RUM_PROXY_USER_WINDOW. Predefinito: 240.',
+      '# RUM_PROXY_USER_MAX=240',
+    ],
+    [
+      'RUM_PROXY_USER_WINDOW',
+      'number',
+      'Finestra in minuti per RUM_PROXY_USER_MAX. Predefinito: 1.',
+      '# RUM_PROXY_USER_WINDOW=1',
+    ],
+    [
       'RUM_TRACE_PROPAGATION_TARGETS',
       'string',
       'Origini HTTPS o URL proprietari separati da virgole che dovrebbero ricevere le intestazioni traceparent.',
       '# RUM_TRACE_PROPAGATION_TARGETS=https://api.example.com',
     ],
     [
+      'RUM_SESSION_REPLAY_ENABLED',
+      'boolean',
+      'Abilita la registrazione delle sessioni del browser (session replay). La riproduzione può raccogliere prompt, risposte o payload sensibili. Un valore impostato per telemetry.rum.sessionReplay.enabled in librechat.yaml ha la precedenza. Predefinito: false.',
+      '# RUM_SESSION_REPLAY_ENABLED=false',
+    ],
+    [
       'RUM_DISABLE_REPLAY',
       'boolean',
-      'Disabilita la riproduzione della sessione del browser. Predefinito: true.',
+      'Interruttore legacy per il replay delle sessioni del browser, utilizzato solo quando RUM_SESSION_REPLAY_ENABLED non è impostata. Il replay resta disattivato a meno che questa non sia esplicitamente impostata su false. Preferire RUM_SESSION_REPLAY_ENABLED.',
       '# RUM_DISABLE_REPLAY=true',
+    ],
+    [
+      'RUM_CLIENT_LOGS',
+      'boolean',
+      'Esporta gli avvisi e gli errori del logger del client browser come log OTLP. Si applica solo in modalità proxy. Valore predefinito: false.',
+      '# RUM_CLIENT_LOGS=false',
     ],
     [
       'RUM_CONSOLE_CAPTURE',
@@ -823,7 +867,7 @@ Decommenta `ENDPOINTS` per personalizzare gli endpoint disponibili in LibreChat.
       'ENDPOINTS',
       'string',
       'Elenco separato da virgole degli endpoint disponibili.',
-      '# ENDPOINTS=openAI,agents,assistants,gptPlugins,azureOpenAI,google,anthropic,bingAI,custom',
+      '# ENDPOINTS=openAI,assistants,azureOpenAI,google,anthropic',
     ],
     [
       'PROXY',
@@ -983,7 +1027,7 @@ vedi: [Anthropic Endpoint](/docs/configuration/pre_configured_ai/anthropic)
       'ANTHROPIC_MODELS',
       'string',
       'Elenco separato da virgole dei modelli Anthropic da utilizzare.',
-      '# ANTHROPIC_MODELS=claude-fable-5-1,claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,claude-opus-4-6,claude-opus-4-20250514,claude-3-7-sonnet-20250219,claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022',
+      '# ANTHROPIC_MODELS=claude-fable-5-1,claude-fable-5,claude-opus-5,claude-opus-4-8,claude-opus-4-7,claude-sonnet-5,claude-sonnet-4-6,claude-opus-4-6,claude-opus-4-20250514,claude-3-7-sonnet-20250219,claude-3-5-sonnet-20241022,claude-3-5-haiku-20241022,claude-3-opus-20240229,claude-3-sonnet-20240229,claude-3-haiku-20240307',
     ],
     [
       'ANTHROPIC_REVERSE_PROXY',
@@ -992,17 +1036,13 @@ vedi: [Anthropic Endpoint](/docs/configuration/pre_configured_ai/anthropic)
       '# ANTHROPIC_REVERSE_PROXY=',
     ],
     [
-      'ANTHROPIC_TITLE_MODEL',
+      'ANTHROPIC_VERSION',
       'string',
-      'DEPRECATO: Modello da utilizzare per la titolazione con Anthropic.',
-      '# ANTHROPIC_TITLE_MODEL=claude-3-haiku-20240307',
+      'Valore dell\'header anthropic-version inviato durante il recupero dell\'elenco dei modelli Anthropic. Predefinito: 2023-06-01.',
+      '# ANTHROPIC_VERSION=2023-06-01',
     ],
   ]}
 />
-
-- `ANTHROPIC_TITLE_MODEL` è ora deprecato e verrà rimosso nelle versioni future. Utilizza invece l'impostazione dell'endpoint [`titleModel`](/docs/configuration/librechat_yaml/object_structure/shared_endpoint_settings#titlemodel) all'interno della configurazione `librechat.yaml`.
-
-> **Nota:** Deve essere compatibile con l'endpoint Anthropic. Inoltre, i modelli Claude 2 e Claude 3 offrono le prestazioni migliori per questa attività, con i modelli `claude-3-haiku` che risultano i più economici.
 
 Claude Fable 5.1 e Fable 5 sono inclusi nell'elenco predefinito dei modelli Anthropic. I modelli di classe Fable/Mythos utilizzano il moderno comportamento di Anthropic in LibreChat: 1M di contesto, supporto per il pensiero adattivo (adaptive thinking), supporto per la memorizzazione nella cache dei prompt (prompt caching) e gestione di `thinkingDisplay` per l'output di ragionamento riassunto o omesso.
 
@@ -1072,10 +1112,16 @@ Vedi: [Configurazione AWS Bedrock](/docs/configuration/pre_configured_ai/bedrock
       '# BEDROCK_AWS_BEARER_TOKEN=your_bedrock_api_key',
     ],
     [
+      'BEDROCK_REVERSE_PROXY',
+      'string',
+      'Host of a reverse proxy for Bedrock API calls, without the https:// scheme. Works with or without PROXY.',
+      '# BEDROCK_REVERSE_PROXY=bedrock-proxy.example.com',
+    ],
+    [
       'BEDROCK_AWS_MODELS',
       'string',
       'Elenco separato da virgole degli ID dei modelli Bedrock. Se omesso, vengono inclusi tutti i modelli supportati noti.',
-      '# BEDROCK_AWS_MODELS=global.anthropic.claude-fable-5-1,global.anthropic.claude-fable-5,global.anthropic.claude-opus-5,global.anthropic.claude-opus-4-8,global.anthropic.claude-opus-4-7,global.anthropic.claude-sonnet-5,global.anthropic.claude-sonnet-4-6,meta.llama3-1-8b-instruct-v1:0',
+      '# BEDROCK_AWS_MODELS=global.anthropic.claude-fable-5-1,global.anthropic.claude-fable-5,global.anthropic.claude-opus-5,global.anthropic.claude-opus-4-8,global.anthropic.claude-opus-4-7,global.anthropic.claude-sonnet-5,global.anthropic.claude-sonnet-4-6,global.anthropic.claude-opus-4-6-v1,global.anthropic.claude-haiku-4-5-20251001-v1:0,meta.llama3-1-8b-instruct-v1:0',
     ],
   ]}
 />
@@ -1083,29 +1129,6 @@ Vedi: [Configurazione AWS Bedrock](/docs/configuration/pre_configured_ai/bedrock
 > **Nota:** Puoi omettere le chiavi di accesso per utilizzare la catena di credenziali AWS predefinita (variabili d'ambiente, credenziali SSO, file di credenziali condivisi o il servizio di metadati dell'istanza EC2/ECS). Vedi [AWS Bedrock Setup](/docs/configuration/pre_configured_ai/bedrock) per maggiori dettagli.
 
 I modelli Claude Fable/Mythos su Bedrock sono esclusivamente basati su inference-profile. Utilizza un ID profilo come `global.anthropic.claude-fable-5-1` e abilita l'impostazione di condivisione dati Anthropic richiesta nella console Bedrock o tramite la Data Retention API prima di invocarli.
-
-### BingAI [#bingai]
-
-Bing, utilizzato anche per Sydney, jailbreak e Bing Image Creator
-
-<OptionTable
-  options={[
-    [
-      'BINGAI_TOKEN',
-      'string',
-      'Token di accesso Bing. Lasciare vuoto per disabilitare. Può essere impostato su "user_provided" per consentire agli utenti di fornire il proprio token dalla WebUI.',
-      'BINGAI_TOKEN=user_provided',
-    ],
-    [
-      'BINGAI_HOST',
-      'string',
-      'URL host di Bing. Lasciare commentato per utilizzare il server predefinito.',
-      '# BINGAI_HOST=https://cn.bing.com',
-    ],
-  ]}
-/>
-
-Nota: Si consiglia di lasciarlo come "user_provided" e di fornire il token dalla WebUI.
 
 ### Google [#google]
 
@@ -1123,7 +1146,13 @@ Segui queste istruzioni per configurare il [Google Endpoint](/docs/configuration
       'GOOGLE_SERVICE_KEY_FILE',
       'string',
       'Percorso del file della chiave JSON dell\'account di servizio Google, URL da cui recuperarlo o JSON stringificato. Utilizzato per l\'autenticazione Vertex AI (ad esempio, funzionalità OCR).',
-      'GOOGLE_SERVICE_KEY_FILE=/path/to/auth.json',
+      'GOOGLE_SERVICE_KEY_FILE=/path/to/service-account.json',
+    ],
+    [
+      'GOOGLE_CLOUD_PROJECT',
+      'string',
+      'ID del progetto Google Cloud per Vertex AI. Viene verificato dopo VERTEX_PROJECT_ID; GCLOUD_PROJECT e GOOGLE_PROJECT_ID vengono usati come ulteriori fallback, in quest\'ordine.',
+      '# GOOGLE_CLOUD_PROJECT=your-project-id',
     ],
     ['GOOGLE_REVERSE_PROXY', 'string', 'URL del reverse proxy di Google.', 'GOOGLE_REVERSE_PROXY='],
     [
@@ -1136,19 +1165,19 @@ Segui queste istruzioni per configurare il [Google Endpoint](/docs/configuration
       'GOOGLE_MODELS',
       'string',
       'Modelli Google Gemini API disponibili, separati da virgole.',
-      'GOOGLE_MODELS=gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-2.0-flash-lite',
+      'GOOGLE_MODELS=gemini-4-argon,gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-2.0-flash-lite',
     ],
     [
       'GOOGLE_MODELS',
       'string',
       'Modelli Vertex AI Google disponibili, separati da virgole.',
-      'GOOGLE_MODELS=gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash-001,gemini-2.0-flash-lite-001',
+      'GOOGLE_MODELS=gemini-4-argon,gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3.1-flash-lite-preview,gemini-2.5-pro,gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash-001,gemini-2.0-flash-lite-001',
     ],
     [
       'GOOGLE_TITLE_MODEL',
       'string',
       'DEPRECATED: Il modello utilizzato per la titolazione con Google.',
-      'GOOGLE_TITLE_MODEL=gemini-pro',
+      'GOOGLE_TITLE_MODEL=gemini-2.0-flash-lite-001',
     ],
     [
       'GOOGLE_LOC',
@@ -1171,37 +1200,39 @@ Segui queste istruzioni per configurare il [Google Endpoint](/docs/configuration
     [
       'GOOGLE_SAFETY_SEXUALLY_EXPLICIT',
       'string',
-      'Impostazione di sicurezza per contenuti sessualmente espliciti. Le opzioni sono BLOCK_ALL, BLOCK_ONLY_HIGH, WARN_ONLY e OFF.',
+      'Impostazione di sicurezza per i contenuti sessualmente espliciti. Le opzioni sono BLOCK_NONE, BLOCK_ONLY_HIGH, BLOCK_MEDIUM_AND_ABOVE e BLOCK_LOW_AND_ABOVE.',
       'GOOGLE_SAFETY_SEXUALLY_EXPLICIT=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_HATE_SPEECH',
       'string',
-      'Impostazione di sicurezza per i contenuti che incitano all\'odio. Le opzioni sono BLOCK_ALL, BLOCK_ONLY_HIGH, WARN_ONLY e OFF.',
+      'Impostazione di sicurezza per i contenuti di incitamento all\'odio. Le opzioni sono BLOCK_NONE, BLOCK_ONLY_HIGH, BLOCK_MEDIUM_AND_ABOVE e BLOCK_LOW_AND_ABOVE.',
       'GOOGLE_SAFETY_HATE_SPEECH=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_HARASSMENT',
       'string',
-      'Impostazione di sicurezza per i contenuti molesti. Le opzioni sono BLOCK_ALL, BLOCK_ONLY_HIGH, WARN_ONLY e OFF.',
+      'Impostazione di sicurezza per i contenuti di molestia. Le opzioni sono BLOCK_NONE, BLOCK_ONLY_HIGH, BLOCK_MEDIUM_AND_ABOVE e BLOCK_LOW_AND_ABOVE.',
       'GOOGLE_SAFETY_HARASSMENT=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_DANGEROUS_CONTENT',
       'string',
-      'Impostazione di sicurezza per contenuti pericolosi. Le opzioni sono BLOCK_ALL, BLOCK_ONLY_HIGH, WARN_ONLY e OFF.',
+      'Impostazione di sicurezza per i contenuti pericolosi. Le opzioni sono BLOCK_NONE, BLOCK_ONLY_HIGH, BLOCK_MEDIUM_AND_ABOVE e BLOCK_LOW_AND_ABOVE.',
       'GOOGLE_SAFETY_DANGEROUS_CONTENT=BLOCK_ONLY_HIGH',
     ],
     [
       'GOOGLE_SAFETY_CIVIC_INTEGRITY',
       'string',
-      'Impostazione di sicurezza per i contenuti sull\'integrità civica. Le opzioni sono BLOCK_ALL, BLOCK_ONLY_HIGH, WARN_ONLY e OFF.',
+      'Impostazione di sicurezza per i contenuti di integrità civica. Le opzioni sono BLOCK_NONE, BLOCK_ONLY_HIGH, BLOCK_MEDIUM_AND_ABOVE e BLOCK_LOW_AND_ABOVE.',
       '# GOOGLE_SAFETY_CIVIC_INTEGRITY=BLOCK_ONLY_HIGH',
     ],
   ]}
 />
 
 Personalizza i modelli disponibili, separati da virgole, **senza spazi**. Il primo sarà quello predefinito. Lascia vuoto o commentato per utilizzare le impostazioni interne.
+
+Quando una variabile `GOOGLE_SAFETY_*` non è impostata, viene utilizzato il valore predefinito del provider (`BLOCK_NONE` per l'integrità civica), e i modelli Gemini 2.0, `gemini-1.5-flash-8b`, sperimentali e LearnLM ricevono `BLOCK_NONE`. Imposta `GOOGLE_EXCLUDE_SAFETY_SETTINGS=true` per omettere del tutto le impostazioni di sicurezza.
 
 - `GOOGLE_TITLE_MODEL` è ora deprecato e verrà rimosso nelle versioni future. Utilizza invece l'impostazione dell'endpoint [`titleModel`](/docs/configuration/librechat_yaml/object_structure/shared_endpoint_settings#titlemodel) all'interno della configurazione `librechat.yaml`.
 
@@ -1250,7 +1281,7 @@ Vedi: [Configurazione OpenAI](/docs/configuration/pre_configured_ai/openai)
       'OPENAI_MODELS',
       'string',
       'Personalizza i modelli disponibili, separati da virgole, senza spazi. Il primo sarà quello predefinito. Lascia commentato per utilizzare le impostazioni interne.',
-      '# OPENAI_MODELS=gpt-5,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini,gpt-4.1,gpt-4.1-mini,gpt-4.1-nano,o3-mini,o1-pro,o1,gpt-4o,gpt-4o-mini',
+      '# OPENAI_MODELS=gpt-6-astra,gpt-6.1-sol,gpt-6-sol,gpt-6-luna,gpt-5.6,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.5-pro,chat-latest,gpt-5.4,gpt-5.4-pro,gpt-5.4-mini,gpt-5.4-nano,gpt-5.3-codex,gpt-5.2,gpt-5,gpt-5-codex,gpt-5-mini,gpt-5-nano,o3-pro,o3,o4-mini,gpt-4.1,gpt-4.1-mini,gpt-4.1-nano,o3-mini,o1-pro,o1,gpt-4o,gpt-4o-mini',
     ],
     ['DEBUG_OPENAI', 'boolean', 'Abilita la modalità debug per l\'endpoint OpenAI.', 'DEBUG_OPENAI=false'],
     [
@@ -1263,7 +1294,7 @@ Vedi: [Configurazione OpenAI](/docs/configuration/pre_configured_ai/openai)
       'OPENAI_SUMMARY_MODEL',
       'string',
       'Il modello utilizzato per la sintesi di OpenAI.',
-      '# OPENAI_SUMMARY_MODEL=gpt-3.5-turbo',
+      '# OPENAI_SUMMARY_MODEL=gpt-4o-mini',
     ],
     [
       'OPENAI_FORCE_PROMPT',
@@ -1287,7 +1318,7 @@ Vedi: [Configurazione OpenAI](/docs/configuration/pre_configured_ai/openai)
       'OPENAI_TITLE_MODEL',
       'string',
       'DEPRECATO: Il modello utilizzato per la titolazione OpenAI.',
-      '# OPENAI_TITLE_MODEL=gpt-3.5-turbo',
+      '# OPENAI_TITLE_MODEL=gpt-4o-mini',
     ],
   ]}
 />
@@ -1311,7 +1342,7 @@ Vedi: [Assistants Setup](/docs/configuration/pre_configured_ai/assistants)
       'ASSISTANTS_MODELS',
       'string',
       'Personalizza i modelli disponibili, separati da virgole, senza spazi. Il primo sarà quello predefinito. Lascia vuoto per utilizzare le impostazioni interne.',
-      '# ASSISTANTS_MODELS=gpt-3.5-turbo-0125,gpt-3.5-turbo-16k-0613,gpt-3.5-turbo-16k,gpt-3.5-turbo,gpt-4,gpt-4-0314,gpt-4-32k-0314,gpt-4-0613,gpt-3.5-turbo-0613,gpt-3.5-turbo-1106,gpt-4-0125-preview,gpt-4-turbo-preview,gpt-4-1106-preview',
+      '# ASSISTANTS_MODELS=gpt-4o,gpt-4o-mini,gpt-3.5-turbo-0125,gpt-3.5-turbo-16k-0613,gpt-3.5-turbo-16k,gpt-3.5-turbo,gpt-4,gpt-4-0314,gpt-4-32k-0314,gpt-4-0613,gpt-3.5-turbo-0613,gpt-3.5-turbo-1106,gpt-4-0125-preview,gpt-4-turbo-preview,gpt-4-1106-preview',
     ],
     [
       'ASSISTANTS_BASE_URL',
@@ -1323,6 +1354,75 @@ Vedi: [Assistants Setup](/docs/configuration/pre_configured_ai/assistants)
 />
 
 Nota: Puoi personalizzare i modelli disponibili, separati da virgole, senza spazi. Il primo sarà quello predefinito. Lascialo vuoto o commentato per utilizzare le impostazioni interne.
+
+### Variabili legacy di Azure OpenAI (deprecate) [#legacy-azure-openai-variables-deprecated]
+
+Queste variabili configurano un singolo deployment di Azure OpenAI senza `librechat.yaml`. Sono deprecate. Usa invece la [configurazione di Azure OpenAI](/docs/configuration/librechat_yaml/ai_endpoints/azure) in `librechat.yaml`, che supporta più gruppi, modelli e deployment.
+
+<OptionTable
+  options={[
+    [
+      'AZURE_API_KEY',
+      'string',
+      'Chiave API di Azure OpenAI. AZURE_OPENAI_API_KEY viene letta quando questa è non impostata. Impostare su user_provided per consentire agli utenti di inserire la propria chiave.',
+      '# AZURE_API_KEY=',
+    ],
+    [
+      'AZURE_OPENAI_API_INSTANCE_NAME',
+      'string',
+      'Nome della risorsa (istanza) Azure OpenAI',
+      '# AZURE_OPENAI_API_INSTANCE_NAME=',
+    ],
+    [
+      'AZURE_OPENAI_API_DEPLOYMENT_NAME',
+      'string',
+      'Nome della distribuzione di Azure OpenAI',
+      '# AZURE_OPENAI_API_DEPLOYMENT_NAME=',
+    ],
+    [
+      'AZURE_OPENAI_API_VERSION',
+      'string',
+      'Versione API di Azure OpenAI.',
+      '# AZURE_OPENAI_API_VERSION=',
+    ],
+    [
+      'AZURE_OPENAI_BASEURL',
+      'string',
+      'URL base personalizzato per l\'endpoint Azure OpenAI.',
+      '# AZURE_OPENAI_BASEURL=',
+    ],
+    [
+      'AZURE_OPENAI_DEFAULT_MODEL',
+      'string',
+      'Modello predefinito per l\'endpoint Azure OpenAI.',
+      '# AZURE_OPENAI_DEFAULT_MODEL=gpt-3.5-turbo',
+    ],
+    [
+      'AZURE_USE_MODEL_AS_DEPLOYMENT_NAME',
+      'boolean',
+      'Usa il nome del modello selezionato come nome di distribuzione.',
+      '# AZURE_USE_MODEL_AS_DEPLOYMENT_NAME=TRUE',
+    ],
+    [
+      'AZURE_OPENAI_MODELS',
+      'string',
+      'Elenco di modelli di Azure OpenAI separati da virgole, senza spazi.',
+      '# AZURE_OPENAI_MODELS=gpt-3.5-turbo,gpt-4',
+    ],
+    [
+      'AZURE_ASSISTANTS_API_KEY',
+      'string',
+      'Chiave API per l\'endpoint Azure Assistants. Impostala su user_provided per consentire agli utenti di inserire la propria chiave.',
+      '# AZURE_ASSISTANTS_API_KEY=',
+    ],
+    [
+      'AZURE_ASSISTANTS_BASE_URL',
+      'string',
+      'URL base per l\'endpoint Azure Assistants.',
+      '# AZURE_ASSISTANTS_BASE_URL=',
+    ],
+  ]}
+/>
 
 ### Tavily [#tavily]
 
@@ -1403,6 +1503,18 @@ Vedi le istruzioni dettagliate qui: **[OpenWeather](/docs/configuration/tools/op
       'Dimensione massima in byte per i download di file remoti lato server. Predefinito: 536870912 (512 MiB).',
       '# REMOTE_FILE_FETCH_MAX_BYTES=536870912',
     ],
+    [
+      'FILE_RETENTION_SWEEP_INTERVAL_MS',
+      'number',
+      'Intervallo in millisecondi tra le scansioni che eliminano i file scaduti. Impostare a 0 per disabilitare la scansione. Predefinito: 3600000 (1 ora).',
+      '# FILE_RETENTION_SWEEP_INTERVAL_MS=3600000',
+    ],
+    [
+      'FILE_RETENTION_SWEEP_MAX_ATTEMPTS',
+      'number',
+      'Numero di eliminazioni non riuscite consecutive dopo le quali un file scaduto viene messo in attesa per 30 giorni invece di essere ritentato con il normale backoff. Abbassalo quando smaltisci un ampio arretrato. Predefinito: 10.',
+      '# FILE_RETENTION_SWEEP_MAX_ATTEMPTS=10',
+    ],
   ]}
 />
 
@@ -1425,8 +1537,8 @@ L'API Code Interpreter fornisce un ambiente sicuro per l'esecuzione di codice e 
     [
       'CODE_ENVIRONMENT_DECISION_VERSION',
       'number',
-      'Pubblicizza decisioni sull\'ambiente di codice immutabili e di proprietà della conversazione. Abilita il protocollo versione 1 solo dopo che ogni replica API lo supporta.',
-      '# CODE_ENVIRONMENT_DECISION_VERSION=1',
+      'Controlla il protocollo decisionale immutabile dell\'ambiente di esecuzione del codice di proprietà della conversazione (versione 1), che viene pubblicizzato per impostazione predefinita e da cui dipende la scelta della macchina per chat. Impostalo su 0 per mantenere il percorso legacy, ad esempio finché sono ancora in esecuzione repliche dell\'API precedenti al protocollo versione 1. 0 disattiva anche la scelta della macchina per chat, quindi ogni agente resta sulla propria macchina fissa.',
+      '# CODE_ENVIRONMENT_DECISION_VERSION=0',
     ],
     [
       'LIBRECHAT_CODE_BASEURL',
@@ -1475,6 +1587,30 @@ L'API Code Interpreter fornisce un ambiente sicuro per l'esecuzione di codice e 
       'number',
       'Finestra di limite di frequenza per l\'abbinamento self-service dei code-worker in minuti. Predefinito: 60.',
       '# CODE_ENVIRONMENT_PAIRING_USER_WINDOW=60',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_USER_MAX',
+      'number',
+      'Numero massimo di richieste di stato dell\'ambiente di codice per utente in CODE_ENVIRONMENT_STATUS_USER_WINDOW. Predefinito: 120.',
+      '# CODE_ENVIRONMENT_STATUS_USER_MAX=120',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_USER_WINDOW',
+      'number',
+      'Finestra in minuti per CODE_ENVIRONMENT_STATUS_USER_MAX. Predefinito: 1.',
+      '# CODE_ENVIRONMENT_STATUS_USER_WINDOW=1',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_IP_MAX',
+      'number',
+      'Numero massimo di richieste di stato dell\'ambiente di codice per IP in CODE_ENVIRONMENT_STATUS_IP_WINDOW. Predefinito: 300.',
+      '# CODE_ENVIRONMENT_STATUS_IP_MAX=300',
+    ],
+    [
+      'CODE_ENVIRONMENT_STATUS_IP_WINDOW',
+      'number',
+      'Finestra in minuti per CODE_ENVIRONMENT_STATUS_IP_MAX. Predefinito: 1.',
+      '# CODE_ENVIRONMENT_STATUS_IP_WINDOW=1',
     ],
   ]}
 />
@@ -1655,6 +1791,12 @@ Per ulteriori informazioni, incluse le immagini container predefinite per l'host
       'Specifica un URL di bundler personalizzato per Sandpack, utilizzato da Artifacts',
       'SANDPACK_BUNDLER_URL=your-bundler-url',
     ],
+    [
+      'SANDPACK_STATIC_BUNDLER_URL',
+      'string',
+      'URL del bundler personalizzato utilizzato per i template statici degli artefatti (anteprime di HTML, Markdown, codice, testo e documenti office). Quando si esegue un self-hosting, impostarlo insieme a SANDPACK_BUNDLER_URL.',
+      'SANDPACK_STATIC_BUNDLER_URL=your-static-bundler-url',
+    ],
   ]}
 />
 
@@ -1814,6 +1956,12 @@ Configura la funzionalità dei link di conversazione condivisi.
       'File di snapshot referenziati da una chat condivisa in modo che i visualizzatori possano visualizzarli in anteprima o scaricarli tramite il link condiviso. Sovrascrive interface.sharedLinks.snapshotFiles quando impostato.',
       'SHARED_LINKS_SNAPSHOT_FILES=true',
     ],
+    [
+      'SHARED_LINKS_AUTO_MIGRATE',
+      'boolean',
+      'Meccanismo di ripiego che migra i link condivisi legacy non gestiti dalla migrazione esplicita dei permessi dei link condivisi, al primo accesso. Attivo quando non impostato; impostare su false per disabilitarlo.',
+      '# SHARED_LINKS_AUTO_MIGRATE=true',
+    ],
     ['SHARE_IP_MAX', 'number', 'Recuperi massimi di link condivisi per IP durante la finestra IP. Predefinito: 100.', '# SHARE_IP_MAX=100'],
     ['SHARE_IP_WINDOW', 'number', 'Finestra di limite di frequenza IP per i link condivisi in minuti. Predefinito: 1.', '# SHARE_IP_WINDOW=1'],
     ['SHARE_USER_MAX', 'number', 'Recuperi massimi di link condivisi per utente autenticato durante la finestra temporale dell\'utente. Predefinito: 60.', '# SHARE_USER_MAX=60'],
@@ -1898,13 +2046,41 @@ Questa sezione contiene la configurazione per:
     [
       'ENABLE_INSIGHTS',
       'boolean',
-      'Abilita la dashboard Insights basata su MongoDB per gli amministratori con le funzionalità richieste. Predefinito: false.',
+      'Abilita la dashboard Insights basata su MongoDB. Valore predefinito: false.',
       'ENABLE_INSIGHTS=false',
     ],
   ]}
 />
 
-Quando abilitato, Insights rimane limitato agli account con ruolo `ADMIN` più `access:admin` e `read:insights`. Le query sono limitate al tenant ed espongono metriche di attività persistenti e metadati delle conversazioni recenti. Vedi [Admin Insights](/docs/features/insights) per le definizioni delle metriche e i dettagli sull'accesso.
+Quando abilitato, gli amministratori e gli account con la capacità `read:insights` possono visualizzare ogni Agent, mentre gli altri utenti possono visualizzare solo gli Agent per cui hanno ricevuto il permesso **View insights**. Le query sono limitate al tenant e mostrano le metriche di attività persistite e i metadati delle conversazioni recenti. Consulta [Admin Insights](/docs/features/insights) per le definizioni delle metriche e i dettagli sull'accesso.
+
+### Registro di controllo [#audit-log]
+
+<OptionTable
+  options={[
+    [
+      'AUDIT_LOG_FAIL_CLOSED',
+      'boolean',
+      'Le concessioni di sistema e la condivisione delle risorse vengono sottoposte a verifica prima di avere effetto. Se impostato su true, una concessione o una modifica che amplia i permessi che non può essere verificata fallisce e nulla viene modificato. Le revoche non vengono mai bloccate da un\'interruzione del sistema di verifica. Se impostato su false, tutte le modifiche vengono applicate comunque e vengono registrati solo gli errori di verifica. Valore predefinito: true per le concessioni di sistema, la condivisione delle risorse, le esportazioni del registro di verifica e l\'associazione del codice. Le modifiche alle sostituzioni di configurazione dell\'amministratore, ai gruppi e ai ruoli falliscono in modo sicuro solo quando questo valore è esattamente true; quando non è impostato vengono applicate e viene registrato l\'errore di verifica.',
+      '# AUDIT_LOG_FAIL_CLOSED=true',
+    ],
+  ]}
+/>
+
+### Riferimenti alle variabili d'ambiente per la sovrascrittura della configurazione [#config-override-environment-references]
+
+Gli override di configurazione scritti tramite l'API di amministrazione (profili di ruolo, gruppo e utente, e il profilo Base) possono fare riferimento solo ai nomi `${ENV_VAR}` che `librechat.yaml` già utilizza, alle credenziali degli endpoint integrate (come `OPENAI_API_KEY` e `ANTHROPIC_API_KEY`) e ai nomi elencati di seguito. Qualsiasi altro riferimento viene rifiutato in fase di scrittura e non produce alcun valore a runtime. I riferimenti non vengono verificati nelle sezioni `interface` e `modelSpecs` né nei seguenti campi di prompt, che vengono utilizzati così come sono scritti: `titlePrompt`, `titlePromptTemplate`, `activityPrompt`, `activityPhasePrompt` e `reasoningLabelPrompt` di ciascun endpoint, `summarization.prompt` e `summarization.updatePrompt`, `memory.agent.instructions` e `webSearch.firecrawlOptions.changeTrackingOptions.prompt`. Le chiavi di prompt in qualsiasi altra posizione vengono verificate. Consulta [Pannello di amministrazione](/docs/features/admin_panel) per informazioni su come vengono stratificati gli override.
+
+<OptionTable
+  options={[
+    [
+      'CONFIG_OVERRIDE_ENV_ALLOWLIST',
+      'string',
+      'Elenco separato da virgole o spazi dei nomi di variabili d\'ambiente aggiuntive a cui possono fare riferimento le sostituzioni della configurazione dell\'amministratore.',
+      '# CONFIG_OVERRIDE_ENV_ALLOWLIST=MY_GATEWAY_KEY,MY_GATEWAY_URL',
+    ],
+  ]}
+/>
 
 ### Controlli della conversazione dell'agente [#agent-conversation-controls]
 
@@ -2275,6 +2451,12 @@ Limita le richieste di [modifica dell'indirizzo email](/docs/configuration/authe
       '# EMAIL_CHANGE_VIOLATION_SCORE=1',
     ],
     [
+      'EMAIL_CHANGE_SUBMISSION_IP_VIOLATION_SCORE',
+      'integer',
+      'Punteggio per il superamento del limite per IP sulle aperture dei link di verifica del cambio email. Predefinito: 1.',
+      '# EMAIL_CHANGE_SUBMISSION_IP_VIOLATION_SCORE=1',
+    ],
+    [
       'TWO_FACTOR_TEMP_VIOLATION_SCORE',
       'integer',
       'Punteggio per il superamento del limite di tentativi del codice a due fattori. Il valore predefinito è LOGIN_VIOLATION_SCORE.',
@@ -2405,18 +2587,12 @@ Limita la frequenza con cui gli utenti possono importare conversazioni per preve
 
 > Nota: queste possono anche essere configurate tramite `librechat.yaml` nella sezione `rateLimits.conversationsImport`. Un valore impostato in `librechat.yaml` ha la precedenza sulla variabile d'ambiente.
 
-> Nota: È possibile utilizzare entrambi i limitatori, ma l'impostazione predefinita è limitare solo per IP.
+> Nota: entrambi i limitatori, per IP e per utente, sono sempre attivi. Regolali tramite le variabili `MAX` e `WINDOW` indicate di seguito.
 
 ##### Limitatore IP: [#ip-limiter-1]
 
 <OptionTable
   options={[
-    [
-      'LIMIT_IMPORT_IP',
-      'boolean',
-      'Se limitare il numero di importazioni di conversazioni che un IP può eseguire per `IMPORT_IP_WINDOW`.',
-      'LIMIT_IMPORT_IP=true',
-    ],
     [
       'IMPORT_IP_MAX',
       'integer',
@@ -2427,7 +2603,7 @@ Limita la frequenza con cui gli utenti possono importare conversazioni per preve
       'IMPORT_IP_WINDOW',
       'integer',
       'In minuti, determina la finestra temporale per le importazioni di `IMPORT_IP_MAX`.',
-      'IMPORT_IP_WINDOW=1',
+      'IMPORT_IP_WINDOW=15',
     ],
   ]}
 />
@@ -2436,12 +2612,6 @@ Limita la frequenza con cui gli utenti possono importare conversazioni per preve
 
 <OptionTable
   options={[
-    [
-      'LIMIT_IMPORT_USER',
-      'boolean',
-      'Se limitare la quantità di importazioni di conversazioni che un utente può eseguire per `IMPORT_USER_WINDOW`.',
-      'LIMIT_IMPORT_USER=false',
-    ],
     [
       'IMPORT_USER_MAX',
       'integer',
@@ -2452,7 +2622,7 @@ Limita la frequenza con cui gli utenti possono importare conversazioni per preve
       'IMPORT_USER_WINDOW',
       'integer',
       'In minuti, determina la finestra temporale per le importazioni `IMPORT_USER_MAX`.',
-      'IMPORT_USER_WINDOW=1',
+      'IMPORT_USER_WINDOW=15',
     ],
   ]}
 />
@@ -2461,18 +2631,12 @@ Limita la frequenza con cui gli utenti possono importare conversazioni per preve
 
 Limita la frequenza con cui gli utenti possono effettuare il fork delle conversazioni per prevenire abusi.
 
-> Nota: È possibile utilizzare entrambi i limitatori, ma l'impostazione predefinita è limitare solo per IP.
+> Nota: entrambi i limitatori, per IP e per utente, sono sempre attivi. Regolali tramite le variabili `MAX` e `WINDOW` indicate di seguito.
 
 ##### Limitatore IP: [#ip-limiter-2]
 
 <OptionTable
   options={[
-    [
-      'LIMIT_FORK_IP',
-      'boolean',
-      'Se limitare il numero di fork di conversazione che un IP può creare per `FORK_IP_WINDOW`.',
-      'LIMIT_FORK_IP=true',
-    ],
     [
       'FORK_IP_MAX',
       'integer',
@@ -2492,12 +2656,6 @@ Limita la frequenza con cui gli utenti possono effettuare il fork delle conversa
 
 <OptionTable
   options={[
-    [
-      'LIMIT_FORK_USER',
-      'boolean',
-      'Indica se limitare il numero di fork di conversazione che un utente può creare per `FORK_USER_WINDOW`.',
-      'LIMIT_FORK_USER=false',
-    ],
     [
       'FORK_USER_MAX',
       'integer',
@@ -2756,6 +2914,12 @@ vedi: **[Authentication System](/docs/configuration/authentication)**
       'ENFORCE_TWO_FACTOR_AUTHENTICATION=false',
     ],
     [
+      'TWO_FACTOR_BACKUP_CODE_FORMAT',
+      'string',
+      'Formato dei codici di recupero a due fattori appena emessi: robusto (128 bit, con salt) o legacy (32 bit, senza salt). Predefinito: robusto. Usare legacy solo durante un aggiornamento progressivo, su ogni replica, finché sono ancora in esecuzione backend più vecchi che non possono leggere i codici robusti. I codici legacy esistenti continuano a funzionare finché l\'utente non li rigenera.',
+      '# TWO_FACTOR_BACKUP_CODE_FORMAT=strong',
+    ],
+    [
       'MIN_PASSWORD_LENGTH',
       'number',
       'Lunghezza minima della password per l\'autenticazione utente. Quando si utilizza l\'autenticazione LDAP, potrebbe essere necessario impostarla su 1 per ignorare la convalida della password locale, poiché i server LDAP gestiscono le proprie policy relative alle password.',
@@ -3011,6 +3175,30 @@ Per ulteriori informazioni:
       'OPENID_AUDIENCE=https://api.librechat.com',
     ],
     [
+      'OPENID_REFRESH_AUDIENCE',
+      'string',
+      'Parametro audience per le richieste di refresh token OpenID. Alcuni provider, come le API personalizzate di Auth0, lo richiedono per preservare il pubblico previsto del token di accesso durante il refresh. Di solito corrisponde a OPENID_AUDIENCE.',
+      'OPENID_REFRESH_AUDIENCE=',
+    ],
+    [
+      'OPENID_AVATAR_AUTHORIZED_ORIGINS',
+      'string',
+      'Origini aggiuntive, separate da virgole o spazi, a cui LibreChat invia il token di accesso dell\'utente durante il recupero dell\'immagine del profilo. Le origini dell\'issuer e dell\'endpoint userinfo sono sempre autorizzate.',
+      '# OPENID_AVATAR_AUTHORIZED_ORIGINS=https://avatars.example.com',
+    ],
+    [
+      'OPENID_DISCOVERY_RETRY_ATTEMPTS',
+      'number',
+      'Tentativi di discovery durante l\'avvio, da 0 a 100. Impostare a 0 per usare solo i tentativi in background. Predefinito: 1. registration.openidDiscovery.startupAttempts in librechat.yaml ha la precedenza.',
+      '# OPENID_DISCOVERY_RETRY_ATTEMPTS=1',
+    ],
+    [
+      'OPENID_DISCOVERY_RETRY_DELAY_MS',
+      'number',
+      'Ritardo in millisecondi tra l\'avvio e i tentativi di rilevamento in background, da 100 a 3600000. Predefinito: 5000. registration.openidDiscovery.retryDelayMs in librechat.yaml ha la precedenza.',
+      '# OPENID_DISCOVERY_RETRY_DELAY_MS=5000',
+    ],
+    [
       'OPENID_REQUIRED_ROLE',
       'string',
       'Il ruolo o i ruoli richiesti per la convalida. Supporta un singolo ruolo o più ruoli separati da virgola. Quando vengono specificati più ruoli, l\'utente deve possedere UNO QUALSIASI dei ruoli specificati (logica OR).',
@@ -3207,14 +3395,14 @@ LibreChat supporta il riutilizzo dei token di accesso e di aggiornamento (refres
     [
       'OPENID_JWKS_URL_CACHE_ENABLED',
       'boolean',
-      'Abilita la memorizzazione nella cache dei risultati della verifica della chiave di firma.',
+      'Abilita la memorizzazione nella cache dei risultati di verifica della chiave di firma. Abilitata quando non impostata; qualsiasi valore diverso da true la disabilita.',
       'OPENID_JWKS_URL_CACHE_ENABLED=true',
     ],
     [
       'OPENID_JWKS_URL_CACHE_TIME',
       'number',
-      'Durata della cache in millisecondi (predefinito: 600000 ms / 10 minuti).',
-      'OPENID_JWKS_URL_CACHE_TIME=600000',
+      'Durata della cache in millisecondi. Predefinito: 60000 (1 minuto).',
+      'OPENID_JWKS_URL_CACHE_TIME=60000',
     ],
     [
       'OPENID_ON_BEHALF_FLOW_FOR_USERINFO_REQUIRED',
@@ -3476,8 +3664,8 @@ Per maggiori informazioni: **[Autenticazione LDAP/AD](/docs/configuration/authen
     ],
     [
       'LDAP_TLS_REJECT_UNAUTHORIZED',
-      'string',
-      'Verifica TLS LDAP',
+      'boolean',
+      'Se verificare il certificato del server LDAP rispetto a LDAP_CA_CERT_PATH. Si applica solo quando LDAP_CA_CERT_PATH è impostato: in tal caso, lasciarlo non impostato disabilita la verifica del certificato, quindi impostarlo a true. Senza LDAP_CA_CERT_PATH, si applica la verifica predefinita di Node.js.',
       'LDAP_TLS_REJECT_UNAUTHORIZED=true',
     ],
     [
@@ -3717,7 +3905,7 @@ Vedi: **[Configurazione CDN di Azure Blob Storage](/docs/configuration/cdn/azure
     [
       'AZURE_STORAGE_PUBLIC_ACCESS',
       'boolean',
-      'Abilita l\'accesso pubblico per i blob. Predefinito: false.',
+      'Rendi pubblicamente leggibili i blob caricati. Predefinito: true; impostalo su false per mantenere i blob privati.',
       'AZURE_STORAGE_PUBLIC_ACCESS=false',
     ],
     [
@@ -3852,6 +4040,12 @@ Controlla quanto possono essere grandi i file generati prima che LibreChat ignor
       'Dimensione massima del file sorgente in byte per le anteprime inline degli artefatti di esecuzione del codice, inclusi DOCX, XLSX, CSV, PPTX, POTX, file di testo e simili a PDF. Predefinito: 2097152 (2 MiB). Le anteprime HTML renderizzate sono comunque limitate separatamente, quindi i file molto ricchi potrebbero non essere visualizzati in anteprima anche se al di sotto di questo valore.',
       '# FILE_PREVIEW_MAX_EXTRACT_BYTES=2097152',
     ],
+    [
+      'OFFICE_PREVIEW_DISABLE_CDN',
+      'boolean',
+      'Esegui il rendering delle anteprime DOCX sul server invece di caricare un renderer da cdn.jsdelivr.net. Impostare su true per reti air-gapped o filtrate. Accetta true, 1 o yes. Predefinito: false.',
+      '# OFFICE_PREVIEW_DISABLE_CDN=true',
+    ],
   ]}
 />
 
@@ -3890,8 +4084,8 @@ Configura le impostazioni del Model Context Protocol per una gestione avanzata d
     [
       'MCP_CONNECTION_CHECK_TTL',
       'number',
-      'Controlli dello stato della connessione alla cache per questo numero di millisecondi per evitare costose verifiche.',
-      'MCP_CONNECTION_CHECK_TTL=30000',
+      'Memorizza nella cache i controlli dello stato della connessione per questo numero di millisecondi, per evitare verifiche costose. Predefinito: 60000.',
+      'MCP_CONNECTION_CHECK_TTL=60000',
     ],
     [
       'MCP_TOOLS_LIST_MAX_PAGES',
@@ -3916,6 +4110,117 @@ Configura le impostazioni del Model Context Protocol per una gestione avanzata d
       'number',
       'Byte massimi consentiti in una singola riga SSE per risposte HTTP MCP streamabili non-GET. Impostare a 0 per disabilitare. Predefinito: 5242880 (5 MiB).',
       '# MCP_STREAMABLE_HTTP_MAX_LINE_BYTES=5242880',
+    ],
+    [
+      'MCP_TOOLS_LIST_MAX_TOOLS',
+      'number',
+      'Numero massimo di strumenti totali mantenuti dalle risposte paginate di tools/list. Limitato a un minimo di 1. Predefinito: 1000.',
+      '# MCP_TOOLS_LIST_MAX_TOOLS=1000',
+    ],
+    [
+      'MCP_TOOLS_LIST_MAX_BYTES',
+      'number',
+      'Massimo numero approssimativo di byte JSON conservati dalle risposte paginate di tools/list. Limitato a un minimo di 1. Predefinito: 5242880 (5 MiB).',
+      '# MCP_TOOLS_LIST_MAX_BYTES=5242880',
+    ],
+    [
+      'MCP_TOOLS_LIST_TIMEOUT_MS',
+      'number',
+      'Tempo massimo trascorso in millisecondi per la scoperta paginata di tools/list. Limitato a un minimo di 1. Predefinito: 30000.',
+      '# MCP_TOOLS_LIST_TIMEOUT_MS=30000',
+    ],
+    [
+      'MCP_USER_CONNECTION_IDLE_TIMEOUT',
+      'number',
+      'Tempo di inattività in millisecondi dopo il quale le connessioni MCP per utente vengono disconnesse. Valore predefinito: 900000 (15 minuti).',
+      '# MCP_USER_CONNECTION_IDLE_TIMEOUT=900000',
+    ],
+    [
+      'MCP_REGISTRY_CACHE_TTL',
+      'number',
+      'TTL in millisecondi per le cache del registro dei server MCP. Con più istanze, il disallineamento tra istanze può raggiungere il doppio di questo valore. Impostare a 0 per disabilitare lo snapshot locale, in modo che ogni lettura venga eseguita su Redis. Valore predefinito: 5000.',
+      '# MCP_REGISTRY_CACHE_TTL=5000',
+    ],
+    [
+      'MCP_INIT_TIMEOUT_MS',
+      'number',
+      'Tempo in millisecondi concesso ai server MCP per l\'inizializzazione all\'avvio. Predefinito: 30000.',
+      '# MCP_INIT_TIMEOUT_MS=30000',
+    ],
+    [
+      'MCP_INIT_FOLLOWER_RETRY_MS',
+      'number',
+      'Nei deployment multi-istanza, la frequenza con cui le istanze non leader verificano se il leader ha completato l\'inizializzazione dei server MCP, in millisecondi. Valore predefinito: 3000.',
+      '# MCP_INIT_FOLLOWER_RETRY_MS=3000',
+    ],
+    [
+      'MCP_INIT_FOLLOWER_MAX_WAIT_MS',
+      'number',
+      'Tempo massimo in millisecondi che un\'istanza non leader attende affinché il leader completi l\'inizializzazione di MCP. Impostare a 0 per non attendere. Predefinito: MCP_INIT_TIMEOUT_MS più MCP_INIT_FOLLOWER_RETRY_MS.',
+      '# MCP_INIT_FOLLOWER_MAX_WAIT_MS=33000',
+    ],
+    [
+      'MCP_IMAGE_DATA_MAX_BYTES',
+      'number',
+      'Dimensione massima in byte dei dati immagine inline in un risultato di strumento MCP. I risultati più grandi vengono rifiutati; gli URL di immagini remote non vengono conteggiati. Predefinito: 10485760 (10 MiB).',
+      '# MCP_IMAGE_DATA_MAX_BYTES=10485760',
+    ],
+    [
+      'MCP_SANDBOX_FRAME_ANCESTORS',
+      'string',
+      'Origini separate da virgola autorizzate a incorporare il frame sandbox dell\'app MCP. Se non impostato, l\'incorporamento è negato (frame-ancestors none).',
+      '# MCP_SANDBOX_FRAME_ANCESTORS=https://chat.example.com',
+    ],
+  ]}
+/>
+
+#### Interruttore di sicurezza (circuit breaker) per la connessione MCP [#mcp-connection-circuit-breaker]
+
+LibreChat limita la frequenza con cui si riconnette a un server MCP, così che un server guasto o instabile non possa innescare una tempesta di riconnessioni. Si applicano due controlli indipendenti. L'interruttore del ciclo scatta dopo `MCP_CB_MAX_CYCLES` cicli di connessione e disconnessione entro `MCP_CB_CYCLE_WINDOW_MS`, quindi rifiuta nuovi tentativi di connessione per `MCP_CB_CYCLE_COOLDOWN_MS`. Il backoff in caso di errore inizia quando si verificano `MCP_CB_MAX_FAILED_ROUNDS` round di connessione falliti consecutivi entro `MCP_CB_FAILED_WINDOW_MS`; i nuovi tentativi attendono poi un ritardo che cresce in modo esponenziale, partendo da `MCP_CB_BASE_BACKOFF_MS` e limitato a `MCP_CB_MAX_BACKOFF_MS`.
+
+<OptionTable
+  options={[
+    [
+      'MCP_CB_MAX_CYCLES',
+      'number',
+      'Cicli di connessione e disconnessione consentiti entro la finestra di cicli prima che l\'interruttore scatti. Predefinito: 7.',
+      '# MCP_CB_MAX_CYCLES=7',
+    ],
+    [
+      'MCP_CB_CYCLE_WINDOW_MS',
+      'number',
+      'Finestra scorrevole in millisecondi per il conteggio dei cicli. Valore predefinito: 45000.',
+      '# MCP_CB_CYCLE_WINDOW_MS=45000',
+    ],
+    [
+      'MCP_CB_CYCLE_COOLDOWN_MS',
+      'number',
+      'Tempo di attesa in millisecondi dopo l\'attivazione del cycle breaker. Valore predefinito: 15000.',
+      '# MCP_CB_CYCLE_COOLDOWN_MS=15000',
+    ],
+    [
+      'MCP_CB_MAX_FAILED_ROUNDS',
+      'number',
+      'Numero di tentativi di connessione falliti consecutivi consentiti prima dell\'avvio del backoff. Predefinito: 3.',
+      '# MCP_CB_MAX_FAILED_ROUNDS=3',
+    ],
+    [
+      'MCP_CB_FAILED_WINDOW_MS',
+      'number',
+      'Finestra scorrevole in millisecondi per il conteggio dei round falliti. Predefinito: 120000.',
+      '# MCP_CB_FAILED_WINDOW_MS=120000',
+    ],
+    [
+      'MCP_CB_BASE_BACKOFF_MS',
+      'number',
+      'Backoff di base in millisecondi una volta raggiunta la soglia dei round falliti. Predefinito: 30000.',
+      '# MCP_CB_BASE_BACKOFF_MS=30000',
+    ],
+    [
+      'MCP_CB_MAX_BACKOFF_MS',
+      'number',
+      'Backoff massimo in millisecondi per il backoff esponenziale. Predefinito: 300000.',
+      '# MCP_CB_MAX_BACKOFF_MS=300000',
     ],
   ]}
 />
@@ -3973,13 +4278,13 @@ Per una configurazione dettagliata ed esempi, consulta: **[Redis Configuration G
     [
       'REDIS_USERNAME',
       'string',
-      'Nome utente Redis per l\'autenticazione. Sovrascrive il nome utente nell\'URI se entrambi sono forniti.',
+      'Nome utente Redis per l\'autenticazione. Viene usato solo quando REDIS_URI non contiene un nome utente; un nome utente nell\'URI ha la precedenza.',
       '# REDIS_USERNAME=your_redis_username',
     ],
     [
       'REDIS_PASSWORD',
       'string',
-      'Password Redis per l\'autenticazione. Sovrascrive la password nell\'URI se entrambe sono fornite.',
+      'Password Redis per l\'autenticazione. Viene usata solo quando REDIS_URI non contiene una password; una password presente nell\'URI ha la precedenza.',
       '# REDIS_PASSWORD=your_redis_password',
     ],
     [
@@ -4035,6 +4340,48 @@ Per una configurazione dettagliata ed esempi, consulta: **[Redis Configuration G
       'number',
       'Ritardo di inattività TCP keepalive in millisecondi per i socket ioredis. Predefinito: 10000; impostare a 0 per il valore predefinito del kernel.',
       '# REDIS_KEEP_ALIVE=10000',
+    ],
+    [
+      'REDIS_CONNECT_TIMEOUT',
+      'number',
+      'Timeout di connessione in millisecondi. Predefinito: 10000.',
+      '# REDIS_CONNECT_TIMEOUT=10000',
+    ],
+    [
+      'REDIS_RETRY_MAX_ATTEMPTS',
+      'number',
+      'Numero massimo di tentativi di riconnessione. Impostare a 0 per tentativi illimitati. Predefinito: 10.',
+      '# REDIS_RETRY_MAX_ATTEMPTS=10',
+    ],
+    [
+      'REDIS_RETRY_MAX_DELAY',
+      'number',
+      'Ritardo massimo tra i tentativi di riconnessione in millisecondi. Predefinito: 3000.',
+      '# REDIS_RETRY_MAX_DELAY=3000',
+    ],
+    [
+      'REDIS_ENABLE_OFFLINE_QUEUE',
+      'boolean',
+      'Accoda i comandi mentre la connessione è interrotta, invece di farli fallire immediatamente. Valore predefinito: true.',
+      '# REDIS_ENABLE_OFFLINE_QUEUE=true',
+    ],
+    [
+      'REDIS_SCAN_COUNT',
+      'number',
+      'Suggerimento COUNT per le operazioni SCAN di Redis durante la scansione delle chiavi tramite pattern. Valori più alti riducono i round trip ma aumentano la memoria e la latenza per ogni chiamata. Predefinito: 1000.',
+      '# REDIS_SCAN_COUNT=1000',
+    ],
+    [
+      'REDIS_DELETE_CHUNK_SIZE',
+      'number',
+      'Numero di chiavi eliminate per batch nelle operazioni DEL di Redis. In modalità cluster, le chiavi vengono eliminate singolarmente in blocchi paralleli di questa dimensione. Valori più bassi riducono l\'uso di memoria ma aumentano il numero di round trip. Predefinito: 1000.',
+      '# REDIS_DELETE_CHUNK_SIZE=1000',
+    ],
+    [
+      'STREAM_KEEP_COMPLETED_JOBS',
+      'boolean',
+      'Mantieni i job di streaming della generazione completati invece di rimuoverli al termine della generazione. Predefinito: false.',
+      '# STREAM_KEEP_COMPLETED_JOBS=false',
     ],
     [
       'FORCED_IN_MEMORY_CACHE_NAMESPACES',
