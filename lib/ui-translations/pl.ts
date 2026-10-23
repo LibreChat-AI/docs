@@ -185,6 +185,35 @@ export const pl: UIStrings = {
       },
     },
     categories: {
+      agentic: {
+        title: 'Agentowa AI',
+        items: {
+          skills: {
+            title: 'Skills',
+            description: 'Wielokrotnego użytku instrukcje SKILL.md dla agentów',
+          },
+          subagents: {
+            title: 'Subagenci',
+            description: 'Deleguj zadania do izolowanych agentów podrzędnych',
+          },
+          scheduledChats: {
+            title: 'Zaplanowane czaty',
+            description: 'Uruchamiaj zapisanych agentów według harmonogramu',
+          },
+          agentPlugins: {
+            title: 'Wtyczki agentów',
+            description: 'Eksperymentalne pakiety Skills, serwerów MCP i hooków',
+          },
+          agentsApi: {
+            title: 'Agents API (beta)',
+            description: 'Uruchamiaj agentów i odbieraj zdarzenia programowo',
+          },
+          pullRequests: {
+            title: 'Pull requesty rozmów',
+            description: 'Status pull requestów i CI dla czatów uruchamiających kod',
+          },
+        },
+      },
       searchKnowledge: {
         title: 'Wyszukiwanie i wiedza',
         items: {
@@ -241,6 +270,30 @@ export const pl: UIStrings = {
             title: 'Wznawialne strumienie',
             description: 'Automatycznie łącz ponownie i wznawiaj przerwane odpowiedzi',
           },
+          composer: {
+            title: 'Pole wiadomości',
+            description: 'Dołączaj pliki i włączaj narzędzia z palety +',
+          },
+          settings: {
+            title: 'Ustawienia osobiste',
+            description: 'Zarządzaj preferencjami użytkownika i przeglądarki',
+          },
+          navigation: {
+            title: 'Pasek boczny i nawigacja',
+            description: 'Czaty, przypięte rozmowy, panele i szuflada mobilna',
+          },
+          messageActions: {
+            title: 'Akcje wiadomości',
+            description: 'Edytuj, uruchamiaj ponownie, cytuj, kopiuj i rozgałęziaj wiadomości',
+          },
+          projects: {
+            title: 'Projekty',
+            description: 'Grupuj powiązane czaty ze wspólnymi instrukcjami i plikami',
+          },
+          smoothStreaming: {
+            title: 'Płynne strumieniowanie',
+            description: 'Płynnie wygaszaj i pokazuj strumieniowany tekst',
+          },
         },
       },
       security: {
@@ -261,6 +314,14 @@ export const pl: UIStrings = {
           moderation: {
             title: 'System moderacji',
             description: 'Moderacja treści i kontrolki bezpieczeństwa',
+          },
+          accessControl: {
+            title: 'Kontrola dostępu',
+            description: 'Szczegółowe uprawnienia dla agentów, promptów i serwerów MCP',
+          },
+          insights: {
+            title: 'Statystyki administratora',
+            description: 'Panel użycia i aktywności agentów',
           },
         },
       },

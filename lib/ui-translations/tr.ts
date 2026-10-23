@@ -183,6 +183,35 @@ export const tr: UIStrings = {
       },
     },
     categories: {
+      agentic: {
+        title: 'Ajan tabanlı yapay zeka',
+        items: {
+          skills: {
+            title: 'Skills',
+            description: 'Ajanların çağırabileceği yeniden kullanılabilir SKILL.md yönergeleri',
+          },
+          subagents: {
+            title: 'Alt ajanlar',
+            description: 'Odaklı işleri yalıtılmış alt ajanlara devredin',
+          },
+          scheduledChats: {
+            title: 'Zamanlanmış sohbetler',
+            description: 'Kayıtlı ajanları yinelenen takvimlerle çalıştırın',
+          },
+          agentPlugins: {
+            title: 'Ajan eklentileri',
+            description: "Skills, MCP sunucuları ve hook'lardan deneysel paketler",
+          },
+          agentsApi: {
+            title: 'Agents API (Beta)',
+            description: 'Ajanları çalıştırın ve olayları programatik olarak alın',
+          },
+          pullRequests: {
+            title: "Konuşma pull request'leri",
+            description: 'Kod çalıştıran sohbetler için pull request ve CI durumu',
+          },
+        },
+      },
       searchKnowledge: {
         title: 'Arama ve bilgi',
         items: {
@@ -239,6 +268,31 @@ export const tr: UIStrings = {
             title: 'Sürdürülebilir akışlar',
             description: 'Otomatik yeniden bağlanma ve kesilen yanıtları sürdürme',
           },
+          composer: {
+            title: 'Mesaj yazma alanı',
+            description: '+ paletinden dosya ekleyin ve araçları etkinleştirin',
+          },
+          settings: {
+            title: 'Kişisel ayarlar',
+            description: 'Kullanıcı ve tarayıcı başına tercihleri yönetin',
+          },
+          navigation: {
+            title: 'Kenar çubuğu ve gezinme',
+            description: 'Sohbetler, sabitlenmiş konuşmalar, paneller ve mobil çekmece',
+          },
+          messageActions: {
+            title: 'Mesaj eylemleri',
+            description:
+              'Mesajları düzenleyin, yeniden çalıştırın, alıntılayın, kopyalayın ve fork edin',
+          },
+          projects: {
+            title: 'Projeler',
+            description: 'İlgili sohbetleri ortak yönergeler ve dosyalarla gruplayın',
+          },
+          smoothStreaming: {
+            title: 'Akıcı akış',
+            description: 'Akışla gelen metni yumuşak geçişle gösterin',
+          },
         },
       },
       security: {
@@ -259,6 +313,14 @@ export const tr: UIStrings = {
           moderation: {
             title: 'Moderasyon sistemi',
             description: 'İçerik moderasyonu ve güvenlik kontrolleri',
+          },
+          accessControl: {
+            title: 'Erişim denetimi',
+            description: 'Ajanlar, istemler ve MCP sunucuları için ayrıntılı izinler',
+          },
+          insights: {
+            title: 'Yönetici içgörüleri',
+            description: 'Ajan kullanımı ve etkinliği panosu',
           },
         },
       },

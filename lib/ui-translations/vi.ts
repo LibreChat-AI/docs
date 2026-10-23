@@ -182,6 +182,35 @@ export const vi: UIStrings = {
       },
     },
     categories: {
+      agentic: {
+        title: 'AI tác nhân',
+        items: {
+          skills: {
+            title: 'Skills',
+            description: 'Hướng dẫn SKILL.md tái sử dụng để tác nhân gọi',
+          },
+          subagents: {
+            title: 'Tác nhân con',
+            description: 'Giao việc cụ thể cho các tác nhân con được cô lập',
+          },
+          scheduledChats: {
+            title: 'Chat theo lịch',
+            description: 'Chạy tác nhân đã lưu theo lịch lặp lại',
+          },
+          agentPlugins: {
+            title: 'Plugin tác nhân',
+            description: 'Gói thử nghiệm gồm Skills, máy chủ MCP và hook',
+          },
+          agentsApi: {
+            title: 'Agents API (Beta)',
+            description: 'Chạy tác nhân và nhận sự kiện bằng lập trình',
+          },
+          pullRequests: {
+            title: 'Pull request của cuộc trò chuyện',
+            description: 'Trạng thái pull request và CI cho chat chạy mã',
+          },
+        },
+      },
       searchKnowledge: {
         title: 'Tìm kiếm và tri thức',
         items: {
@@ -238,6 +267,30 @@ export const vi: UIStrings = {
             title: 'Luồng có thể tiếp tục',
             description: 'Tự động kết nối lại và tiếp tục phản hồi bị gián đoạn',
           },
+          composer: {
+            title: 'Khung soạn tin nhắn',
+            description: 'Đính kèm tệp và bật công cụ từ bảng +',
+          },
+          settings: {
+            title: 'Cài đặt cá nhân',
+            description: 'Quản lý tùy chọn theo người dùng và trình duyệt',
+          },
+          navigation: {
+            title: 'Thanh bên và điều hướng',
+            description: 'Chat, cuộc trò chuyện đã ghim, bảng điều khiển và ngăn kéo di động',
+          },
+          messageActions: {
+            title: 'Thao tác tin nhắn',
+            description: 'Sửa, chạy lại, trích dẫn, sao chép và fork tin nhắn',
+          },
+          projects: {
+            title: 'Dự án',
+            description: 'Nhóm các chat liên quan với hướng dẫn và tệp dùng chung',
+          },
+          smoothStreaming: {
+            title: 'Streaming mượt',
+            description: 'Hiện văn bản streaming với hiệu ứng mờ dần mượt mà',
+          },
         },
       },
       security: {
@@ -258,6 +311,14 @@ export const vi: UIStrings = {
           moderation: {
             title: 'Hệ thống kiểm duyệt',
             description: 'Kiểm duyệt nội dung và kiểm soát an toàn',
+          },
+          accessControl: {
+            title: 'Kiểm soát truy cập',
+            description: 'Quyền chi tiết cho tác nhân, prompt và máy chủ MCP',
+          },
+          insights: {
+            title: 'Thông tin chi tiết quản trị',
+            description: 'Bảng điều khiển mức sử dụng và hoạt động của tác nhân',
           },
         },
       },

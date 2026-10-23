@@ -210,6 +210,35 @@ const en = {
       },
     },
     categories: {
+      agentic: {
+        title: 'Agentic AI',
+        items: {
+          skills: {
+            title: 'Skills',
+            description: 'Reusable SKILL.md instructions agents can invoke',
+          },
+          subagents: {
+            title: 'Subagents',
+            description: 'Delegate focused work to isolated child agents',
+          },
+          scheduledChats: {
+            title: 'Scheduled Chats',
+            description: 'Run saved Agents on recurring schedules',
+          },
+          agentPlugins: {
+            title: 'Agent Plugins',
+            description: 'Experimental packages of Skills, MCP servers, and hooks',
+          },
+          agentsApi: {
+            title: 'Agents API (Beta)',
+            description: 'Run agents and receive events programmatically',
+          },
+          pullRequests: {
+            title: 'Conversation Pull Requests',
+            description: 'Pull request and CI status for chats that run code',
+          },
+        },
+      },
       searchKnowledge: {
         title: 'Search & Knowledge',
         items: {
@@ -266,6 +295,30 @@ const en = {
             title: 'Resumable Streams',
             description: 'Auto-reconnect and resume interrupted responses',
           },
+          composer: {
+            title: 'Message Composer',
+            description: 'Attach files and enable tools from the + palette',
+          },
+          settings: {
+            title: 'Personal Settings',
+            description: 'Manage per-user and per-browser preferences',
+          },
+          navigation: {
+            title: 'Sidebar and Navigation',
+            description: 'Chats, pinned conversations, panels, and mobile drawer',
+          },
+          messageActions: {
+            title: 'Message Actions',
+            description: 'Edit, rerun, quote, copy, and fork messages',
+          },
+          projects: {
+            title: 'Projects',
+            description: 'Group related chats with shared instructions and files',
+          },
+          smoothStreaming: {
+            title: 'Smooth Streaming',
+            description: 'Fade in streamed text as responses generate',
+          },
         },
       },
       security: {
@@ -286,6 +339,14 @@ const en = {
           moderation: {
             title: 'Moderation System',
             description: 'Content moderation and safety controls',
+          },
+          accessControl: {
+            title: 'Access Control',
+            description: 'Granular permissions for agents, prompts, and MCP servers',
+          },
+          insights: {
+            title: 'Admin Insights',
+            description: 'Usage and activity dashboard for Agents',
           },
         },
       },

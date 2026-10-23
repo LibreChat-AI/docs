@@ -191,6 +191,35 @@ export const de: UIStrings = {
       },
     },
     categories: {
+      agentic: {
+        title: 'Agentische KI',
+        items: {
+          skills: {
+            title: 'Skills',
+            description: 'Wiederverwendbare SKILL.md-Anweisungen für Agenten',
+          },
+          subagents: {
+            title: 'Subagenten',
+            description: 'Gezielte Aufgaben an isolierte Unter-Agenten delegieren',
+          },
+          scheduledChats: {
+            title: 'Geplante Chats',
+            description: 'Gespeicherte Agenten nach Zeitplan ausführen',
+          },
+          agentPlugins: {
+            title: 'Agent-Plugins',
+            description: 'Experimentelle Pakete aus Skills, MCP-Servern und Hooks',
+          },
+          agentsApi: {
+            title: 'Agents API (Beta)',
+            description: 'Agenten ausführen und Ereignisse programmatisch empfangen',
+          },
+          pullRequests: {
+            title: 'Pull Requests in Unterhaltungen',
+            description: 'Pull-Request- und CI-Status für Chats mit Code-Ausführung',
+          },
+        },
+      },
       searchKnowledge: {
         title: 'Suche & Wissen',
         items: {
@@ -250,6 +279,30 @@ export const de: UIStrings = {
             title: 'Fortsetzbare Streams',
             description: 'Automatisch erneut verbinden und unterbrochene Antworten fortsetzen',
           },
+          composer: {
+            title: 'Nachrichteneingabe',
+            description: 'Dateien anhängen und Tools über die +-Palette aktivieren',
+          },
+          settings: {
+            title: 'Persönliche Einstellungen',
+            description: 'Einstellungen pro Benutzer und Browser verwalten',
+          },
+          navigation: {
+            title: 'Seitenleiste und Navigation',
+            description: 'Chats, angeheftete Unterhaltungen, Panels und mobile Leiste',
+          },
+          messageActions: {
+            title: 'Nachrichtenaktionen',
+            description: 'Nachrichten bearbeiten, neu ausführen, zitieren, kopieren und verzweigen',
+          },
+          projects: {
+            title: 'Projekte',
+            description: 'Zusammengehörige Chats mit gemeinsamen Anweisungen und Dateien bündeln',
+          },
+          smoothStreaming: {
+            title: 'Flüssiges Streaming',
+            description: 'Gestreamten Text beim Erzeugen weich einblenden',
+          },
         },
       },
       security: {
@@ -271,6 +324,14 @@ export const de: UIStrings = {
           moderation: {
             title: 'Moderationssystem',
             description: 'Inhaltsmoderation und Sicherheitskontrollen',
+          },
+          accessControl: {
+            title: 'Zugriffskontrolle',
+            description: 'Feingranulare Berechtigungen für Agenten, Prompts und MCP-Server',
+          },
+          insights: {
+            title: 'Admin-Einblicke',
+            description: 'Dashboard für Nutzung und Aktivität von Agenten',
           },
         },
       },

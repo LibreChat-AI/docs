@@ -190,6 +190,35 @@ export const it: UIStrings = {
       },
     },
     categories: {
+      agentic: {
+        title: 'IA agentica',
+        items: {
+          skills: {
+            title: 'Skills',
+            description: 'Istruzioni SKILL.md riutilizzabili che gli agenti possono invocare',
+          },
+          subagents: {
+            title: 'Subagenti',
+            description: 'Delega attività mirate ad agenti figli isolati',
+          },
+          scheduledChats: {
+            title: 'Chat programmate',
+            description: 'Esegui agenti salvati con pianificazioni ricorrenti',
+          },
+          agentPlugins: {
+            title: 'Plugin per agenti',
+            description: 'Pacchetti sperimentali di Skills, server MCP e hook',
+          },
+          agentsApi: {
+            title: 'Agents API (beta)',
+            description: 'Esegui agenti e ricevi eventi in modo programmatico',
+          },
+          pullRequests: {
+            title: 'Pull request delle conversazioni',
+            description: 'Stato di pull request e CI per le chat che eseguono codice',
+          },
+        },
+      },
       searchKnowledge: {
         title: 'Ricerca e conoscenza',
         items: {
@@ -246,6 +275,30 @@ export const it: UIStrings = {
             title: 'Stream ripristinabili',
             description: 'Riconnessione automatica e ripresa delle risposte interrotte',
           },
+          composer: {
+            title: 'Composizione messaggi',
+            description: 'Allega file e attiva strumenti dalla palette +',
+          },
+          settings: {
+            title: 'Impostazioni personali',
+            description: 'Gestisci le preferenze per utente e per browser',
+          },
+          navigation: {
+            title: 'Barra laterale e navigazione',
+            description: 'Chat, conversazioni fissate, pannelli e drawer mobile',
+          },
+          messageActions: {
+            title: 'Azioni sui messaggi',
+            description: 'Modifica, riesegui, cita, copia e crea fork dei messaggi',
+          },
+          projects: {
+            title: 'Progetti',
+            description: 'Raggruppa chat correlate con istruzioni e file condivisi',
+          },
+          smoothStreaming: {
+            title: 'Streaming fluido',
+            description: 'Mostra il testo in streaming con dissolvenza graduale',
+          },
         },
       },
       security: {
@@ -266,6 +319,14 @@ export const it: UIStrings = {
           moderation: {
             title: 'Sistema di moderazione',
             description: 'Moderazione dei contenuti e controlli di sicurezza',
+          },
+          accessControl: {
+            title: 'Controllo degli accessi',
+            description: 'Permessi granulari per agenti, prompt e server MCP',
+          },
+          insights: {
+            title: 'Insight amministratore',
+            description: 'Dashboard di utilizzo e attività degli agenti',
           },
         },
       },
