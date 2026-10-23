@@ -1,7 +1,7 @@
 ---
 title: Admin Panel
 icon: LayoutDashboard
-description: A standalone web UI for managing LibreChat users, groups, roles, configuration overrides, and system grants - without editing librechat.yaml by hand.
+description: A standalone web UI for managing LibreChat users, groups, roles, configuration overrides, and system grants, without editing librechat.yaml by hand.
 ---
 
 # LibreChat Admin Panel
@@ -9,8 +9,8 @@ description: A standalone web UI for managing LibreChat users, groups, roles, co
 The **LibreChat Admin Panel** is a standalone browser-based management interface for LibreChat. It connects to the same database as LibreChat itself and provides a GUI for the administrative tasks that power [granular access control](/docs/features/access_control): user and group administration, role management, configuration overrides scoped to roles or groups, and system-level capability grants.
 
 <Callout type="info" title="Status: Preview">
-  The admin panel is available for testing now and is the upcoming management surface that builds on
-  the admin APIs introduced in [LibreChat v0.8.5](/changelog/v0.8.5). Source, issues, and releases
+  The admin panel ships as the `admin-panel` service in `docker-compose.yml` and `deploy-compose.yml`
+  and builds on the admin APIs introduced in [LibreChat v0.8.5](/changelog/v0.8.5). Source, issues, and releases
   live at
   [github.com/ClickHouse/librechat-admin-panel](https://github.com/ClickHouse/librechat-admin-panel).
 </Callout>
@@ -20,7 +20,7 @@ The **LibreChat Admin Panel** is a standalone browser-based management interface
 The admin panel is a thin client: all data lives in LibreChat's database, and every action goes through the versioned `/api/admin/*` endpoints on the LibreChat API server. It gives administrators a single place to:
 
 - **Manage configuration**: view and edit every LibreChat setting through a dynamic, schema-driven form. New fields added to the config schema appear automatically, no admin-panel release required.
-- **Apply per-principal overrides**: scope configuration overrides to specific roles or groups, with a priority-based cascade that determines the final resolved value each user sees at login.
+- **Apply per-principal overrides**: scope configuration overrides to specific roles, groups, or users, with a priority-based cascade that determines the final resolved value each user sees at login.
 - **Administer users**: list, search, and view every account on the instance.
 - **Manage groups**: create and delete groups, add/remove members, and use groups as first-class principals in ACLs and overrides.
 - **Manage roles**: create custom roles beyond the built-in `USER` / `ADMIN`, edit their feature-permission matrix, and assign users to roles.
@@ -54,6 +54,12 @@ The admin API surface exposed by LibreChat is:
 | `/api/admin/roles`                        | Custom role CRUD + permission editing + member management |
 | `/api/admin/grants`                       | System capability grants (assign/revoke/list)             |
 | `/api/admin/config`                       | Base + per-principal configuration overrides              |
+| `/api/admin/skills`                       | GitHub skill sync: status, run, and sync credentials      |
+| `/api/admin/code-environments`            | Pair and revoke code environment workers (`manage:code_environments`) |
+| `/api/admin/langfuse`                     | Langfuse connection read, update, and test, plus per-conversation session links |
+| `/api/admin/audit-log`                    | Grant audit log (`read:audit_log`)                        |
+
+The audit log endpoints are `GET /` (list), `GET /export.csv` (CSV export), `GET /verify` (integrity check), and `GET /:id` (single entry). They require `access:admin` and `read:audit_log`. The log is append-only, so there is no manage capability and no write endpoint.
 
 ## Getting Started
 
@@ -65,7 +71,7 @@ The admin API surface exposed by LibreChat is:
 
 ### Bundled with LibreChat (recommended)
 
-If you run LibreChat with its official [`docker-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/docker-compose.yml) or [`deploy-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/deploy-compose.yml), the admin panel ships as a service and starts automatically alongside LibreChat -- no separate deployment needed.
+If you run LibreChat with its official [`docker-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/docker-compose.yml) or [`deploy-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/deploy-compose.yml), the admin panel ships as a service and starts automatically alongside LibreChat, with no separate deployment needed.
 
 | Compose file                   | Admin panel URL          | How it is served                                                  |
 | ------------------------------ | ------------------------ | ----------------------------------------------------------------- |
@@ -96,7 +102,7 @@ The compose files wire the rest automatically: `API_SERVER_URL` points at the `a
 
 ### Standalone (separate deployment)
 
-To host the admin panel on its own -- pointed at a LibreChat instance running elsewhere -- use the published image from GHCR:
+To host the admin panel on its own, pointed at a LibreChat instance running elsewhere, use the published image from the LibreChat registry (`registry.librechat.ai/librechat-ai/librechat-admin-panel:latest`, the image the bundled compose files use):
 
 ```bash
 # 1. Create an env file
@@ -118,7 +124,7 @@ docker run -p 3000:3000 \
   --add-host=host.docker.internal:host-gateway \
   -e SESSION_SECRET=replace-with-32-char-random-string \
   -e VITE_API_BASE_URL=http://host.docker.internal:3080 \
-  ghcr.io/clickhouse/librechat-admin-panel:latest
+  registry.librechat.ai/librechat-ai/librechat-admin-panel:latest
 ```
 
 <Callout type="warning" title="Docker Networking">
@@ -163,7 +169,7 @@ When the admin panel is hosted on a separate URL from LibreChat, set `ADMIN_PANE
 ADMIN_PANEL_URL=https://admin.example.com/admin
 ```
 
-When set, LibreChat also shows an **Admin Panel** link to administrators under **Settings -> General**. Non-admin users do not see the link.
+When set, LibreChat also shows an **Admin Panel** link to administrators under **Settings > General**. Non-admin users do not see the link.
 
 For Helm deployments, set `librechat.adminPanelUrl` in your values file. The chart renders it as `ADMIN_PANEL_URL` for LibreChat's admin OAuth flow:
 
@@ -207,7 +213,9 @@ Google admin SSO requests offline access and consent so the panel can refresh an
 The panel renders the LibreChat config as a dynamic form driven by the config schema. This has two useful properties:
 
 - **Forward-compatible**: when LibreChat ships a new config field, the panel picks it up automatically from the schema. No admin-panel upgrade or redeploy is required.
-- **Layered overrides**: the base config (from `librechat.yaml`) can be shadowed by per-principal overrides scoped to a role or group. When a user logs in, overrides are resolved in priority order and merged on top of the base to produce the effective config that user sees.
+- **Layered overrides**: the base config (from `librechat.yaml`) can be shadowed by per-principal overrides scoped to a role, group, or user. When a user logs in, the documents that apply merge in one fixed order: the Base profile first regardless of its priority, then ascending priority, then role before group before user, then creation order. A new profile written without a priority gets its principal type's default (role 10, group 20, user 100, Base 0), and a write that omits the priority keeps the stored one.
+- **Encrypted credentials**: MCP server credentials, Azure group keys, and web search keys stored through the admin API are encrypted at rest and returned only as masked previews. A write that keeps a stored key while changing where it is sent (such as a server URL or base URL) must enter the key again.
+- **Environment references**: `${ENV_VAR}` references in overrides are limited to the names `librechat.yaml` already references, the built-in endpoint credentials, and the names listed in `CONFIG_OVERRIDE_ENV_ALLOWLIST`. Any other reference is rejected on write.
 
 <Callout type="warning" title="Process-backed MCP servers stay in YAML">
   MCP servers that use `type: stdio` or process fields such as `command`, `args`, `env`, `cwd`, or `stderr` are operator-owned. Configure them only in `librechat.yaml`; the admin API rejects attempts to create or modify them, and overrides cannot replace or remove them. Remote MCP server configuration remains available through the normal override system.
@@ -226,7 +234,7 @@ This is the surface behind LibreChat's [DB-backed per-principal configuration ov
 - Let a "FinanceAdmins" role manage remote MCP servers while regular users can only use them
 - Scope stricter `interface` permissions to external-contractor groups
 
-Administrators can also use the opt-in [Admin Insights](/docs/features/insights) dashboard to review tenant-scoped MongoDB activity. Set `ENABLE_INSIGHTS=true`, then grant both `access:admin` and `read:insights` to an account with the `ADMIN` role.
+Administrators can also use the opt-in [Admin Insights](/docs/features/insights) dashboard to review tenant-scoped MongoDB activity. Set `ENABLE_INSIGHTS=true`; who can review which Agents is described in [Admin Insights](/docs/features/insights#access-requirements).
 
 ### Override Validation
 

@@ -11,19 +11,19 @@ OCR (Optical Character Recognition) in LibreChat is an optional enhancement for 
 The "Upload as Text" feature (from the chat) works the same way:
 
 - Files matching `fileConfig.ocr.supportedMimeTypes` use OCR if available
-- Falls back to text parsing if OCR is not configured
+- Without OCR, PDF, DOCX, spreadsheet, and ODT files fall back to the [built-in document parser](#built-in-document-parser); images and other types the parser cannot read need OCR
 - Especially useful for images with text, scanned documents, and complex PDFs
-- Processing priority: **OCR > STT > text parsing**
+- Processing order: **OCR > RAG text extraction > built-in document parser > STT > plain text**
 - See the [Upload as Text](/docs/features/upload_as_text) documentation for details.
 
 ### File Context (for agents)
 
 When you upload files through the Agent Builder's File Context section:
 
-1. Text is extracted using text parsing by default (OCR/STT if configured and file matches)
+1. Text is extracted using the built-in document parser or plain text reading by default (OCR/STT if configured and file matches)
 2. Extracted text is stored as part of the agent's system instructions
 3. Agent can reference this context in all conversations
-4. **OCR service is optional** - the feature works without it using text parsing
+4. **OCR service is optional** - the feature works without it for plain text files and for documents the built-in parser handles
 
 Files uploaded as "File Context" are processed to extract text, which is then added to the Agent's system instructions. This is ideal for documents, code files, PDFs, or images with text where you need the full text content to be included in the agent's instructions.
 
@@ -31,7 +31,7 @@ Files uploaded as "File Context" are processed to extract text, which is then ad
 
 ## Optional OCR Configuration
 
-Both Agent File Context and Upload as Text work out-of-the-box using text parsing. To enhance extraction quality for images and scanned documents, you can optionally configure an OCR service:
+Both Agent File Context and Upload as Text work out-of-the-box for plain text files and for the document types the built-in parser handles. To extract text from images, scanned documents, and other formats, you can optionally configure an OCR service:
 
 ```yaml
 # librechat.yaml
@@ -48,9 +48,20 @@ ocr:
   mistralModel: "mistral-ocr-latest"
 ```
 
-**Note:** The `context` capability is enabled by default. You only need to configure OCR (the `ocr` capability) if you want enhanced extraction quality for images and scanned documents.
+**Note:** The `context` capability is enabled by default, as is `ocr` in the default capability list. If you set a custom `endpoints.agents.capabilities` list that omits `ocr` while OCR is configured, uploads that match the OCR MIME types fail with "OCR capability is not enabled for Agents".
 
 OCR connections block private, loopback, link-local, and cloud-metadata destinations by default. For a trusted private OCR service, add its exact private host and port to [`ocr.allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/ocr#allowedaddresses). This is an exemption from SSRF protection, so list only infrastructure you control.
+
+## Built-in Document Parser
+
+When no OCR service handles a file, agent File Context and Upload as Text use a built-in `document_parser` strategy. It also serves as the fallback if a configured OCR service fails. It handles only:
+
+- PDF (text layer only, no image recognition)
+- DOCX (not legacy `.doc`)
+- Spreadsheets: xlsx, xls, and ods
+- ODT
+
+Files larger than 15 MB are rejected by the parser, and a document with no extractable text returns an error. PowerPoint files, `.doc`, EPUB, and images require an OCR service (or the RAG API text route, see [Upload as Text](/docs/features/upload_as_text)).
 
 ## Overview of OCR Capabilities
 
@@ -165,9 +176,9 @@ ocr:
 3. Download the service account JSON key file
 4. Set the `GOOGLE_SERVICE_KEY_FILE` environment variable using one of the supported methods
 
-### 4. Custom OCR (Planned)
+### 4. Custom OCR (Not Implemented)
 
-Support for custom OCR providers and user-defined strategies is planned for future releases.
+`custom_ocr` appears as a value in the strategy list, but LibreChat has no implementation behind it. Support for custom OCR providers and user-defined strategies is planned for future releases.
 
 ### 5. Upload Files to Provider (Direct)
 
@@ -217,7 +228,7 @@ fileConfig:
 
 Files matching these patterns will use OCR when:
 - Uploaded to agent file context (always, if OCR is configured)
-- Uploaded as text in chat (if OCR is configured; otherwise falls back to text parsing)
+- Uploaded as text in chat (if OCR is configured; otherwise the built-in document parser or plain text reading applies where it supports the file)
 
 For more details on file processing configuration, see [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config).
 

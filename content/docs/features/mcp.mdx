@@ -165,13 +165,15 @@ Your new MCP server is also available in the Agent Builder, where you can add it
 
 #### Credential Variables for UI-Created Servers
 
-When adding an MCP server through the UI, you can require users to provide their own API keys. In the Authentication section of the MCP Server Builder dialog, select "API Key" and check **"User provides key"**. Choose the header format (Bearer, Basic, or Custom) and save the server.
+When adding an MCP server through the UI, you can require users to provide their own API keys. In the Authentication section of the MCP Server Builder dialog, select **API Key** and check **Each user provides their own key**. Choose the header format (Bearer, Basic, or Custom) and save the server.
+
+The authentication options are **None (Auto-detect)**, **API Key**, **OAuth**, and **On-Behalf-Of (OBO)**. OBO appears only for users who may configure it, which an administrator controls with [`interface.mcpServers.configureObo`](/docs/configuration/librechat_yaml/object_structure/interface#mcpservers). OBO requires OpenID Connect authentication such as Entra ID, and you set the scopes to request for the downstream server.
 
 Behind the scenes, LibreChat creates a destination-bound `customUserVars` entry named `MCP_API_KEY_<hash>` and configures the matching authentication header. The name is managed automatically; users still enter their key in the MCP Tool Select Dialog or MCP Settings panel. Existing servers may retain the legacy `MCP_API_KEY` name while their request boundary is unchanged. This uses the same key-entry UI as [YAML-defined `customUserVars`](#user-provided-credentials).
 
 Changing a UI-created server's URL (including path or query), proxy, transport, authorization format, custom auth header, or configured OAuth client/destination requires each user to enter a key for the new boundary. Old saved keys are not forwarded to that replacement destination. Cosmetic edits, equivalent normalized URLs, and fragment-only outbound URL edits preserve the existing key. Shared servers can resolve only credential variables declared by their current configuration, so an editor cannot reference an old generated name to recover a previous key. No bulk credential migration is needed. Upgrade **every API replica**, including replicas serving server-edit requests, before relying on this protection; an older writer can still recreate an unbound configuration.
 
-When an administrator or user API key is configured, LibreChat treats the server as API-key authenticated and skips OAuth auto-detection. An explicit OAuth configuration still takes precedence. If a UI-created API-key server was saved by an older LibreChat version and remains stuck in **OAuth Required**, edit and save the server once so its stored connection metadata is refreshed.
+When an administrator or user API key is configured, LibreChat treats the server as API-key authenticated and skips OAuth auto-detection. An explicit OAuth configuration still takes precedence. If a UI-created API-key server was saved by an older LibreChat version and remains stuck in **Needs Auth**, edit and save the server once so its stored connection metadata is refreshed.
 
 <Callout type="warning">
 For security, UI-created (DB-sourced) MCP servers can **only** resolve `customUserVars` placeholders (`{{VAR_NAME}}`). Server-side environment variables (`${ENV_VAR}`), user profile fields (`{{LIBRECHAT_USER_*}}`), and OIDC tokens (`{{LIBRECHAT_OPENID_*}}`) are intentionally blocked to prevent unauthorized access to server secrets or other users' data. For full placeholder support, configure the server in `librechat.yaml` instead.
@@ -232,12 +234,12 @@ LibreChat displays dynamic status icons showing the current state of each MCP se
 
 **Status Types:**
 
-- **Connected** (green gear): Server is connected and has configurable customUserVars
-- **OAuth Required** (amber key): Server requires OAuth authentication
-- **Disconnected** (orange plug): Server connection failed or lost
-- **Initializing** (blue loader): Server is starting up or reconnecting
-- **Error** (red triangle): Server encountered an error
-- **Cancelling** (red x): OAuth flow is being cancelled
+- **Connected**: The server is connected. If it defines `customUserVars`, a key button lets you configure them.
+- **Connecting** and **Initializing**: A spinner shows while the server connects or starts. When an OAuth flow can be cancelled, hovering the spinner reveals a cancel control.
+- **Needs Auth**: The server is disconnected and requires OAuth authentication.
+- **Disconnected** and **Error**: The connection failed or was lost. A connect button (plug icon) lets you retry.
+- **On-demand**: The server connects only while serving a request, so there is no persistent connection to show.
+- **Unknown**: No status is available yet.
 
 ### Cancelling OAuth from the Agent Tool Dialog
 
@@ -281,11 +283,15 @@ LibreChat classifies Streamable HTTP responses from the parsed `Content-Type` me
 
 ### MCP Settings Panel Visibility
 
-The MCP Settings Panel appears in the right sidebar when LibreChat detects MCP servers that might require user intervention during their initialization. The panel will be visible when any configured server meets one of these criteria:
+The MCP Settings panel appears in the right sidebar when the user has `USE` access to MCP servers and at least one MCP server is available to them, or when the user has `CREATE` access to MCP servers. Servers that need user input, such as those with `customUserVars`, OAuth, or `startup: false`, are initialized from this panel.
 
-- **Custom User Variables**: Server has `customUserVars` defined which may contain user-provided credentials
-- **OAuth Authentication**: Server is detected as requiring OAuth authentication during startup
-- **Manual Initialization**: Server has `startup: false` configured, requiring manual initialization
+### MCP Apps
+
+MCP servers can return interactive interfaces (MCP Apps) alongside tool results. When MCP Apps are enabled, a tool result that includes an app shows an **Open app** control, and **Close app** hides it again. Apps render inside a sandboxed frame, and the number of apps open at once is limited: close another app before opening a new one.
+
+An app cannot act on its own. When it asks to call a tool, LibreChat shows **Run tool from app?**, and when it asks to post a message, **Send message from app?**. Sending a message starts a model response in the current conversation, so the selected agent and its tools may be used. The app can proceed only after you approve the request. MCP Apps are not viewable in shared conversations.
+
+Administrators enable apps with [`mcpSettings.apps`](/docs/configuration/librechat_yaml/object_structure/mcp_settings#apps) and configure the sandbox with [`mcpAppSandbox`](/docs/configuration/librechat_yaml/object_structure/mcp_app_sandbox).
 
 ## LibreChat-Specific Features
 
@@ -427,6 +433,8 @@ mcpServers:
 ### OAuth Authentication
 
 LibreChat supports OAuth authentication for MCP servers, following Anthropic's recommendation for secure MCP connections. OAuth provides a standardized, secure way to authenticate without storing long-lived credentials.
+
+By default, LibreChat asks the user to sign in when a conversation turn starts. For servers whose tools are deferred, [`oauthPrompt: on_use`](/docs/configuration/librechat_yaml/object_structure/mcp_servers#oauthprompt) delays the sign-in prompt until the agent first calls one of the server's tools.
 
 #### Supported OAuth Flows
 
