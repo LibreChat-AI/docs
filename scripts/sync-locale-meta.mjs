@@ -35,7 +35,10 @@ function sectionPages(pages) {
  * translated sidebar. A translated separator is reused for the English
  * section that shares the most pages with it, so reordered or regrouped
  * sections keep the right heading, and translated link labels are reused by
- * URL; anything without a translation keeps its English label.
+ * URL; anything without a translation keeps its English label. A renamed
+ * English heading keeps its old translation, because the pages cannot tell a
+ * rename from a regroup, so update the translated headings by hand when you
+ * rename one.
  */
 export function syncLocalePages(englishPages, localePages = []) {
   const englishSections = sectionPages(englishPages)
@@ -101,22 +104,34 @@ export async function syncLocaleMeta({
   write = false,
 } = {}) {
   const changedFiles = []
+  const metaDirs = await listMetaDirs(docsDir)
+  const localeFilesByDir = new Map()
+  for (const dir of metaDirs) {
+    localeFilesByDir.set(
+      dir,
+      (await readdir(dir)).filter((name) => LOCALE_META_PATTERN.test(name)),
+    )
+  }
+  // Every sidebar folder needs the locales used anywhere else, so a deleted
+  // file or a new folder without translations is reported too.
+  const expectedFiles = [...new Set([...localeFilesByDir.values()].flat())].sort()
 
-  for (const dir of await listMetaDirs(docsDir)) {
+  for (const dir of metaDirs) {
     const english = JSON.parse(await readFile(path.join(dir, 'meta.json'), 'utf8'))
     if (!Array.isArray(english.pages)) {
       continue
     }
 
-    const localeFiles = (await readdir(dir)).filter((name) => LOCALE_META_PATTERN.test(name))
+    const present = new Set(localeFilesByDir.get(dir))
 
-    for (const name of localeFiles) {
+    for (const name of expectedFiles) {
       const filePath = path.join(dir, name)
-      const original = await readFile(filePath, 'utf8')
-      const locale = JSON.parse(original)
+      const locale = present.has(name)
+        ? JSON.parse(await readFile(filePath, 'utf8'))
+        : { ...english, pages: undefined }
       const pages = syncLocalePages(english.pages, locale.pages)
 
-      if (JSON.stringify(pages) === JSON.stringify(locale.pages)) {
+      if (present.has(name) && JSON.stringify(pages) === JSON.stringify(locale.pages)) {
         continue
       }
 
@@ -136,8 +151,8 @@ function usage() {
     'Usage: node scripts/sync-locale-meta.mjs [--check|--write]',
     '',
     'Options:',
-    '  --check           Report translated sidebars whose pages differ from English (default)',
-    '  --write           Rewrite translated sidebars to follow the English pages',
+    '  --check           Report translated sidebars that are missing or whose pages differ from English (default)',
+    '  --write           Rewrite translated sidebars to follow the English pages, creating missing ones from English',
     '  --docs-dir=<dir>  Docs content directory',
   ].join('\n')
 }

@@ -87,4 +87,20 @@ describe('syncLocaleMeta', () => {
     expect(updated).toEqual({ title: 'Funktionen', icon: 'Star', pages: ['agents', 'skills'] })
     expect((await syncLocaleMeta({ docsDir })).changedFiles).toEqual([])
   })
+
+  it('reports and creates a translated sidebar missing from one folder', async () => {
+    const docsDir = await fixture()
+    await mkdir(path.join(docsDir, 'guides'))
+    await writeFile(
+      path.join(docsDir, 'guides', 'meta.json'),
+      JSON.stringify({ title: 'Guides', pages: ['intro'] }),
+    )
+    const missing = path.join(docsDir, 'guides', 'meta.de.json')
+    expect((await syncLocaleMeta({ docsDir })).changedFiles).toContain(missing)
+    await syncLocaleMeta({ docsDir, write: true })
+    expect(JSON.parse(await readFile(missing, 'utf8'))).toEqual({
+      title: 'Guides',
+      pages: ['intro'],
+    })
+  })
 })
