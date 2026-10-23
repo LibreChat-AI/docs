@@ -1,0 +1,111 @@
+---
+date: 2026-10-22
+title: ⚙️ Config v1.3.18
+version: '1.3.18'
+---
+
+- Added opt-in PII redaction for Agent chat messages
+  - `filters.messages.pii.action` now accepts `redact` in addition to `block` (default) and `audit`
+  - `redact` transforms only fresh, text-only interactive Agent chat submissions that carry a `clientRequestId`; edits, resumes, files, quotes, other endpoints, and other fields still use blocking checks
+  - Requires a valid `CREDS_KEY`: original text is stored as an encrypted, unindexed sidecar field, and changing the key makes existing originals unavailable
+  - `maxCharacters` (default `65536`) and `maxMatches` (default `256`) bound each transformation session; custom patterns may set `category` to `email`, `phone`, `name`, `credential`, or `custom`
+
+- Added an Agent tool approval "Always allow" option and per-mode approval controls
+  - `endpoints.agents.toolApproval.allowAlways` offers "Always allow" to stop prompting for a tool for the rest of a conversation; the default is `false`
+  - `allowAlwaysMaxTools` and `allowAlwaysMaxToolNameLength` each accept integers from `1` through `1024`
+  - `agentModes` exposes Always ask, Always approve, Ask once per chat, and Ask once then always approve on Agent tool rows; the default is `false`, so opt in only after every replica is upgraded
+  - Explicit administrator `ask` and `deny` rules and hooks remain authoritative
+  - `grantLookupTimeoutMs` accepts `100` through `5000` ms (example value `3000`)
+
+- Added deferred MCP OAuth sign-in
+  - `mcpServers.<name>.oauthPrompt` accepts `on_start` (default) or `on_use`
+  - `on_use` waits for the agent's first call to one of the server's tools, but only when every tool the agent selected from it is deferred
+  - Until a user signs in, tool search offers the tools listed in `oauthToolCatalog` (each with `name`, `description`, and `inputSchema`); without a catalog the turn-start prompt is kept
+
+- Added MCP Apps controls
+  - `mcpSettings.apps` requires explicit opt-in for new MCP Apps; if omitted, legacy inline HTML stays enabled, and `false` disables both MCP Apps and legacy inline HTML
+  - `mcpAppSandbox` is a deployment-owned block that role, group, and user configuration cannot override; set `url` to a dedicated origin routed to `/api/mcp/sandbox`
+  - The sandbox defaults are `maxSourcesPerDirective: 32`, `maxSerializedLength: 4096`, `maxPersistedAppBytes: 1048576`, `maxAdmissionRequestsPerMinute: 240`, `maxActiveViews: 3` per browser, and `maxActionPreviewChars: 16384`
+  - `rateLimits.mcpApps.resourcesPerMinute` (example `120`) and `toolCallsPerMinute` (example `60`) set per-user fixed one-minute limits
+
+- Added chat pull request lookups
+  - `endpoints.agents.pullRequests` shows a conversation's pull request in the chat header and sidebar, and is on as soon as the server has a token and a repository scope; set `enabled: false` to turn it off
+  - `provider` accepts `github` (default), `gitlab`, or `bitbucket`; `host` selects GitHub Enterprise Server, a `*.ghe.com` tenant, or a self-managed GitLab host
+  - `token` must be an environment variable reference such as `${GITHUB_PULL_REQUEST_TOKEN}`, never the token itself
+  - `allowedRepositories` (up to 256 entries, `owner/name`, `owner/*`, or nested GitLab group paths) limits which repositories the server's token is used for; `allowAllRepositories` is `false` by default because any user could otherwise point the token at any repository it can read
+  - `oauth` lets each user connect their own account, with `clientId` and `clientSecret` as environment variable references, `flowTimeoutMinutes` (`1` through `60`), `requestTimeoutSeconds` (`1` through `60`), and `retentionDays` (`1` through `3650`)
+  - `provider`, `host`, `oauth`, and `sharedCacheSlots` are read from the base `librechat.yaml` only
+  - Tuning keys and defaults: `cacheTtlSeconds` `30` (`5` through `3600`), `cacheMaxEntries` `500`, `cacheMaxCredentials` `256`, `maxConcurrentLookups` `4` (`1` through `16`), `batchTimeoutSeconds` `20`, `requestTimeoutSeconds` `10`, `lookupTimeoutSeconds` `30`, `maxCheckRunPages` `10`, `maxCandidatePullRequests` `10`, `maxCandidatePages` `1`, `maxHeadComparisons` `3` (`0` through `20`)
+  - `sharedCache` (default `false`) shares results across replicas and takes effect only with `USE_REDIS`; `sharedCacheTimeoutMs` defaults to `250` and `sharedCacheSlots` to `65536` (`64` through `1000000`)
+  - Needs a code worker that reports its branch and `CODEAPI_BRIDGE_LANE_GIT=true` on the Code API
+
+- Added a `reset` balance refill mode and balance display options
+  - `balance.refillMode` accepts `add` or `reset`; `reset` replaces the allowance each period without rollover and requires `refillIntervalValue` to be a positive integer
+  - Deploy reset-capable servers to every replica before selecting `reset`
+  - `balance.display` accepts `credits`, `currency` (uses `interface.currency`), or `percent` (share of the allotment used)
+
+- Added ephemeral retention mode
+  - `interface.retentionMode` now accepts `ephemeral`, which forces every chat to be temporary (always on, not user-toggleable) and applies expiry to all data
+  - `all` applies expiry to all data types while keeping chats visible in history; `temporary` remains the default
+  - Before switching from `all` or `ephemeral` back to `temporary`, remove retention deadlines from non-temporary data that should stop expiring
+  - `langfuse.trace.temporaryChats` (default `false`) must be `true` for temporary chats, including every chat in `ephemeral` mode, to be traced and for their feedback to be scored
+
+- Added account email change and passkey limits
+  - `emailChange.enabled` and `emailChange.tokenTTLSeconds` configure changing the registered email in Settings > Account; omitted values fall back to `ALLOW_EMAIL_CHANGE` and a 15-minute link (`900`)
+  - `passkeys.perUserMax` caps passkey enrollment per user; omitted, it falls back to `MAX_PASSKEYS_PER_USER`, then `20`
+  - `rateLimits.emailChange` (`userMax: 3`, `userWindowInMinutes: 2`) limits change requests per authenticated user
+  - `rateLimits.emailChangeConfirm` (`ipMax: 20`, `ipWindowInMinutes: 2`, `userMax: 2`, `userWindowInMinutes: 2`) bounds the unauthenticated verification link by source address and by account
+
+- Added bounded outbound call and password hashing settings
+  - `timeouts` sets budgets in milliseconds: `ragMs` `30000`, `ocrMs` `300000`, `actionsMs` `300000`, `moderationMs` `10000`, `imageFetchMs` `30000`
+  - `passwordHashing.maxWorkers` sets the worker threads that hash passwords and auth tokens off the event loop; the default is one less than the CPU count, at most `4`
+  - `speech.tts.maxInputChars` limits the text one request may synthesize (example `20000`); each 1,000 characters is a provider call
+
+- Added Chat Projects limits
+  - `projects.maxFiles` defaults to `50` (maximum `500`)
+  - `projects.maxInstructionsLength` defaults to `16000` characters (maximum `200000`)
+  - `projects.maxDescriptionLength` defaults to `1000` characters (maximum `10000`)
+
+- Added tool-call previews and credential write format
+  - `toolCallPreviews.enabled` defaults to `true`; the web client loads bounded previews of long tool outputs and arguments and loads a call in full when it is opened, while exports and share links get full content
+  - `toolCallPreviews.outputChars` and `argsChars` both default to `512`
+  - `credentials.writeFormat` defaults to `v3` (random IV per stored value); both formats are always read
+  - During a rolling upgrade of a multi-replica deployment, set `legacy` until every replica reads `v3`; a rollback to a release that predates `v3` cannot read credentials saved in that format
+
+- Added browser telemetry and session replay flags
+  - `telemetry.rum.enabled` and `telemetry.rum.sessionReplay.enabled` are independent opt-ins; session replay records masked DOM and input
+  - Collector URL, authentication, and service settings stay in `.env`; YAML flags override `.env`, and omitting them preserves the environment settings
+
+- Expanded welcome screen, theme, and notification settings under `interface`
+  - `landingHeading` accepts `entity` (default) or `greeting`; `landingFooter` defaults to `true`
+  - `runningChatRename` defaults to `true`; set it to `false` during a rolling upgrade until every API replica is upgraded and old title-generation jobs have drained
+  - `theme` applies a deployment theme to every user, either a bundled name (`librechat`, `clickhouse`) or an inline definition with RGB triplets keyed by `rgb-*` token
+  - `artifactUndocking` and `mascot` both default to `true`
+  - `historyCacheTtlMs` defaults to `60000` ms and `historyCacheRecent` to `1`
+  - `replyNotifications` gates unseen-reply alerts: `tabBadge`, `desktop`, and `sound` default to `true`; `pollLimit` defaults to `100` (`1` through `100`), `pollIntervalMs` to `30000` (`10000` through `600000`), and `focusedRefreshMs` to `300000` (`60000` through `300000`)
+
+- Expanded Agent run and stream controls
+  - `endpoints.agents.streamKeepaliveIntervalMs` defaults to `25000` ms; `0` disables it, and other values must be at least `1000` and at most `3600000`
+  - `endpoints.agents.hostFileEdits` bounds host-side skill and sandbox edits: `maxEdits` `100`, `maxWorkBytes` `67108864`, `maxOccurrences` `100000`, `timeoutMs` `2000`, `maxConcurrent` `2` per API process; over-budget calls write nothing
+  - `endpoints.agents.subagentActivity` configures live child activity: `replayTtlMs` `300000`, `publicationTimeoutMs` `1000`, `retryAttempts` `3`, `retryBaseDelayMs` `100`, `recoveryDelayMs` `1000`, `memoryMaxStreams` `1000`, `memoryMaxBytes` `16777216`
+  - `backgroundTasks.completionReceiptBatching` defaults to `true`; set it to `false` during a rolling upgrade while replicas without it still serve traffic
+
+- Expanded highly experimental stateful Code session controls
+  - `statefulCodeSessions.allowEnvironmentSelection` defaults to `true` and lets new chats choose from an agent's saved machine allowlist; set `false` to keep every agent on its fixed machine
+  - `maxEnvironmentChoices` defaults to `32` with a supported ceiling of `128`
+  - `environments[].configSchema.limits.defaultCommandTimeoutMs` sets the foreground Bash default (omit to keep `30000`)
+  - `defaultReadFileLines` sets the attached `read_file` window (omit to keep `200`; range `1` through `500`)
+  - `maxRequestTimeoutMs` sets an optional total HTTP budget per workspace tool call; enable it only after every replica recognizes the field, the Code API honors `X-LibreChat-Workspace-Queue-Wait-Ms`, and a canary confirms the live proxy chain outlasts it
+  - `minCommandAdmissionMs` accepts `1000` through `300000` (default reserve `10000`); a request budget of `20000` ms or less is rejected with the default reserve
+
+- Changed Agent capabilities and file-list defaults
+  - The `chain` capability is removed from the default `endpoints.agents.capabilities` list
+  - `web_search` controls only LibreChat's external pipeline, not provider-native search; both require `WEB_SEARCH.USE`, seeded by `interface.webSearch`
+  - `fileListLimit` caps rows returned when `GET /files` receives an explicit `limit` query parameter (example `100`)
+  - `fileConfig.clientImageResize.enabled` now forces resizing on or off for everyone when set; omitted, each user decides and resizing is on by default
+
+- Added ACL sharing lease limits
+  - `permissions.leaseTtlMs` accepts integers from `1000` through `600000` (example `30000`); on deployments without transactions, sharing updates hold a per-resource lease for this long between renewals
+  - `permissions.leaseWaitMs` accepts integers from `0` through `60000` (example `3000`) and sets how long an update waits for a contended lease before answering `409`
+
+- Updated the config version to `1.3.18`
