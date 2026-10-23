@@ -18,10 +18,25 @@ describe('syncLocalePages', () => {
     expect(syncLocalePages(['c', 'a'], ['a', 'old', 'c'])).toEqual(['c', 'a'])
   })
 
-  it('keeps English separators when the section count changed', () => {
+  it('translates each section by the pages it shares', () => {
+    expect(
+      syncLocalePages(
+        ['---Services---', 's', '---Infrastructure---', 'i'],
+        ['---Infrastruktur---', 'i', '---Dienste---', 's'],
+      ),
+    ).toEqual(['---Dienste---', 's', '---Infrastruktur---', 'i'])
+  })
+
+  it('keeps the English separator for a section without shared pages', () => {
     expect(syncLocalePages(['---One---', 'a', '---Two---', 'b'], ['---Eins---', 'a', 'b'])).toEqual(
-      ['---One---', 'a', '---Two---', 'b'],
+      ['---Eins---', 'a', '---Two---', 'b'],
     )
+    expect(syncLocalePages(['---New---', 'n', '---Old---', 'o'], ['---Alt---', 'o'])).toEqual([
+      '---New---',
+      'n',
+      '---Alt---',
+      'o',
+    ])
   })
 
   it('reuses translated link labels by URL', () => {

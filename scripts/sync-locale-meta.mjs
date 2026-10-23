@@ -12,27 +12,59 @@ function linkTarget(entry) {
   return LINK_PATTERN.exec(entry)?.[1] ?? null
 }
 
+function entryKey(entry) {
+  return linkTarget(entry) ?? entry
+}
+
+/** Maps each separator to the pages listed under it, up to the next separator. */
+function sectionPages(pages) {
+  const sections = []
+  for (const entry of pages) {
+    if (SEPARATOR_PATTERN.test(entry)) {
+      sections.push({ separator: entry, pages: new Set() })
+    } else if (sections.length > 0) {
+      sections[sections.length - 1].pages.add(entryKey(entry))
+    }
+  }
+  return sections
+}
+
 /**
  * Rebuilds a locale's `pages` list from the English one. Page slugs always
  * follow English, so a page added to `meta.json` cannot go missing from a
- * translated sidebar. Translated separators are reused by position when the
- * section count still matches, and translated link labels by URL; anything
- * without a translation keeps its English label.
+ * translated sidebar. A translated separator is reused for the English
+ * section that shares the most pages with it, so reordered or regrouped
+ * sections keep the right heading, and translated link labels are reused by
+ * URL; anything without a translation keeps its English label.
  */
 export function syncLocalePages(englishPages, localePages = []) {
-  const englishSeparators = englishPages.filter((entry) => SEPARATOR_PATTERN.test(entry))
-  const localeSeparators = localePages.filter((entry) => SEPARATOR_PATTERN.test(entry))
-  const reuseSeparators = englishSeparators.length === localeSeparators.length
+  const localeSections = sectionPages(localePages)
+  const translatedSeparators = new Map()
+  for (const { separator, pages } of sectionPages(englishPages)) {
+    let best = null
+    let bestShared = 0
+    for (const section of localeSections) {
+      if (section.used) {
+        continue
+      }
+      const shared = [...section.pages].filter((page) => pages.has(page)).length
+      if (shared > bestShared) {
+        best = section
+        bestShared = shared
+      }
+    }
+    if (best) {
+      best.used = true
+      translatedSeparators.set(separator, best.separator)
+    }
+  }
   const localeLinks = new Map(
     localePages.filter(linkTarget).map((entry) => [linkTarget(entry), entry]),
   )
-  let separatorIndex = 0
 
   return englishPages.map((entry) => {
     if (SEPARATOR_PATTERN.test(entry)) {
-      const translated = reuseSeparators ? localeSeparators[separatorIndex] : undefined
-      separatorIndex += 1
-      return translated ?? entry
+      return translatedSeparators.get(entry) ?? entry
     }
 
     const target = linkTarget(entry)
