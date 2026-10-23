@@ -7,18 +7,22 @@ icon: FileCode
 
 `fileConfig` 对象允许您配置应用程序的文件处理设置，包括大小限制和 MIME 类型限制。本节详细介绍了 `fileConfig` 对象的结构。
 
-`fileConfig` 下有 13 个主要字段：
+`fileConfig` 下的主要字段包括:
 
   - `endpoints`
   - `skills`
   - `serverFileSizeLimit`
   - `avatarSizeLimit`
   - `imageGeneration`
+  - `clientImageResize`
   - `fileTokenLimit`
   - `fileContextSizeLimit`
   - `fileContextCharLimit`
   - `defaultLLMDeliveryPath`
   - `legacyFileUploadUX`
+  - `textFallbackWithoutTools`
+  - `codeEnvLivenessSafeWindowMs`
+  - `legacySearchProbeTimeoutMs`
   - `ocr`
   - `text`
   - `stt`
@@ -79,7 +83,10 @@ fileConfig:
   legacyFileUploadUX: false
   imageGeneration:
     percentage: 100
-    px: 1024
+  clientImageResize:
+    maxWidth: 1900
+    maxHeight: 1900
+    quality: 0.92
   ocr:
     supportedMimeTypes:
       - "^image/(jpeg|gif|png|webp|heic|heif)$"
@@ -106,13 +113,16 @@ fileConfig:
   ]}
 />
 
-`skills` 支持两个参数：
+`skills` 支持三个参数:
 
-- `fileSizeLimit` (整数)
+- `fileSizeLimit`（Number）
   - 单个 Skill 上传的最大大小，以兆字节 (MB) 为单位。
   - **默认值：** `50`
 - `importCleanupConcurrency` (整数)
   - 在 Skill 归档导入失败后，最大并发清理操作数。使用 `1` 进行串行清理。
+  - **默认值：** `8`
+- `deletionCleanupConcurrency`(整数)
+  - 删除 Skill 时并发清理操作的最大数量。设置为 `1` 表示串行清理。
   - **默认值：** `8`
 
 ```yaml filename="fileConfig / skills"
@@ -120,6 +130,7 @@ fileConfig:
   skills:
     fileSizeLimit: 50
     importCleanupConcurrency: 8
+    deletionCleanupConcurrency: 8
 ```
 
 请参阅 [Skills](/docs/features/skills) 以了解其余的导入规则，例如每个文件和归档条目的限制。
@@ -128,7 +139,7 @@ fileConfig:
 
 <OptionTable
   options={[
-    ['serverFileSizeLimit', 'Integer', '上传至服务器的任何文件的全局最大大小，以兆字节 (MB) 为单位。', 'Acts as an overarching limit for file uploads across all endpoints, ensuring that no file exceeds this size server-wide.'],
+    ['serverFileSizeLimit', 'Number', '上传至服务器的任何文件的全局最大大小，以兆字节 (MB) 为单位。', 'Acts as an overarching limit for file uploads across all endpoints, ensuring that no file exceeds this size server-wide.'],
   ]}
 />
 
@@ -141,7 +152,7 @@ fileConfig:
 
 <OptionTable
 options={[
-['avatarSizeLimit', 'Integer', '头像图片允许的最大尺寸，以兆字节 (MB) 为单位。', 'Specifically tailored for user avatar uploads, allowing for control over image sizes to maintain consistent quality and loading times.'],
+['avatarSizeLimit', 'Number', '头像图片允许的最大尺寸，以兆字节 (MB) 为单位。', 'Specifically tailored for user avatar uploads, allowing for control over image sizes to maintain consistent quality and loading times.'],
 ]}
 />
 
@@ -160,15 +171,15 @@ fileConfig:
 
 `imageGeneration` 支持以下参数：
 
-- `percentage` (整数)
+- `percentage`（数字）
   - 生成的图像输出大小，以百分比表示（例如，`100` 表示基础大小的 100%）。
   - 使用此项可相对于默认或原始尺寸缩放输出图像。
 
-- `px` (整数)
+- `px`(数字)
   - 指定输出图像的尺寸（以像素为单位，例如 `1024`）。
   - 使用此选项可明确设置生成图像的输出尺寸，而无需考虑基础尺寸。
 
-根据您的使用场景，您可以设置这些参数中的其中一个（`percentage` 或 `px`），但不能同时设置两者。
+仅设置以下参数之一(`percentage` 或 `px`),请勿同时设置两者。
 
 配置示例：
 
@@ -176,7 +187,28 @@ fileConfig:
 fileConfig:
   imageGeneration:
     percentage: 100
-    px: 1024
+```
+
+## clientImageResize
+
+控制图片上传前的客户端缩放，从而避免因图片过大而导致的上传错误。用户可以在“设置 > 聊天”中切换缩放功能。此处设置 `enabled` 会覆盖所有用户的选择并锁定该开关；若省略此项，则由用户自行控制。
+
+- `enabled`(Boolean)
+  - 强制对所有用户开启(`true`)或关闭(`false`)调整大小。省略此项时,由每位用户自行决定,默认开启调整大小。
+- `maxWidth` (数字)
+  - 调整大小后图片的最大宽度(以像素为单位)。最小值为 `1`。**默认值:** `1900`
+- `maxHeight`(数字)
+  - 调整大小后图片的最大高度(单位:像素)。最小值为 `1`。**默认值:** `1900`
+- `quality`(数字)
+  - JPEG 压缩质量，取值范围为 `0` 到 `1`。**默认值：** `0.92`
+
+```yaml filename="fileConfig / clientImageResize"
+fileConfig:
+  clientImageResize:
+    enabled: true
+    maxWidth: 1900
+    maxHeight: 1900
+    quality: 0.92
 ```
 
 ## fileTokenLimit
@@ -257,6 +289,44 @@ fileConfig:
 ```yaml filename="fileConfig / legacyFileUploadUX"
 fileConfig:
   legacyFileUploadUX: true
+```
+
+## textFallbackWithoutTools
+
+当上传文件被路由到 `none`(仅存储,仅供工具使用)且本轮对话未运行任何可读取该文件的工具时,LibreChat 可以改为提供该文件提取出的文本。设置 `textFallbackWithoutTools: true` 即可启用此功能。该选项可在 `fileConfig` 下全局设置,也可在 `fileConfig.endpoints` 下针对每个条目单独设置(包括 `default`);端点级别的值优先于全局值。
+
+**默认值：** `false`
+
+它仅适用于路由是自动推断的消息附件;用户明确选择的目标位置永远不会被重新解析,保存在智能体工具资源中的文件也永远不会进入提示词。只会运行内置的文档和纯文本提取器,因此对于用于工具的文件不会发起任何 RAG 或 OCR 调用。已有但未提取文本的文件不会被回填。
+
+```yaml filename="fileConfig / textFallbackWithoutTools"
+fileConfig:
+  textFallbackWithoutTools: true
+  endpoints:
+    openAI:
+      textFallbackWithoutTools: false
+```
+
+## codeEnvLivenessSafeWindowMs
+
+在此时间窗口(以毫秒为单位)内提供给代码执行环境的文件,在复用前将跳过实时可用性检查。最小值为 `0`。
+
+**默认值:** `21600000`(6 小时)
+
+```yaml filename="fileConfig / codeEnvLivenessSafeWindowMs"
+fileConfig:
+  codeEnvLivenessSafeWindowMs: 21600000
+```
+
+## legacySearchProbeTimeoutMs
+
+在旧版 File Search 可用性检查上,预热(priming)在直接嵌入文件之前等待的时长(毫秒)。最小值为 `1`。
+
+**默认值:** `5000`
+
+```yaml filename="fileConfig / legacySearchProbeTimeoutMs"
+fileConfig:
+  legacySearchProbeTimeoutMs: 5000
 ```
 
 ## ocr
@@ -416,6 +486,8 @@ LibreChat 根据 MIME 类型匹配，按照以下**优先级顺序**处理上传
       - 单个文件的最大大小。单位为 MB（例如，使用 `20` 表示 20 兆字节）
   - `totalSizeLimit`
       - 单次请求中所有文件的总最大大小。单位为 MB（例如，使用 `20` 表示 20 兆字节）
+  - `defaultLLMDeliveryPath`, `legacyFileUploadUX`, and `textFallbackWithoutTools`
+      - 针对每个端点的覆盖配置,用于覆盖上述同名的全局设置。
   - `supportedMimeTypes`
       - 一个指定允许上传哪些 MIME 类型的 [Regular Expressions](https://en.wikipedia.org/wiki/Regular_expression) 列表。可以对其进行自定义以限制文件类型。
 
@@ -455,7 +527,7 @@ assistants:
 **密钥：**
 <OptionTable
   options={[
-    ['fileSizeLimit', 'Integer', '每个单独文件允许的最大大小，以兆字节 (MB) 为单位。', 'This limit ensures that no single file exceeds the specified size, allowing for better resource allocation and management.'],
+    ['fileSizeLimit', 'Number', '每个单独文件允许的最大大小，以兆字节 (MB) 为单位。', 'This limit ensures that no single file exceeds the specified size, allowing for better resource allocation and management.'],
   ]}
 />
 
@@ -471,7 +543,7 @@ YourCustomEndpointName:
 **密钥：**
 <OptionTable
   options={[
-    ['totalSizeLimit', 'Integer', '单次请求中所有文件允许的总最大大小，以兆字节 (MB) 为单位。', 'This setting is crucial for preventing excessive bandwidth and storage usage by any single upload request.'],
+    ['totalSizeLimit', 'Number', '单次请求中所有文件允许的总最大大小，以兆字节 (MB) 为单位。', 'This setting is crucial for preventing excessive bandwidth and storage usage by any single upload request.'],
   ]}
 />
 

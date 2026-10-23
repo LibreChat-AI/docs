@@ -89,14 +89,28 @@ projects:
       '各ACLドキュメントに対する最大比較交換（CAS）試行回数（最初の書き込みを含む）。書き込み競合のみが再試行されます。',
       '3',
     ],
+    [
+      'leaseTtlMs',
+      'Integer',
+      'ホルダーがリースを更新せずに、リソースごとの権限リースを保持する時間（ミリ秒）。有効な値は1000から600000までの範囲です。',
+      '30000',
+    ],
+    [
+      'leaseWaitMs',
+      'Integer',
+      '権限更新がリソースごとの競合したリースを待機する時間(ミリ秒)です。この時間を過ぎると409 Conflictで応答します。有効な値は0から60000までです。',
+      '3000',
+    ],
   ]}
 />
 
-有効な値の範囲は `1` から `100` です。
+`maxWriteAttempts` は `1` から `100` までの範囲で指定できます。
 
 ```yaml filename="permissions"
 permissions:
   maxWriteAttempts: 3
+  leaseTtlMs: 30000
+  leaseWaitMs: 3000
 ```
 
 ## langfuse
@@ -395,7 +409,7 @@ fileStrategies:
     [
       'filteredTools',
       'Array of Strings',
-      'PluginsおよびOpenAI Assistantsのendpointから特定のツールを除外します。',
+      '組み込みツールのうち特定のものを、エージェントおよびアシスタントが利用できるツールリストから削除します。',
       'filteredTools: ["scholarai", "calculator"]',
     ],
   ]}
@@ -403,11 +417,9 @@ fileStrategies:
 
 - **注記**:
   - `includedTools` と `filteredTools` の両方が指定されている場合、`includedTools` のみが認識されます。
-  - `gptPlugins` および `assistants` endpoint の両方に影響します
-  - フィルタリングするツールの名前は、[`api/app/clients/tools/manifest.json`](https://github.com/LibreChat-AI/LibreChat/blob/main/api/app/clients/tools/manifest.json) で確認できます。
+  - 起動時に読み込まれる組み込みツールに適用されます。これらは Agents と Assistants で使用されます。Ask User ツール(`ask_user_question`)もこれらのリストに従います。MCP ツールは別途設定されます。
+  - [`api/app/clients/tools/manifest.json`](https://github.com/LibreChat-AI/LibreChat/blob/main/api/app/clients/tools/manifest.json) で、ツールの名前を確認できます。
     - `pluginKey` 値を使用してください
-  - また、`api/app/clients/tools/.well-known` ディレクトリ配下にリストされているものも同様です。
-    - `name_for_model` の値を使用してください
 
 ## includedTools
 
@@ -416,7 +428,7 @@ fileStrategies:
     [
       'includedTools',
       'Array of Strings',
-      'PluginsおよびOpenAI Assistantsの各endpointから特定のツールが含まれます。',
+      '組み込みツールのうち、エージェントおよびアシスタントが利用できるものを、指定したツールのみに制限します。',
       'includedTools: ["calculator"]',
     ],
   ]}
@@ -424,11 +436,9 @@ fileStrategies:
 
 - **注記**:
   - `includedTools` と `filteredTools` の両方が指定されている場合、`includedTools` のみが認識されます。
-  - `gptPlugins` および `assistants` endpoint の両方に影響します
-  - フィルタリングするツールの名前は、[`api/app/clients/tools/manifest.json`](https://github.com/LibreChat-AI/LibreChat/blob/main/api/app/clients/tools/manifest.json) で確認できます。
+  - 起動時に読み込まれる組み込みツールに適用されます。これらは Agents と Assistants で使用されます。Ask User ツール(`ask_user_question`)もこれらのリストに従います。MCP ツールは別途設定されます。
+  - [`api/app/clients/tools/manifest.json`](https://github.com/LibreChat-AI/LibreChat/blob/main/api/app/clients/tools/manifest.json) で、ツールの名前を確認できます。
     - `pluginKey` 値を使用してください
-  - また、`api/app/clients/tools/.well-known` ディレクトリ配下にリストされているものも同様です。
-    - `name_for_model` の値を使用してください
 
 ## secureImageLinks
 
@@ -718,8 +728,20 @@ conversationList:
       '切り捨て前にプロンプトに含めるテキストファイルからの最大トークン数。',
       'fileTokenLimit: 100000',
     ],
+    ['imageGeneration', 'Object', '生成画像の出力サイズ（パーセンテージまたはピクセル単位で指定）。', ''],
+    [
+      'defaultLLMDeliveryPath',
+      'Object',
+      'アップロードの送信先が明示されていない場合に、そのファイルがモデルのコンテキストにどのように取り込まれるか(プロバイダー、テキスト、またはなし)。',
+      '',
+    ],
+    ['legacyFileUploadUX', 'Boolean', '保存先の選択ツールと、ユーザーが選んだファイルをすぐにアップロードする動作を復元します。', ''],
+    ['fileContextSizeLimit', 'Number', '1回のエージェントのターンでモデルに送信される添付ファイルの合計サイズの上限(MB単位)。', ''],
+    ['fileContextCharLimit', 'Number', '1回のエージェントターンで抽出されたテキストの合計最大文字数。', ''],
   ]}
 />
+
+[File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config) の完全なリファレンス(`textFallbackWithoutTools`、`codeEnvLivenessSafeWindowMs`、`legacySearchProbeTimeoutMs` を含む)をご覧ください。
 
 ## clientImageResize
 
@@ -1086,7 +1108,9 @@ rateLimits:
 <OptionTable
   options={[
     ['socialLogins', '', 'ソーシャルログインの設定', ''],
-    ['allowedDomains', '', '登録を許可するドメインを指定します。', ''],
+    ['allowedDomains', '', '登録を許可するメールアドレスのドメインを指定します。省略可能です。省略した場合は、すべてのドメインが許可されます。', ''],
+    ['oauthStateTtlMs', 'Integer', 'ソーシャルログインの開始からコールバックに到達するまでに許容される時間（ミリ秒）。60000から3600000の範囲で指定し、デフォルトは600000です。', ''],
+    ['openidDiscovery', 'Object', 'OpenIDディスカバリーの再試行: startupAttempts(0〜100、デフォルト1)とretryDelayMs(100〜3600000、デフォルト5000)。OPENID_DISCOVERY_RETRY_ATTEMPTSおよびOPENID_DISCOVERY_RETRY_DELAY_MSを上書きします。', ''],
   ]}
 />
 
@@ -1244,6 +1268,7 @@ passkeys:
 
 <OptionTable
   options={[
+    ['enabled', 'Boolean', '要約機能を有効または無効にします。', ''],
     [
       'provider',
       'String',
@@ -1269,7 +1294,7 @@ passkeys:
     [
       'reserveRatio',
       'Number',
-      'ヘッドルームとして確保するトークン予算の割合（0–1）。デフォルト: 0.05。',
+      'トークン予算のうち、余裕分として確保する割合(0〜1)。デフォルト: 0.05。',
       '',
     ],
     [
@@ -1494,6 +1519,10 @@ passkeys:
       '配列内の各オブジェクトは、一意のendpoint設定を表します。',
       '',
     ],
+    ['openAI', 'Object', 'OpenAIエンドポイント固有の設定', ''],
+    ['google', 'Object', 'Google エンドポイント固有の設定。', ''],
+    ['anthropic', 'Object', 'Anthropic endpoint 固有の設定', ''],
+    ['bedrock', 'Object', 'AWS Bedrock エンドポイント固有の設定。', ''],
     ['azureOpenAI', 'Object', 'Azure OpenAI エンドポイント固有の設定', ''],
     ['assistants', 'Object', 'Assistants エンドポイント固有の設定。', ''],
     ['azureAssistants', 'Object', 'Azure Assistants エンドポイント固有の設定。', ''],
@@ -1514,6 +1543,8 @@ passkeys:
 />
 
 > **注:** エンドポイントは、`streamRate`、`headers`、`titleModel`、`titleMethod`、`titlePrompt`、`titlePromptTemplate`、`titleEndpoint`、`maxToolResultChars` といった [Shared Endpoint Settings](/docs/configuration/librechat_yaml/object_structure/shared_endpoint_settings) をサポートしています。これらは、各エンドポイントごとに個別に設定することも、`all` キーを使用してグローバルに設定することも可能です。`headers` はマージされ、キーが重複した場合はエンドポイントレベルの値が優先されます。`all` キーは `baseURL` を受け付けません。
+
+> **注:** `openAI`、`google`、`anthropic`、`bedrock` のキーは、それぞれのプロバイダーのドキュメントに記載されています: [OpenAI](/docs/configuration/pre_configured_ai/openai)、[Google](/docs/configuration/pre_configured_ai/google)、[Anthropic](/docs/configuration/pre_configured_ai/anthropic)、[AWS Bedrock](/docs/configuration/librechat_yaml/object_structure/aws_bedrock)。
 
 > **注:** `endpoints.agents.pullRequests` は、会話のプルリクエストチップとサイドバーのマークを設定します。[`pullRequests`](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) を参照してください。
 
@@ -1619,7 +1650,7 @@ mcpSettings:
     - `stdio`
     - `websocket`
     - `sse`
-    - `streamable-http`
+    - `streamable-http`(`http` も別名として受け付けられます)
   - `type` フィールドは、MCP サーバーへの接続タイプを指定します。
   - `type` が省略された場合、`url` または `command` の有無と形式に基づいてデフォルト値が設定されます。
     - `url` が指定されており、かつ `http` または `https` で始まる場合、`type` はデフォルトで `sse` になります。
@@ -1762,6 +1793,134 @@ Both `speech.tts` and `speech.stt` accept an `allowedAddresses` array of trusted
 />
 
 参照: [Transactions Object Structure](/docs/configuration/librechat_yaml/object_structure/transactions)
+
+## telemetry
+
+ブラウザのリアルユーザーモニタリング(RUM)を制御します。このブロックでは、未知のキーは拒否されます。
+
+<OptionTable
+  options={[
+    ['rum.enabled', 'Boolean', 'ブラウザRUMを有効にします。省略した場合は、RUM_ENABLED環境変数の値によって決まります。', ''],
+    ['rum.sessionReplay.enabled', 'Boolean', 'セッションリプレイを有効にします。RUMそのものが有効な場合にのみ効果があります。デフォルトは false です。', ''],
+  ]}
+/>
+
+```yaml filename="telemetry"
+telemetry:
+  rum:
+    enabled: true
+    sessionReplay:
+      enabled: false
+```
+
+## credentials
+
+<OptionTable
+  options={[
+    ['writeFormat', 'String', '新たに保存されるユーザー認証情報(ツール、ウェブ検索、MCPのカスタムユーザー変数の値)の書き込みに使用する形式。「v3」または「legacy」のいずれか。どちらの形式も常に読み取り可能です。「legacy」を指定すると、ローリングアップグレード中でも、古いリリースのレプリカが書き込みを読み取れるようになります。', 'v3'],
+  ]}
+/>
+
+```yaml filename="credentials"
+credentials:
+  writeFormat: v3
+```
+
+## toolCallPreviews
+
+会話の読み込み時に送信されるツール呼び出しの出力と引数の量を制限します。クライアントには長い文字列の先頭と末尾が送られ、読者がその部分を開いたときにのみ全文を取得します。すべての読み込みを全文で送信するには `enabled: false` を設定してください。
+
+<OptionTable
+  options={[
+    ['enabled', 'Boolean', '確定したツール呼び出しの、範囲を限定したプレビューを有効にします。', 'true'],
+    ['outputChars', 'Integer', '各ツール呼び出し出力の文字数を保持（先頭と末尾から半分ずつ、256〜1000000）', '512'],
+    ['argsChars', 'Integer', 'ツール呼び出しの引数をシリアライズした各文字列の保持文字数 (256～1000000)', '512'],
+  ]}
+/>
+
+```yaml filename="toolCallPreviews"
+toolCallPreviews:
+  enabled: true
+  outputChars: 512
+  argsChars: 512
+```
+
+## githubCompare
+
+GitHub Compare ツールを制御します。このツールは、ワークスペースなしで公開 GitHub リポジトリのコミット系統を比較します。エージェントのみが利用でき、デフォルトではオフになっています。このブロックは不明なキーを拒否します。
+
+<OptionTable
+  options={[
+    ['enabled', 'Boolean', 'GitHubのCompareツールを利用可能にします。', 'false'],
+    ['timeoutMs', 'Integer', 'リクエストのタイムアウト時間（ミリ秒）（1～30000）。', '10000'],
+  ]}
+/>
+
+```yaml filename="githubCompare"
+githubCompare:
+  enabled: true
+  timeoutMs: 10000
+```
+
+## passwordHashing
+
+パスワードおよび認証トークンのハッシュ化は、イベントループから切り離され、ワーカースレッド上で実行されます。
+
+<OptionTable
+  options={[
+    ['maxWorkers', 'Integer', 'ハッシュ処理ワーカースレッドの最大数(1〜32)。デフォルトは CPU 数から 1 を引いた値で、最大 4 です。', ''],
+  ]}
+/>
+
+```yaml filename="passwordHashing"
+passwordHashing:
+  maxWorkers: 2
+```
+
+## timeouts
+
+リクエスト内で行われる外部呼び出しに対するタイムアウト時間(ミリ秒)です。各キーは省略可能で、2147483647 以下の正の整数を指定します。予算を超過すると、そのキー名を含むエラーで呼び出しは失敗します。
+
+<OptionTable
+  options={[
+    ['ragMs', 'Integer', 'RAG API によるファイル検索およびメッセージコンテキストのクエリ', '30000'],
+    ['ocrMs', 'Integer', '各OCRプロバイダーへの呼び出し(アップロード、署名付きURL、OCR、削除)。', '300000'],
+    ['actionsMs', 'Integer', '各アクション(OpenAPIツール)の HTTP 呼び出し。', '300000'],
+    ['moderationMs', 'Integer', 'OpenAI による、チャットのターン実行前に行われるモデレーションチェック。', '10000'],
+    ['imageFetchMs', 'Integer', 'URLで保存済みの画像を取得し、プロバイダー向けにエンコードする。', '30000'],
+  ]}
+/>
+
+```yaml filename="timeouts"
+timeouts:
+  ragMs: 30000
+  ocrMs: 300000
+```
+
+## openapi
+
+<OptionTable
+  options={[
+    ['enabled', 'Boolean', '公開Agents APIのOpenAPI仕様とドキュメントを提供します。', 'false'],
+  ]}
+/>
+
+```yaml filename="openapi"
+openapi:
+  enabled: true
+```
+
+## skillDeletion
+
+削除されたスキルが、バックグラウンドでどのように最終処理およびクリーンアップされるかを制御します。キーについては、[スキルの削除](/docs/configuration/librechat_yaml/object_structure/skill_sync#skill-deletion)を参照してください。
+
+## mcpAppSandbox
+
+MCP Apps をチャット内でレンダリングする際の、サンドボックスホスト、サイズ制限、およびレート制限を設定します。[MCP App Sandbox オブジェクト構造](/docs/configuration/librechat_yaml/object_structure/mcp_app_sandbox)を参照してください。
+
+## balance
+
+トークンクレジット残高を設定します。開始残高、自動補充、補充モード、残高の表示方法を含みます。詳細は[残高オブジェクトの構造](/docs/configuration/librechat_yaml/object_structure/balance)を参照してください。
 
 ## その他のリンク [#additional-links]
 

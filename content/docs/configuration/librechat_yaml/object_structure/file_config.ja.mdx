@@ -7,18 +7,22 @@ icon: FileCode
 
 `fileConfig` オブジェクトを使用すると、サイズ制限やMIMEタイプの制限など、アプリケーションのファイル処理設定を構成できます。このセクションでは、`fileConfig` オブジェクトの構造について詳しく解説します。
 
-`fileConfig` の下には13の主要なフィールドがあります：
+`fileConfig` の主なフィールドは以下のとおりです:
 
   - `endpoints`
   - `skills`
   - `serverFileSizeLimit`
   - `avatarSizeLimit`
   - `imageGeneration`
+  - `clientImageResize`
   - `fileTokenLimit`
   - `fileContextSizeLimit`
   - `fileContextCharLimit`
   - `defaultLLMDeliveryPath`
   - `legacyFileUploadUX`
+  - `textFallbackWithoutTools`
+  - `codeEnvLivenessSafeWindowMs`
+  - `legacySearchProbeTimeoutMs`
   - `ocr`
   - `text`
   - `stt`
@@ -79,7 +83,10 @@ fileConfig:
   legacyFileUploadUX: false
   imageGeneration:
     percentage: 100
-    px: 1024
+  clientImageResize:
+    maxWidth: 1900
+    maxHeight: 1900
+    quality: 0.92
   ocr:
     supportedMimeTypes:
       - "^image/(jpeg|gif|png|webp|heic|heif)$"
@@ -106,13 +113,16 @@ fileConfig:
   ]}
 />
 
-`skills` は2つのパラメータをサポートしています：
+`skills` は3つのパラメータをサポートします:
 
-- `fileSizeLimit` (整数)
+- `fileSizeLimit` (Number)
   - 単一のSkillアップロードの最大サイズ（メガバイト（MB）単位）。
   - **デフォルト:** `50`
 - `importCleanupConcurrency` (整数)
   - Skillアーカイブのインポート失敗後の最大同時クリーンアップ操作数。シリアル（逐次）クリーンアップを行う場合は `1` を使用してください。
+  - **デフォルト:** `8`
+- `deletionCleanupConcurrency` (整数)
+  - Skill が削除されたときに同時に実行されるクリーンアップ処理の最大数です。直列でクリーンアップする場合は `1` を指定してください。
   - **デフォルト:** `8`
 
 ```yaml filename="fileConfig / skills"
@@ -120,6 +130,7 @@ fileConfig:
   skills:
     fileSizeLimit: 50
     importCleanupConcurrency: 8
+    deletionCleanupConcurrency: 8
 ```
 
 ファイルごとの制限やアーカイブエントリの制限など、その他のインポートルールについては[Skills](/docs/features/skills)を参照してください。
@@ -128,7 +139,7 @@ fileConfig:
 
 <OptionTable
   options={[
-    ['serverFileSizeLimit', 'Integer', 'サーバーにアップロードされるあらゆるファイルのグローバル最大サイズ（メガバイト（MB）単位で指定）。', 'Acts as an overarching limit for file uploads across all endpoints, ensuring that no file exceeds this size server-wide.'],
+    ['serverFileSizeLimit', 'Number', 'サーバーにアップロードされるあらゆるファイルのグローバル最大サイズ（メガバイト（MB）単位で指定）。', 'Acts as an overarching limit for file uploads across all endpoints, ensuring that no file exceeds this size server-wide.'],
   ]}
 />
 
@@ -141,7 +152,7 @@ fileConfig:
 
 <OptionTable
 options={[
-['avatarSizeLimit', 'Integer', 'アバター画像に許可される最大サイズ（メガバイト（MB）単位）。', 'Specifically tailored for user avatar uploads, allowing for control over image sizes to maintain consistent quality and loading times.'],
+['avatarSizeLimit', 'Number', 'アバター画像に許可される最大サイズ（メガバイト（MB）単位）。', 'Specifically tailored for user avatar uploads, allowing for control over image sizes to maintain consistent quality and loading times.'],
 ]}
 />
 
@@ -160,15 +171,15 @@ fileConfig:
 
 `imageGeneration` は以下のパラメータをサポートしています：
 
-- `percentage` (整数)
+- `percentage` (Number)
   - 生成された画像の出力サイズをパーセンテージで表したもの（例: `100` は基本サイズの100%を意味します）。
   - デフォルトまたは元のサイズに対して出力画像を拡大・縮小するには、これを使用します。
 
-- `px` (整数)
+- `px`(数値)
   - 出力画像の寸法をピクセル単位で指定します（例: `1024`）。
   - ベースサイズに関係なく、生成される画像の出力サイズを明示的に設定するためにこれを使用します。
 
-ユースケースに応じて、これらのパラメータ（`percentage` または `px`）のうちいずれか1つのみを設定できます。両方を同時に設定することはできません。
+1つのパラメータのみを設定してください(`percentage` または `px` のどちらか)。両方を設定しないでください。
 
 設定例:
 
@@ -176,7 +187,28 @@ fileConfig:
 fileConfig:
   imageGeneration:
     percentage: 100
-    px: 1024
+```
+
+## clientImageResize
+
+クライアント側でのアップロード前の画像リサイズを制御します。これにより、サイズの大きすぎる画像によるアップロードエラーを防ぎます。ユーザーは「設定 > チャット」でリサイズのオン/オフを切り替えられます。ここで`enabled`を設定すると、その選択はすべてのユーザーに対して上書きされ、切り替えスイッチはロックされます。省略した場合は、ユーザーが自分で制御できます。
+
+- `enabled` (Boolean)
+  - 強制的にリサイズを有効(`true`)または無効(`false`)にし、全ユーザーに適用します。省略した場合は、各ユーザーが設定を選択でき、デフォルトではリサイズが有効になります。
+- `maxWidth` (Number)
+  - リサイズ後の画像の最大幅（ピクセル単位）。最小値は `1`。**デフォルト:** `1900`
+- `maxHeight` (Number)
+  - リサイズされた画像の最大の高さ（ピクセル単位）。最小値は `1`。**デフォルト:** `1900`
+- `quality` (Number)
+  - JPEG圧縮品質（`0`から`1`まで）。**デフォルト:** `0.92`
+
+```yaml filename="fileConfig / clientImageResize"
+fileConfig:
+  clientImageResize:
+    enabled: true
+    maxWidth: 1900
+    maxHeight: 1900
+    quality: 0.92
 ```
 
 ## fileTokenLimit
@@ -257,6 +289,44 @@ fileConfig:
 ```yaml filename="fileConfig / legacyFileUploadUX"
 fileConfig:
   legacyFileUploadUX: true
+```
+
+## textFallbackWithoutTools
+
+アップロードが `none`（保存のみ、ツールからのみ利用可能）にルーティングされ、そのターンで内容を読み取れるツールが実行されない場合、LibreChat は代わりにファイルから抽出されたテキストを提供できます。これを有効にするには `textFallbackWithoutTools: true` を設定します。`fileConfig` の下でグローバルに設定することも、`fileConfig.endpoints`（`default` を含む）の各エントリごとに設定することもできます。エンドポイントの値はグローバルの値よりも優先されます。
+
+**デフォルト:** `false`
+
+これは、ルートが推論された（自動判定された）メッセージ添付ファイルにのみ適用されます。ユーザーが明示的に選択した宛先は再判定されることはなく、エージェントのツールリソースに保持されたファイルがプロンプトに渡されることもありません。ツール向けのファイルについては、組み込みのドキュメントおよびプレーンテキスト抽出機能のみが実行されるため、RAGやOCRの呼び出しは行われません。抽出済みテキストを持たない既存のファイルに対して、後から遡ってテキストが生成されることはありません。
+
+```yaml filename="fileConfig / textFallbackWithoutTools"
+fileConfig:
+  textFallbackWithoutTools: true
+  endpoints:
+    openAI:
+      textFallbackWithoutTools: false
+```
+
+## codeEnvLivenessSafeWindowMs
+
+コード実行環境にプロビジョニングされたファイルのうち、このウィンドウ(ミリ秒単位)内のものは、再利用前のライブ可用性チェックをスキップします。最小値は `0` です。
+
+**デフォルト:** `21600000`(6時間)
+
+```yaml filename="fileConfig / codeEnvLivenessSafeWindowMs"
+fileConfig:
+  codeEnvLivenessSafeWindowMs: 21600000
+```
+
+## legacySearchProbeTimeoutMs
+
+ミリ秒単位で、プライミングがレガシーのFile Searchの利用可能性チェックを待つ時間を指定します。この時間を過ぎると、ファイルを埋め込み処理します。最小値は`1`です。
+
+**デフォルト:** `5000`
+
+```yaml filename="fileConfig / legacySearchProbeTimeoutMs"
+fileConfig:
+  legacySearchProbeTimeoutMs: 5000
 ```
 
 ## ocr
@@ -416,6 +486,8 @@ LibreChatは、以下の**優先順位**に従ってMIMEタイプの照合に基
       - 1つのファイルの最大サイズ。単位はMBです（例：20メガバイトの場合は `20` と指定します）
   - `totalSizeLimit`
       - 1回のリクエストにおける全ファイルの合計最大サイズ。単位はMBです（例：20メガバイトの場合は `20` と指定してください）。
+  - `defaultLLMDeliveryPath`, `legacyFileUploadUX`, `textFallbackWithoutTools`
+      - エンドポイントごとの上書き設定。上記で説明した、同名のグローバル設定をエンドポイント単位で上書きします。
   - `supportedMimeTypes`
       - アップロードを許可するMIMEタイプを指定する[Regular Expressions](https://en.wikipedia.org/wiki/Regular_expression)のリストです。これは、ファイルタイプを制限するためにカスタマイズ可能です。
 
@@ -455,7 +527,7 @@ assistants:
 **キー:**
 <OptionTable
   options={[
-    ['fileSizeLimit', 'Integer', '各ファイルに許可される最大サイズ（メガバイト（MB）単位）。', 'This limit ensures that no single file exceeds the specified size, allowing for better resource allocation and management.'],
+    ['fileSizeLimit', 'Number', '各ファイルに許可される最大サイズ（メガバイト（MB）単位）。', 'This limit ensures that no single file exceeds the specified size, allowing for better resource allocation and management.'],
   ]}
 />
 
@@ -471,7 +543,7 @@ YourCustomEndpointName:
 **キー:**
 <OptionTable
   options={[
-    ['totalSizeLimit', 'Integer', '1回のリクエストで許可される全ファイルの合計最大サイズ（メガバイト単位）。', 'This setting is crucial for preventing excessive bandwidth and storage usage by any single upload request.'],
+    ['totalSizeLimit', 'Number', '1回のリクエストで許可される全ファイルの合計最大サイズ（メガバイト単位）。', 'This setting is crucial for preventing excessive bandwidth and storage usage by any single upload request.'],
   ]}
 />
 

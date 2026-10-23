@@ -7,18 +7,22 @@ icon: FileCode
 
 O objeto `fileConfig` permite que você configure as definições de manipulação de arquivos para a aplicação, incluindo limites de tamanho e restrições de tipo MIME. Esta seção fornece um detalhamento da estrutura do objeto `fileConfig`.
 
-Existem 13 campos principais em `fileConfig`:
+Os principais campos em `fileConfig` são:
 
   - `endpoints`
   - `skills`
   - `serverFileSizeLimit`
   - `avatarSizeLimit`
   - `imageGeneration`
+  - `clientImageResize`
   - `fileTokenLimit`
   - `fileContextSizeLimit`
   - `fileContextCharLimit`
   - `defaultLLMDeliveryPath`
   - `legacyFileUploadUX`
+  - `textFallbackWithoutTools`
+  - `codeEnvLivenessSafeWindowMs`
+  - `legacySearchProbeTimeoutMs`
   - `ocr`
   - `text`
   - `stt`
@@ -79,7 +83,10 @@ fileConfig:
   legacyFileUploadUX: false
   imageGeneration:
     percentage: 100
-    px: 1024
+  clientImageResize:
+    maxWidth: 1900
+    maxHeight: 1900
+    quality: 0.92
   ocr:
     supportedMimeTypes:
       - "^image/(jpeg|gif|png|webp|heic|heif)$"
@@ -106,13 +113,16 @@ fileConfig:
   ]}
 />
 
-`skills` suporta dois parâmetros:
+`skills` oferece suporte a três parâmetros:
 
-- `fileSizeLimit` (Inteiro)
+- `fileSizeLimit` (Número)
   - Tamanho máximo de um único upload de Skill, especificado em megabytes (MB).
   - **Padrão:** `50`
 - `importCleanupConcurrency` (Inteiro)
   - Máximo de operações de limpeza simultâneas após uma falha na importação de arquivo de Skill. Use `1` para limpeza serial.
+  - **Padrão:** `8`
+- `deletionCleanupConcurrency` (Integer)
+  - Máximo de operações de limpeza simultâneas quando uma Skill é excluída. Use `1` para limpeza serial.
   - **Padrão:** `8`
 
 ```yaml filename="fileConfig / skills"
@@ -120,6 +130,7 @@ fileConfig:
   skills:
     fileSizeLimit: 50
     importCleanupConcurrency: 8
+    deletionCleanupConcurrency: 8
 ```
 
 Veja [Skills](/docs/features/skills) para o restante das regras de importação, como os limites por arquivo e por entrada de arquivo.
@@ -128,7 +139,7 @@ Veja [Skills](/docs/features/skills) para o restante das regras de importação,
 
 <OptionTable
   options={[
-    ['serverFileSizeLimit', 'Integer', 'O tamanho máximo global para qualquer arquivo enviado ao servidor, especificado em megabytes (MB).', 'Acts as an overarching limit for file uploads across all endpoints, ensuring that no file exceeds this size server-wide.'],
+    ['serverFileSizeLimit', 'Number', 'O tamanho máximo global para qualquer arquivo enviado ao servidor, especificado em megabytes (MB).', 'Acts as an overarching limit for file uploads across all endpoints, ensuring that no file exceeds this size server-wide.'],
   ]}
 />
 
@@ -141,7 +152,7 @@ fileConfig:
 
 <OptionTable
 options={[
-['avatarSizeLimit', 'Integer', 'O tamanho máximo permitido para imagens de avatar, especificado em megabytes (MB).', 'Specifically tailored for user avatar uploads, allowing for control over image sizes to maintain consistent quality and loading times.'],
+['avatarSizeLimit', 'Number', 'O tamanho máximo permitido para imagens de avatar, especificado em megabytes (MB).', 'Specifically tailored for user avatar uploads, allowing for control over image sizes to maintain consistent quality and loading times.'],
 ]}
 />
 
@@ -160,15 +171,15 @@ fileConfig:
 
 `imageGeneration` suporta os seguintes parâmetros:
 
-- `percentage` (Inteiro)
+- `percentage` (Número)
   - O tamanho de saída da imagem gerada expresso como uma porcentagem (por exemplo, `100` significa 100% do tamanho base).
   - Use isso para ajustar a escala da imagem de saída em relação a um tamanho padrão ou original.
 
-- `px` (Inteiro)
+- `px` (Número)
   - Especifica a dimensão da imagem de saída em pixels (por exemplo, `1024`).
   - Use isso para definir explicitamente o tamanho da saída da imagem gerada, independentemente do tamanho base.
 
-Você pode definir apenas um desses parâmetros (`percentage` ou `px`), não ambos, dependendo do seu caso de uso
+Defina apenas um destes parâmetros (`percentage` ou `px`), e não ambos.
 
 Exemplo de configuração:
 
@@ -176,7 +187,28 @@ Exemplo de configuração:
 fileConfig:
   imageGeneration:
     percentage: 100
-    px: 1024
+```
+
+## clientImageResize
+
+Controla o redimensionamento no lado do cliente de imagens antes do upload, o que evita erros de upload causados por imagens muito grandes. Os usuários podem ativar ou desativar o redimensionamento em Configurações > Chat. Definir `enabled` aqui substitui essa escolha para todos e bloqueia a opção; omita-o para deixar os usuários no controle.
+
+- `enabled` (Booleano)
+  - Forçar redimensionamento ativado (`true`) ou desativado (`false`) para todos. Quando omitido, cada usuário decide, com o redimensionamento ativado por padrão.
+- `maxWidth` (Número)
+  - Largura máxima das imagens redimensionadas, em pixels. Mínimo `1`. **Padrão:** `1900`
+- `maxHeight` (Number)
+  - Altura máxima das imagens redimensionadas, em pixels. Mínimo `1`. **Padrão:** `1900`
+- `quality` (Número)
+  - Qualidade de compressão JPEG de `0` a `1`. **Padrão:** `0.92`
+
+```yaml filename="fileConfig / clientImageResize"
+fileConfig:
+  clientImageResize:
+    enabled: true
+    maxWidth: 1900
+    maxHeight: 1900
+    quality: 0.92
 ```
 
 ## fileTokenLimit
@@ -257,6 +289,44 @@ O uploader unificado padrão escolhe a entrega do modelo automaticamente e provi
 ```yaml filename="fileConfig / legacyFileUploadUX"
 fileConfig:
   legacyFileUploadUX: true
+```
+
+## textFallbackWithoutTools
+
+Quando um upload é direcionado para `none` (armazenado, disponível apenas para ferramentas) e o turno não executa nenhuma ferramenta capaz de lê-lo, o LibreChat pode entregar, em vez disso, o texto extraído do arquivo. Defina `textFallbackWithoutTools: true` para habilitar essa opção. Ela pode ser configurada globalmente em `fileConfig` ou por entrada em `fileConfig.endpoints` (incluindo `default`); um valor de endpoint tem precedência sobre o valor global.
+
+**Padrão:** `false`
+
+Aplica-se apenas aos anexos de mensagens cuja rota foi inferida; um destino escolhido explicitamente pelo usuário nunca é resolvido novamente, e os arquivos mantidos nos recursos de ferramenta de um agente nunca chegam a um prompt. Somente os extratores integrados de documentos e de texto simples são executados, portanto nenhuma chamada de RAG ou OCR é feita para um arquivo destinado a uma ferramenta. Arquivos existentes sem texto extraído não são preenchidos retroativamente.
+
+```yaml filename="fileConfig / textFallbackWithoutTools"
+fileConfig:
+  textFallbackWithoutTools: true
+  endpoints:
+    openAI:
+      textFallbackWithoutTools: false
+```
+
+## codeEnvLivenessSafeWindowMs
+
+Arquivos provisionados no ambiente de execução de código dentro desta janela (em milissegundos) ignoram a verificação de disponibilidade em tempo real antes de serem reutilizados. Mínimo `0`.
+
+**Padrão:** `21600000` (6 horas)
+
+```yaml filename="fileConfig / codeEnvLivenessSafeWindowMs"
+fileConfig:
+  codeEnvLivenessSafeWindowMs: 21600000
+```
+
+## legacySearchProbeTimeoutMs
+
+Por quanto tempo, em milissegundos, a inicialização aguarda uma verificação de disponibilidade legada do File Search antes de incorporar o arquivo mesmo assim. Mínimo `1`.
+
+**Padrão:** `5000`
+
+```yaml filename="fileConfig / legacySearchProbeTimeoutMs"
+fileConfig:
+  legacySearchProbeTimeoutMs: 5000
 ```
 
 ## ocr
@@ -416,6 +486,8 @@ Este sistema de prioridade permite que recursos como "Upload as Text" funcionem 
       - O tamanho máximo para um único arquivo. Em unidades de MB (por exemplo, use `20` para 20 megabytes)
   - `totalSizeLimit`
       - O tamanho máximo total para todos os arquivos em uma única solicitação. Em unidades de MB (por exemplo, use `20` para 20 megabytes)
+  - `defaultLLMDeliveryPath`, `legacyFileUploadUX` e `textFallbackWithoutTools`
+      - Substituições por endpoint das configurações globais de mesmo nome descritas acima.
   - `supportedMimeTypes`
       - Uma lista de [Regular Expressions](https://en.wikipedia.org/wiki/Regular_expression) especificando quais MIME types são permitidos para upload. Isso pode ser personalizado para restringir tipos de arquivo.
 
@@ -455,7 +527,7 @@ assistants:
 **Chave:**
 <OptionTable
   options={[
-    ['fileSizeLimit', 'Integer', 'O tamanho máximo permitido para cada arquivo individual, especificado em megabytes (MB).', 'This limit ensures that no single file exceeds the specified size, allowing for better resource allocation and management.'],
+    ['fileSizeLimit', 'Number', 'O tamanho máximo permitido para cada arquivo individual, especificado em megabytes (MB).', 'This limit ensures that no single file exceeds the specified size, allowing for better resource allocation and management.'],
   ]}
 />
 
@@ -471,7 +543,7 @@ YourCustomEndpointName:
 **Chave:**
 <OptionTable
   options={[
-    ['totalSizeLimit', 'Integer', 'O tamanho máximo total permitido para todos os arquivos em uma única solicitação, especificado em megabytes (MB).', 'This setting is crucial for preventing excessive bandwidth and storage usage by any single upload request.'],
+    ['totalSizeLimit', 'Number', 'O tamanho máximo total permitido para todos os arquivos em uma única solicitação, especificado em megabytes (MB).', 'This setting is crucial for preventing excessive bandwidth and storage usage by any single upload request.'],
   ]}
 />
 
