@@ -1,21 +1,14 @@
 ---
 title: Access Control
 icon: ShieldCheck
-description: LibreChat's granular authorization system - control who can use, share, edit, and manage agents, prompts, MCP servers, and other resources at the user, group, role, and instance level.
+description: "LibreChat's granular authorization system: control who can use, share, edit, and manage agents, prompts, MCP servers, and other resources at the user, group, role, and instance level."
 ---
 
 # Granular Access Control
 
-LibreChat ships with a full authorization system on top of authentication. Access is not "all-or-nothing": every shareable entity in the app (agents, prompts, MCP servers, remote agents, files, conversations) has its own Access Control List (ACL), and every feature can be independently enabled or restricted per **user**, **group**, **role**, or **publicly**.
+LibreChat ships with a full authorization system on top of authentication. Access is not "all-or-nothing": every shareable entity in the app (agents, prompts, MCP servers, remote agents, skills, code environments, shared links) has its own Access Control List (ACL), and every feature can be independently enabled or restricted per **user**, **group**, **role**, or **publicly**.
 
 This page explains how the pieces fit together so you can model permissions to match your organization, from a small team where everyone shares freely, to an enterprise deployment with sync'd Entra ID groups, custom roles, and delegated admins.
-
-<Callout type="info" title="Admin Panel">
-  A dedicated [**LibreChat Admin Panel**](/docs/features/admin_panel) is the upcoming UI for
-  managing users, groups, roles, custom permission profiles, and system-wide grants introduced in
-  [v0.8.5](/changelog/v0.8.5). This page documents the underlying model, which is available today in
-  LibreChat itself.
-</Callout>
 
 ## The Access Model at a Glance
 
@@ -106,12 +99,12 @@ Resource ACLs currently apply to:
 - **MCP Servers** (`mcpServer`)
 - **Skills** (`skill`), see [Skills](/docs/features/skills)
 - **Remote Agents** (`remoteAgent`), for the [Agents API](/docs/features/agents_api)
-- **Files** (`file`), typically inherited from the resource that uses them
-- **Projects** (`project`), supports inheritance so resources shared to a project automatically inherit ACLs
+- **Code Environments** (`codeEnvironment`), for deployment-owned code workers; see [Code Interpreter](/docs/features/code_interpreter)
+- **Shared Links** (`sharedLink`), see [Shareable Links](/docs/features/shareable_links)
 
 ### Access Roles (Permission Presets)
 
-Rather than exposing raw permission bits to end users, sharing uses three named roles per resource type:
+Rather than exposing raw permission bits to end users, sharing uses three named roles per resource type (shared links have only Viewer and Owner):
 
 | Role       | Permission bits                                 | What the grantee can do                                             |
 | ---------- | ----------------------------------------------- | ------------------------------------------------------------------- |
@@ -120,6 +113,8 @@ Rather than exposing raw permission bits to end users, sharing uses three named 
 | **Owner**  | `VIEW` + `EDIT` + `DELETE` + `SHARE` (`0b1111`) | Full control: edit, delete, and re-share to others                  |
 
 Under the hood, permissions are stored as a bitmask (`permBits`) against each (resource, principal) pair; supersets are handled automatically, so granting Editor implies Viewer.
+
+A fifth bit, `VIEW_INSIGHTS` (`0b10000`), applies to agents only. It lets a principal that also holds `VIEW` see that agent's [Insights](/docs/features/insights). It is not part of the Viewer, Editor, or Owner presets: only administrators can grant it, through the **View insights** toggle in an agent's share dialog, and it cannot be given to the public principal.
 
 ### Granting Access from the UI
 
@@ -145,10 +140,6 @@ Under the hood, permissions are stored as a bitmask (`permBits`) against each (r
 - **Owners** have the same UI as the original author, and can delete and re-share freely.
 - **The original author** always retains full control regardless of ACL state, and admins can manage any resource on the instance.
 
-### Project Inheritance
-
-Permissions can be inherited from a parent **project**. When an ACL entry is inherited, the `inheritedFrom` link points back to the source. This is what powers the "Global" project in LibreChat, where a resource added to the global project becomes available to all users without needing an entry per principal.
-
 ## Layer 3: System Grants (Admin Capabilities)
 
 System grants are a separate grant table used for **admin-level capabilities**, answering questions like _"Can this user access the admin panel?"_ or _"Can this group manage MCP servers globally?"_. They are always scoped to a principal (user, group, or role) and a capability string.
@@ -167,13 +158,20 @@ The canonical capabilities include:
 | `read:usage`                         | View platform usage and telemetry             |
 | `read:agents` / `manage:agents`      | View / moderate every agent on the instance   |
 | `read:prompts` / `manage:prompts`    | View / moderate every prompt                  |
+| `read:skills` / `manage:skills`      | View / moderate every skill                   |
+| `read:sharedlinks` / `manage:sharedlinks` | View / moderate every shared link        |
 | `manage:mcpservers`                  | Manage MCP servers globally                   |
+| `manage:code_environments`           | Enroll and revoke deployment-owned code workers |
+| `read:insights`                      | View [Insights](/docs/features/insights) for every agent |
+| `read:audit_log`                     | List, view, and export the grant audit log (read-only; there is no manage counterpart) |
 
 Manage capabilities imply their corresponding read capability (e.g. holding `manage:users` automatically grants `read:users`). This also applies to configuration sections: `manage:configs:endpoints` satisfies `read:configs:endpoints`. Users with only section-scoped config access receive admin configuration responses filtered to the sections they can read; users with no config-read grant receive `403`.
 
+`read:assistants` and `manage:assistants` also exist but are reserved: no middleware enforces them yet.
+
 A `SystemRoles.ADMIN` user implicitly holds all capabilities; grants let you **delegate** a subset of admin powers to non-admin principals without making them full admins. Access to the admin UI itself still requires `access:admin`.
 
-System grants are issued and revoked via the admin panel.
+System grants are issued and revoked via the [Admin Panel](/docs/features/admin_panel).
 
 ## Principals in Depth
 
