@@ -185,6 +185,35 @@ export const ja: UIStrings = {
       },
     },
     categories: {
+      agentic: {
+        title: 'エージェント型 AI',
+        items: {
+          skills: {
+            title: 'Skills',
+            description: 'エージェントが呼び出せる再利用可能な SKILL.md 指示',
+          },
+          subagents: {
+            title: 'サブエージェント',
+            description: '特定の作業を分離された子エージェントに委任',
+          },
+          scheduledChats: {
+            title: 'スケジュールチャット',
+            description: '保存したエージェントを定期スケジュールで実行',
+          },
+          agentPlugins: {
+            title: 'エージェントプラグイン',
+            description: 'Skills、MCP サーバー、フックをまとめた実験的パッケージ',
+          },
+          agentsApi: {
+            title: 'Agents API（ベータ）',
+            description: 'エージェントの実行とイベント受信をプログラムから実行',
+          },
+          pullRequests: {
+            title: '会話のプルリクエスト',
+            description: 'コードを実行するチャットのプルリクエストと CI の状態',
+          },
+        },
+      },
       searchKnowledge: {
         title: '検索とナレッジ',
         items: {
@@ -241,6 +270,27 @@ export const ja: UIStrings = {
             title: '再開可能なストリーム',
             description: '中断された応答を自動的に再接続して再開',
           },
+          composer: {
+            title: 'メッセージ入力欄',
+            description: '+ パレットからファイル添付とツールの有効化',
+          },
+          settings: { title: '個人設定', description: 'ユーザー単位・ブラウザ単位の設定を管理' },
+          navigation: {
+            title: 'サイドバーとナビゲーション',
+            description: 'チャット、固定した会話、パネル、モバイルドロワー',
+          },
+          messageActions: {
+            title: 'メッセージアクション',
+            description: 'メッセージの編集、再実行、引用、コピー、フォーク',
+          },
+          projects: {
+            title: 'プロジェクト',
+            description: '関連するチャットを共有の指示とファイルでまとめる',
+          },
+          smoothStreaming: {
+            title: 'スムーズストリーミング',
+            description: 'ストリーミングされるテキストを滑らかにフェードイン',
+          },
         },
       },
       security: {
@@ -261,6 +311,14 @@ export const ja: UIStrings = {
           moderation: {
             title: 'モデレーションシステム',
             description: 'コンテンツのモデレーションと安全管理',
+          },
+          accessControl: {
+            title: 'アクセス制御',
+            description: 'エージェント、プロンプト、MCP サーバーの詳細な権限設定',
+          },
+          insights: {
+            title: '管理者インサイト',
+            description: 'エージェントの利用状況とアクティビティのダッシュボード',
           },
         },
       },

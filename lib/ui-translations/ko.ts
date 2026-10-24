@@ -180,6 +180,35 @@ export const ko: UIStrings = {
       },
     },
     categories: {
+      agentic: {
+        title: '에이전트형 AI',
+        items: {
+          skills: {
+            title: 'Skills',
+            description: '에이전트가 호출할 수 있는 재사용 가능한 SKILL.md 지침',
+          },
+          subagents: {
+            title: '서브에이전트',
+            description: '특정 작업을 격리된 하위 에이전트에 위임',
+          },
+          scheduledChats: {
+            title: '예약 채팅',
+            description: '저장된 에이전트를 반복 일정에 따라 실행',
+          },
+          agentPlugins: {
+            title: '에이전트 플러그인',
+            description: 'Skills, MCP 서버, 훅을 묶은 실험적 패키지',
+          },
+          agentsApi: {
+            title: 'Agents API(베타)',
+            description: '에이전트를 실행하고 이벤트를 프로그래밍 방식으로 수신',
+          },
+          pullRequests: {
+            title: '대화 풀 리퀘스트',
+            description: '코드를 실행하는 채팅의 풀 리퀘스트 및 CI 상태',
+          },
+        },
+      },
       searchKnowledge: {
         title: '검색 및 지식',
         items: {
@@ -236,6 +265,24 @@ export const ko: UIStrings = {
             title: '재개 가능한 스트림',
             description: '자동 재연결 및 중단된 응답 재개',
           },
+          composer: {
+            title: '메시지 작성기',
+            description: '+ 팔레트에서 파일을 첨부하고 도구를 활성화',
+          },
+          settings: { title: '개인 설정', description: '사용자별, 브라우저별 환경설정 관리' },
+          navigation: {
+            title: '사이드바 및 탐색',
+            description: '채팅, 고정된 대화, 패널, 모바일 드로어',
+          },
+          messageActions: {
+            title: '메시지 작업',
+            description: '메시지 편집, 다시 실행, 인용, 복사, 포크',
+          },
+          projects: { title: '프로젝트', description: '관련 채팅을 공유 지침과 파일로 묶기' },
+          smoothStreaming: {
+            title: '부드러운 스트리밍',
+            description: '스트리밍되는 텍스트를 부드럽게 페이드인',
+          },
         },
       },
       security: {
@@ -257,6 +304,11 @@ export const ko: UIStrings = {
             title: '모더레이션 시스템',
             description: '콘텐츠 모더레이션 및 안전 제어',
           },
+          accessControl: {
+            title: '접근 제어',
+            description: '에이전트, 프롬프트, MCP 서버에 대한 세분화된 권한',
+          },
+          insights: { title: '관리자 인사이트', description: '에이전트 사용량 및 활동 대시보드' },
         },
       },
     },

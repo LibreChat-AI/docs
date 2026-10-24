@@ -25,6 +25,20 @@ import {
   ArrowRight,
   ChevronRight,
   Sparkles,
+  Zap,
+  Network,
+  CalendarClock,
+  Puzzle,
+  Workflow,
+  GitPullRequest,
+  SquarePen,
+  Settings,
+  PanelLeft,
+  MousePointerClick,
+  FolderKanban,
+  Type,
+  Lock,
+  BarChart3,
 } from 'lucide-react'
 import { localizedDocsHref } from '@/lib/i18n'
 import { getUI, type UIStrings } from '@/lib/ui-i18n'
@@ -59,6 +73,18 @@ const categories: {
   items: { icon: LucideIcon; key: string; href: string }[]
 }[] = [
   {
+    key: 'agentic',
+    layout: 'grid',
+    items: [
+      { icon: Zap, key: 'skills', href: '/docs/features/skills' },
+      { icon: Network, key: 'subagents', href: '/docs/features/subagents' },
+      { icon: CalendarClock, key: 'scheduledChats', href: '/docs/features/scheduled_chats' },
+      { icon: Puzzle, key: 'agentPlugins', href: '/docs/features/agent_plugins' },
+      { icon: Workflow, key: 'agentsApi', href: '/docs/features/agents_api' },
+      { icon: GitPullRequest, key: 'pullRequests', href: '/docs/features/pull_requests' },
+    ],
+  },
+  {
     key: 'searchKnowledge',
     layout: 'grid',
     items: [
@@ -87,6 +113,12 @@ const categories: {
       { icon: Clock, key: 'temporaryChat', href: '/docs/features/temporary_chat' },
       { icon: Link2, key: 'urlQuery', href: '/docs/features/url_query' },
       { icon: RefreshCw, key: 'resumableStreams', href: '/docs/features/resumable_streams' },
+      { icon: SquarePen, key: 'composer', href: '/docs/features/composer' },
+      { icon: Settings, key: 'settings', href: '/docs/features/settings' },
+      { icon: PanelLeft, key: 'navigation', href: '/docs/features/navigation' },
+      { icon: MousePointerClick, key: 'messageActions', href: '/docs/features/message_actions' },
+      { icon: FolderKanban, key: 'projects', href: '/docs/features/projects' },
+      { icon: Type, key: 'smoothStreaming', href: '/docs/features/smooth_streaming' },
     ],
   },
   {
@@ -97,6 +129,8 @@ const categories: {
       { icon: LayoutDashboard, key: 'adminPanel', href: '/docs/features/admin_panel' },
       { icon: KeyRound, key: 'passwordReset', href: '/docs/features/password_reset' },
       { icon: ShieldCheck, key: 'moderation', href: '/docs/features/mod_system' },
+      { icon: Lock, key: 'accessControl', href: '/docs/features/access_control' },
+      { icon: BarChart3, key: 'insights', href: '/docs/features/insights' },
     ],
   },
 ]

@@ -184,6 +184,35 @@ export const id: UIStrings = {
       },
     },
     categories: {
+      agentic: {
+        title: 'AI agentik',
+        items: {
+          skills: {
+            title: 'Skills',
+            description: 'Instruksi SKILL.md yang dapat dipakai ulang oleh agen',
+          },
+          subagents: {
+            title: 'Subagen',
+            description: 'Delegasikan tugas khusus ke agen turunan yang terisolasi',
+          },
+          scheduledChats: {
+            title: 'Chat terjadwal',
+            description: 'Jalankan agen tersimpan sesuai jadwal berulang',
+          },
+          agentPlugins: {
+            title: 'Plugin agen',
+            description: 'Paket eksperimental berisi Skills, server MCP, dan hook',
+          },
+          agentsApi: {
+            title: 'Agents API (Beta)',
+            description: 'Jalankan agen dan terima event secara terprogram',
+          },
+          pullRequests: {
+            title: 'Pull request percakapan',
+            description: 'Status pull request dan CI untuk chat yang menjalankan kode',
+          },
+        },
+      },
       searchKnowledge: {
         title: 'Pencarian dan pengetahuan',
         items: {
@@ -240,6 +269,30 @@ export const id: UIStrings = {
             title: 'Stream yang dapat dilanjutkan',
             description: 'Sambung ulang otomatis dan lanjutkan respons yang terputus',
           },
+          composer: {
+            title: 'Kotak penulis pesan',
+            description: 'Lampirkan file dan aktifkan alat dari palet +',
+          },
+          settings: {
+            title: 'Pengaturan pribadi',
+            description: 'Kelola preferensi per pengguna dan per browser',
+          },
+          navigation: {
+            title: 'Bilah samping dan navigasi',
+            description: 'Chat, percakapan yang disematkan, panel, dan laci seluler',
+          },
+          messageActions: {
+            title: 'Aksi pesan',
+            description: 'Edit, jalankan ulang, kutip, salin, dan fork pesan',
+          },
+          projects: {
+            title: 'Proyek',
+            description: 'Kelompokkan chat terkait dengan instruksi dan file bersama',
+          },
+          smoothStreaming: {
+            title: 'Streaming mulus',
+            description: 'Tampilkan teks streaming dengan efek fade halus',
+          },
         },
       },
       security: {
@@ -261,6 +314,11 @@ export const id: UIStrings = {
             title: 'Sistem moderasi',
             description: 'Moderasi konten dan kontrol keamanan',
           },
+          accessControl: {
+            title: 'Kontrol akses',
+            description: 'Izin terperinci untuk agen, prompt, dan server MCP',
+          },
+          insights: { title: 'Insight admin', description: 'Dasbor penggunaan dan aktivitas agen' },
         },
       },
     },
