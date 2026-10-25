@@ -71,11 +71,18 @@ export function scoreTitle(title: string, query: string): number {
 type Fragment = { doc: IndexedDoc; score: number }
 type PageGroup = { pageId: string; best: number; count: number; fragments: Fragment[] }
 
-export type RankedPage = { page: IndexedDoc; score: number; fragments: IndexedDoc[] }
+export type RankedPage = {
+  page: IndexedDoc
+  titleScore: number
+  bodyScore: number
+  fragments: IndexedDoc[]
+}
 
 /**
  * Groups Orama hits by page and orders pages by title match first, then by
- * their best weighted body hit, then by how many fragments matched.
+ * their best weighted body hit, then by how many fragments matched. The title
+ * tier is compared on its own so body hits can never lift a weaker title match
+ * above a stronger one.
  */
 export function rankPages(
   hits: { score: number; document: IndexedDoc }[],
@@ -109,7 +116,8 @@ export function rankPages(
     const coverage = (Math.min(group.count, 10) / 10) * 10
     ranked.push({
       page,
-      score: scoreTitle(page.content, query) + body + coverage,
+      titleScore: scoreTitle(page.content, query),
+      bodyScore: body + coverage,
       fragments: group.fragments
         .sort((a, b) => b.score - a.score)
         .slice(0, maxFragmentsPerPage)
@@ -117,7 +125,9 @@ export function rankPages(
     })
   }
 
-  return ranked.sort((a, b) => b.score - a.score).slice(0, maxPages)
+  return ranked
+    .sort((a, b) => b.titleScore - a.titleScore || b.bodyScore - a.bodyScore)
+    .slice(0, maxPages)
 }
 
 /** Runs a query against an exported fumadocs advanced index. */

@@ -1,6 +1,6 @@
 import { create, insertMultiple } from '@orama/orama'
 import { describe, expect, it } from 'vitest'
-import { scoreTitle, searchRanked } from './search-ranking'
+import { rankPages, scoreTitle, searchRanked } from './search-ranking'
 
 const SCHEMA = {
   id: 'string',
@@ -67,6 +67,31 @@ describe('scoreTitle', () => {
 
   it('falls back to substring matching for CJK titles', () => {
     expect(scoreTitle('Docker 部署指南', '部署')).toBeGreaterThan(0)
+  })
+})
+
+describe('rankPages', () => {
+  it('never lets body hits lift a weaker title match above a stronger one', () => {
+    const doc = (page_id: string, type: 'page' | 'text', content: string) => ({
+      id: `${page_id}-${content}`,
+      page_id,
+      type,
+      content,
+      url: page_id,
+    })
+    const pages = {
+      '/override': doc('/override', 'page', 'Docker Override'),
+      '/guide': doc('/guide', 'page', 'Remote Docker Guide'),
+    }
+    const hits = [
+      { score: 1, document: doc('/override', 'text', 'docker') },
+      ...Array.from({ length: 10 }, (_, i) => ({
+        score: 100,
+        document: doc('/guide', 'text', `docker ${i}`),
+      })),
+    ]
+    const ranked = rankPages(hits, 'docker', (id) => pages[id as keyof typeof pages])
+    expect(ranked.map((r) => r.page.url)).toEqual(['/override', '/guide'])
   })
 })
 
