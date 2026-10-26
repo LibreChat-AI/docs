@@ -1,0 +1,98 @@
+---
+title: Upgrade und rollierende Bereitstellungen
+icon: RefreshCw
+description: >-
+  Upgrade-Voraussetzungen, Kompatibilitätsschalter und Rollback-Grenzen für
+  LibreChat-Betreiber.
+---
+
+## Vorbereitung auf v0.8.9-rc1 [#preparing-for-v089-rc1]
+
+Verwende Node.js **24.22.1** für lokale Installationen. Sichere MongoDB, `librechat.yaml` und die Verschlüsselungsdaten, bevor du die Versionen änderst. Behalte `CREDS_KEY` und `CREDS_IV` bei; das Ersetzen dieser Werte ist keine Migration. Die Konfiguration `1.3.18` beschreibt diesen Kandidaten; die neu hinzugekommenen Einstellungen findest du im [Konfigurations-Changelog](/changelog/config_v1.3.18).
+
+Aktualisiere jede LibreChat-API-Replik, bevor du ein Feature aktivierst, das ältere Repliken nicht durchsetzen können. Aktualisiere kompatible Clients, Code-API-Dienste und angehängte Worker separat. Das LibreChat-Image aktualisiert keine separat bereitgestellte Code-API oder deren installierte Sprachpakete.
+
+### Kompatibilität bei gemischten Versionen [#mixed-version-compatibility]
+
+| Oberfläche | Während inkompatible Replicas oder Clients noch laufen | Nach dem Rollout |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Gespeicherte Benutzeranmeldedaten | Setzen Sie `credentials.writeFormat: legacy` in der Deployment-YAML auf jedem Replica. | Entfernen Sie die Überschreibung, um `v3`-Schreibvorgänge mit einem zufälligen IV pro Wert zu verwenden. Beide Formate bleiben in dieser Version lesbar. |
+| Zwei-Faktor-Backup-Codes | Setzen Sie `TWO_FACTOR_BACKUP_CODE_FORMAT=legacy` auf jedem Replica, wenn ältere Backends oder Clients starke Codes nicht lesen können. | Entfernen Sie die Variable, um 128-Bit-Zufallscodes mit individuellem Salt auszugeben. Bestehende Legacy-Codes bleiben gültig, bis sie neu generiert werden. |
+| E-Mail-Adressänderungen | Setzen Sie `emailChange.enabled: false` oder `ALLOW_EMAIL_CHANGE=false`. Das YAML-Flag hat Vorrang. | Aktivieren Sie dies erst, wenn jeder Node an E-Mail-Adressen gebundene Links zum Zurücksetzen des Passworts unterstützt. Andernfalls kann ein von einem älteren Node ausgestellter Link eine E-Mail-Änderung überdauern. |
+| Maschinenauswahl pro Chat | Setzen Sie `CODE_ENVIRONMENT_DECISION_VERSION=0` oder `endpoints.agents.statefulCodeSessions.allowEnvironmentSelection: false`. | Entscheidungsprotokoll v1 und Maschinenauswahl sind standardmäßig aktiviert, aber nur Agents mit einer expliziten Maschinen-Allowlist können Auswahlmöglichkeiten anbieten. |
+| Workspace-Änderungen gespeicherter Chats | Lassen Sie `statefulCodeSessions.conversationMoves.enabled` deaktiviert; `allowAttachDetach` ist eine separate Opt-in-Option. | Aktivieren Sie dies nur mit Protokoll v1 auf jedem API-Replica sowie kompatiblen Code-API-/Worker-Instanzen. Aktualisieren Sie anschließend die Clients. |
+| Gemerkte Tool-Genehmigungen | Belassen Sie `endpoints.agents.toolApproval.agentModes: false`. | Aktivieren Sie den Modus explizit, nachdem alle Replicas ihn unterstützen. Administrator-Regeln für Nachfragen/Ablehnen bleiben maßgeblich. |
+| Gebündelte Hintergrundabschlüsse | Setzen Sie `endpoints.agents.backgroundTasks.completionReceiptBatching: false`, solange ältere Replicas Traffic bedienen. | Entfernen Sie die Überschreibung, um fertige Ergebnisse gemeinsam auszuliefern. |
+| Umbenennen laufender Chats | Setzen Sie `interface.runningChatRename: false`, bis ältere Titelgenerierungsjobs abgearbeitet sind. | Entfernen Sie die Überschreibung, um das Umbenennen laufender oder mit Platzhaltertitel versehener Chats zu erlauben. |
+
+Das Zurückstellen eines Schalters für das Schreibformat konvertiert bereits gespeicherte Daten **nicht**. Eine ältere Version kann Zugangsdaten, die als v3 gespeichert wurden, oder neu ausgestellte starke Backup-Codes nicht lesen. Ersetzen oder migrieren Sie inkompatible Daten vor einem Rollback gezielt, anstatt Verschlüsselungsschlüssel zu rotieren.
+
+### Authentifizierungs- und Sicherheitsrichtlinie [#authentication-and-security-policy]
+
+[Passkey-Anmeldung](/docs/configuration/authentication) ist optional und wird über `ALLOW_PASSKEY_LOGIN=true` aktiviert. In der Produktion ist HTTPS erforderlich. Halte die Relying-Party-ID stabil: Eine Änderung von `PASSKEY_RP_ID` kann bestehende Registrierungen ungültig machen. `passkeys.perUserMax` überschreibt `MAX_PASSKEYS_PER_USER`; der Standardwert ist 20.
+
+`ENFORCE_TWO_FACTOR_AUTHENTICATION` ist standardmäßig auf `false` gesetzt. Wenn es aktiviert ist, müssen Konten mit E-Mail/Passwort und LDAP eine Zwei-Faktor-Authentifizierung einrichten, bevor sie eine vollständige Sitzung erhalten. Föderierte Anbieter bleiben für ihre eigene MFA verantwortlich. Die Kontingente für temporäre Codes (`TWO_FACTOR_TEMP_MAX`, `TWO_FACTOR_TEMP_WINDOW`) sind getrennt von den Kontingenten für die Einrichtungsschritte (`TWO_FACTOR_SETUP_MAX`, `TWO_FACTOR_SETUP_WINDOW`).
+
+Systemgewährungs-Zuweisungen und Änderungen, die die Ressourcenfreigabe erweitern, schlagen standardmäßig im Fehlerfall ab (fail closed), wenn der Audit-Schreibvorgang vor der Änderung fehlschlägt. Widerrufe werden durch einen Audit-Ausfall nicht blockiert. Nur `AUDIT_LOG_FAIL_CLOSED=false` deaktiviert diesen standardmäßigen Schutz. Andere administrative Mutationen folgen einer operationsspezifischen Audit-Reihenfolge: Ein Audit-Fehler impliziert nicht generell ein Rollback.
+
+### Admin-Konfiguration und Secrets [#admin-configuration-and-secrets]
+
+Das aktive Datenbankprofil „Base" überschreibt die YAML-Bereitstellungskonfiguration vor den Rollen-, Gruppen- und Benutzerprofilen, unabhängig von der numerischen Priorität von „Base". Andere aktive Profile werden in aufsteigender Priorität zusammengeführt, wobei Gleichstände deterministisch aufgelöst werden. Das Entfernen eines Overrides stellt die Vererbung wieder her; ein Tombstone unterdrückt einen geerbten Wert. Gewöhnliche Arrays werden als Ganzes unterdrückt; unterstützte Sammlungen mit Schlüsseln erlauben zusätzlich das Ausblenden einzelner benannter Einträge. Das Entfernen dieses Tombstones stellt die Vererbung wieder her.
+
+Der Admin-Konfigurations-Endpunkt `changes` wendet einen Stapel atomar auf ein Profil an. Verwende `dryRun`, um zu validieren, und `expectedRevision` für optimistische Nebenläufigkeitskontrolle; eine veraltete Revision gibt `409` zurück. Prüfe ignorierte Ergebnisse, da geschützte Einstellungen unangewendet bleiben können, ohne dass der gesamte Stapel abgelehnt wird. Diese Garantie macht Rollenumbenennungen oder andere Admin-Operationen über mehrere Dokumente nicht atomar.
+
+Administratorseitig geschriebene `${ENV_VAR}`-Referenzen sind auf Namen beschränkt, die in der YAML-Konfiguration der Bereitstellung, in den Anmeldedaten der integrierten Endpunkte sowie in `CONFIG_OVERRIDE_ENV_ALLOWLIST` (durch Kommas oder Leerzeichen getrennt) referenziert werden. Unbekannte Referenzen werden beim Speichern abgelehnt und werden zur Laufzeit zu nichts aufgelöst. Die Überschreibungen für Vertex AI sind enger gefasst: `endpoints.anthropic.vertex` kann nur die Umgebungsnamen verwenden, die in der eigenen Vertex-Konfiguration der YAML-Datei der Bereitstellung referenziert werden, nicht zusätzliche Namen aus der allgemeinen Allowlist. Wörtlich verwendeter Text ist davon ausgenommen: `interface`, `modelSpecs`, Prompts für Endpunkt-Titel, Aktivität und Reasoning-Labels, Zusammenfassungs-Prompts, Speicheranweisungen sowie Prompts für die Change-Tracking-Funktion von Firecrawl.
+
+Gespeicherte Anmeldedaten für Websuche, MCP und Azure sind an ihre Ziele gebunden. Ein Schreibvorgang, der ein gebundenes Ziel ändert oder entfernt, muss den gespeicherten Schlüssel im selben Schreibvorgang erneut eingeben oder ihn entfernen. Behandeln Sie `secret_reentry_required`, indem Sie das erforderliche Geheimnis erneut abfragen; versuchen Sie nicht stillschweigend, einen alten Schlüssel gegen eine neue URL erneut zu verwenden. Von der Umgebung verwaltete und vom Benutzer verwaltete Anmeldedaten können nicht über ein Administratorprofil umgeleitet werden.
+
+`CONFIG_REDERIVE_ENDPOINTS` ist in diesem Release standardmäßig deaktiviert. Profil-Overrides von Azure-Gruppen, `endpoints.anthropic.vertex` und der Azure-Assistants-Schalter bleiben gespeichert, sind jedoch wirkungslos, bis der Betreiber die Option aktiviert. Prüfen Sie die Startdiagnose auf betroffene Profile und nicht auflösbare Gruppen, bevor Sie die Option auf allen Replikaten aktivieren. Profil-Vertex-Einstellungen gelten nur dort, wo die Deployment-YAML Vertex konfiguriert, und verwenden dann die vom Deployment verwaltete Schlüsseldatei und Region.
+
+Das Umbenennen einer benutzerdefinierten Rolle verschiebt deren Mitglieder, Konfigurationsprofil, Berechtigungen und ACL-Einträge innerhalb ihres Mandanten. Beim Löschen werden die Mitglieder der Rolle `USER` zugewiesen, und abhängige Konfigurationen und Berechtigungen werden entfernt. Diese Änderungen über mehrere Dokumente hinweg bilden keine atomare Transaktion. Nach einem Fehler sollte der aktuelle Zustand überprüft werden, bevor ein erneuter Versuch unternommen wird, da bereits entzogene Zugriffe entzogen bleiben können.
+
+### Strikte Mandantenauthentifizierung [#strict-tenant-authentication]
+
+Mit `TENANT_ISOLATION_STRICT=true` benötigen Authentifizierungs- und Kontorouten einen echten, nicht systemeigenen Mandanten, bevor ein Benutzer nachgeschlagen wird. Fehlt der Mandantenkontext, wird die Anfrage mit `403` und `TENANT_CONTEXT_REQUIRED` abgelehnt; OAuth-Abläufe verwenden stattdessen ihre Fehler-Weiterleitung. Überprüfen Sie das Mandanten-Routing am vertrauenswürdigen Proxy bzw. an der Authentifizierungsgrenze, einschließlich der Anmelde- und Aktualisierungsrouten. Umgehen Sie einen fehlenden Mandanten nicht, indem Sie die strikte Isolation deaktivieren oder beliebigen öffentlichen Headern vertrauen.
+
+Systemweite Prüfungen beim Start, die Synchronisierung von Indizes und Berechtigungsmigrationen laufen im expliziten Systemkontext. Wenn eine Migration eine Ressource schreibt, bleibt die Mandantenpartition dieser Ressource erhalten. Diese Prüfungen gewähren normalen Authentifizierungsanfragen keinen Rückfall auf den Systemmandanten.
+
+### Kompatibilität des gemeinsamen Pakets [#shared-package-compatibility]
+
+Die aktualisierten gemeinsam genutzten Pakete verwenden Zod 4. Benutzerdefinierte Integrationen, die LibreChat-Schemas importieren und zusammensetzen, müssen ihre Zod-Nutzung anpassen und mit den passenden Paketversionen neu erstellt werden; diese Pakete dürfen nicht wieder auf Zod 3 zurückgesetzt werden. Das Release behält nicht angegebene optionale Konfigurationsfelder und Validierungsdiagnosen bei; für die Migration der Bibliothek ist weder eine neue YAML-Versionserhöhung noch eine pauschale Neufassung der Konfiguration erforderlich.
+
+Custom-Frontends, die veraltete Legacy-Steuerelemente aus `@librechat/client` importieren, müssen auf die aktuell gepflegten Steuerelemente umstellen. Insbesondere werden `Select`, `SelectDropDown`, `Dialog`, `DialogTemplate` und die Radix-`DropdownMenu`-Exporte nicht mehr bereitgestellt. Verwenden Sie für Dialoge `OGDialog`/`OGDialogTemplate`, für Auswahlfelder mit einzelnem Wert `Dropdown` und für Aktionsmenüs `DropdownPopup` oder Ariakit-Primitive. Die eigenen Aufrufer von LibreChat wurden bereits migriert. Dies ist eine Änderung für Entwickler bei der Integration, keine Anforderung, die Einstellungen einer selbst gehosteten Bereitstellung umzuschreiben.
+
+### Browser-Telemetrie [#browser-telemetry]
+
+RUM, Client-Logs und Session Replay sind unabhängige Opt-in-Optionen. Die YAML-Werte `telemetry.rum.enabled` und `telemetry.rum.sessionReplay.enabled` haben Vorrang vor den Umgebungsvariablen als Fallback; wird der Wert weggelassen, bleibt die Einstellung aus der Umgebung erhalten, und ein leeres YAML-Objekt `sessionReplay: {}` deaktiviert Replay.
+
+- `RUM_CLIENT_LOGS=true` aktiviert bereinigte clientseitige Diagnoseprotokolle ausschließlich im authentifizierten Proxy-Modus.
+- `RUM_SESSION_REPLAY_ENABLED=true` aktiviert die Session-Wiedergabe, sofern RUM aktiviert ist. Diese Variable ersetzt die veraltete, umgekehrte Variable `RUM_DISABLE_REPLAY` als Fallback.
+- `RUM_PROXY_BODY_LIMIT` hat den Standardwert `3mb`. Traces und Logs teilen sich das Kontingent pro authentifiziertem Benutzer: `RUM_PROXY_USER_MAX=240` pro `RUM_PROXY_USER_WINDOW=1` Minute. Überschreitende Anfragen liefern `429` zurück.
+- Replay maskiert Texte und Eingabewerte und schließt Authentifizierungsbildschirme aus, ist jedoch **kein allgemeines DLP-Werkzeug**. Validieren Sie mit synthetischen Daten, bevor Sie echte Benutzer aufzeichnen. Die direkte Aufnahme öffentlicher Tokens umgeht die serverseitige Replay-Filterung und benötigt eine eigene Collector-Richtlinie.
+
+`LOG_REDACTION_MAX_NODES=5000` begrenzt den Aufwand für die Schwärzung pro Server-Log-Eintrag. Objekte und Strings, die nach ihrer Länge gewichtet werden, verbrauchen das Budget; überschüssige Felder werden ersetzt statt unverschwärzt exportiert. Diese prozessweite Einstellung wird beim Initialisieren des Loggers eingelesen.
+
+### Verbundenes Coding und MCP-Apps [#connected-coding-and-mcp-apps]
+
+Stateful-Code-Sitzungen bleiben äußerst experimentell. Eine im Browser genehmigte Registrierung gewährt nicht automatisch jedem Agenten Zugriff auf einen Rechner. Konfigurieren Sie die angehängte Umgebung, aktivieren Sie die Registrierung des Principal-Workers sowie dessen separate `browserSetup.enabled`-Zustimmung, konfigurieren Sie die kanonische öffentliche `instance`, starten Sie einen kompatiblen Worker und speichern Sie die explizite Maschinen-Allowlist des Agenten. Neue Chats dürfen nur Maschinen aus dieser Allowlist auswählen; bestehende Unterhaltungen behalten ihre gespeicherte Entscheidung bei.
+
+Die optionale Integration `endpoints.agents.pullRequests` benötigt einen kompatiblen Worker, der den Git-Status meldet, die Code-API `CODEAPI_BRIDGE_LANE_GIT=true`, einen Repository-Geltungsbereich sowie ein passend eingeschränktes Provider-Token. GitHub benötigt schreibgeschützten Zugriff auf Pull requests, Checks und Contents. GitLab und Bitbucket verwenden ihre providerspezifischen Anmeldedaten. Eine OAuth-Verbindung pro Benutzer ist eine separate, optionale Einwilligung.
+
+Neue MCP Apps erfordern `mcpSettings.apps: true`. Wenn der Eintrag weggelassen wird, bleibt das bisherige Verhalten für Inline-HTML erhalten, während `false` beides deaktiviert. Stelle die MCP-App-Sandbox auf einem dedizierten Ursprung bereit, der an `/api/mcp/sandbox` weitergeleitet wird; die Sandbox-Richtlinie der Bereitstellung ist kein Überschreiben nach Rolle, Gruppe oder Benutzer. Wende die Einrichtung des Sandbox-Ursprungs und die Build-Zeit-Konfiguration gemäß dem [MCP-Konfigurationsleitfaden](/docs/configuration/librechat_yaml/object_structure/mcp_settings) an.
+
+### Datei-Bereinigung-Rollout [#file-cleanup-rollout]
+
+`fileConfig.retainedFileCleanup` bleibt standardmäßig deaktiviert. Aktivieren Sie es erst, nachdem jede Replik und jedes Rollback-Ziel retainierte Dateiziele unterstützt. Die Bereinigung von Vektoren erfordert außerdem `fileConfig.vectorOwnershipTrackingStart`, einen UTC-Stichtag, der festgelegt wird, nachdem alte Vektor-Schreibprozesse und Rollback-Ziele außer Betrieb genommen wurden, sowie einen vollständigen Eigentumsnachweis für die Datei, der zu oder nach diesem Stichtag erfasst wurde. Datieren Sie den Stichtag nicht rückwirkend und leiten Sie keine Eigentumsverhältnisse für historische Dateien ab, nur damit die Löschung fortgesetzt werden kann.
+
+Mehrdeutige oder vor dem Stichtag erstellte Datensätze schlagen fehl und werden geschlossen. Die primäre Datei bleibt lesbar, bis die Bereinigung der sekundären Daten bestätigt ist. `fileConfig.vectorDeletionConcurrency` ist standardmäßig auf `4` gesetzt und akzeptiert `1`–`16` Namespace-Löschungen pro Datei. Lesen Sie die [Steuerelemente zur Dateibereinigung](/docs/configuration/librechat_yaml/object_structure/file_config#retained-file-and-vector-cleanup), bevor Sie sie aktivieren.
+
+### Weitere geänderte Standardwerte [#other-changed-defaults]
+
+- Standardmäßig sendet die Eingabetaste Nachrichten. Benutzer können diese Einstellung unter Einstellungen ändern.
+- Die Größenanpassung von Bildern im Browser ist standardmäßig aktiviert, wenn `fileConfig.clientImageResize.enabled` nicht angegeben wird. Ein explizites `true` oder `false` erzwingt die Entscheidung für die gesamte Bereitstellung.
+- `interface.retentionMode: ephemeral` erzwingt, dass jeder Chat nur vorübergehend gespeichert wird. Bevor du zu `temporary` zurückkehrst, entferne Aufbewahrungsfristen von Datensätzen, die nicht mehr ablaufen sollen; bestehende Fristen werden nicht automatisch migriert.
+- Temporäre Chats, einschließlich Chats im flüchtigen Modus, werden nicht nachverfolgt und nicht mit Feedback bewertet, sofern `langfuse.trace.temporaryChats` nicht aktiviert ist.
+- `interface.historyCacheTtlMs` ist standardmäßig auf `60000` gesetzt und `historyCacheRecent` auf `1`. Zusätzlich gibt es ein Speicherlimit für `historyCacheMaxBytes` von `8388608` Bytes, das begrenzt, wie lange kürzlich verlassene Verläufe im Cache gehalten werden.
+- `toolCallPreviews` ist standardmäßig auf begrenzte Vorschauen für Clients eingestellt, die diese anfordern. `outputChars` und `argsChars` haben standardmäßig den Wert `512`; Exporte und Clients, die keine Vorschauen anfordern, behalten den vollständigen Inhalt bei.
+
+Weitere Informationen finden Sie in der [Referenz zur Benutzeroberfläche](/docs/configuration/librechat_yaml/object_structure/interface), der [Agents-Referenz](/docs/configuration/librechat_yaml/object_structure/agents) und der [Referenz zur Umgebung](/docs/configuration/dotenv) für bestehende Optionen.

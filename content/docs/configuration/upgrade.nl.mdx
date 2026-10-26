@@ -1,0 +1,98 @@
+---
+title: Upgrade- en rolling deployments
+icon: RefreshCw
+description: >-
+  Upgradevereisten, compatibiliteitsschakelaars en terugrolgrenzen voor
+  LibreChat-beheerders.
+---
+
+## Voorbereiding op v0.8.9-rc1 [#preparing-for-v089-rc1]
+
+Gebruik Node.js **24.22.1** voor lokale installaties. Maak een back-up van MongoDB, `librechat.yaml` en de versleutelingsgegevens voordat je versies wijzigt. Bewaar `CREDS_KEY` en `CREDS_IV`; deze vervangen is geen migratie. Configuratie `1.3.18` beschrijft deze kandidaat; zie de [configuratiewijzigingslog](/changelog/config_v1.3.18) voor de toegevoegde instellingen.
+
+Upgrade elke LibreChat API-replica voordat u een functie inschakelt die oudere replica's niet kunnen afdwingen. Werk compatibele clients, Code API-services en gekoppelde workers afzonderlijk bij. De LibreChat-image upgradet geen afzonderlijk geïmplementeerde Code API of de daarin geïnstalleerde taalpakketten.
+
+### Compatibiliteit tussen gemengde versies [#mixed-version-compatibility]
+
+| Oppervlak | Zolang incompatibele replicas of clients actief zijn | Na de uitrol |
+| --- | --- | --- |
+| Opgeslagen gebruikersreferenties | Stel `credentials.writeFormat: legacy` in de deployment-YAML in op elke replica. | Verwijder de override om `v3`-schrijfacties met een willekeurige IV per waarde te gebruiken. Beide formaten blijven door deze release leesbaar. |
+| Back-upcodes voor tweefactorauthenticatie | Stel `TWO_FACTOR_BACKUP_CODE_FORMAT=legacy` in op elke replica als oudere backends of clients sterke codes niet kunnen lezen. | Verwijder deze instelling om willekeurige, individueel gezouten codes van 128 bit uit te geven. Bestaande legacy-codes blijven geldig totdat ze opnieuw worden gegenereerd. |
+| Wijzigingen van e-mailadres | Stel `emailChange.enabled: false` of `ALLOW_EMAIL_CHANGE=false` in. De YAML-instelling heeft voorrang. | Schakel dit alleen in nadat elke node koppeling van herstellinks voor wachtwoorden aan het e-mailadres ondersteunt. Anders kan een link die door een oudere node is uitgegeven, een e-mailwijziging overleven. |
+| Machinekeuzes per chat | Stel `CODE_ENVIRONMENT_DECISION_VERSION=0` of `endpoints.agents.statefulCodeSessions.allowEnvironmentSelection: false` in. | Beslissingsprotocol v1 en machineselectie zijn standaard ingeschakeld, maar alleen agents met een expliciete machine-allowlist kunnen keuzes aanbieden. |
+| Wijzigingen van werkruimte in opgeslagen chats | Laat `statefulCodeSessions.conversationMoves.enabled` uitgeschakeld; `allowAttachDetach` is een afzonderlijke opt-in. | Schakel dit alleen in met protocol v1 op elke API-replica en compatibele Code API/workers. Vernieuw daarna de clients. |
+| Onthouden toestemmingen voor tools | Laat `endpoints.agents.toolApproval.agentModes: false` staan. | Schakel dit expliciet in nadat alle replicas de modus ondersteunen. Regels voor toestaan/weigeren van de beheerder blijven leidend. |
+| Gebundelde afrondingen op de achtergrond | Stel `endpoints.agents.backgroundTasks.completionReceiptBatching: false` in zolang oudere replicas verkeer verwerken. | Verwijder de override om klaarstaande resultaten gezamenlijk af te leveren. |
+| Hernoemen van lopende chats | Stel `interface.runningChatRename: false` in totdat oudere taakjes voor titelgeneratie zijn afgerond. | Verwijder de override om het hernoemen van lopende chats of chats met een tijdelijke titel toe te staan. |
+
+Het terugzetten van een schakelaar voor het schrijfformaat zet al opgeslagen gegevens **niet** om. Een oudere release kan geen credentials lezen die zijn opgeslagen als v3, of nieuw uitgegeven sterke back-upcodes. Vervang of migreer onverenigbare gegevens daarom bewust voordat je terugrolt, in plaats van encryptiesleutels te roteren.
+
+### Authenticatie- en beveiligingsbeleid [#authentication-and-security-policy]
+
+[Passkey-aanmelding](/docs/configuration/authentication) is standaard uitgeschakeld en moet worden ingeschakeld via `ALLOW_PASSKEY_LOGIN=true`. In productie is HTTPS vereist. Houd de relying-party-ID stabiel: als `PASSKEY_RP_ID` wordt gewijzigd, kunnen bestaande registraties ongeldig worden. `passkeys.perUserMax` overschrijft `MAX_PASSKEYS_PER_USER`; de standaardwaarde is 20.
+
+`ENFORCE_TWO_FACTOR_AUTHENTICATION` staat standaard op `false`. Wanneer deze optie is ingeschakeld, moeten accounts met e-mail/wachtwoord en LDAP zich registreren voordat ze een volledige sessie ontvangen. Federatieve providers blijven zelf verantwoordelijk voor hun eigen MFA. De limieten voor tijdelijke codes (`TWO_FACTOR_TEMP_MAX`, `TWO_FACTOR_TEMP_WINDOW`) zijn los van de limieten voor de installatiestappen (`TWO_FACTOR_SETUP_MAX`, `TWO_FACTOR_SETUP_WINDOW`).
+
+Toekenningen van systeemrechten en wijzigingen die het delen van resources uitbreiden, falen standaard gesloten wanneer de audit-schrijfactie vóór de wijziging mislukt. Intrekkingen worden niet geblokkeerd door een storing van de audit-log. Alleen `AUDIT_LOG_FAIL_CLOSED=false` schakelt deze standaardbescherming uit. Andere beheerwijzigingen hebben een operatiespecifieke volgorde voor audit-logging: een auditfout impliceert niet altijd een terugdraaiing.
+
+### Beheerdersconfiguratie en geheimen [#admin-configuration-and-secrets]
+
+De actieve database-Base-profiel overschrijft de deployment-YAML vóór rol-, groeps- en gebruikersprofielen, ongeacht de numerieke prioriteit van Base. Andere actieve profielen worden samengevoegd in oplopende prioriteitsvolgorde, waarbij gelijke prioriteiten deterministisch worden afgehandeld. Het verwijderen van een override herstelt de overerving; een tombstone onderdrukt een geërfde waarde. Gewone arrays worden als geheel onderdrukt; ondersteunde collecties met sleutels maken het daarnaast mogelijk om een afzonderlijk benoemd item te verbergen. Het verwijderen van die tombstone herstelt de overerving.
+
+Het `changes`-eindpunt van de admin-configuratie past een batch atomair toe op één profiel. Gebruik `dryRun` om te valideren en `expectedRevision` voor optimistische concurrentie; een verouderde revisie geeft `409` terug. Controleer de genegeerde resultaten, omdat beschermde instellingen ontoegepast kunnen blijven zonder dat de hele batch wordt afgewezen. Deze garantie maakt rolnamen wijzigen of andere admin-bewerkingen over meerdere documenten niet atomair.
+
+Verwijzingen naar `${ENV_VAR}` die door beheerders worden geschreven, zijn beperkt tot namen die worden genoemd in de YAML-configuratie van de implementatie, tot de ingebouwde credentials van endpoints en tot `CONFIG_OVERRIDE_ENV_ALLOWLIST` (gescheiden door komma's of spaties). Onbekende verwijzingen worden bij het opslaan geweigerd en resolven tijdens runtime naar niets. Overrides voor Vertex AI zijn strikter: `endpoints.anthropic.vertex` kan alleen de omgevingsnamen gebruiken die worden genoemd in de eigen Vertex-configuratie van de YAML-configuratie van de implementatie, en niet de extra namen uit de algemene allowlist. Tekst die letterlijk wordt gebruikt, is uitgezonderd: `interface`, `modelSpecs`, prompts voor de titel, activiteit en redeneringslabels van endpoints, samenvattingsprompts, geheugeninstructies en prompts voor change-tracking van Firecrawl.
+
+Opgeslagen webzoekopdracht-, MCP- en Azure-referenties zijn gekoppeld aan hun bestemmingen. Een schrijfactie die een gekoppelde bestemming wijzigt of verwijdert, moet de opgeslagen sleutel in dezelfde schrijfactie opnieuw invoeren, of de sleutel verwijderen. Verwerk `secret_reentry_required` door de vereiste geheime sleutel opnieuw op te vragen; probeer een oude sleutel niet stilzwijgend opnieuw tegen een nieuwe URL. Door de omgeving beheerde en door de gebruiker beheerde referenties kunnen niet via een beheerdersprofiel naar een andere bestemming worden omgeleid.
+
+`CONFIG_REDERIVE_ENDPOINTS` staat standaard uit in deze release. Profieloverschrijvingen van Azure-groepen, `endpoints.anthropic.vertex` en de Azure Assistants-schakelaar blijven opgeslagen maar zijn inactief totdat de beheerder deze inschakelt. Controleer de startdiagnostiek op getroffen profielen en niet-oplosbare groepen voordat u deze op elke replica inschakelt. Profiel-Vertex-instellingen worden alleen toegepast waar de deployment-YAML Vertex configureert, met het door de deployment beheerde sleutelbestand en de regio.
+
+Het hernoemen van een aangepaste rol verplaatst de leden, het configuratieprofiel, de toekenningen en de ACL-items binnen de tenant. Het verwijderen ervan wijst de leden opnieuw toe aan `USER` en verwijdert de afhankelijke configuratie en toekenningen. Deze wijzigingen over meerdere documenten vormen geen enkele atomaire transactie. Controleer na een fout eerst de huidige status voordat u het opnieuw probeert; reeds ingetrokken toegang kan ingetrokken blijven.
+
+### Strikte tenantauthenticatie [#strict-tenant-authentication]
+
+Met `TENANT_ISOLATION_STRICT=true` moeten authenticatie- en accountroutes een echte, niet-systeemtenant hebben voordat er naar een gebruiker wordt gezocht. Ontbrekende tenantcontext wordt geweigerd met `403` en `TENANT_CONTEXT_REQUIRED`; OAuth-flows gebruiken hun foutomleiding. Controleer de tenantroutering bij de vertrouwde proxy of de authenticatiegrens, inclusief de routes voor inloggen en vernieuwen. Omzeil een ontbrekende tenant niet door strikte isolatie uit te schakelen of door willekeurige openbare headers te vertrouwen.
+
+Deployment-brede opstartcontroles, indexsynchronisatie en permissiemigraties worden uitgevoerd in een expliciete systeemscope. Wanneer een migratie een resource schrijft, behoudt zij de tenantpartitie van die resource. Deze controles verlenen normale authenticatieverzoeken geen terugvalmogelijkheid naar de systeemtenant.
+
+### Compatibiliteit van gedeeld pakket [#shared-package-compatibility]
+
+De bijgewerkte gedeelde pakketten gebruiken Zod 4. Aangepaste integraties die LibreChat-schema's importeren en samenstellen, moeten hun Zod-gebruik bijwerken en opnieuw bouwen met de bijbehorende pakketversies; overschrijf deze pakketten niet terug naar Zod 3. De release behoudt weggelaten optionele configuratievelden en validatiediagnostiek; voor de migratie van de bibliotheek is geen nieuwe YAML-versieverhoging of algemene configuratieherschrijving nodig.
+
+Aangepaste frontends die verouderde, verwijderde `@librechat/client`-besturingselementen importeren, moeten migreren naar de onderhouden besturingselementen. Concreet worden `Select`, `SelectDropDown`, `Dialog`, `DialogTemplate` en de Radix `DropdownMenu`-exports niet langer aangeboden. Gebruik `OGDialog`/`OGDialogTemplate` voor dialogen, `Dropdown` voor selectors met één waarde, en `DropdownPopup` of Ariakit-primitieven voor actiemenu's. De eigen aanroepers van LibreChat zijn al gemigreerd. Dit is een wijziging voor ontwikkelaars bij de integratie, geen vereiste om de instellingen van een zelf gehoste implementatie te herschrijven.
+
+### Browsertelemetrie [#browser-telemetry]
+
+RUM, clientlogs en sessieweergave zijn onafhankelijke opt-ins. De YAML-instellingen `telemetry.rum.enabled` en `telemetry.rum.sessionReplay.enabled` hebben voorrang op de omgevingsvariabelen als fallback; wanneer deze worden weggelaten, blijft de omgevingsinstelling behouden, en een lege YAML-waarde `sessionReplay: {}` schakelt sessieweergave uit.
+
+- `RUM_CLIENT_LOGS=true` schakelt geschoonde clientdiagnostische logs alleen in de geauthenticeerde proxymodus in.
+- `RUM_SESSION_REPLAY_ENABLED=true` schakelt replay in wanneer RUM is ingeschakeld. Het vervangt de verouderde omgekeerde fallback `RUM_DISABLE_REPLAY`.
+- `RUM_PROXY_BODY_LIMIT` staat standaard op `3mb`. Traces en logs delen het budget per geauthenticeerde gebruiker: `RUM_PROXY_USER_MAX=240` per `RUM_PROXY_USER_WINDOW=1` minuut. Overtollige verzoeken geven `429` terug.
+- Replay maskeert tekst en invoerwaarden en sluit authenticatieschermen uit, maar is **geen DLP voor algemeen gebruik**. Valideer met synthetische gegevens voordat je echte gebruikers opneemt. Directe ingestie van publieke tokens omzeilt de replay-filtering van de server en heeft een eigen collectorbeleid nodig.
+
+`LOG_REDACTION_MAX_NODES=5000` beperkt het redactiewerk per serverlogrecord. Objecten en strings die gewogen worden op lengte verbruiken het budget; overtollige velden worden vervangen in plaats van ongeredigeerd geëxporteerd. Deze instelling op procesniveau wordt gelezen wanneer de logger wordt geïnitialiseerd.
+
+### Verbonden coding en MCP Apps [#connected-coding-and-mcp-apps]
+
+Stateful Code-sessies blijven zeer experimenteel. Goedkeuring van inschrijving via de browser verleent op zichzelf nog geen enkele agent toegang tot een machine. Configureer de bijgevoegde omgeving, schakel principal-worker-inschrijving en de bijbehorende aparte `browserSetup.enabled`-opt-in in, configureer de canonieke publieke `instance`, start een compatibele worker en sla de expliciete machine-allowlist van de agent op. Nieuwe chats kunnen alleen kiezen uit die allowlist; bestaande gesprekken behouden hun vastgelegde beslissing.
+
+De optionele `endpoints.agents.pullRequests`-integratie heeft een compatibele worker nodig die de git-status rapporteert, Code API `CODEAPI_BRIDGE_LANE_GIT=true`, een repositorybereik en een juist bepaald providertoken. GitHub heeft alleen-lezen toegang nodig tot Pull requests, Checks en Contents. GitLab en Bitbucket gebruiken hun providerspecifieke inloggegevens. Een OAuth-verbinding per gebruiker is een afzonderlijke keuze waarvoor expliciet toestemming moet worden gegeven.
+
+Nieuwe MCP Apps vereisen `mcpSettings.apps: true`. Weglaten behoudt het oude gedrag van inline HTML, terwijl `false` beide uitschakelt. Implementeer de MCP App-sandbox op een dedicated origin die is gerouteerd naar `/api/mcp/sandbox`; het sandbox-beleid van de implementatie is geen rol-, groeps- of gebruikersoverride. Pas de instellingen voor de sandbox-origin en de build-time configuratie toe volgens de [MCP-configuratiegids](/docs/configuration/librechat_yaml/object_structure/mcp_settings).
+
+### Uitrol van bestandsopschoning [#file-cleanup-rollout]
+
+`fileConfig.retainedFileCleanup` staat standaard uitgeschakeld. Schakel deze optie pas in nadat elke replica en elk rollbackdoel ondersteuning biedt voor bestemmingen voor bewaarde bestanden. Het opschonen van vectoren vereist daarnaast `fileConfig.vectorOwnershipTrackingStart`, een UTC-cutoffdatum die is gekozen nadat legacy vectorschrijvers en rollbackdoelen zijn buiten gebruik gesteld, en volledig eigendomsbewijs dat voor het bestand is vastgelegd op of na die cutoff. Verplaats de cutoff niet naar een eerder moment en leid het eigendom van historische bestanden niet af om verwijdering alsnog mogelijk te maken.
+
+Dubieuze of vóór-cutoff-records falen gesloten. Het primaire bestand blijft leesbaar totdat de secundaire opschoning is bevestigd. `fileConfig.vectorDeletionConcurrency` heeft standaard de waarde `4` en accepteert `1`–`16` namespace-verwijderingen per bestand. Zie [bestandsopschoningsinstellingen](/docs/configuration/librechat_yaml/object_structure/file_config#retained-file-and-vector-cleanup) voordat je deze inschakelt.
+
+### Andere gewijzigde standaardwaarden [#other-changed-defaults]
+
+- Enter verzendt berichten standaard. Gebruikers kunnen deze voorkeur wijzigen in Instellingen.
+- Het verkleinen van afbeeldingen in de browser staat standaard aan wanneer `fileConfig.clientImageResize.enabled` niet is opgegeven. Met een expliciete waarde `true` of `false` wordt de keuze voor de hele implementatie afgedwongen.
+- `interface.retentionMode: ephemeral` forceert elke chat om tijdelijk te zijn. Voordat je terugschakelt naar `temporary`, verwijder je de bewaartermijnen van records die niet meer mogen verlopen; bestaande bewaartermijnen worden niet automatisch gemigreerd.
+- Tijdelijke chats, inclusief chats in de vluchtige modus, worden niet getraceerd of van feedbackscores voorzien, tenzij `langfuse.trace.temporaryChats` is ingeschakeld.
+- `interface.historyCacheTtlMs` heeft standaard de waarde `60000` en `historyCacheRecent` de waarde `1`, met een extra budget `historyCacheMaxBytes` van `8388608` bytes, waarmee wordt begrensd hoe lang recent verlaten geschiedenissen in de cache blijven.
+- `toolCallPreviews` heeft standaard begrensde voorvertoningen voor clients die erom vragen. `outputChars` en `argsChars` hebben standaard de waarde `512`; exports en clients die geen voorvertoningen aanvragen behouden de volledige inhoud.
+
+Zie de [interfacereferentie](/docs/configuration/librechat_yaml/object_structure/interface), de [Agents-referentie](/docs/configuration/librechat_yaml/object_structure/agents) en de [omgevingsreferentie](/docs/configuration/dotenv) voor bestaande opties.

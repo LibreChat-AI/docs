@@ -1,0 +1,98 @@
+---
+title: Upgrade dan Deployment Bertahap
+icon: RefreshCw
+description: >-
+  Prasyarat upgrade, sakelar kompatibilitas, dan batas rollback untuk operator
+  LibreChat.
+---
+
+## Persiapan untuk v0.8.9-rc1 [#preparing-for-v089-rc1]
+
+Gunakan Node.js **24.22.1** untuk instalasi lokal. Cadangkan MongoDB, `librechat.yaml`, dan kredensial enkripsi sebelum mengubah versi. Pertahankan `CREDS_KEY` dan `CREDS_IV`; menggantinya bukan merupakan migrasi. Konfigurasi `1.3.18` menjelaskan kandidat ini; lihat [changelog konfigurasi](/changelog/config_v1.3.18) untuk pengaturan yang ditambahkan.
+
+Tingkatkan setiap replika API LibreChat sebelum mengaktifkan fitur yang tidak dapat ditegakkan oleh replika yang lebih lama. Perbarui klien yang kompatibel, layanan Code API, dan worker yang terpasang secara terpisah. Image LibreChat tidak memutakhirkan Code API yang di-deploy secara independen maupun paket bahasa yang terpasang di dalamnya.
+
+### Kompatibilitas antar-versi campuran [#mixed-version-compatibility]
+
+| Surface | Selama replika atau klien yang tidak kompatibel masih ada | Setelah rollout |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Kredensial pengguna yang tersimpan | Atur `credentials.writeFormat: legacy` di YAML deployment pada setiap replika. | Hapus override untuk menggunakan penulisan `v3` dengan IV acak untuk setiap nilai. Kedua format tetap dapat dibaca oleh rilis ini. |
+| Kode cadangan autentikasi dua faktor | Atur `TWO_FACTOR_BACKUP_CODE_FORMAT=legacy` pada setiap replika jika backend atau klien lama tidak dapat membaca kode yang kuat. | Hapus pengaturan ini untuk menerbitkan kode 128-bit acak yang di-salt secara individual. Kode legacy yang ada tetap valid sampai dibuat ulang. |
+| Perubahan alamat email | Atur `emailChange.enabled: false` atau `ALLOW_EMAIL_CHANGE=false`. Flag YAML memiliki prioritas. | Aktifkan hanya setelah setiap node mendukung tautan reset kata sandi yang terikat pada alamat email. Tautan yang diterbitkan oleh node lama dapat bertahan melampaui perubahan email. |
+| Pilihan mesin per chat | Atur `CODE_ENVIRONMENT_DECISION_VERSION=0` atau `endpoints.agents.statefulCodeSessions.allowEnvironmentSelection: false`. | Protokol keputusan v1 dan pemilihan mesin diaktifkan secara default, tetapi hanya agent dengan daftar izin mesin eksplisit yang dapat menawarkan pilihan. |
+| Perubahan workspace chat tersimpan | Biarkan `statefulCodeSessions.conversationMoves.enabled` nonaktif; `allowAttachDetach` adalah opt-in terpisah. | Aktifkan hanya dengan protokol v1 pada setiap replika API dan Code API/worker yang kompatibel. Muat ulang klien setelahnya. |
+| Persetujuan alat yang diingat | Biarkan `endpoints.agents.toolApproval.agentModes: false`. | Aktifkan secara eksplisit setelah semua replika mendukung mode tersebut. Aturan ask/deny dari administrator tetap berlaku. |
+| Penyelesaian latar belakang yang dikelompokkan | Atur `endpoints.agents.backgroundTasks.completionReceiptBatching: false` selama replika lama masih melayani trafik. | Hapus override untuk mengirimkan hasil yang sudah siap secara bersamaan. |
+| Mengganti nama chat yang sedang berjalan | Atur `interface.runningChatRename: false` sampai job pembuatan judul lama selesai. | Hapus override untuk mengizinkan penggantian nama chat yang sedang berjalan atau yang masih memakai judul placeholder. |
+
+Mengubah kembali sakelar format tulis **tidak** mengonversi data yang sudah tersimpan. Rilis yang lebih lama tidak dapat membaca kredensial yang disimpan sebagai v3 atau kode cadangan kuat yang baru diterbitkan. Sebelum melakukan rollback, ganti atau migrasikan data yang tidak kompatibel secara sengaja, alih-alih merotasi kunci enkripsi.
+
+### Kebijakan autentikasi dan keamanan [#authentication-and-security-policy]
+
+[Login dengan passkey](/docs/configuration/authentication) bersifat opt-in melalui `ALLOW_PASSKEY_LOGIN=true` dan memerlukan HTTPS di lingkungan produksi. Jaga agar relying-party ID tetap stabil: mengubah `PASSKEY_RP_ID` dapat membatalkan pendaftaran yang sudah ada. `passkeys.perUserMax` menimpa `MAX_PASSKEYS_PER_USER`; nilai default-nya adalah 20.
+
+`ENFORCE_TWO_FACTOR_AUTHENTICATION` secara default bernilai `false`. Ketika diaktifkan, akun email/kata sandi dan LDAP harus melakukan pendaftaran terlebih dahulu sebelum menerima sesi penuh. Penyedia federasi tetap bertanggung jawab atas MFA mereka sendiri. Batas percobaan kode sementara (`TWO_FACTOR_TEMP_MAX`, `TWO_FACTOR_TEMP_WINDOW`) terpisah dari batas percobaan langkah pengaturan (`TWO_FACTOR_SETUP_MAX`, `TWO_FACTOR_SETUP_WINDOW`).
+
+Penetapan hibah sistem dan perubahan berbagi sumber daya yang memperluas akses akan gagal secara tertutup (*fail closed*) secara default ketika penulisan audit sebelum perubahan gagal. Pencabutan tidak diblokir oleh gangguan audit. Hanya `AUDIT_LOG_FAIL_CLOSED=false` yang menonaktifkan perlindungan default tersebut. Mutasi admin lainnya memiliki urutan audit yang spesifik untuk setiap operasi; kesalahan audit tidak secara universal berarti pembatalan (*rollback*).
+
+### Konfigurasi admin dan rahasia [#admin-configuration-and-secrets]
+
+Profil Base database yang aktif menimpa YAML deployment sebelum profil role, group, dan user, terlepas dari prioritas numerik Base. Profil aktif lainnya digabungkan dalam urutan prioritas yang menaik dengan tie yang deterministik. Menghapus override akan memulihkan pewarisan; sebuah tombstone menekan nilai yang diwarisi. Array biasa ditekan secara keseluruhan; koleksi berkunci yang didukung juga memungkinkan penyembunyian entri bernama tertentu. Menghapus tombstone tersebut akan memulihkan pewarisan.
+
+Endpoint `changes` konfigurasi admin menerapkan satu batch ke satu profil secara atomik. Gunakan `dryRun` untuk memvalidasi dan `expectedRevision` untuk konkurensi optimistik; revisi yang sudah usang akan mengembalikan `409`. Periksa hasil yang diabaikan (ignored) karena pengaturan yang dilindungi mungkin tetap tidak diterapkan tanpa menolak seluruh batch. Jaminan ini tidak membuat perubahan nama peran atau operasi admin multi-dokumen lainnya menjadi atomik.
+
+Referensi `${ENV_VAR}` yang ditulis admin dibatasi pada nama-nama yang dirujuk oleh YAML deployment, kredensial endpoint bawaan, dan `CONFIG_OVERRIDE_ENV_ALLOWLIST` (dipisahkan dengan koma atau spasi). Referensi yang tidak dikenal akan ditolak saat penulisan dan tidak menghasilkan nilai apa pun saat runtime. Override Vertex AI lebih terbatas: `endpoints.anthropic.vertex` hanya dapat menggunakan nama environment yang dirujuk oleh konfigurasi Vertex dalam YAML deployment itu sendiri, bukan nama tambahan dari allowlist umum. Teks yang digunakan secara literal dikecualikan: `interface`, `modelSpecs`, prompt judul/aktivitas/label penalaran endpoint, prompt ringkasan, instruksi memori, dan prompt change-tracking Firecrawl.
+
+Kredensial web-search, MCP, dan Azure yang tersimpan terikat pada tujuannya masing-masing. Operasi tulis yang mengubah atau menghapus tujuan yang terikat harus memasukkan ulang kunci tersimpan dalam operasi tulis yang sama, atau menghapusnya. Tangani `secret_reentry_required` dengan meminta kembali secret yang diperlukan; jangan secara diam-diam mencoba ulang kunci lama terhadap URL baru. Kredensial yang dimiliki lingkungan dan yang dimiliki pengguna tidak dapat dialihkan melalui profil admin.
+
+`CONFIG_REDERIVE_ENDPOINTS` dinonaktifkan secara default untuk rilis ini. Override profil untuk grup Azure, `endpoints.anthropic.vertex`, dan sakelar Azure Assistants tetap disimpan tetapi tidak aktif hingga operator mengaktifkannya. Tinjau diagnostik startup untuk profil yang terdampak dan grup yang tidak dapat diselesaikan sebelum mengaktifkannya pada setiap replika. Pengaturan Vertex profil hanya berlaku jika YAML deployment mengonfigurasi Vertex, menggunakan file kunci dan region yang dimiliki oleh deployment.
+
+Mengganti nama peran kustom akan memindahkan anggotanya, profil konfigurasi, hak akses (grants), dan entri ACL dalam tenant-nya. Menghapus peran tersebut akan menetapkan ulang anggotanya ke `USER` dan menghapus konfigurasi serta hak akses yang terkait. Perubahan multi-dokumen ini bukan transaksi atomik. Setelah terjadi kegagalan, periksa status saat ini sebelum mencoba ulang; akses yang sudah dicabut dapat tetap dalam keadaan dicabut.
+
+### Autentikasi tenant yang ketat [#strict-tenant-authentication]
+
+Dengan `TENANT_ISOLATION_STRICT=true`, rute autentikasi dan akun memerlukan tenant nyata yang bukan sistem sebelum mencari pengguna. Konteks tenant yang tidak ada akan ditolak dengan `403` dan `TENANT_CONTEXT_REQUIRED`; alur OAuth menggunakan pengalihan kegagalannya. Verifikasi perutean tenant di proxy tepercaya atau batas autentikasi, termasuk rute sign-in dan refresh. Jangan mengatasi tenant yang tidak ada dengan menonaktifkan isolasi ketat atau mempercayai header publik yang sembarang.
+
+Pemeriksaan startup di seluruh deployment, sinkronisasi indeks, dan migrasi izin dijalankan dalam cakupan sistem yang eksplisit. Ketika sebuah migrasi menulis sebuah resource, migrasi tersebut mempertahankan partisi tenant resource tersebut. Pemeriksaan ini tidak memberikan permintaan autentikasi normal fallback ke tenant sistem.
+
+### Kompatibilitas paket bersama [#shared-package-compatibility]
+
+Paket bersama yang diperbarui menggunakan Zod 4. Integrasi kustom yang mengimpor dan menyusun skema LibreChat harus memperbarui penggunaan Zod mereka dan membangun ulang dengan versi paket yang sesuai; jangan menurunkan versi paket ini kembali ke Zod 3. Rilis ini mempertahankan field konfigurasi opsional yang dihilangkan serta diagnostik validasi; tidak diperlukan kenaikan versi YAML baru atau penulisan ulang konfigurasi secara menyeluruh untuk migrasi pustaka ini.
+
+Frontend kustom yang mengimpor kontrol warisan `@librechat/client` yang sudah dihapus harus bermigrasi ke kontrol yang dipelihara. Secara khusus, `Select`, `SelectDropDown`, `Dialog`, `DialogTemplate`, dan ekspor `DropdownMenu` dari Radix tidak lagi disediakan. Gunakan `OGDialog`/`OGDialogTemplate` untuk dialog, `Dropdown` untuk pemilih nilai tunggal, dan `DropdownPopup` atau primitif Ariakit untuk menu aksi. Pemanggil bawaan LibreChat sudah dimigrasikan. Ini adalah perubahan integrasi pengembang, bukan kewajiban untuk menulis ulang pengaturan deployment self-hosted.
+
+### Telemetri peramban [#browser-telemetry]
+
+RUM, log klien, dan pemutaran ulang sesi adalah opt-in yang independen. `telemetry.rum.enabled` dan `telemetry.rum.sessionReplay.enabled` di YAML memiliki prioritas di atas fallback lingkungan; jika dihilangkan, pengaturan lingkungan tetap dipertahankan, dan `sessionReplay: {}` yang kosong di YAML menonaktifkan pemutaran ulang.
+
+- `RUM_CLIENT_LOGS=true` mengaktifkan log diagnostik klien yang telah disanitasi hanya dalam mode proxy yang terautentikasi.
+- `RUM_SESSION_REPLAY_ENABLED=true` mengaktifkan replay saat RUM diaktifkan. Pengaturan ini menggantikan fallback `RUM_DISABLE_REPLAY` yang berlawanan dan sudah tidak digunakan lagi.
+- `RUM_PROXY_BODY_LIMIT` secara default bernilai `3mb`. Trace dan log berbagi anggaran pengguna yang sudah terautentikasi: `RUM_PROXY_USER_MAX=240` per `RUM_PROXY_USER_WINDOW=1` menit. Permintaan yang melebihi batas akan mengembalikan `429`.
+- Replay menyamarkan teks dan nilai input serta mengecualikan layar autentikasi, tetapi **bukan DLP untuk tujuan umum**. Validasi dengan data sintetis sebelum merekam pengguna sungguhan. Ingesti token publik langsung melewati penyaringan replay di server dan memerlukan kebijakan collector tersendiri.
+
+`LOG_REDACTION_MAX_NODES=5000` membatasi jumlah kerja redaksi per catatan log server. Objek dan string yang dihitung berdasarkan panjangnya menggunakan anggaran tersebut; field yang melebihi batas akan diganti, bukan diekspor tanpa redaksi. Pengaturan tingkat proses ini dibaca saat logger diinisialisasi.
+
+### Koneksi coding dan MCP Apps [#connected-coding-and-mcp-apps]
+
+Sesi Code stateful masih sangat eksperimental. Pendaftaran yang disetujui melalui browser tidak dengan sendirinya memberikan setiap agen akses ke sebuah mesin. Konfigurasikan lingkungan yang dilampirkan, aktifkan pendaftaran principal-worker beserta opt-in `browserSetup.enabled` yang terpisah, konfigurasikan `instance` publik kanonik, jalankan worker yang kompatibel, dan simpan daftar izin mesin eksplisit (allowlist) untuk agen tersebut. Obrolan baru hanya dapat memilih dari daftar izin tersebut; percakapan yang sudah ada tetap mempertahankan keputusan yang telah tercatat.
+
+Integrasi opsional `endpoints.agents.pullRequests` memerlukan worker yang kompatibel untuk melaporkan state git, Code API `CODEAPI_BRIDGE_LANE_GIT=true`, cakupan repositori, dan token penyedia dengan cakupan yang sesuai. GitHub memerlukan akses read-only ke Pull requests, Checks, dan Contents. GitLab dan Bitbucket menggunakan kredensial khusus penyedia masing-masing. Koneksi OAuth per pengguna merupakan opt-in yang terpisah.
+
+Aplikasi MCP baru memerlukan `mcpSettings.apps: true`. Jika properti ini dihilangkan, perilaku HTML inline lama tetap dipertahankan, sedangkan `false` menonaktifkan keduanya. Deploy sandbox aplikasi MCP pada origin khusus yang diarahkan ke `/api/mcp/sandbox`; kebijakan sandbox deployment bukan override berdasarkan role/grup/pengguna. Terapkan pengaturan origin sandbox dan build-time sesuai dengan [panduan konfigurasi MCP](/docs/configuration/librechat_yaml/object_structure/mcp_settings).
+
+### Peluncuran pembersihan berkas [#file-cleanup-rollout]
+
+`fileConfig.retainedFileCleanup` tetap nonaktif secara default. Aktifkan hanya setelah setiap replika dan target rollback mendukung tujuan retained file. Pembersihan vektor juga memerlukan `fileConfig.vectorOwnershipTrackingStart`, yaitu batas waktu UTC yang dipilih setelah penulis vektor lama dan target rollback telah dihentikan, serta bukti kepemilikan lengkap yang tercatat untuk file pada atau setelah batas waktu tersebut. Jangan memundurkan batas waktu atau menyimpulkan kepemilikan untuk file historis hanya agar penghapusan dapat dilanjutkan.
+
+Catatan yang ambigu atau yang dibuat sebelum batas waktu akan gagal secara tertutup (*fail closed*). File primer tetap dapat dibaca hingga pembersihan sekunder dikonfirmasi. `fileConfig.vectorDeletionConcurrency` memiliki nilai default `4` dan menerima `1`–`16` penghapusan namespace per file. Lihat [kontrol pembersihan file](/docs/configuration/librechat_yaml/object_structure/file_config#retained-file-and-vector-cleanup) sebelum mengaktifkannya.
+
+### Perubahan default lainnya [#other-changed-defaults]
+
+- Enter mengirim pesan secara default. Pengguna dapat mengubah preferensi ini di Pengaturan.
+- Resize gambar di browser aktif secara default ketika `fileConfig.clientImageResize.enabled` dihilangkan. Nilai `true` atau `false` yang eksplisit akan memaksa pilihan untuk seluruh deployment.
+- `interface.retentionMode: ephemeral` memaksa setiap chat bersifat sementara. Sebelum kembali ke `temporary`, hapus tenggat retensi dari catatan yang tidak boleh lagi kedaluwarsa; tenggat yang sudah ada tidak dimigrasikan secara otomatis.
+- Obrolan sementara, termasuk obrolan mode ephemeral, tidak dilacak atau diberi skor umpan balik kecuali `langfuse.trace.temporaryChats` diaktifkan.
+- `interface.historyCacheTtlMs` secara default bernilai `60000` dan `historyCacheRecent` bernilai `1`, dengan anggaran tambahan `historyCacheMaxBytes` sebesar `8388608` byte, yang membatasi berapa lama riwayat yang baru saja ditinggalkan tetap disimpan dalam cache.
+- `toolCallPreviews` secara default menggunakan pratinjau terbatas untuk klien yang memintanya. `outputChars` dan `argsChars` secara default bernilai `512`; ekspor dan klien yang tidak meminta pratinjau tetap menyimpan konten lengkap.
+
+Lihat [referensi antarmuka](/docs/configuration/librechat_yaml/object_structure/interface), [referensi Agents](/docs/configuration/librechat_yaml/object_structure/agents), dan [referensi lingkungan](/docs/configuration/dotenv) untuk opsi yang tersedia.

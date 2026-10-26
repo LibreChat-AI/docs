@@ -41,7 +41,7 @@ LibreChat 的 Code Interpreter API 提供了一种安全且便捷的方式，通
 - 安全文件管理
 - 基于会话的文件组织
 
-LibreChat 会在 Agent 运行前将引用的对话文件恢复到托管的 Code Interpreter 环境中。如果所有必需的 Code Interpreter 文件均恢复失败，运行将在模型调用前停止，并提示用户重新附加文件，而不是继续使用陈旧的引用。在选定的已附加工作区中，聊天上传的文件**不会**被复制到用户的工作区中，工作区文件和 Bash 工具也无法在其中打开这些文件。如果 worker 启用了带有文件转发功能的 Programmatic Bash，该工具将在其运行期间看到位于 `$LIBRECHAT_CODE_DATA_DIR` 下的暂存上传文件。
+LibreChat 会在 Agent 运行之前,将引用的对话文件恢复到受管理的 Code Interpreter 环境中。如果所有必需的 Code Interpreter 文件都恢复失败,运行将在调用模型之前停止,并提示用户重新附加这些文件,而不是继续使用过时的引用。在选定的已附加工作区中,当 worker 声明支持 `import_file` 和 `write_file` 且未禁止文件写入时,符合条件的、由请求者拥有的聊天上传文件可以复制到 `.librechat/attachments` 中。有关限制和失败处理,请参阅[附件副本](#chat-attachments-in-attached-workspaces)。如果 worker 声明支持带文件中继的 Programmatic Bash,则该工具在其运行期间会在 `$LIBRECHAT_CODE_DATA_DIR` 下看到已暂存的上传文件。
 
 Code API 上传通过遵循 `Retry-After`、为每次尝试重新打开源流以及共享有限的等待预算，从 `429` 速率限制中恢复。管理员可以通过 [`codeApiUploadConcurrency` 和 `codeApiMaxRetryWaitMs`](/docs/configuration/librechat_yaml/object_structure/agents#code-api-upload-recovery) 来调整每个用户、每个路由的恢复设置。
 
@@ -103,7 +103,7 @@ Stateful code sessions 让 LibreChat Agent 能够在多次执行中复用同一�
 
 当所选环境缺失、无法访问或不兼容时，有状态请求（Stateful requests）将以关闭状态失败；LibreChat 不会将它们发送到 `LIBRECHAT_CODE_BASEURL`，也不会静默选择另一个已命名的后端。当未配置任何命名环境时，`LIBRECHAT_CODE_BASEURL_STATEFUL` 仍作为有状态路由。无状态代理（Stateless agents）继续使用常规 endpoint。LibreChat 还会发送 `X-CodeAPI-Expected-Profile: stateful`，因此专用服务必须声明 `stateful` 配置文件。
 
-有状态和无状态会话不共享同一个实时工作区。无论选择何种范围，有状态工作区都可能随时重置。在托管的 Code Interpreter 环境中，请将重要输出保存到 `/mnt/data` 下，不要将其他会话状态视为持久存储。附加的工作区是一个独立的、由 worker 拥有的目录；上传的文件默认不会放置在该目录中。
+无状态会话与有状态会话并不共享实时工作区。有状态工作区可能随时重置，与其所选范围无关。在托管的 Code Interpreter 环境中，请将重要输出保存到 `/mnt/data` 下，除此之外不要依赖会话状态作为持久存储。已附加的工作区是由工作进程拥有的独立目录；当工作进程支持附件导入时，符合条件的聊天附件可以复制到该目录中；参见[附件副本](#chat-attachments-in-attached-workspaces)。
 
 由有状态的 `create_file` 和 `edit_file` 调用所创建的文件会显示在助手消息下方的可展开的 **Workspace changes** 行中。该行会列出针对该响应所更改的每个唯一路径，并提供经过身份验证的下载操作。下载过程在可用时会使用 LibreChat 的持久化文件流，否则将使用安全的 Code Interpreter 后备方案。该行是已创建输出的记录，而非持久的工作区快照；无状态输出将继续作为常规内联附件显示。
 
@@ -127,7 +127,7 @@ Stateful code sessions 让 LibreChat Agent 能够在多次执行中复用同一�
 
 要在聊天标题和侧边栏中显示对话的拉取请求（GitHub、GitLab 或 Bitbucket Cloud），附加的 worker 必须报告其 git 分支。这需要使用 `LibreChat-AI/code-interpreter` PR #311 或更高版本构建的 worker，并在 Code API（而非 LibreChat）上设置 `CODEAPI_BRIDGE_LANE_GIT=true`。请参阅 [Conversation Pull Requests](/docs/features/pull_requests)。
 
-附加的 worker 会通告其可用的工作区根目录。Composer 允许用户为通过 Agent 或其子 Agent 可访问的每个附加环境选择一个工作区；对于新的对话，系统会自动选择一个明确的工作区。LibreChat 会将这些选择存储在对话中，在执行前根据实时 worker 进行重新验证，并在批准暂停和恢复运行期间保持固定。当缺少必要的选择或选择不可用时，发送操作将被阻止，LibreChat 绝不会静默替换为其他工作区。在运行开始时，LibreChat 可以从选定的工作区加载存储库指令，以便 Agent 遵循该存储库的指导；管理员可以使用 [`repositoryInstructions.timeoutMs`](/docs/configuration/librechat_yaml/object_structure/agents#repositoryinstructions) 来限制发现范围。即使 worker 不支持可重用的运行时会话，原生的文件和 Bash 工作区工具也可以使用通告的根目录。当 Agent 的程序化工具配置允许、授权的附加 worker 就绪并通告 `programmaticLanguages: ['bash']`，且选定的工作区和 worker 都允许 `execute_command` 时，兼容的 Code API 和 worker 构建版本即可使用支持工作区的程序化 Bash。LibreChat 会将服务器验证的工作区 ID 和对话工作区实例 ID（如果存在）传递给程序化工具；模型参数无法替换该选择。若不具备这些功能，程序化 Bash 将被禁用；请对支持工作区的命令使用直接 Bash。当 worker 支持文件转发时，聊天上传的文件会单独暂存在 `$LIBRECHAT_CODE_DATA_DIR` 下供程序化运行使用，而不会复制到选定的工作区中。**停止 (Stop)** 会取消正在运行的、支持信号的 BYOM 命令，且不会使工作区对后续命令失效；分离的任务保留其独立的取消生命周期。
+已连接的工作节点会公布其可用的工作区根目录。输入框允许用户为通过 Agent 或其子 Agent 可访问的每个已连接环境选择一个工作区;当只有一个明确的工作区时,新对话会自动选中该工作区。LibreChat 将这些选择存储在对话中,在执行前会对照实时工作节点重新验证,并在审批暂停和恢复运行期间保持不变。当所需的选择缺失或不可用时,发送操作会被阻止,LibreChat 绝不会悄悄替换为其他工作区。运行开始时,LibreChat 可以从所选工作区加载仓库说明,使 Agent 遵循该仓库的指引;管理员可以通过 [`repositoryInstructions.timeoutMs`](/docs/configuration/librechat_yaml/object_structure/agents#repositoryinstructions) 限制发现过程的时长。即使工作节点不支持可复用的运行时会话,原生文件和 Bash 工作区工具仍可使用已公布的根目录。在兼容的 Code API 和工作节点版本上,当 Agent 的程序化工具配置允许、已授权的已连接工作节点处于就绪状态并公布 `programmaticLanguages: ['bash']`,且所选工作区和工作节点都允许 `execute_command` 时,可使用支持工作区的程序化 Bash。LibreChat 会将服务器验证过的工作区 ID 以及(如存在的)对话工作区实例 ID 传递给程序化工具;模型参数无法替换该选择。若不满足这些条件,程序化 Bash 将被禁用;对于支持工作区的命令,请使用直接 Bash。当工作节点支持文件中继时,程序化 Bash 还会在 `$LIBRECHAT_CODE_DATA_DIR` 下接收运行范围内的上传文件;此暂存与复制到 `.librechat/attachments` 中的附件副本相互独立。**停止**操作会取消支持信号感知的进行中 BYOM 命令,但不会使工作区失效,后续命令仍可正常执行;分离的后台任务则保留其独立的取消生命周期。
 
 对于附加的执行环境，Agent Builder 可以将**工作区默认值 (Workspace default)** 设置为当前已广播的根目录之一。它会根据该附加环境进行验证，并用于初始化该 Agent 的新对话。选择**上次使用 (Last used)** 将使用已登录用户在该 Agent 和环境下的浏览器本地偏好设置；这仅是一个便捷提示，绝非授权许可或对话绑定。更改执行环境会清除显式默认值，而不再广播的已保存根目录虽然仍可见，但在重新配置之前无法被选中。
 
@@ -310,3 +310,11 @@ Code Interpreter 服务在 Apache 2.0 许可证下开源，地址为 [ClickHouse
 Code Interpreter API 提供了一种安全、便捷的方式，可在隔离的沙盒中执行代码并管理文件。无论您是通过 LibreChat 的 Agents 使用它，还是将其直接集成到您的应用程序中，它都能为代码执行需求提供强大的解决方案。
 
 有关详细的技术规范、部署指南和 API 参考，请参阅 [code-interpreter repository](https://github.com/ClickHouse/code-interpreter)。
+
+## 已附加工作区中的聊天附件 [#chat-attachments-in-attached-workspaces]
+
+在模型运行之前,符合条件的、由请求用户上传的聊天附件会被复制到所选已附加工作区中的 `.librechat/attachments` 目录下。工作进程必须同时声明 `import_file` 和 `write_file` 能力,并且其文件写入策略不能为 `deny`。`ask` 策略允许此次复制,因为上传行为即代表用户已授予同意。智能体专用文件和其他用户上传的文件不会被复制。
+
+附件文件夹必须通过其 `.gitignore` 进行忽略。与现有忽略规则不兼容时，将停止复制，而不会改写用户的规则。Agent 会收到实际复制的路径，或明确的不可用原因，例如不支持的 worker、写入被拒绝、超出大小限制、冲突、忽略保护、超时或传输失败。超时后未完成的复制会在下一轮重试。这与 Programmatic Bash 的 `$LIBRECHAT_CODE_DATA_DIR` 暂存相互独立。
+
+`endpoints.agents.workspaceAttachments.timeoutMs` 默认值为 `10000`(取值范围 `1000`–`120000`),`concurrency` 默认值为 `3`(取值范围 `1`–`16`),适用于本次对话轮次中的工作区请求。

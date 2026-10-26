@@ -1,0 +1,98 @@
+---
+title: Nâng cấp và Triển khai luân phiên
+icon: RefreshCw
+description: >-
+  Điều kiện tiên quyết để nâng cấp, các công tắc tương thích và giới hạn khôi
+  phục cho quản trị viên LibreChat.
+---
+
+## Chuẩn bị cho v0.8.9-rc1 [#preparing-for-v089-rc1]
+
+Sử dụng Node.js **24.22.1** cho các bản cài đặt cục bộ. Sao lưu MongoDB, `librechat.yaml` và thông tin mã hóa trước khi thay đổi phiên bản. Giữ nguyên `CREDS_KEY` và `CREDS_IV`; thay thế chúng không phải là một quá trình di chuyển. Cấu hình `1.3.18` mô tả bản ứng viên này; xem [nhật ký thay đổi cấu hình](/changelog/config_v1.3.18) để biết các thiết lập đã được bổ sung.
+
+Nâng cấp mọi bản sao (replica) API của LibreChat trước khi bật một tính năng mà các bản sao cũ không thể thực thi. Cập nhật riêng các client tương thích, các dịch vụ Code API và các worker đi kèm. Image LibreChat không nâng cấp một Code API được triển khai độc lập hoặc các gói ngôn ngữ đã cài đặt trong đó.
+
+### Tương thích giữa các phiên bản hỗn hợp [#mixed-version-compatibility]
+
+| Bề mặt | Trong khi vẫn còn các replica hoặc client không tương thích | Sau khi triển khai hoàn tất |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Thông tin xác thực người dùng đã lưu | Đặt `credentials.writeFormat: legacy` trong YAML triển khai trên mọi replica. | Xóa ghi đè để sử dụng ghi `v3` với IV ngẫu nhiên cho mỗi giá trị. Cả hai định dạng vẫn có thể đọc được bởi bản phát hành này. |
+| Mã dự phòng xác thực hai yếu tố | Đặt `TWO_FACTOR_BACKUP_CODE_FORMAT=legacy` trên mọi replica nếu các backend hoặc client cũ không thể đọc mã mạnh. | Xóa cấu hình này để cấp mã 128-bit ngẫu nhiên, được muối riêng từng mã. Các mã legacy hiện có vẫn hợp lệ cho đến khi được tạo lại. |
+| Thay đổi địa chỉ email | Đặt `emailChange.enabled: false` hoặc `ALLOW_EMAIL_CHANGE=false`. Cờ YAML có mức ưu tiên cao hơn. | Chỉ bật sau khi mọi node đều hỗ trợ liên kết đặt lại mật khẩu gắn với địa chỉ email. Nếu không, một liên kết được phát hành bởi node cũ có thể tồn tại lâu hơn việc thay đổi email. |
+| Lựa chọn máy theo từng cuộc trò chuyện | Đặt `CODE_ENVIRONMENT_DECISION_VERSION=0` hoặc `endpoints.agents.statefulCodeSessions.allowEnvironmentSelection: false`. | Giao thức quyết định v1 và việc chọn máy được bật theo mặc định, nhưng chỉ các agent có danh sách máy được phép rõ ràng mới có thể đưa ra lựa chọn. |
+| Thay đổi không gian làm việc của cuộc trò chuyện đã lưu | Giữ `statefulCodeSessions.conversationMoves.enabled` ở trạng thái tắt; `allowAttachDetach` là một tùy chọn bật riêng biệt. | Chỉ bật khi có giao thức v1 trên mọi replica API và Code API/worker tương thích. Làm mới client sau đó. |
+| Phê duyệt công cụ đã ghi nhớ | Giữ `endpoints.agents.toolApproval.agentModes: false`. | Chủ động bật sau khi mọi replica đều hỗ trợ chế độ này. Các quy tắc hỏi/từ chối của quản trị viên vẫn có thẩm quyền cao nhất. |
+| Hoàn thành tác vụ nền theo lô | Đặt `endpoints.agents.backgroundTasks.completionReceiptBatching: false` trong khi các replica cũ vẫn đang phục vụ lưu lượng. | Xóa ghi đè để gửi các kết quả đã sẵn sàng cùng lúc. |
+| Đổi tên cuộc trò chuyện đang chạy | Đặt `interface.runningChatRename: false` cho đến khi các tác vụ tạo tiêu đề cũ hoàn tất. | Xóa ghi đè để cho phép đổi tên các cuộc trò chuyện đang chạy hoặc có tiêu đề tạm thời. |
+
+Việc chuyển ngược công tắc định dạng ghi **không** chuyển đổi dữ liệu đã được lưu trữ. Một bản phát hành cũ hơn không thể đọc các thông tin xác thực được lưu dưới dạng v3 hoặc các mã dự phòng mạnh mới được cấp. Trước khi quay lui, hãy chủ động thay thế hoặc di chuyển dữ liệu không tương thích thay vì xoay vòng khóa mã hóa.
+
+### Chính sách xác thực và bảo mật [#authentication-and-security-policy]
+
+[Đăng nhập bằng passkey](/docs/configuration/authentication) là tính năng tùy chọn, được bật thông qua `ALLOW_PASSKEY_LOGIN=true` và yêu cầu HTTPS trong môi trường production. Hãy giữ ổn định ID của bên tin cậy (relying-party ID): thay đổi `PASSKEY_RP_ID` có thể làm vô hiệu hóa các đăng ký passkey hiện có. `passkeys.perUserMax` ghi đè `MAX_PASSKEYS_PER_USER`; giá trị mặc định là 20.
+
+`ENFORCE_TWO_FACTOR_AUTHENTICATION` mặc định là `false`. Khi được bật, các tài khoản đăng nhập bằng email/mật khẩu và LDAP phải đăng ký xác thực hai yếu tố trước khi nhận được phiên đăng nhập đầy đủ. Các nhà cung cấp định danh liên hợp (federated) vẫn chịu trách nhiệm về xác thực đa yếu tố (MFA) của riêng họ. Các hạn mức cho mã tạm thời (`TWO_FACTOR_TEMP_MAX`, `TWO_FACTOR_TEMP_WINDOW`) được tách biệt với hạn mức cho các bước thiết lập (`TWO_FACTOR_SETUP_MAX`, `TWO_FACTOR_SETUP_WINDOW`).
+
+Các thay đổi cấp phát quyền hệ thống và mở rộng việc chia sẻ tài nguyên sẽ bị từ chối theo mặc định (fail closed) khi ghi nhật ký kiểm toán trước thay đổi thất bại. Việc thu hồi quyền không bị chặn bởi sự cố nhật ký kiểm toán. Chỉ có `AUDIT_LOG_FAIL_CLOSED=false` mới vô hiệu hóa cơ chế bảo vệ mặc định này. Các thao tác quản trị khác có thứ tự ghi kiểm toán riêng theo từng thao tác: lỗi kiểm toán không đồng nghĩa với việc luôn luôn hoàn tác (rollback).
+
+### Cấu hình quản trị và bí mật [#admin-configuration-and-secrets]
+
+Hồ sơ Base đang hoạt động trong cơ sở dữ liệu sẽ ghi đè YAML triển khai trước các hồ sơ theo vai trò, nhóm và người dùng, bất kể mức độ ưu tiên dạng số của Base là bao nhiêu. Các hồ sơ đang hoạt động khác được gộp theo thứ tự ưu tiên tăng dần, với các trường hợp đồng hạng được xử lý theo cách xác định. Xóa một ghi đè sẽ khôi phục kế thừa; một tombstone sẽ che giấu giá trị được kế thừa. Các mảng thông thường bị che giấu toàn bộ; các tập hợp có khóa được hỗ trợ cũng cho phép ẩn từng mục được đặt tên riêng lẻ. Xóa tombstone đó sẽ khôi phục kế thừa.
+
+Endpoint `changes` của cấu hình quản trị áp dụng một lô thay đổi cho một hồ sơ (profile) theo cách nguyên tử (atomic). Sử dụng `dryRun` để kiểm tra tính hợp lệ và `expectedRevision` để kiểm soát đồng thời lạc quan (optimistic concurrency); nếu revision đã cũ, endpoint trả về `409`. Hãy kiểm tra các kết quả bị bỏ qua (ignored) vì các thiết lập được bảo vệ (protected) có thể vẫn chưa được áp dụng mà không làm từ chối toàn bộ lô. Cam kết này không làm cho việc đổi tên vai trò (role rename) hoặc các thao tác quản trị trên nhiều tài liệu khác trở nên nguyên tử.
+
+Các tham chiếu `${ENV_VAR}` do quản trị viên viết được giới hạn trong các tên được tham chiếu bởi YAML triển khai, thông tin xác thực endpoint tích hợp sẵn và `CONFIG_OVERRIDE_ENV_ALLOWLIST` (phân tách bằng dấu phẩy hoặc khoảng trắng). Các tham chiếu không xác định sẽ bị từ chối khi ghi và không được phân giải thành giá trị nào trong thời gian chạy. Các ghi đè Vertex AI bị hạn chế chặt hơn: `endpoints.anthropic.vertex` chỉ có thể sử dụng các tên biến môi trường được tham chiếu trong cấu hình Vertex của chính YAML triển khai, không dùng thêm các tên khác từ danh sách cho phép chung. Văn bản được dùng nguyên dạng (literal) được miễn trừ: `interface`, `modelSpecs`, các prompt về tiêu đề endpoint/hoạt động/nhãn suy luận, prompt tóm tắt, hướng dẫn bộ nhớ và prompt change-tracking của Firecrawl.
+
+Các thông tin xác thực web-search, MCP và Azure đã lưu được gắn cố định với đích đến của chúng. Một thao tác ghi làm thay đổi hoặc xóa một đích đến đã gắn phải nhập lại khóa đã lưu trong cùng thao tác ghi đó, hoặc xóa khóa đó. Khi gặp `secret_reentry_required`, hãy thu thập lại khóa bí mật cần thiết; không được âm thầm thử lại một khóa cũ với một URL mới. Các thông tin xác thực do môi trường sở hữu và do người dùng sở hữu không thể bị chuyển hướng thông qua một hồ sơ quản trị viên.
+
+`CONFIG_REDERIVE_ENDPOINTS` được tắt theo mặc định trong bản phát hành này. Các ghi đè theo hồ sơ đối với nhóm Azure, `endpoints.anthropic.vertex` và công tắc Azure Assistants vẫn được lưu trữ nhưng không có tác dụng cho đến khi người vận hành bật tính năng này. Hãy xem xét các chẩn đoán khởi động đối với những hồ sơ bị ảnh hưởng và các nhóm không thể phân giải trước khi bật tính năng này trên mọi replica. Các cài đặt Vertex của hồ sơ chỉ được áp dụng khi YAML triển khai có cấu hình Vertex, sử dụng tệp khóa và khu vực do triển khai quản lý.
+
+Việc đổi tên một vai trò tùy chỉnh sẽ chuyển các thành viên, hồ sơ cấu hình, quyền cấp và mục ACL của vai trò đó trong cùng tenant. Việc xóa vai trò sẽ gán lại các thành viên về `USER` và xóa cấu hình cùng quyền cấp phụ thuộc. Các thay đổi nhiều tài liệu này không phải là một giao dịch nguyên tử (atomic). Sau khi gặp lỗi, hãy kiểm tra trạng thái hiện tại trước khi thử lại; các quyền truy cập đã bị thu hồi có thể vẫn ở trạng thái bị thu hồi.
+
+### Xác thực tenant nghiêm ngặt [#strict-tenant-authentication]
+
+Với `TENANT_ISOLATION_STRICT=true`, các route xác thực và tài khoản cần có một tenant thực, không phải tenant hệ thống, trước khi tra cứu người dùng. Khi thiếu ngữ cảnh tenant, yêu cầu sẽ bị từ chối với mã `403` và `TENANT_CONTEXT_REQUIRED`; các luồng OAuth sử dụng chuyển hướng khi thất bại. Hãy xác minh việc định tuyến tenant tại proxy đáng tin cậy hoặc ranh giới xác thực, bao gồm các route đăng nhập và làm mới token. Không được xử lý tình huống thiếu tenant bằng cách tắt chế độ cách ly nghiêm ngặt hoặc tin tưởng các header công khai tùy ý.
+
+Các kiểm tra khởi động trên toàn triển khai, đồng bộ chỉ mục và di chuyển quyền được thực thi trong phạm vi hệ thống rõ ràng. Khi một tác vụ di chuyển ghi một tài nguyên, nó giữ nguyên phân vùng tenant của tài nguyên đó. Các kiểm tra này không cấp cho các yêu cầu xác thực thông thường khả năng quay về tenant hệ thống làm phương án dự phòng.
+
+### Tương thích gói dùng chung [#shared-package-compatibility]
+
+Các gói dùng chung đã được làm mới sử dụng Zod 4. Các tích hợp tùy chỉnh import và kết hợp các schema của LibreChat phải cập nhật cách sử dụng Zod và build lại với các phiên bản gói tương ứng; không được ghi đè các gói này về Zod 3. Bản phát hành này giữ nguyên các trường cấu hình tùy chọn bị bỏ qua và các thông tin chẩn đoán xác thực; không cần tăng phiên bản YAML mới hay viết lại cấu hình hàng loạt để thực hiện việc chuyển đổi thư viện.
+
+Các frontend tùy chỉnh đang import các control cũ đã bị gỡ bỏ từ `@librechat/client` phải chuyển sang các control được duy trì. Cụ thể, `Select`, `SelectDropDown`, `Dialog`, `DialogTemplate` và các export `DropdownMenu` của Radix không còn được cung cấp nữa. Hãy dùng `OGDialog`/`OGDialogTemplate` cho hộp thoại, `Dropdown` cho bộ chọn đơn giá trị, và `DropdownPopup` hoặc các primitive của Ariakit cho menu hành động. Các thành phần gọi đến từ chính LibreChat đã được chuyển đổi. Đây là thay đổi tích hợp dành cho nhà phát triển, không yêu cầu viết lại cấu hình của một triển khai tự host.
+
+### Đo lường từ trình duyệt [#browser-telemetry]
+
+RUM, nhật ký phía client (client logs) và phát lại phiên (session replay) là các tùy chọn bật riêng biệt, độc lập với nhau. Cài đặt YAML `telemetry.rum.enabled` và `telemetry.rum.sessionReplay.enabled` được ưu tiên hơn các giá trị dự phòng từ biến môi trường; nếu bỏ qua khóa này thì giữ nguyên cài đặt từ môi trường, còn `sessionReplay: {}` rỗng trong YAML sẽ tắt tính năng phát lại phiên.
+
+- `RUM_CLIENT_LOGS=true` chỉ bật nhật ký chẩn đoán phía máy khách đã được làm sạch (scrubbed) khi ở chế độ proxy có xác thực.
+- `RUM_SESSION_REPLAY_ENABLED=true` cho phép bật tính năng phát lại phiên khi RUM được bật. Biến này thay thế cho cơ chế dự phòng `RUM_DISABLE_REPLAY` đã lỗi thời (ngược lại với biến này).
+- `RUM_PROXY_BODY_LIMIT` mặc định là `3mb`. Traces và logs dùng chung hạn mức của người dùng đã xác thực: `RUM_PROXY_USER_MAX=240` mỗi `RUM_PROXY_USER_WINDOW=1` phút. Các yêu cầu vượt quá sẽ trả về `429`.
+- Replay che văn bản và giá trị input, đồng thời loại trừ các màn hình xác thực, nhưng **không phải là giải pháp DLP đa năng**. Hãy kiểm tra bằng dữ liệu tổng hợp trước khi ghi lại người dùng thật. Việc nhận trực tiếp token công khai sẽ bỏ qua bộ lọc replay phía máy chủ và cần có chính sách collector riêng.
+
+`LOG_REDACTION_MAX_NODES=5000` giới hạn khối lượng công việc che giấu (redaction) cho mỗi bản ghi log phía máy chủ. Các đối tượng và chuỗi được tính trọng số theo độ dài sẽ tiêu tốn ngân sách này; những trường vượt quá giới hạn sẽ bị thay thế thay vì được xuất ra mà chưa che giấu. Cài đặt cấp tiến trình này được đọc khi logger khởi tạo.
+
+### Kết nối lập trình và ứng dụng MCP [#connected-coding-and-mcp-apps]
+
+Phiên Code có trạng thái (stateful) vẫn đang ở giai đoạn thử nghiệm rất cao. Việc đăng ký được phê duyệt qua trình duyệt không tự động cấp cho mọi tác nhân quyền truy cập vào một máy. Hãy cấu hình môi trường đính kèm, bật tính năng đăng ký worker chính (principal-worker enrollment) cùng với tùy chọn tham gia riêng `browserSetup.enabled`, cấu hình `instance` công khai chuẩn, khởi động một worker tương thích, và lưu danh sách máy được phép (allowlist) rõ ràng của tác nhân. Các cuộc trò chuyện mới chỉ có thể chọn từ danh sách được phép đó; các cuộc trò chuyện hiện có giữ nguyên quyết định đã được ghi nhận.
+
+Tích hợp tùy chọn `endpoints.agents.pullRequests` cần một worker tương thích để báo cáo trạng thái git, Code API với `CODEAPI_BRIDGE_LANE_GIT=true`, một phạm vi kho lưu trữ (repository scope), và một token nhà cung cấp có phạm vi quyền phù hợp. GitHub cần quyền truy cập chỉ đọc đối với Pull requests, Checks và Contents. GitLab và Bitbucket sử dụng thông tin xác thực riêng của từng nhà cung cấp. Kết nối OAuth dành riêng cho từng người dùng là một tùy chọn đăng ký riêng biệt.
+
+Các MCP Apps mới yêu cầu `mcpSettings.apps: true`. Nếu bỏ qua tùy chọn này, hệ thống sẽ giữ nguyên hành vi HTML inline cũ, trong khi giá trị `false` sẽ tắt cả hai. Triển khai sandbox của MCP App trên một origin riêng được định tuyến tới `/api/mcp/sandbox`; chính sách sandbox khi triển khai không phải là ghi đè theo vai trò, nhóm hoặc người dùng. Áp dụng thiết lập origin sandbox và thiết lập lúc build theo [hướng dẫn cấu hình MCP](/docs/configuration/librechat_yaml/object_structure/mcp_settings).
+
+### Triển khai dọn dẹp tệp [#file-cleanup-rollout]
+
+`fileConfig.retainedFileCleanup` vẫn được tắt theo mặc định. Chỉ bật tính năng này sau khi mọi replica và mọi rollback target đều hỗ trợ các đích lưu giữ tệp. Việc dọn dẹp vector cũng yêu cầu `fileConfig.vectorOwnershipTrackingStart`, một mốc cắt theo UTC được chọn sau khi các writer vector cũ và rollback target đã được gỡ bỏ, cùng với bằng chứng quyền sở hữu đầy đủ được ghi nhận cho tệp tại hoặc sau mốc cắt đó. Không được lùi mốc cắt về thời điểm trước đó, cũng không được suy đoán quyền sở hữu đối với các tệp lịch sử chỉ nhằm để việc xóa có thể tiếp tục.
+
+Các bản ghi không rõ ràng hoặc có trước thời điểm cắt đều bị từ chối theo cơ chế fail closed. Tệp chính vẫn có thể đọc được cho đến khi việc dọn dẹp tệp phụ được xác nhận. `fileConfig.vectorDeletionConcurrency` mặc định là `4` và chấp nhận từ `1` đến `16` lần xóa namespace trên mỗi tệp. Xem [các kiểm soát dọn dẹp tệp](/docs/configuration/librechat_yaml/object_structure/file_config#retained-file-and-vector-cleanup) trước khi bật chúng.
+
+### Các giá trị mặc định khác đã thay đổi [#other-changed-defaults]
+
+- Enter gửi tin nhắn theo mặc định. Người dùng có thể thay đổi tùy chọn này trong Cài đặt.
+- Việc thay đổi kích thước hình ảnh trên trình duyệt được bật theo mặc định khi bỏ qua `fileConfig.clientImageResize.enabled`. Đặt giá trị rõ ràng là `true` hoặc `false` sẽ buộc áp dụng lựa chọn cho toàn bộ triển khai.
+- `interface.retentionMode: ephemeral` buộc mọi cuộc trò chuyện phải có tính tạm thời. Trước khi chuyển lại về `temporary`, hãy xóa thời hạn lưu giữ khỏi các bản ghi không còn cần hết hạn; các thời hạn hiện có sẽ không được tự động di chuyển.
+- Các cuộc trò chuyện tạm thời, bao gồm cả các cuộc trò chuyện ở chế độ tạm thời (ephemeral), sẽ không được theo dõi (trace) hoặc chấm điểm phản hồi trừ khi `langfuse.trace.temporaryChats` được bật.
+- `interface.historyCacheTtlMs` mặc định là `60000` và `historyCacheRecent` mặc định là `1`, cùng với ngân sách `historyCacheMaxBytes` bổ sung là `8388608` byte, giới hạn thời gian các lịch sử hội thoại vừa rời khỏi được lưu trong bộ nhớ đệm.
+- `toolCallPreviews` mặc định sử dụng bản xem trước giới hạn cho các client yêu cầu chúng. `outputChars` và `argsChars` mặc định là `512`; các bản xuất (exports) và các client không yêu cầu bản xem trước sẽ giữ nguyên toàn bộ nội dung.
+
+Xem [tài liệu tham khảo giao diện](/docs/configuration/librechat_yaml/object_structure/interface), [tài liệu tham khảo Agents](/docs/configuration/librechat_yaml/object_structure/agents) và [tài liệu tham khảo môi trường](/docs/configuration/dotenv) để biết các tùy chọn hiện có.

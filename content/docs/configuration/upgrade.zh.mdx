@@ -1,0 +1,96 @@
+---
+title: 升级与滚动部署
+icon: RefreshCw
+description: 升级前提、兼容性开关与回滚边界(面向 LibreChat 运维人员)
+---
+
+## 为 v0.8.9-rc1 做准备 [#preparing-for-v089-rc1]
+
+使用 Node.js **24.22.1** 进行本地安装。在更改版本之前,请备份 MongoDB、`librechat.yaml` 以及加密凭据。保留 `CREDS_KEY` 和 `CREDS_IV`;替换它们并不是迁移。配置 `1.3.18` 描述了此候选版本;新增设置请参阅[配置更新日志](/changelog/config_v1.3.18)。
+
+在启用旧版副本无法执行的功能之前,请先升级每一个 LibreChat API 副本。请分别更新兼容的客户端、Code API 服务以及所附加的 worker。LibreChat 镜像不会升级独立部署的 Code API,也不会升级其中已安装的语言包。
+
+### 混合版本兼容性 [#mixed-version-compatibility]
+
+| 界面 | 在存在不兼容的副本或客户端时 | 滚动升级完成后 |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 已存储的用户凭据 | 在每个副本的部署 YAML 中设置 `credentials.writeFormat: legacy`。 | 移除该覆盖配置,即可使用 `v3` 格式写入,每个值使用随机 IV。本版本仍可读取两种格式。 |
+| 双因素认证备用码 | 如果旧版后端或客户端无法读取强备用码,请在每个副本上设置 `TWO_FACTOR_BACKUP_CODE_FORMAT=legacy`。 | 移除该配置,即可签发 128 位随机、各自加盐的备用码。已有的旧版备用码在重新生成之前仍然有效。 |
+| 邮箱地址更改 | 设置 `emailChange.enabled: false` 或 `ALLOW_EMAIL_CHANGE=false`。YAML 中的配置优先。 | 仅在每个节点都支持绑定邮箱地址的密码重置链接之后再启用。否则,旧版节点签发的链接可能在邮箱更改后仍然有效。 |
+| 每个对话的机器选择 | 设置 `CODE_ENVIRONMENT_DECISION_VERSION=0` 或 `endpoints.agents.statefulCodeSessions.allowEnvironmentSelection: false`。 | 决策协议 v1 和机器选择默认已启用,但只有配置了明确机器白名单的智能体才能提供选择。 |
+| 已保存对话的工作区变更 | 保持 `statefulCodeSessions.conversationMoves.enabled` 关闭;`allowAttachDetach` 是单独的可选项。 | 仅在每个 API 副本和兼容的 Code API/工作进程都使用协议 v1 时启用。之后刷新客户端。 |
+| 记住的工具审批 | 保持 `endpoints.agents.toolApproval.agentModes: false`。 | 在所有副本都支持该模式之后显式启用。管理员设置的询问/拒绝规则仍然具有最终效力。 |
+| 批量后台任务完成通知 | 在旧版副本仍在处理流量时,设置 `endpoints.agents.backgroundTasks.completionReceiptBatching: false`。 | 移除该覆盖配置,即可将已完成的结果一起投递。 |
+| 重命名正在运行的对话 | 在旧版标题生成任务清空之前,设置 `interface.runningChatRename: false`。 | 移除该覆盖配置,即可重命名正在运行的对话或使用占位标题的对话。 |
+
+将写入格式开关切换回旧值**不会**转换已存储的数据。旧版本无法读取以 v3 格式保存的凭据，也无法识别新签发的强备份码。回滚之前，请有意识地替换或迁移不兼容的数据，而不是轮换加密密钥。
+
+### 身份验证与安全策略 [#authentication-and-security-policy]
+
+[Passkey 登录](/docs/configuration/authentication)需通过 `ALLOW_PASSKEY_LOGIN=true` 主动开启,并且在生产环境中必须使用 HTTPS。请保持依赖方 ID(relying-party ID)稳定:更改 `PASSKEY_RP_ID` 可能会使已有的注册信息失效。`passkeys.perUserMax` 会覆盖 `MAX_PASSKEYS_PER_USER`;默认值为 20。
+
+`ENFORCE_TWO_FACTOR_AUTHENTICATION` 默认值为 `false`。启用后,使用邮箱/密码和 LDAP 的账户必须完成注册(绑定双因素认证)后才能获得完整会话。联合身份提供商(Federated providers)仍需负责其自身的多因素认证(MFA)。临时验证码的次数限制(`TWO_FACTOR_TEMP_MAX`、`TWO_FACTOR_TEMP_WINDOW`)与设置步骤的次数限制(`TWO_FACTOR_SETUP_MAX`、`TWO_FACTOR_SETUP_WINDOW`)相互独立。
+
+系统授权分配以及扩大资源共享范围的变更,在变更前的审计写入失败时,默认采用失败即关闭(fail closed)策略。撤销操作不会因审计服务中断而被阻止。只有设置 `AUDIT_LOG_FAIL_CLOSED=false` 才会禁用这一默认保护。其他管理操作具有针对具体操作的审计顺序:审计错误并不意味着一律回滚。
+
+### 管理员配置与密钥 [#admin-configuration-and-secrets]
+
+活动数据库中的 Base 配置文件优先于部署 YAML 生效,并先于角色、群组和用户配置文件应用,与 Base 的数字优先级无关。其他活动配置文件按优先级从低到高合并,优先级相同时按确定的规则排序。移除覆盖项可恢复继承值;墓碑(tombstone)标记会屏蔽被继承的值。普通数组整体被屏蔽;支持的键控集合还允许仅隐藏某个具名条目。移除该墓碑标记即可恢复继承。
+
+管理员配置的 `changes` 端点会以原子方式将一批变更应用到一个配置档案。使用 `dryRun` 进行校验，并使用 `expectedRevision` 实现乐观并发控制；如果修订版本已过期，则返回 `409`。请检查被忽略的结果，因为受保护的设置可能仍未被应用，而不会拒绝整个批次。该保证并不意味着角色重命名或其他涉及多个文档的管理员操作具有原子性。
+
+管理员编写的 `${ENV_VAR}` 引用仅限于以下名称:部署 YAML 中引用的名称、内置端点凭据,以及 `CONFIG_OVERRIDE_ENV_ALLOWLIST`(以逗号或空格分隔)中列出的名称。未知引用在写入时会被拒绝,在运行时解析为空值。Vertex AI 的覆盖范围更窄:`endpoints.anthropic.vertex` 只能使用部署 YAML 自身 Vertex 配置中引用的环境变量名称,不能使用通用允许列表中的其他名称。以字面量形式使用的文本不受此限制,包括 `interface`、`modelSpecs`、端点标题/活动/推理标签提示词、摘要提示词、记忆指令以及 Firecrawl 变更追踪提示词。
+
+存储的网络搜索、MCP 和 Azure 凭据都与其目标地址绑定。如果某次写入会更改或删除已绑定的目标地址,则该写入必须在同一次操作中重新输入已存储的密钥,或将其删除。处理 `secret_reentry_required` 时,应重新收集所需的密钥;不要静默地将旧密钥用于新的 URL 进行重试。环境所有的凭据和用户所有的凭据不能通过管理员配置文件被重定向。
+
+`CONFIG_REDERIVE_ENDPOINTS` 在本版本中默认关闭。在运营人员启用之前,配置文件中对 Azure 分组的覆盖设置、`endpoints.anthropic.vertex` 以及 Azure Assistants 开关仍会被保存,但不会生效。在所有副本上启用之前,请先检查受影响配置文件和无法解析分组的启动诊断信息。配置文件中的 Vertex 设置仅在部署 YAML 中配置了 Vertex 的情况下生效,并使用部署方所拥有的密钥文件和区域。
+
+重命名自定义角色会在其租户内迁移其成员、配置文件、授权以及 ACL 条目。删除该角色则会将成员重新分配给 `USER`,并移除依赖的配置和授权。这些跨多个文档的变更不是一个原子事务。失败后,请先检查当前状态再重试;已撤销的访问权限可能仍保持撤销状态。
+
+### 严格的租户身份验证 [#strict-tenant-authentication]
+
+当 `TENANT_ISOLATION_STRICT=true` 时,身份验证和账户相关路由在查找用户之前,必须获得真实的、非系统的租户上下文。缺少租户上下文的请求将被拒绝,返回 `403` 和 `TENANT_CONTEXT_REQUIRED`;OAuth 流程则使用其失败重定向进行处理。请在受信任的代理或身份验证边界处验证租户路由,包括登录和刷新路由。不要通过禁用严格隔离或信任任意公共请求头来绕过缺失的租户上下文。
+
+部署范围的启动检查、索引同步和权限迁移都在显式的系统作用域中运行。当迁移写入某个资源时,会保留该资源所属的租户分区。这些检查不会为普通的身份验证请求授予系统租户回退权限。
+
+### 共享包兼容性 [#shared-package-compatibility]
+
+刷新后的共享包使用 Zod 4。导入并组合 LibreChat 架构的自定义集成必须更新其 Zod 用法,并针对匹配的包版本重新构建;请勿将这些包降级回 Zod 3。此版本会保留省略的可选配置字段和验证诊断信息;库迁移无需递增新的 YAML 版本号,也无需进行全面的配置重写。
+
+自定义前端如果导入了已移除的旧版 `@librechat/client` 控件,必须迁移到维护中的控件。具体而言,`Select`、`SelectDropDown`、`Dialog`、`DialogTemplate` 以及 Radix `DropdownMenu` 相关导出已不再提供。对话框请使用 `OGDialog`/`OGDialogTemplate`,单值选择器请使用 `Dropdown`,操作菜单请使用 `DropdownPopup` 或 Ariakit 基础组件。LibreChat 自身的调用方已完成迁移。此次变更属于开发者集成层面的调整,并不要求重写自托管部署的设置。
+
+### 浏览器遥测 [#browser-telemetry]
+
+RUM、客户端日志和会话回放是相互独立的可选功能。YAML 中的 `telemetry.rum.enabled` 与 `telemetry.rum.sessionReplay.enabled` 优先于环境变量回退设置;若省略这些配置项,则保留环境变量中的设置;而空的 YAML `sessionReplay: {}` 会禁用会话回放。
+
+- `RUM_CLIENT_LOGS=true` 仅在已认证的代理模式下启用经过脱敏处理的客户端诊断日志。
+- `RUM_SESSION_REPLAY_ENABLED=true` 用于在启用 RUM 时选择开启会话回放。它取代了已弃用的反向变量 `RUM_DISABLE_REPLAY` 作为回退方案。
+- `RUM_PROXY_BODY_LIMIT` 默认为 `3mb`。追踪(traces)和日志(logs)共享已认证用户的配额:每 `RUM_PROXY_USER_WINDOW=1` 分钟最多 `RUM_PROXY_USER_MAX=240` 次请求。超出的请求将返回 `429`。
+- 回放会对文本和输入值进行遮罩,并排除身份验证页面,但它**并非通用的数据防泄漏(DLP)方案**。在录制真实用户之前,请先使用合成数据进行验证。直接的公共令牌摄取会绕过服务器端的回放过滤,因此需要为其单独制定收集器策略。
+
+`LOG_REDACTION_MAX_NODES=5000` 用于限制每条服务器日志记录的脱敏处理工作量。对象和字符串按长度加权计入预算;超出预算的字段会被替换,而不会以未脱敏的形式导出。该进程级设置在日志记录器初始化时读取。
+
+### 连接编码与 MCP 应用 [#connected-coding-and-mcp-apps]
+
+Stateful Code 会话仍处于高度实验阶段。通过浏览器批准的注册本身并不会授予每个智能体访问机器的权限。请配置所附的环境,启用主工作进程注册及其独立的 `browserSetup.enabled` 选择加入项,配置规范的公共 `instance`,启动兼容的工作进程,并保存智能体明确的机器允许列表。新建聊天只能从该允许列表中进行选择;现有对话则保留其已记录的决定。
+
+可选的 `endpoints.agents.pullRequests` 集成需要一个能够上报 git 状态的兼容 worker、Code API 的 `CODEAPI_BRIDGE_LANE_GIT=true`、仓库范围，以及权限范围恰当的提供方令牌。GitHub 需要对 Pull requests、Checks 和 Contents 的只读访问权限。GitLab 和 Bitbucket 则使用各自提供方专用的凭据。每用户的 OAuth 连接是单独的可选配置。
+
+新的 MCP Apps 需要设置 `mcpSettings.apps: true`。省略该项将保留旧版内联 HTML 行为,而 `false` 则会同时禁用两者。请将 MCP App 沙箱部署在专用源上,并将其路由到 `/api/mcp/sandbox`;部署级沙箱策略不是角色/组/用户级的覆盖设置。沙箱源及构建时的配置步骤,请参阅 [MCP 配置指南](/docs/configuration/librechat_yaml/object_structure/mcp_settings)。
+
+### 文件清理上线 [#file-cleanup-rollout]
+
+`fileConfig.retainedFileCleanup` 默认保持关闭。只有在每个副本和回滚目标都支持保留文件目的地之后,才应启用它。向量清理还需要设置 `fileConfig.vectorOwnershipTrackingStart`,即在旧版向量写入方和回滚目标全部退役之后选定的 UTC 截止时间,并且该截止时间当天或之后的文件必须记录完整的所有权证明。请勿为了使删除操作得以继续而倒推截止时间,也不要为历史文件推断所有权。
+
+模糊或早于截止时间的记录将执行失败关闭策略。在确认二级清理完成之前,主文件保持可读状态。`fileConfig.vectorDeletionConcurrency` 默认值为 `4`,每个文件可接受 `1`–`16` 个命名空间删除操作。在启用之前,请先参阅[文件清理控制](/docs/configuration/librechat_yaml/object_structure/file_config#retained-file-and-vector-cleanup)。
+
+### 其他已更改的默认值 [#other-changed-defaults]
+
+- 默认情况下,按 Enter 键发送消息。用户可以在“设置”中更改此偏好。
+- 浏览器端图片缩放在省略 `fileConfig.clientImageResize.enabled` 时默认开启。显式设置为 `true` 或 `false` 则会强制应用全局统一的选择。
+- `interface.retentionMode: ephemeral` 会强制所有对话都为临时对话。在切换回 `temporary` 之前,请先移除那些不应再过期的记录的保留期限;现有的期限不会被自动迁移。
+- 临时聊天（包括临时模式聊天）不会被追踪或进行反馈评分，除非启用 `langfuse.trace.temporaryChats`。
+- `interface.historyCacheTtlMs` 默认为 `60000`,`historyCacheRecent` 默认为 `1`,另有 `historyCacheMaxBytes` 缓存预算,默认为 `8388608` 字节,用于限制最近离开的对话历史在缓存中的保留时长。
+- `toolCallPreviews` 默认为向请求预览的客户端提供有上限的预览。`outputChars` 和 `argsChars` 默认值为 `512`;导出内容以及未请求预览的客户端则保留完整内容。
+
+有关现有选项，请参阅[界面参考](/docs/configuration/librechat_yaml/object_structure/interface)、[Agents 参考](/docs/configuration/librechat_yaml/object_structure/agents)和[环境变量参考](/docs/configuration/dotenv)。

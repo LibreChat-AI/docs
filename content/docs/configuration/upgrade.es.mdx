@@ -1,0 +1,98 @@
+---
+title: Actualización y despliegues progresivos
+icon: RefreshCw
+description: >-
+  Requisitos previos de actualización, interruptores de compatibilidad y límites
+  de reversión para operadores de LibreChat.
+---
+
+## Preparando la versión v0.8.9-rc1 [#preparing-for-v089-rc1]
+
+Use Node.js **24.22.1** para las instalaciones locales. Haga una copia de seguridad de MongoDB, de `librechat.yaml` y de las credenciales de cifrado antes de cambiar las versiones. Conserve `CREDS_KEY` y `CREDS_IV`; reemplazarlas no es una migración. La configuración `1.3.18` describe este candidato; consulte el [registro de cambios de configuración](/changelog/config_v1.3.18) para ver los ajustes añadidos.
+
+Actualice cada réplica de la API de LibreChat antes de habilitar una función que las réplicas anteriores no puedan aplicar. Actualice por separado los clientes compatibles, los servicios de la API de Code y los workers asociados. La imagen de LibreChat no actualiza una API de Code desplegada de forma independiente ni los paquetes de idiomas que tiene instalados.
+
+### Compatibilidad entre versiones mixtas [#mixed-version-compatibility]
+
+| Superficie | Mientras sigan existiendo réplicas o clientes incompatibles | Después del despliegue |
+| ---------- | ----------------------------------------------------------- | ---------------------- |
+| Credenciales de usuario almacenadas | Establezca `credentials.writeFormat: legacy` en el YAML de despliegue de todas las réplicas. | Elimine la anulación para usar escrituras `v3` con un IV aleatorio por valor. Ambos formatos seguirán siendo legibles en esta versión. |
+| Códigos de respaldo de autenticación de dos factores | Establezca `TWO_FACTOR_BACKUP_CODE_FORMAT=legacy` en todas las réplicas si los backends o clientes más antiguos no pueden leer los códigos seguros. | Elimínelo para emitir códigos aleatorios de 128 bits, cada uno con su propio salt. Los códigos legacy existentes seguirán siendo válidos hasta que se regeneren. |
+| Cambios de dirección de correo electrónico | Establezca `emailChange.enabled: false` o `ALLOW_EMAIL_CHANGE=false`. El indicador de YAML tiene prioridad. | Actívelo solo después de que todos los nodos admitan enlaces de restablecimiento de contraseña vinculados a la dirección. De lo contrario, un enlace emitido por un nodo anterior podría seguir activo tras un cambio de correo. |
+| Selecciones de máquina por chat | Establezca `CODE_ENVIRONMENT_DECISION_VERSION=0` o `endpoints.agents.statefulCodeSessions.allowEnvironmentSelection: false`. | El protocolo de decisión v1 y la selección de máquina están habilitados por defecto, pero solo los agentes con una lista de máquinas permitidas explícita pueden ofrecer opciones. |
+| Cambios de espacio de trabajo en chats guardados | Mantenga `statefulCodeSessions.conversationMoves.enabled` desactivado; `allowAttachDetach` es una opción independiente que debe activarse expresamente. | Actívelo solo con el protocolo v1 en todas las réplicas de la API y en las API de código y workers compatibles. Actualice los clientes después. |
+| Aprobaciones de herramientas recordadas | Mantenga `endpoints.agents.toolApproval.agentModes: false`. | Actívelo explícitamente cuando todas las réplicas admitan este modo. Las reglas de preguntar o denegar del administrador siguen siendo las que prevalecen. |
+| Finalizaciones de tareas en segundo plano agrupadas | Establezca `endpoints.agents.backgroundTasks.completionReceiptBatching: false` mientras las réplicas antiguas sigan atendiendo tráfico. | Elimine la anulación para entregar los resultados listos juntos. |
+| Renombrado de chats en ejecución | Establezca `interface.runningChatRename: false` hasta que los trabajos antiguos de generación de títulos finalicen. | Elimine la anulación para permitir renombrar chats en ejecución o con título provisional. |
+
+Cambiar un interruptor de formato de escritura de vuelta **no** convierte los datos ya almacenados. Una versión anterior no puede leer las credenciales guardadas como v3 ni los códigos de respaldo fuertes emitidos recientemente. Antes de revertir, reemplace o migre los datos incompatibles de forma deliberada en lugar de rotar las claves de cifrado.
+
+### Política de autenticación y seguridad [#authentication-and-security-policy]
+
+El inicio de sesión con [passkey](/docs/configuration/authentication) es opcional y se activa mediante `ALLOW_PASSKEY_LOGIN=true`, y requiere HTTPS en producción. Mantén estable el ID de la parte que confía (relying-party ID): cambiar `PASSKEY_RP_ID` puede invalidar los registros existentes. `passkeys.perUserMax` anula `MAX_PASSKEYS_PER_USER`; el valor predeterminado es 20.
+
+`ENFORCE_TWO_FACTOR_AUTHENTICATION` tiene como valor predeterminado `false`. Cuando está habilitada, las cuentas con correo electrónico y contraseña, así como las cuentas LDAP, deben registrar un segundo factor antes de recibir una sesión completa. Los proveedores federados siguen siendo responsables de su propia autenticación multifactor. Los presupuestos de códigos temporales (`TWO_FACTOR_TEMP_MAX`, `TWO_FACTOR_TEMP_WINDOW`) son independientes de los presupuestos de los pasos de configuración (`TWO_FACTOR_SETUP_MAX`, `TWO_FACTOR_SETUP_WINDOW`).
+
+Las asignaciones de concesiones del sistema y los cambios que amplían el uso compartido de recursos fallan en modo cerrado por defecto cuando falla la escritura de auditoría previa al cambio. Las revocaciones no se bloquean por una interrupción del servicio de auditoría. Solo `AUDIT_LOG_FAIL_CLOSED=false` desactiva esa protección predeterminada. Otras mutaciones administrativas tienen un orden de auditoría específico para cada operación: un error de auditoría no implica universalmente una reversión.
+
+### Configuración de administrador y secretos [#admin-configuration-and-secrets]
+
+La perfil Base de la base de datos activa tiene prioridad sobre el YAML de despliegue antes que los perfiles de rol, grupo y usuario, independientemente de su prioridad numérica Base. Los demás perfiles activos se combinan en orden ascendente de prioridad, con empates resueltos de forma determinista. Eliminar una anulación restaura la herencia; una lápida (tombstone) suprime un valor heredado. Los arrays ordinarios se suprimen en su totalidad; las colecciones con clave compatibles también permiten ocultar una entrada con nombre individual. Eliminar esa lápida restaura la herencia.
+
+El endpoint `changes` de configuración de administración aplica un lote a un perfil de forma atómica. Usa `dryRun` para validar y `expectedRevision` para el control de concurrencia optimista; una revisión obsoleta devuelve `409`. Inspecciona los resultados ignorados, porque los ajustes protegidos pueden quedar sin aplicar sin rechazar todo el lote. Esta garantía no hace que los cambios de nombre de roles u otras operaciones administrativas que afectan a varios documentos sean atómicos.
+
+Las referencias `${ENV_VAR}` escritas por el administrador están restringidas a los nombres referenciados en el YAML de despliegue, a las credenciales de endpoints integrados y a `CONFIG_OVERRIDE_ENV_ALLOWLIST` (separados por comas o espacios). Las referencias desconocidas se rechazan al guardar y se resuelven a nada en tiempo de ejecución. Las sustituciones de Vertex AI son más restrictivas: `endpoints.anthropic.vertex` solo puede usar los nombres de variables de entorno referenciados en la propia configuración de Vertex del YAML de despliegue, no nombres adicionales de la lista de permitidos general. El texto usado de forma literal está exento: `interface`, `modelSpecs`, los prompts de título, actividad y etiqueta de razonamiento de los endpoints, los prompts de resumen, las instrucciones de memoria y los prompts de change-tracking de Firecrawl.
+
+Las credenciales almacenadas de búsqueda web, MCP y Azure están vinculadas a sus destinos. Una escritura que cambie o elimine un destino vinculado debe volver a introducir la clave almacenada en la misma escritura, o bien eliminarla. Gestione `secret_reentry_required` solicitando nuevamente el secreto requerido; no reintente silenciosamente una clave antigua contra una nueva URL. Las credenciales propiedad del entorno y las propiedad del usuario no pueden redirigirse mediante un perfil de administrador.
+
+`CONFIG_REDERIVE_ENDPOINTS` está desactivado por defecto en esta versión. Las anulaciones de perfil de los grupos de Azure, `endpoints.anthropic.vertex` y el interruptor de Azure Assistants siguen almacenados pero inactivos hasta que el operador lo habilite. Revise los diagnósticos de inicio de los perfiles afectados y de los grupos no resolubles antes de habilitarlo en todas las réplicas. La configuración de Vertex del perfil solo se aplica donde el YAML de despliegue configura Vertex, utilizando su archivo de clave y su región propios del despliegue.
+
+Cambiar el nombre de un rol personalizado mueve sus miembros, su perfil de configuración, sus permisos y sus entradas de ACL dentro de su tenant. Eliminarlo reasigna los miembros a `USER` y elimina la configuración y los permisos dependientes. Estos cambios en múltiples documentos no son una transacción atómica. Tras un fallo, inspeccione el estado actual antes de volver a intentarlo, ya que el acceso que ya fue revocado puede permanecer revocado.
+
+### Autenticación estricta de inquilinos [#strict-tenant-authentication]
+
+Con `TENANT_ISOLATION_STRICT=true`, las rutas de autenticación y de cuenta necesitan un tenant real y no del sistema antes de buscar un usuario. Si falta el contexto del tenant, la solicitud se rechaza con `403` y `TENANT_CONTEXT_REQUIRED`; los flujos de OAuth usan su redirección de error. Verifica el enrutamiento por tenant en el proxy de confianza o en el límite de autenticación, incluidas las rutas de inicio de sesión y de renovación. No soluciones la falta de tenant desactivando el aislamiento estricto ni confiando en encabezados públicos arbitrarios.
+
+Las comprobaciones de inicio a nivel de despliegue, la sincronización de índices y las migraciones de permisos se ejecutan en un ámbito de sistema explícito. Cuando una migración escribe un recurso, conserva la partición de tenant de ese recurso. Estas comprobaciones no conceden a las solicitudes de autenticación normales un mecanismo de respaldo en el tenant del sistema.
+
+### Compatibilidad de paquetes compartidos [#shared-package-compatibility]
+
+Los paquetes compartidos actualizados utilizan Zod 4. Las integraciones personalizadas que importan y combinan esquemas de LibreChat deben actualizar su uso de Zod y recompilarse con las versiones de paquete correspondientes; no los reviertan a Zod 3. La versión conserva los campos de configuración opcionales omitidos y los diagnósticos de validación, por lo que no se requiere un incremento de versión de YAML nuevo ni una reescritura general de la configuración para la migración de la biblioteca.
+
+Los frontends personalizados que importan controles heredados y eliminados de `@librechat/client` deben migrar a los controles mantenidos. En concreto, `Select`, `SelectDropDown`, `Dialog`, `DialogTemplate` y las exportaciones de `DropdownMenu` de Radix ya no se proporcionan. Use `OGDialog`/`OGDialogTemplate` para los diálogos, `Dropdown` para los selectores de valor único y `DropdownPopup` o los primitivos de Ariakit para los menús de acciones. Los llamadores propios de LibreChat ya han sido migrados. Este es un cambio de integración para desarrolladores, no un requisito para reescribir la configuración de una implementación autoalojada.
+
+### Telemetría del navegador [#browser-telemetry]
+
+RUM, registros del cliente y reproducción de sesión son opciones de activación independientes. Los valores YAML `telemetry.rum.enabled` y `telemetry.rum.sessionReplay.enabled` tienen prioridad sobre los valores de reserva del entorno; si se omiten, se mantiene la configuración del entorno, y un `sessionReplay: {}` vacío en YAML desactiva la reproducción.
+
+- `RUM_CLIENT_LOGS=true` habilita los registros de diagnóstico del cliente depurados únicamente en el modo de proxy autenticado.
+- `RUM_SESSION_REPLAY_ENABLED=true` activa la reproducción de sesiones cuando RUM está habilitado. Reemplaza al mecanismo alternativo inverso obsoleto `RUM_DISABLE_REPLAY`.
+- `RUM_PROXY_BODY_LIMIT` tiene como valor predeterminado `3mb`. Las trazas y los registros comparten el presupuesto del usuario autenticado: `RUM_PROXY_USER_MAX=240` por `RUM_PROXY_USER_WINDOW=1` minuto. Las solicitudes que excedan este límite devuelven `429`.
+- Replay enmascara el texto y los valores de los campos de entrada y excluye las pantallas de autenticación, pero **no es una herramienta de DLP de propósito general**. Valide con datos sintéticos antes de grabar usuarios reales. La ingesta directa de tokens públicos omite el filtrado de repetición del servidor y necesita su propia política de recolector.
+
+`LOG_REDACTION_MAX_NODES=5000` limita el trabajo de redacción por cada registro de log del servidor. Los objetos y las cadenas, ponderados por su longitud, consumen el presupuesto; los campos excedentes se reemplazan en lugar de exportarse sin redactar. Esta configuración a nivel de proceso se lee cuando se inicializa el logger.
+
+### Aplicaciones conectadas de programación y MCP [#connected-coding-and-mcp-apps]
+
+Las sesiones con estado de Code siguen siendo muy experimentales. La inscripción aprobada desde el navegador no concede por sí misma a todos los agentes acceso a una máquina. Configure el entorno adjunto, habilite la inscripción de workers principales y su opt-in independiente `browserSetup.enabled`, configure la `instance` pública canónica, inicie un worker compatible y guarde la lista de permitidos explícita de máquinas del agente. Los chats nuevos solo pueden elegir entre esa lista de permitidos; las conversaciones existentes conservan la decisión registrada.
+
+La integración opcional `endpoints.agents.pullRequests` requiere un worker compatible que informe del estado de git, Code API con `CODEAPI_BRIDGE_LANE_GIT=true`, un ámbito de repositorio y un token del proveedor con los permisos adecuados. GitHub necesita acceso de solo lectura a Pull requests, Checks y Contents. GitLab y Bitbucket utilizan sus credenciales específicas del proveedor. Una conexión OAuth por usuario es una opción independiente que debe activarse de forma explícita.
+
+Los nuevos MCP Apps requieren `mcpSettings.apps: true`. La omisión conserva el comportamiento heredado de HTML en línea, mientras que `false` deshabilita ambos. Despliegue el entorno aislado (sandbox) de MCP App en un origen dedicado enrutado a `/api/mcp/sandbox`; la política de sandbox del despliegue no es un override por rol/grupo/usuario. Aplique la configuración del origen del sandbox y de la compilación descrita en la [guía de configuración de MCP](/docs/configuration/librechat_yaml/object_structure/mcp_settings).
+
+### Despliegue de la limpieza de archivos [#file-cleanup-rollout]
+
+`fileConfig.retainedFileCleanup` permanece desactivado por defecto. Actívalo solo después de que todas las réplicas y los objetivos de rollback admitan destinos de archivos retenidos. La limpieza de vectores también requiere `fileConfig.vectorOwnershipTrackingStart`, una fecha de corte en UTC elegida después de que los escritores de vectores heredados y los objetivos de rollback hayan sido retirados, además de una prueba de propiedad completa registrada para el archivo en o después de esa fecha de corte. No retrasos la fecha de corte ni infieras la propiedad de archivos históricos solo para que la eliminación pueda continuar.
+
+Los registros ambiguos o anteriores al corte fallan de forma segura (fail closed). El archivo principal permanece legible hasta que se confirme la limpieza secundaria. `fileConfig.vectorDeletionConcurrency` tiene como valor predeterminado `4` y acepta entre `1` y `16` eliminaciones de espacios de nombres por archivo. Consulte los [controles de limpieza de archivos](/docs/configuration/librechat_yaml/object_structure/file_config#retained-file-and-vector-cleanup) antes de habilitarlos.
+
+### Otros valores predeterminados modificados [#other-changed-defaults]
+
+- Enter envía los mensajes de forma predeterminada. Los usuarios pueden cambiar esta preferencia en Configuración.
+- El redimensionamiento de imágenes en el navegador está activado de forma predeterminada cuando se omite `fileConfig.clientImageResize.enabled`. Los valores explícitos `true` o `false` fuerzan la elección para toda la implementación.
+- `interface.retentionMode: ephemeral` obliga a que cada chat sea temporal. Antes de volver a `temporary`, elimina los plazos de retención de los registros que deben dejar de expirar; los plazos existentes no se migran automáticamente.
+- Los chats temporales, incluidos los chats en modo efímero, no se rastrean ni se puntúan mediante retroalimentación a menos que `langfuse.trace.temporaryChats` esté habilitado.
+- `interface.historyCacheTtlMs` tiene como valor predeterminado `60000` y `historyCacheRecent` a `1`, con un presupuesto adicional `historyCacheMaxBytes` de `8388608` bytes, que limita el tiempo durante el cual los historiales abandonados recientemente permanecen en caché.
+- `toolCallPreviews` usa vistas previas acotadas por defecto para los clientes que las soliciten. `outputChars` y `argsChars` tienen como valor predeterminado `512`; las exportaciones y los clientes que no solicitan vistas previas conservan el contenido completo.
+
+Consulta la [referencia de la interfaz](/docs/configuration/librechat_yaml/object_structure/interface), la [referencia de Agents](/docs/configuration/librechat_yaml/object_structure/agents) y la [referencia del entorno](/docs/configuration/dotenv) para ver las opciones existentes.

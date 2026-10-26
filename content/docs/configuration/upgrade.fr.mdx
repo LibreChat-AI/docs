@@ -1,0 +1,98 @@
+---
+title: Mise à niveau et déploiements progressifs
+icon: RefreshCw
+description: >-
+  Prérequis de mise à niveau, commutateurs de compatibilité et limites de
+  restauration pour les opérateurs de LibreChat.
+---
+
+## Préparation de la version v0.8.9-rc1 [#preparing-for-v089-rc1]
+
+Utilisez Node.js **24.22.1** pour les installations locales. Sauvegardez MongoDB, `librechat.yaml` et les identifiants de chiffrement avant de changer de version. Conservez `CREDS_KEY` et `CREDS_IV` ; les remplacer ne constitue pas une migration. La configuration `1.3.18` décrit ce candidat ; consultez le [journal des modifications de la configuration](/changelog/config_v1.3.18) pour les paramètres ajoutés.
+
+Mettez à niveau chaque réplica de l'API LibreChat avant d'activer une fonctionnalité que les anciens réplicas ne peuvent pas appliquer. Mettez à jour séparément les clients compatibles, les services de l'API Code et les workers rattachés. L'image LibreChat ne met pas à niveau une API Code déployée indépendamment ni les packages de langage qu'elle installe.
+
+### Compatibilité entre versions mixtes [#mixed-version-compatibility]
+
+| Surface | Pendant que des réplicas ou clients incompatibles subsistent | Après le déploiement |
+| ------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identifiants utilisateur stockés | Définissez `credentials.writeFormat: legacy` dans le YAML de déploiement sur chaque réplica. | Supprimez la surcharge pour utiliser les écritures `v3` avec un IV aléatoire par valeur. Les deux formats restent lisibles par cette version. |
+| Codes de secours à deux facteurs | Définissez `TWO_FACTOR_BACKUP_CODE_FORMAT=legacy` sur chaque réplica si les backends ou clients plus anciens ne peuvent pas lire les codes robustes. | Supprimez-la pour émettre des codes aléatoires de 128 bits, chacun salé individuellement. Les codes legacy existants restent valides jusqu'à leur régénération. |
+| Changements d'adresse e-mail | Définissez `emailChange.enabled: false` ou `ALLOW_EMAIL_CHANGE=false`. Le flag YAML est prioritaire. | Activez-la uniquement lorsque chaque nœud prend en charge les liens de réinitialisation de mot de passe liés à l'adresse. Sinon, un lien émis par un nœud plus ancien peut survivre à un changement d'e-mail. |
+| Choix de machine par conversation | Définissez `CODE_ENVIRONMENT_DECISION_VERSION=0` ou `endpoints.agents.statefulCodeSessions.allowEnvironmentSelection: false`. | Le protocole de décision v1 et la sélection de machine sont activés par défaut, mais seuls les agents disposant d'une liste d'autorisation explicite de machines peuvent proposer des choix. |
+| Modifications de l'espace de travail des conversations sauvegardées | Gardez `statefulCodeSessions.conversationMoves.enabled` désactivé ; `allowAttachDetach` est une option distincte à activer explicitement. | Activez-la uniquement avec le protocole v1 sur chaque réplica de l'API et des API/workers de code compatibles. Actualisez ensuite les clients. |
+| Approbations d'outils mémorisées | Gardez `endpoints.agents.toolApproval.agentModes: false`. | Activez-le explicitement une fois que tous les réplicas prennent en charge ce mode. Les règles d'autorisation/refus de l'administrateur restent prioritaires. |
+| Finalisations groupées en arrière-plan | Définissez `endpoints.agents.backgroundTasks.completionReceiptBatching: false` tant que des réplicas plus anciens servent le trafic. | Supprimez la surcharge pour livrer ensemble les résultats prêts. |
+| Renommage des conversations en cours | Définissez `interface.runningChatRename: false` jusqu'à ce que les anciennes tâches de génération de titre soient terminées. | Supprimez la surcharge pour autoriser le renommage des conversations en cours ou dont le titre est provisoire. |
+
+Modifier à nouveau un commutateur de format d'écriture ne convertit **pas** les données déjà stockées. Une version antérieure ne peut pas lire les identifiants enregistrés au format v3 ni les codes de secours forts nouvellement émis. Avant une restauration, remplacez ou migrez délibérément les données incompatibles plutôt que de faire tourner les clés de chiffrement.
+
+### Politique d'authentification et de sécurité [#authentication-and-security-policy]
+
+La connexion par [clé d'accès](/docs/configuration/authentication) est activée sur option via `ALLOW_PASSKEY_LOGIN=true` et nécessite HTTPS en production. Conservez un identifiant de partie de confiance (relying-party ID) stable : modifier `PASSKEY_RP_ID` peut invalider les enregistrements existants. `passkeys.perUserMax` remplace `MAX_PASSKEYS_PER_USER` ; la valeur par défaut est 20.
+
+`ENFORCE_TWO_FACTOR_AUTHENTICATION` est défini par défaut à `false`. Lorsqu'elle est activée, les comptes utilisant un e-mail/mot de passe ou LDAP doivent s'inscrire avant de recevoir une session complète. Les fournisseurs fédérés restent responsables de leur propre MFA. Les budgets de codes temporaires (`TWO_FACTOR_TEMP_MAX`, `TWO_FACTOR_TEMP_WINDOW`) sont distincts des budgets des étapes de configuration (`TWO_FACTOR_SETUP_MAX`, `TWO_FACTOR_SETUP_WINDOW`).
+
+Les attributions de droits au niveau système et les modifications élargissant le partage de ressources échouent de manière sécurisée (fail closed) par défaut lorsque l'écriture du journal d'audit préalable à la modification échoue. Les révocations ne sont pas bloquées par une panne du journal d'audit. Seul `AUDIT_LOG_FAIL_CLOSED=false` désactive cette protection par défaut. Les autres mutations administratives suivent un ordre d'audit propre à chaque opération : une erreur d'audit n'entraîne pas systématiquement une annulation (rollback).
+
+### Configuration administrateur et secrets [#admin-configuration-and-secrets]
+
+La profil Base actif de la base de données remplace le YAML de déploiement avant les profils de rôle, de groupe et d'utilisateur, quelle que soit la priorité numérique de Base. Les autres profils actifs sont fusionnés par ordre de priorité croissante, avec des égalités résolues de manière déterministe. La suppression d'une substitution rétablit l'héritage ; une pierre tombale supprime une valeur héritée. Les tableaux ordinaires sont supprimés dans leur ensemble ; les collections indexées prises en charge permettent également de masquer une entrée nommée individuelle. La suppression de cette pierre tombale rétablit l'héritage.
+
+L'endpoint `changes` de configuration d'administration applique un lot à un profil de manière atomique. Utilisez `dryRun` pour valider et `expectedRevision` pour le contrôle de concurrence optimiste ; une révision obsolète renvoie `409`. Inspectez les résultats ignorés, car les paramètres protégés peuvent rester non appliqués sans rejeter l'ensemble du lot. Cette garantie ne rend pas atomiques les renommages de rôles ni les autres opérations d'administration portant sur plusieurs documents.
+
+Les références `${ENV_VAR}` rédigées par l'administrateur sont limitées aux noms référencés par le YAML de déploiement, aux identifiants d'endpoints intégrés et à `CONFIG_OVERRIDE_ENV_ALLOWLIST` (séparés par des virgules ou des espaces). Les références inconnues sont rejetées à l'écriture et ne se résolvent à rien à l'exécution. Les remplacements Vertex AI sont plus restrictifs : `endpoints.anthropic.vertex` ne peut utiliser que les noms de variables d'environnement référencés dans la configuration Vertex propre au YAML de déploiement, et non les noms supplémentaires de la liste d'autorisation générale. Les textes utilisés littéralement sont exemptés : `interface`, `modelSpecs`, les invites de titre, d'activité et d'étiquette de raisonnement des endpoints, les invites de résumé, les instructions de mémoire et les invites de suivi des modifications de Firecrawl.
+
+Les identifiants stockés de recherche web, MCP et Azure sont liés à leurs destinations. Une écriture qui modifie ou supprime une destination liée doit ressaisir la clé stockée dans la même écriture, ou la supprimer. Lorsqu'une réponse contient `secret_reentry_required`, demandez à nouveau le secret requis ; ne réessayez pas silencieusement une ancienne clé sur une nouvelle URL. Les identifiants détenus par l'environnement et ceux détenus par l'utilisateur ne peuvent pas être redirigés via un profil d'administrateur.
+
+`CONFIG_REDERIVE_ENDPOINTS` est désactivé par défaut pour cette version. Les surcharges de profil des groupes Azure, `endpoints.anthropic.vertex` et le commutateur Azure Assistants restent enregistrés mais inactifs tant que l'opérateur ne les active pas. Examinez les diagnostics de démarrage pour les profils concernés et les groupes non résolvables avant de l'activer sur chaque réplica. Les paramètres Vertex du profil ne s'appliquent que lorsque le YAML de déploiement configure Vertex, en utilisant le fichier de clé et la région appartenant au déploiement.
+
+Renommer un rôle personnalisé déplace ses membres, son profil de configuration, ses autorisations et ses entrées ACL au sein de son tenant. Le supprimer réaffecte les membres à `USER` et supprime la configuration et les autorisations dépendantes. Ces modifications portant sur plusieurs documents ne constituent pas une transaction atomique. Après un échec, vérifiez l'état actuel avant de relancer l'opération ; un accès déjà révoqué peut rester révoqué.
+
+### Authentification stricte des locataires [#strict-tenant-authentication]
+
+Avec `TENANT_ISOLATION_STRICT=true`, les routes d'authentification et de gestion de compte exigent un locataire réel et non système avant de rechercher un utilisateur. Un contexte de locataire manquant est rejeté avec `403` et `TENANT_CONTEXT_REQUIRED` ; les flux OAuth utilisent leur redirection d'échec. Vérifiez le routage par locataire au niveau du proxy de confiance ou de la frontière d'authentification, y compris les routes de connexion et de rafraîchissement. Ne contournez pas l'absence de locataire en désactivant l'isolation stricte ni en faisant confiance à des en-têtes publics arbitraires.
+
+Les vérifications de démarrage à l'échelle du déploiement, la synchronisation des index et les migrations de permissions s'exécutent dans un périmètre système explicite. Lorsqu'une migration écrit une ressource, elle préserve la partition de locataire de cette ressource. Ces vérifications n'accordent pas aux requêtes d'authentification normales de repli vers le locataire système.
+
+### Compatibilité des packages partagés [#shared-package-compatibility]
+
+Les packages partagés actualisés utilisent Zod 4. Les intégrations personnalisées qui importent et composent les schémas de LibreChat doivent mettre à jour leur utilisation de Zod et reconstruire avec les versions de packages correspondantes ; ne rétrogradez pas ces packages vers Zod 3. Cette version conserve les champs de configuration optionnels omis ainsi que les diagnostics de validation ; aucune nouvelle incrémentation de version YAML ni réécriture globale de la configuration n'est nécessaire pour la migration de la bibliothèque.
+
+Les frontends personnalisés important les contrôles hérités supprimés de `@librechat/client` doivent migrer vers les contrôles maintenus. En particulier, `Select`, `SelectDropDown`, `Dialog`, `DialogTemplate` et les exports Radix `DropdownMenu` ne sont plus fournis. Utilisez `OGDialog`/`OGDialogTemplate` pour les boîtes de dialogue, `Dropdown` pour les sélecteurs à valeur unique, et `DropdownPopup` ou les primitives Ariakit pour les menus d'actions. Les appelants internes de LibreChat ont été migrés. Il s'agit d'un changement d'intégration pour les développeurs, et non d'une obligation de réécrire les paramètres d'un déploiement auto-hébergé.
+
+### Télémétrie du navigateur [#browser-telemetry]
+
+RUM, journaux côté client et relecture de session sont des options d'adhésion indépendantes. Les valeurs YAML `telemetry.rum.enabled` et `telemetry.rum.sessionReplay.enabled` sont prioritaires sur les solutions de repli des variables d'environnement ; si elles sont omises, le paramètre de l'environnement est conservé, et un `sessionReplay: {}` vide en YAML désactive la relecture.
+
+- `RUM_CLIENT_LOGS=true` active les journaux de diagnostic client épurés uniquement en mode proxy authentifié.
+- `RUM_SESSION_REPLAY_ENABLED=true` active la relecture de session lorsque le RUM est activé. Cette variable remplace l'ancienne variable inverse `RUM_DISABLE_REPLAY`, désormais obsolète.
+- `RUM_PROXY_BODY_LIMIT` est défini par défaut à `3mb`. Les traces et les journaux partagent le quota de l'utilisateur authentifié : `RUM_PROXY_USER_MAX=240` par `RUM_PROXY_USER_WINDOW=1` minute. Les requêtes excédentaires renvoient `429`.
+- Le replay masque le texte et les valeurs des champs de saisie et exclut les écrans d'authentification, mais il ne constitue **pas un outil de prévention des pertes de données (DLP) à usage général**. Validez avec des données synthétiques avant d'enregistrer de vrais utilisateurs. L'ingestion directe de jetons publics contourne le filtrage du replay côté serveur et nécessite sa propre politique de collecte.
+
+`LOG_REDACTION_MAX_NODES=5000` limite le travail de masquage par enregistrement de journal serveur. Les objets et les chaînes, pondérés selon leur longueur, consomment le budget ; les champs en excès sont remplacés plutôt qu'exportés sans masquage. Ce paramètre au niveau du processus est lu lors de l'initialisation du journal.
+
+### Applications connectées de codage et MCP Apps [#connected-coding-and-mcp-apps]
+
+Les sessions Code avec état restent très expérimentales. L'enrôlement approuvé dans le navigateur n'accorde pas à lui seul à chaque agent l'accès à une machine. Configurez l'environnement joint, activez l'enrôlement des workers principaux ainsi que leur option distincte `browserSetup.enabled`, configurez l'`instance` publique canonique, démarrez un worker compatible, puis enregistrez la liste d'autorisation explicite des machines de l'agent. Les nouvelles conversations ne peuvent choisir que parmi cette liste ; les conversations existantes conservent la décision enregistrée.
+
+L'intégration optionnelle `endpoints.agents.pullRequests` nécessite un worker compatible signalant l'état de git, `CODEAPI_BRIDGE_LANE_GIT=true` pour l'API de code, un périmètre de dépôt et un jeton de fournisseur doté des permissions appropriées. GitHub nécessite un accès en lecture seule aux Pull requests, aux Checks et au Contents. GitLab et Bitbucket utilisent leurs identifiants spécifiques à chaque fournisseur. Une connexion OAuth par utilisateur est une option distincte, à activer explicitement.
+
+Les nouvelles applications MCP nécessitent `mcpSettings.apps: true`. L'omission conserve le comportement HTML inline hérité, tandis que `false` désactive les deux. Déployez le bac à sable de l'application MCP sur une origine dédiée acheminée vers `/api/mcp/sandbox` ; la politique de bac à sable de déploiement n'est pas une surcharge par rôle/groupe/utilisateur. Appliquez la configuration de l'origine du bac à sable et de la phase de construction décrite dans le [guide de configuration MCP](/docs/configuration/librechat_yaml/object_structure/mcp_settings).
+
+### Déploiement du nettoyage des fichiers [#file-cleanup-rollout]
+
+`fileConfig.retainedFileCleanup` reste désactivé par défaut. Ne l'activez qu'une fois que chaque réplique et chaque cible de restauration prend en charge les destinations de fichiers conservés. Le nettoyage des vecteurs exige également `fileConfig.vectorOwnershipTrackingStart`, une date limite en UTC choisie après le retrait des anciens écrivains de vecteurs et des cibles de restauration, ainsi qu'une preuve de propriété complète enregistrée pour le fichier à cette date limite ou après. Ne reportez pas rétroactivement la date limite et n'inférez pas la propriété de fichiers historiques dans le seul but de permettre la suppression.
+
+Les enregistrements ambigus ou antérieurs à la date de coupure échouent en mode fermé. Le fichier principal reste lisible jusqu'à ce que le nettoyage secondaire soit confirmé. `fileConfig.vectorDeletionConcurrency` a pour valeur par défaut `4` et accepte de `1` à `16` suppressions d'espaces de noms par fichier. Consultez les [contrôles de nettoyage des fichiers](/docs/configuration/librechat_yaml/object_structure/file_config#retained-file-and-vector-cleanup) avant de les activer.
+
+### Autres valeurs par défaut modifiées [#other-changed-defaults]
+
+- Entrée envoie les messages par défaut. Les utilisateurs peuvent modifier cette préférence dans les Paramètres.
+- La redimensionnement des images côté navigateur est activé par défaut lorsque `fileConfig.clientImageResize.enabled` est omis. Une valeur explicite `true` ou `false` impose le choix à l'ensemble du déploiement.
+- `interface.retentionMode: ephemeral` force chaque conversation à être temporaire. Avant de revenir à `temporary`, supprimez les délais de conservation des enregistrements qui ne doivent plus expirer ; les délais existants ne sont pas migrés automatiquement.
+- Les conversations temporaires, y compris les conversations en mode éphémère, ne sont pas tracées ni notées par retour d'expérience, sauf si `langfuse.trace.temporaryChats` est activé.
+- `interface.historyCacheTtlMs` a pour valeur par défaut `60000` et `historyCacheRecent` a pour valeur par défaut `1`, avec un budget supplémentaire `historyCacheMaxBytes` de `8388608` octets, qui limite la durée de conservation en cache des historiques récemment quittés.
+- `toolCallPreviews` utilise par défaut des aperçus limités pour les clients qui les demandent. `outputChars` et `argsChars` ont pour valeur par défaut `512` ; les exports et les clients qui ne demandent pas d'aperçus conservent le contenu complet.
+
+Consultez la [référence de l'interface](/docs/configuration/librechat_yaml/object_structure/interface), la [référence des Agents](/docs/configuration/librechat_yaml/object_structure/agents) et la [référence de l'environnement](/docs/configuration/dotenv) pour les options existantes.

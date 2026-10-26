@@ -1,0 +1,98 @@
+---
+title: Yükseltme ve Aşamalı Dağıtımlar
+icon: RefreshCw
+description: >-
+  Yükseltme ön koşulları, uyumluluk anahtarları ve LibreChat operatörleri için
+  geri alma sınırları.
+---
+
+## v0.8.9-rc1 için Hazırlık [#preparing-for-v089-rc1]
+
+Yerel kurulumlar için Node.js **24.22.1** sürümünü kullanın. Sürümleri değiştirmeden önce MongoDB, `librechat.yaml` ve şifreleme kimlik bilgilerini yedekleyin. `CREDS_KEY` ve `CREDS_IV` değerlerini saklayın; bunları değiştirmek bir geçiş (migration) işlemi değildir. Yapılandırma `1.3.18` bu adayı tanımlar; eklenen ayarlar için [yapılandırma değişiklik günlüğüne](/changelog/config_v1.3.18) bakın.
+
+Özelliği, eski kopyalar uygulayamayacağı için etkinleştirmeden önce her LibreChat API kopyasını yükseltin. Uyumlu istemcileri, Code API hizmetlerini ve bağlı çalışanları ayrı ayrı güncelleyin. LibreChat imajı, bağımsız olarak dağıtılmış bir Code API'yi veya onun yüklü dil paketlerini yükseltmez.
+
+### Sürümler arası uyumluluk [#mixed-version-compatibility]
+
+| Yüzey | Uyumsuz replica'lar veya istemciler varken | Güncelleme tamamlandıktan sonra |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Saklanan kullanıcı kimlik bilgileri | Her replica üzerinde dağıtım YAML dosyasında `credentials.writeFormat: legacy` ayarlayın. | Değer başına rastgele IV ile `v3` yazımlarını kullanmak için geçersiz kılmayı kaldırın. Her iki format da bu sürüm tarafından okunmaya devam eder. |
+| İki faktörlü doğrulama yedek kodları | Eski backend'ler veya istemciler güçlü kodları okuyamıyorsa her replica üzerinde `TWO_FACTOR_BACKUP_CODE_FORMAT=legacy` ayarlayın. | 128 bit rastgele, her biri ayrı ayrı tuzlanmış kodlar üretmek için bu ayarı kaldırın. Mevcut eski kodlar yeniden oluşturulana kadar geçerli kalır. |
+| E-posta adresi değişiklikleri | `emailChange.enabled: false` veya `ALLOW_EMAIL_CHANGE=false` ayarlayın. YAML bayrağı önceliklidir. | Yalnızca her düğüm, adrese bağlı parola sıfırlama bağlantılarını destekledikten sonra etkinleştirin. Aksi halde eski bir düğümün ürettiği bağlantı, e-posta değişikliğinden sonra da geçerli kalabilir. |
+| Sohbet bazında makine seçimleri | `CODE_ENVIRONMENT_DECISION_VERSION=0` veya `endpoints.agents.statefulCodeSessions.allowEnvironmentSelection: false` ayarlayın. | Karar protokolü v1 ve makine seçimi varsayılan olarak etkindir, ancak yalnızca açık bir makine izin listesine sahip agent'lar seçenek sunabilir. |
+| Kaydedilmiş sohbet çalışma alanı değişiklikleri | `statefulCodeSessions.conversationMoves.enabled` seçeneğini kapalı tutun; `allowAttachDetach` ayrı bir isteğe bağlı seçenektir. | Yalnızca her API replica'sında ve uyumlu Code API/worker'larda protokol v1 ile etkinleştirin. Ardından istemcileri yenileyin. |
+| Hatırlanan araç onayları | `endpoints.agents.toolApproval.agentModes: false` ayarını koruyun. | Tüm replica'lar bu modu desteklediğinde açıkça etkinleştirin. Yönetici tarafından tanımlanan sor/reddet kuralları geçerliliğini korur. |
+| Toplu arka plan tamamlamaları | Eski replica'lar trafiğe hizmet verirken `endpoints.agents.backgroundTasks.completionReceiptBatching: false` ayarlayın. | Hazır sonuçları birlikte teslim etmek için geçersiz kılmayı kaldırın. |
+| Çalışan sohbetleri yeniden adlandırma | Eski başlık oluşturma işleri tamamlanana kadar `interface.runningChatRename: false` ayarlayın. | Çalışan veya geçici başlığa sahip sohbetlerin yeniden adlandırılmasına izin vermek için geçersiz kılmayı kaldırın. |
+
+Yazma formatı anahtarını eski duruma geri almak, halihazırda kaydedilmiş verileri **dönüştürmez**. Eski bir sürüm, v3 olarak kaydedilmiş kimlik bilgilerini veya yeni oluşturulmuş güçlü yedek kodlarını okuyamaz. Geri almadan önce, uyumsuz verileri şifreleme anahtarlarını döndürmek yerine bilinçli olarak değiştirin veya taşıyın.
+
+### Kimlik doğrulama ve güvenlik politikası [#authentication-and-security-policy]
+
+[Passkey ile oturum açma](/docs/configuration/authentication) `ALLOW_PASSKEY_LOGIN=true` ile isteğe bağlı olarak etkinleştirilir ve üretim ortamında HTTPS gerektirir. Relying-party ID'yi sabit tutun: `PASSKEY_RP_ID` değerini değiştirmek mevcut kayıtların geçersiz olmasına neden olabilir. `passkeys.perUserMax`, `MAX_PASSKEYS_PER_USER` değerini geçersiz kılar; varsayılan değer 20'dir.
+
+`ENFORCE_TWO_FACTOR_AUTHENTICATION` varsayılan olarak `false` değerindedir. Etkinleştirildiğinde, e-posta/şifre ve LDAP hesapları tam bir oturum almadan önce kayıt olmak zorundadır. Federe sağlayıcılar kendi MFA işlemlerinden sorumlu olmaya devam eder. Geçici kod bütçeleri (`TWO_FACTOR_TEMP_MAX`, `TWO_FACTOR_TEMP_WINDOW`), kurulum adımı bütçelerinden (`TWO_FACTOR_SETUP_MAX`, `TWO_FACTOR_SETUP_WINDOW`) ayrıdır.
+
+Sistem düzeyindeki yetki atamaları ve kaynak paylaşımını genişleten değişiklikler, değişiklik öncesi denetim kaydı yazımı başarısız olduğunda varsayılan olarak kapalı (fail closed) şekilde başarısız olur. İptaller (revocations) denetim kaydı kesintisinden etkilenmez. Bu varsayılan korumayı yalnızca `AUDIT_LOG_FAIL_CLOSED=false` ayarı devre dışı bırakır. Diğer yönetici işlemleri, işleme özgü denetim sıralamasına sahiptir; bir denetim hatası, otomatik olarak geri alma (rollback) anlamına gelmez.
+
+### Yönetici yapılandırması ve gizli bilgiler [#admin-configuration-and-secrets]
+
+Etkin veritabanı Base profili, rol, grup ve kullanıcı profillerinden önce, Base'in sayısal önceliğinden bağımsız olarak dağıtım YAML'ini geçersiz kılar. Diğer etkin profiller, eşitlik durumlarında deterministik bir sıraya göre artan öncelik sırasında birleştirilir. Bir geçersiz kılmanın kaldırılması kalıtımı geri yükler; bir mezar taşı (tombstone), miras alınmış bir değerin üzerini örter. Bu mezar taşının kaldırılması kalıtımı yeniden geri yükler. Sıradan diziler bir bütün olarak bastırılır; desteklenen anahtarlı koleksiyonlarda ise adlandırılmış tek bir girişin gizlenmesine de izin verilir. Bu mezar taşının kaldırılması kalıtımı yeniden geri yükler.
+
+Yönetici yapılandırması `changes` uç noktası, bir toplu işlemi tek bir profile atomik olarak uygular. Doğrulama yapmak için `dryRun`, iyimser eşzamanlılık kontrolü için `expectedRevision` kullanın; güncel olmayan bir revizyon `409` döndürür. Korumalı ayarlar, tüm toplu işlemi reddetmeden uygulanmadan kalabileceğinden, yoksayılan sonuçları inceleyin. Bu garanti, rol yeniden adlandırmalarını veya diğer çok belgeli yönetici işlemlerini atomik hale getirmez.
+
+Yönetici tarafından yazılan `${ENV_VAR}` başvuruları, dağıtım YAML'ı tarafından başvurulan adlar, yerleşik uç nokta kimlik bilgileri ve `CONFIG_OVERRIDE_ENV_ALLOWLIST` (virgül veya boşlukla ayrılmış) ile sınırlıdır. Tanınmayan başvurular yazma sırasında reddedilir ve çalışma zamanında hiçbir değere çözümlenmez. Vertex AI geçersiz kılmaları daha dardır: `endpoints.anthropic.vertex`, genel izin listesindeki ek adları değil, yalnızca dağıtım YAML'ının kendi Vertex yapılandırması tarafından başvurulan ortam adlarını kullanabilir. Değişmez metin olarak kullanılan içerik bu kısıtlamadan muaftır: `interface`, `modelSpecs`, uç nokta başlığı/etkinlik/muhakeme etiketi istemleri, özetleme istemleri, bellek talimatları ve Firecrawl değişiklik takibi istemleri.
+
+Saklanan web arama, MCP ve Azure kimlik bilgileri hedeflerine bağlıdır. Bağlı bir hedefi değiştiren veya kaldıran bir yazma işlemi, aynı yazma işleminde saklanan anahtarı yeniden girmeli veya anahtarı kaldırmalıdır. `secret_reentry_required` hatasını, gerekli gizli bilgiyi yeniden toplayarak ele alın; eski bir anahtarı yeni bir URL'ye karşı sessizce yeniden denemeyin. Ortam tarafından yönetilen ve kullanıcıya ait kimlik bilgileri bir yönetici profili üzerinden yeniden yönlendirilemez.
+
+`CONFIG_REDERIVE_ENDPOINTS` bu sürüm için varsayılan olarak kapalıdır. Azure gruplarının profil geçersiz kılmaları, `endpoints.anthropic.vertex` ve Azure Assistants anahtarı saklanmaya devam eder, ancak operatör bunu etkinleştirene kadar etkisizdir. Etkinleştirmeden önce her replikada, etkilenen profiller ve çözümlenemeyen gruplar için başlangıç tanılamalarını inceleyin. Profil Vertex ayarları yalnızca dağıtım YAML'ında Vertex yapılandırılmışsa uygulanır ve bu durumda dağıtıma ait anahtar dosyasını ve bölgeyi kullanır.
+
+Özel bir rolü yeniden adlandırmak, üyelerini, yapılandırma profilini, yetkilendirmelerini ve kiracısı içindeki ACL girişlerini taşır. Silmek ise üyeleri `USER` rolüne yeniden atar ve bağımlı yapılandırmayı ile yetkilendirmeleri kaldırır. Bu çok belgeli değişiklikler tek bir atomik işlem değildir. Bir hatadan sonra yeniden denemeden önce mevcut durumu inceleyin; zaten iptal edilmiş erişimler iptal edilmiş olarak kalabilir.
+
+### Katı kiracı kimlik doğrulaması [#strict-tenant-authentication]
+
+`TENANT_ISOLATION_STRICT=true` ayarlandığında, kimlik doğrulama ve hesap rotaları bir kullanıcıyı aramadan önce gerçek, sistem olmayan bir kiracı (tenant) gerektirir. Eksik kiracı bağlamı `403` ve `TENANT_CONTEXT_REQUIRED` ile reddedilir; OAuth akışları ise kendi hata yönlendirmelerini kullanır. Kiracı yönlendirmesini, oturum açma ve yenileme rotaları dahil olmak üzere güvenilir proxy veya kimlik doğrulama sınırında doğrulayın. Eksik bir kiracıyı, katı izolasyonu devre dışı bırakarak ya da rastgele genel başlıklara güvenerek atlamayın.
+
+Dağıtım genelindeki başlangıç kontrolleri, dizin senkronizasyonları ve izin geçişleri açık sistem kapsamında çalışır. Bir geçiş bir kaynağa yazdığında, o kaynağın kiracı bölümünü korur. Bu kontroller, normal kimlik doğrulama isteklerine sistem kiracısına dönüş (fallback) yetkisi vermez.
+
+### Paylaşılan paket uyumluluğu [#shared-package-compatibility]
+
+Yenilenen paylaşılan paketler Zod 4 kullanır. LibreChat şemalarını içe aktaran ve birleştiren özel entegrasyonların Zod kullanımını güncellemesi ve eşleşen paket sürümleriyle yeniden derlemesi gerekir; bu paketleri Zod 3'e geri almayın. Bu sürüm, atlanan isteğe bağlı yapılandırma alanlarını ve doğrulama tanılamalarını korur; kitaplık geçişi için yeni bir YAML sürüm artırımı veya toptan bir yapılandırma yeniden yazımı gerekmez.
+
+Özel ön yüzler, kaldırılmış eski `@librechat/client` denetimlerini içe aktarıyorsa bunları desteklenen denetimlere taşımalıdır. Özellikle `Select`, `SelectDropDown`, `Dialog`, `DialogTemplate` ve Radix `DropdownMenu` dışa aktarımları artık sağlanmamaktadır. Diyaloglar için `OGDialog`/`OGDialogTemplate` kullanın, tek değerli seçiciler için `Dropdown` kullanın ve eylem menüleri için `DropdownPopup` veya Ariakit ilkellerini kullanın. LibreChat'in kendi çağıranları taşınmıştır. Bu, bir geliştirici entegrasyon değişikliğidir; kendi barındırdığınız bir dağıtımın ayarlarını yeniden yazmanız gerektiği anlamına gelmez.
+
+### Tarayıcı telemetrisi [#browser-telemetry]
+
+RUM, istemci günlükleri ve oturum tekrarı bağımsız isteğe bağlı (opt-in) özelliklerdir. YAML'deki `telemetry.rum.enabled` ve `telemetry.rum.sessionReplay.enabled` değerleri, ortam değişkeni yedeklerine göre önceliklidir; bu ayarların atlanması ortam ayarını korur ve boş bir YAML `sessionReplay: {}` tanımı tekrar oynatmayı devre dışı bırakır.
+
+- `RUM_CLIENT_LOGS=true` yalnızca kimlik doğrulamalı proxy modunda, temizlenmiş (scrubbed) istemci tanılama günlüklerini etkinleştirir.
+- `RUM_SESSION_REPLAY_ENABLED=true` değeri, RUM etkinleştirildiğinde oturum tekrarını (replay) açıkça etkinleştirir. Bu değişken, kullanımdan kaldırılmış ters mantıklı `RUM_DISABLE_REPLAY` geri dönüş (fallback) değişkenini geçersiz kılar.
+- `RUM_PROXY_BODY_LIMIT` varsayılan olarak `3mb` değerine ayarlıdır. İzler (traces) ve günlükler (logs), kimliği doğrulanmış kullanıcı bütçesini paylaşır: `RUM_PROXY_USER_WINDOW=1` dakika başına `RUM_PROXY_USER_MAX=240`. Bu sınırı aşan istekler `429` yanıtı döndürür.
+- Replay, metin ve giriş değerlerini maskeler ve kimlik doğrulama ekranlarını hariç tutar, ancak **genel amaçlı bir DLP çözümü değildir**. Gerçek kullanıcıları kaydetmeden önce sentetik verilerle doğrulayın. Genel token alımını doğrudan kullanmak, sunucunun replay filtrelemesini atlar ve kendi toplayıcı (collector) politikasını gerektirir.
+
+`LOG_REDACTION_MAX_NODES=5000` her sunucu günlük kaydı başına gizleme (redaction) işleminin iş yükünü sınırlar. Nesneler ve uzunluklarına göre ağırlıklandırılmış dizeler bu bütçeyi tüketir; bütçeyi aşan alanlar gizlenmeden dışa aktarılmak yerine değiştirilir. Bu süreç düzeyindeki ayar, günlükleyici (logger) başlatıldığında okunur.
+
+### Bağlı kodlama ve MCP Uygulamaları [#connected-coding-and-mcp-apps]
+
+Stateful Code oturumları hâlâ son derece deneyseldir. Tarayıcı üzerinden onaylanan kayıt, tek başına her agent'ın bir makineye erişimine izin vermez. Eklenen ortamı yapılandırın, principal-worker kaydını ve bunun ayrı `browserSetup.enabled` onay seçeneğini etkinleştirin, kanonik herkese açık `instance` değerini yapılandırın, uyumlu bir worker başlatın ve agent'ın açık makine izin listesini kaydedin. Yeni sohbetler yalnızca bu izin listesindeki seçenekler arasından seçim yapabilir; mevcut konuşmalar ise kayıtlı kararlarını korur.
+
+Ä°steğe baÄŸlı `endpoints.agents.pullRequests` entegrasyonu, git durumunu raporlayan uyumlu bir worker, Code API `CODEAPI_BRIDGE_LANE_GIT=true`, bir depo kapsamı ve uygun şekilde kapsamlandırılmış bir sağlayıcı token'ı gerektirir. GitHub için salt okunur Pull requests, Checks ve Contents erişimi gereklidir. GitLab ve Bitbucket ise kendi sağlayıcıya özgü kimlik bilgilerini kullanır. Kullanıcı başına OAuth bağlantısı ise ayrı bir isteğe bağlı (opt-in) seçenektir.
+
+Yeni MCP Apps için `mcpSettings.apps: true` gereklidir. Bu alanın atlanması eski satır içi HTML davranışını korur, `false` ise her ikisini de devre dışı bırakır. MCP App sandbox'ını özel bir origin üzerinde, `/api/mcp/sandbox` yoluna yönlendirilmiş olarak dağıtın; dağıtım sandbox politikası bir rol, grup veya kullanıcı geçersiz kılma mekanizması değildir. Sandbox origin ve derleme zamanı kurulumunu [MCP yapılandırma kılavuzu](/docs/configuration/librechat_yaml/object_structure/mcp_settings) üzerinden uygulayın.
+
+### Dosya temizleme yayılımı [#file-cleanup-rollout]
+
+`fileConfig.retainedFileCleanup` varsayılan olarak kapalı kalır. Bunu yalnızca her replika ve geri alma hedefi saklanan dosya hedeflerini desteklediğinde etkinleştirin. Vektör temizliği ayrıca `fileConfig.vectorOwnershipTrackingStart` ayarını, eski vektör yazıcılarının ve geri alma hedeflerinin kullanımdan kaldırılmasından sonra seçilmiş bir UTC kesim zamanını ve bu kesim zamanında veya sonrasında dosya için kaydedilmiş eksiksiz sahiplik kanıtını gerektirir. Silme işleminin devam edebilmesi için kesim zamanını geriye çekmeyin ve yalnızca silmeyi mümkün kılmak amacıyla geçmiş dosyalar için sahiplik çıkarımında bulunmayın.
+
+Belirsiz veya kesim tarihinden önceki kayıtlar kapalı kalacak şekilde (fail closed) işlenir. Birincil dosya, ikincil temizlik onaylanana kadar okunabilir durumda kalır. `fileConfig.vectorDeletionConcurrency` varsayılan olarak `4` değerine sahiptir ve dosya başına `1`–`16` ad alanı (namespace) silme işlemini kabul eder. Bunları etkinleştirmeden önce [dosya temizleme denetimleri](/docs/configuration/librechat_yaml/object_structure/file_config#retained-file-and-vector-cleanup) bölümüne bakın.
+
+### Diğer değiştirilen varsayılanlar [#other-changed-defaults]
+
+- Enter tuşu varsayılan olarak mesajları gönderir. Kullanıcılar bu tercihi Ayarlar bölümünden değiştirebilir.
+- Tarayıcı tarafında görsel yeniden boyutlandırma, `fileConfig.clientImageResize.enabled` belirtilmediğinde varsayılan olarak açıktır. Açıkça `true` veya `false` değeri verildiğinde ise tüm dağıtım genelinde bu seçim zorunlu kılınır.
+- `interface.retentionMode: ephemeral` tüm sohbetlerin geçici olmasını zorunlu kılar. `temporary` moduna geri dönmeden önce, artık sona ermemesi gereken kayıtlardaki saklama sürelerini kaldırın; mevcut sona erme süreleri otomatik olarak taşınmaz.
+- Geçici sohbetler, geçici mod sohbetleri dahil, `langfuse.trace.temporaryChats` etkinleştirilmediği sürece izlenmez ve geri bildirim puanlamasına tabi tutulmaz.
+- `interface.historyCacheTtlMs` varsayılan olarak `60000` değerini alır ve `historyCacheRecent` varsayılan olarak `1` değerini alır. Ek olarak, `8388608` bayt olan bir `historyCacheMaxBytes` bütçesi bulunur; bu bütçe, yakın zamanda terk edilen geçmişlerin ne kadar süre önbellekte tutulacağını sınırlar.
+- `toolCallPreviews` varsayılan olarak, önizleme isteyen istemciler için sınırlandırılmış önizlemeler sağlar. `outputChars` ve `argsChars` varsayılan olarak `512` değerine ayarlıdır; dışa aktarımlar ve önizleme istemeyen istemciler ise tam içeriği korur.
+
+Mevcut seçenekler için [arayüz referansına](/docs/configuration/librechat_yaml/object_structure/interface), [Agents referansına](/docs/configuration/librechat_yaml/object_structure/agents) ve [ortam değişkenleri referansına](/docs/configuration/dotenv) bakın.
