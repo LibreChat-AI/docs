@@ -11,7 +11,7 @@ Ever wanted to hand a PDF, a code file, or a spreadsheet to the AI and just say 
 You attach a file, LibreChat extracts the text from it, and the full content gets pasted straight into your conversation. The AI can then read every word of it — no plugins, no vector databases, no extra services to configure. It works out of the box.
 
 <Callout type="info" title="Zero setup required">
-  Upload as Text works immediately on any LibreChat instance. It uses built-in text parsing — you don't need OCR, a RAG pipeline, or any external service to get started.
+  Upload as Text works immediately on any LibreChat instance. It uses a built-in document parser for common formats, so plain text, code, PDF, DOCX, spreadsheets, and ODT work without OCR, a RAG pipeline, or any external service. Images and some office formats do need an extra service; see [Which files are supported](#which-files-are-supported).
 </Callout>
 
 ---
@@ -66,32 +66,35 @@ Pasted-text attachments follow the same file-size, token, and [`fileTokenLimit`]
 When an upload is routed to text, LibreChat doesn't dump raw bytes into the prompt. It runs through a processing pipeline to extract clean, readable text:
 
 1. **MIME type detection** — LibreChat checks what kind of file you uploaded (PDF, image, audio, source code, etc.) by inspecting its MIME type.
-2. **Method selection** — Based on the file type and what services are available, it picks the best extraction method using this priority:
+2. **Method selection**: Based on the file type and what services are available, it picks an extraction method in this order:
 
 <Tabs items={["Priority order", "Decision examples"]}>
   <Tabs.Tab>
     | Priority | Method | When it's used |
     |----------|--------|---------------|
-    | 1st | **OCR** | File is an image or scanned document, _and_ OCR is configured |
-    | 2nd | **STT** (Speech-to-Text) | File is audio, _and_ STT is configured |
-    | 3rd | **Text parsing** | File matches a known text MIME type |
-    | 4th | **Fallback** | None of the above matched — tries text parsing anyway |
+    | 1st | **OCR** | OCR is configured _and_ the file matches `fileConfig.ocr.supportedMimeTypes`. If OCR fails, LibreChat falls back to the built-in document parser. |
+    | 2nd | **RAG API `/text`** | `RAG_API_URL` is set, `fileConfig.text.supportedMimeTypes` has been narrowed, and the file matches it. If the RAG API is unavailable, LibreChat falls back to the built-in document parser. |
+    | 3rd | **Built-in document parser** | File is a PDF, DOCX, xlsx/xls/ods spreadsheet, or ODT, up to 15 MB. |
+    | 4th | **STT** (Speech-to-Text) | File is audio and matches `fileConfig.stt.supportedMimeTypes`. |
+    | 5th | **Plain text** | File matches `fileConfig.text.supportedMimeTypes`. Text and code files are read directly; other types are sent to the RAG API `/text` route when `RAG_API_URL` is set, and fail otherwise. |
+
+    A file that matches none of these is rejected as not supported for text parsing.
   </Tabs.Tab>
   <Tabs.Tab>
     **A `.pdf` on an instance with OCR configured:**
     → OCR kicks in. Great for scanned docs and complex layouts.
 
     **A `.pdf` on a default instance (no OCR):**
-    → Text parsing handles it. Works well for digitally-created PDFs.
+    → The built-in document parser handles it. Works well for digitally-created PDFs.
 
     **A `.py` Python file:**
-    → Straight to text parsing. Source code is already text — no conversion needed.
+    → Plain text. Source code is already text, so no conversion is needed.
 
     **An `.mp3` on an instance with STT configured:**
     → Speech-to-Text transcribes it into text for the conversation.
 
     **A `.png` screenshot with no OCR configured:**
-    → Falls back to text parsing (limited results — consider setting up OCR for images).
+    → The upload returns an error rather than text. Configure OCR for images.
   </Tabs.Tab>
 </Tabs>
 
@@ -114,16 +117,21 @@ When you preview or download an Upload as Text attachment, LibreChat serves the 
     - Shell scripts, SQL files
   </Tabs.Tab>
   <Tabs.Tab>
-    Text parsing handles these out of the box. If OCR is configured, it takes over for better accuracy on complex layouts.
+    The built-in document parser handles these out of the box, up to 15 MB per file. If OCR is configured, it takes over for better accuracy on complex layouts.
 
-    - **PDF** — digital and scanned (scanned PDFs benefit from OCR)
-    - **Word** — `.docx`, `.doc`
+    - **PDF**: digital text layer (scanned PDFs need OCR)
+    - **Word**: `.docx` (not legacy `.doc`)
+    - **Spreadsheets**: `.xlsx`, `.xls`, `.ods`
+    - **OpenDocument text**: `.odt`
+
+    These need OCR, or the RAG API `/text` route, because the built-in parser does not read them:
+
+    - **Word**: `.doc`
     - **PowerPoint** — `.pptx`, `.potx`, `.ppt`
-    - **Excel** — `.xlsx`, `.xls`
     - **EPUB** books
   </Tabs.Tab>
   <Tabs.Tab>
-    Images **require OCR** to produce useful text. Without it, results will be poor.
+    Images **require OCR** to produce text. Without it, the upload returns an error instead of text.
 
     - JPEG, PNG, GIF, WebP
     - HEIC, HEIF (Apple formats)
@@ -218,7 +226,7 @@ fileConfig:
 
 ## Optional: boosting extraction with OCR
 
-Text parsing works fine for digitally-created documents (PDFs saved from Word, code files, plain text). But if you're uploading **scanned documents, photos of pages, or images with text**, the built-in parser won't get great results.
+The built-in parser works fine for digitally-created PDFs, DOCX, spreadsheets, ODT, code files, and plain text. But **scanned documents, photos of pages, images with text, and formats such as `.doc`, PowerPoint, and EPUB** need OCR.
 
 That's where OCR comes in. When configured, LibreChat automatically uses OCR for file types that benefit from it — you don't need to do anything differently as a user.
 
@@ -254,7 +262,8 @@ This section is for admins who want to control which file types get processed by
       # Max tokens extracted from a single file before truncation
       fileTokenLimit: 100000
 
-      # Files matching these MIME patterns use OCR (if configured)
+      # Example only: files matching these MIME patterns use OCR (if configured).
+      # These are examples for narrowing or extending, not required settings.
       ocr:
         supportedMimeTypes:
           - "^image/(jpeg|gif|png|webp|heic|heif)$"
@@ -263,18 +272,19 @@ This section is for admins who want to control which file types get processed by
           - "^application/vnd\\.ms-(word|powerpoint|excel)$"
           - "^application/epub\\+zip$"
 
-      # Files matching these MIME patterns use text parsing
+      # Example only: narrowing this list sends the matching types to the RAG API /text
+      # route when RAG_API_URL is set
       text:
         supportedMimeTypes:
           - "^text/(plain|markdown|csv|json|xml|html|css|javascript|typescript|x-python|x-java|x-csharp|x-php|x-ruby|x-go|x-rust|x-kotlin|x-swift|x-scala|x-perl|x-lua|x-shell|x-sql|x-yaml|x-toml)$"
 
-      # Files matching these MIME patterns use STT (if configured)
+      # Example only: files matching these MIME patterns use STT (if configured)
       stt:
         supportedMimeTypes:
           - "^audio/(mp3|mpeg|mpeg3|wav|wave|x-wav|ogg|vorbis|mp4|x-m4a|flac|x-flac|webm)$"
     ```
 
-    **Priority reminder:** OCR > STT > text parsing > fallback.
+    **Priority reminder:** OCR > RAG `/text` (when `RAG_API_URL` is set and the text list is narrowed) > built-in document parser > STT > plain text.
 
     For the full reference, see [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config).
   </Accordion>
@@ -297,10 +307,10 @@ This section is for admins who want to control which file types get processed by
   </Accordion>
   <Accordion title="File content looks wrong or is mostly empty">
     A few things to check:
-    - **Scanned PDFs / images** — These need OCR to extract text properly. Without it, the parser might return garbage or nothing. Ask your admin to [configure OCR](/docs/features/ocr).
+    - **Scanned PDFs / images**: These need OCR to extract text properly. Without it, the parser returns nothing for a scanned PDF and images return an error. Ask your admin to [configure OCR](/docs/features/ocr).
     - **Audio files** — These need STT. There's no text fallback for audio.
     - **Corrupted files** — Try opening the file locally to make sure it's not damaged.
-    - **Unsupported format** — If the MIME type doesn't match any configured pattern, LibreChat attempts a text parse fallback, which may not work for binary formats.
+    - **Unsupported format**: The built-in parser handles only PDF, DOCX, xlsx/xls/ods, and ODT (up to 15 MB). Formats such as `.doc`, PowerPoint, and EPUB need OCR or the RAG API `/text` route. A MIME type that matches no configured pattern is rejected.
   </Accordion>
   <Accordion title="Upload is rejected as an unsupported file type">
     LibreChat returns the rejected MIME type in the upload error. Check the active endpoint's [`fileConfig.endpoints.<endpoint>.supportedMimeTypes`](/docs/configuration/librechat_yaml/object_structure/file_config#supportedmimetypes-3) patterns and allow the canonical type you intend to accept. For shell scripts, use `application/x-sh`; LibreChat normalizes the common `application/x-shellscript` and `text/x-shellscript` variants before matching.
@@ -314,7 +324,7 @@ This section is for admins who want to control which file types get processed by
     - Split the file into smaller parts and upload them separately
   </Accordion>
   <Accordion title="Images upload but the AI can't read the text in them">
-    Without OCR, images are processed through text parsing, which can't actually "see" text in an image. You need OCR configured for this to work. See [OCR for Documents](/docs/features/ocr).
+    Without OCR, there is nothing that can read text in an image, so the upload returns an error. You need OCR configured for this to work. See [OCR for Documents](/docs/features/ocr).
 
     Alternatively, use a **vision model** with standard file upload — the model itself can read text in images.
   </Accordion>

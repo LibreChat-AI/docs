@@ -173,6 +173,26 @@ export const zh: UIStrings = {
       },
     },
     categories: {
+      agentic: {
+        title: '智能体 AI',
+        items: {
+          skills: { title: 'Skills', description: '智能体可调用的可复用 SKILL.md 指令' },
+          subagents: { title: '子智能体', description: '将专项工作委派给相互隔离的子智能体' },
+          scheduledChats: { title: '定时聊天', description: '按周期性计划运行已保存的智能体' },
+          agentPlugins: {
+            title: '智能体插件',
+            description: '将 Skills、MCP 服务器和钩子打包的实验性插件包',
+          },
+          agentsApi: {
+            title: 'Agents API（测试版）',
+            description: '以编程方式运行智能体并接收事件',
+          },
+          pullRequests: {
+            title: '对话拉取请求',
+            description: '为运行代码的聊天显示拉取请求和 CI 状态',
+          },
+        },
+      },
       searchKnowledge: {
         title: '搜索与知识',
         items: {
@@ -229,6 +249,15 @@ export const zh: UIStrings = {
             title: '可恢复的流',
             description: '自动重连并恢复中断的回复',
           },
+          composer: { title: '消息编辑器', description: '通过 + 面板添加文件并启用工具' },
+          settings: { title: '个人设置', description: '管理按用户和按浏览器保存的偏好' },
+          navigation: { title: '侧边栏与导航', description: '聊天、置顶对话、面板和移动端抽屉' },
+          messageActions: {
+            title: '消息操作',
+            description: '编辑、重新运行、引用、复制和分叉消息',
+          },
+          projects: { title: '项目', description: '用共享的指令和文件组织相关聊天' },
+          smoothStreaming: { title: '平滑流式输出', description: '流式文本生成时平滑淡入' },
         },
       },
       security: {
@@ -250,6 +279,11 @@ export const zh: UIStrings = {
             title: '审核系统',
             description: '内容审核与安全控制',
           },
+          accessControl: {
+            title: '访问控制',
+            description: '针对智能体、提示词和 MCP 服务器的细粒度权限',
+          },
+          insights: { title: '管理员洞察', description: '智能体使用情况与活动仪表板' },
         },
       },
     },

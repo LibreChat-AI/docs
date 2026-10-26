@@ -89,14 +89,28 @@ Controls retry behavior for concurrent access-control-list writes.
       'Maximum compare-and-swap attempts for each ACL document, including the initial write. Only write conflicts are retried.',
       '3',
     ],
+    [
+      'leaseTtlMs',
+      'Integer',
+      'How long, in milliseconds, a holder keeps the per-resource permission lease without renewing it. Valid values range from 1000 through 600000.',
+      '30000',
+    ],
+    [
+      'leaseWaitMs',
+      'Integer',
+      'How long, in milliseconds, a permission update waits for a contended per-resource lease before answering with a 409 conflict. Valid values range from 0 through 60000.',
+      '3000',
+    ],
   ]}
 />
 
-Valid values range from `1` through `100`.
+`maxWriteAttempts` ranges from `1` through `100`.
 
 ```yaml filename="permissions"
 permissions:
   maxWriteAttempts: 3
+  leaseTtlMs: 30000
+  leaseWaitMs: 3000
 ```
 
 ## langfuse
@@ -395,7 +409,7 @@ see: [CloudFront Object Structure](/docs/configuration/librechat_yaml/object_str
     [
       'filteredTools',
       'Array of Strings',
-      'Filters out specific tools from both Plugins and OpenAI Assistants endpoints.',
+      'Removes specific built-in tools from the tool list available to Agents and Assistants.',
       'filteredTools: ["scholarai", "calculator"]',
     ],
   ]}
@@ -403,11 +417,9 @@ see: [CloudFront Object Structure](/docs/configuration/librechat_yaml/object_str
 
 - **Notes**:
   - If `includedTools` and `filteredTools` are both specified, only `includedTools` will be recognized.
-  - Affects both `gptPlugins` and `assistants` endpoints
-  - You can find the names of the tools to filter in [`api/app/clients/tools/manifest.json`](https://github.com/LibreChat-AI/LibreChat/blob/main/api/app/clients/tools/manifest.json)
+  - Applies to the built-in tools loaded at startup, which Agents and Assistants use. The Ask User tool (`ask_user_question`) also honors these lists. MCP tools are configured separately.
+  - You can find the names of the tools in [`api/app/clients/tools/manifest.json`](https://github.com/LibreChat-AI/LibreChat/blob/main/api/app/clients/tools/manifest.json)
     - Use the `pluginKey` value
-  - Also, any listed under the ".well-known" directory `api/app/clients/tools/.well-known`
-    - Use the `name_for_model` value
 
 ## includedTools
 
@@ -416,7 +428,7 @@ see: [CloudFront Object Structure](/docs/configuration/librechat_yaml/object_str
     [
       'includedTools',
       'Array of Strings',
-      'Includes specific tools from both Plugins and OpenAI Assistants endpoints.',
+      'Limits the built-in tools available to Agents and Assistants to the listed tools.',
       'includedTools: ["calculator"]',
     ],
   ]}
@@ -424,11 +436,9 @@ see: [CloudFront Object Structure](/docs/configuration/librechat_yaml/object_str
 
 - **Notes**:
   - If `includedTools` and `filteredTools` are both specified, only `includedTools` will be recognized.
-  - Affects both `gptPlugins` and `assistants` endpoints
-  - You can find the names of the tools to filter in [`api/app/clients/tools/manifest.json`](https://github.com/LibreChat-AI/LibreChat/blob/main/api/app/clients/tools/manifest.json)
+  - Applies to the built-in tools loaded at startup, which Agents and Assistants use. The Ask User tool (`ask_user_question`) also honors these lists. MCP tools are configured separately.
+  - You can find the names of the tools in [`api/app/clients/tools/manifest.json`](https://github.com/LibreChat-AI/LibreChat/blob/main/api/app/clients/tools/manifest.json)
     - Use the `pluginKey` value
-  - Also, any listed under the ".well-known" directory `api/app/clients/tools/.well-known`
-    - Use the `name_for_model` value
 
 ## secureImageLinks
 
@@ -718,8 +728,20 @@ see: [Web Search Object Structure](/docs/configuration/librechat_yaml/object_str
       'Maximum number of tokens from text files to include in prompts before truncation.',
       'fileTokenLimit: 100000',
     ],
+    ['imageGeneration', 'Object', 'Output size of generated images, as a percentage or in pixels.', ''],
+    [
+      'defaultLLMDeliveryPath',
+      'Object',
+      'How uploads without an explicit destination enter model context (provider, text, or none).',
+      '',
+    ],
+    ['legacyFileUploadUX', 'Boolean', 'Restores the destination chooser and eager, user-selected upload behavior.', ''],
+    ['fileContextSizeLimit', 'Number', 'Maximum aggregate size (in MB) of model-bound attachments in one Agent turn.', ''],
+    ['fileContextCharLimit', 'Number', 'Maximum aggregate extracted-text characters in one Agent turn.', ''],
   ]}
 />
+
+See [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config) for the full reference, including `textFallbackWithoutTools`, `codeEnvLivenessSafeWindowMs`, and `legacySearchProbeTimeoutMs`.
 
 ## clientImageResize
 
@@ -1086,7 +1108,9 @@ The confirmation endpoint is unauthenticated, so it is bounded by source address
 <OptionTable
   options={[
     ['socialLogins', '', 'Social login configurations.', ''],
-    ['allowedDomains', '', 'Specifies allowed domains for registration.', ''],
+    ['allowedDomains', '', 'Specifies allowed email domains for registration. Optional: when omitted, any domain is allowed.', ''],
+    ['oauthStateTtlMs', 'Integer', 'Milliseconds a started social login may take to reach its callback (60000 to 3600000, default 600000).', ''],
+    ['openidDiscovery', 'Object', 'OpenID discovery retries: startupAttempts (0 to 100, default 1) and retryDelayMs (100 to 3600000, default 5000). Overrides OPENID_DISCOVERY_RETRY_ATTEMPTS and OPENID_DISCOVERY_RETRY_DELAY_MS.', ''],
   ]}
 />
 
@@ -1244,6 +1268,7 @@ see: [Memory Object Structure](/docs/configuration/librechat_yaml/object_structu
 
 <OptionTable
   options={[
+    ['enabled', 'Boolean', 'Enables or disables summarization.', ''],
     [
       'provider',
       'String',
@@ -1269,7 +1294,7 @@ see: [Memory Object Structure](/docs/configuration/librechat_yaml/object_structu
     [
       'reserveRatio',
       'Number',
-      'Fraction of token budget reserved as headroom (0–1). Default: 0.05.',
+      'Fraction of token budget reserved as headroom (0 to 1). Default: 0.05.',
       '',
     ],
     [
@@ -1494,6 +1519,10 @@ see: [Model Specs Object Structure](/docs/configuration/librechat_yaml/object_st
       'Each object in the array represents a unique endpoint configuration.',
       '',
     ],
+    ['openAI', 'Object', 'OpenAI endpoint-specific configuration.', ''],
+    ['google', 'Object', 'Google endpoint-specific configuration.', ''],
+    ['anthropic', 'Object', 'Anthropic endpoint-specific configuration.', ''],
+    ['bedrock', 'Object', 'AWS Bedrock endpoint-specific configuration.', ''],
     ['azureOpenAI', 'Object', 'Azure OpenAI endpoint-specific configuration', ''],
     ['assistants', 'Object', 'Assistants endpoint-specific configuration.', ''],
     ['azureAssistants', 'Object', 'Azure Assistants endpoint-specific configuration.', ''],
@@ -1514,6 +1543,8 @@ see: [Model Specs Object Structure](/docs/configuration/librechat_yaml/object_st
 />
 
 > **Note:** Endpoints support [Shared Endpoint Settings](/docs/configuration/librechat_yaml/object_structure/shared_endpoint_settings) such as `streamRate`, `headers`, `titleModel`, `titleMethod`, `titlePrompt`, `titlePromptTemplate`, `titleEndpoint`, and `maxToolResultChars`. These can be configured individually per endpoint or globally using the `all` key. `headers` are merged with endpoint-level values winning on key collisions. The `all` key does not accept `baseURL`.
+
+> **Note:** The `openAI`, `google`, `anthropic`, and `bedrock` keys are documented with their providers: [OpenAI](/docs/configuration/pre_configured_ai/openai), [Google](/docs/configuration/pre_configured_ai/google), [Anthropic](/docs/configuration/pre_configured_ai/anthropic), and [AWS Bedrock](/docs/configuration/librechat_yaml/object_structure/aws_bedrock).
 
 > **Note:** `endpoints.agents.pullRequests` configures the conversation pull request chip and sidebar mark. See [`pullRequests`](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests).
 
@@ -1619,7 +1650,7 @@ see: [MCP Settings Object Structure](/docs/configuration/librechat_yaml/object_s
     - `stdio`
     - `websocket`
     - `sse`
-    - `streamable-http`
+    - `streamable-http` (`http` is accepted as an alias)
   - The `type` field specifies the connection type to the MCP server.
   - If `type` is omitted, it defaults based on the presence and format of `url` or `command`:
     - If `url` is specified and starts with `http` or `https`, `type` defaults to `sse`.
@@ -1763,6 +1794,134 @@ see: [Turnstile Object Structure](/docs/configuration/librechat_yaml/object_stru
 
 see: [Transactions Object Structure](/docs/configuration/librechat_yaml/object_structure/transactions)
 
+## telemetry
+
+Controls browser real user monitoring (RUM). This block rejects unknown keys.
+
+<OptionTable
+  options={[
+    ['rum.enabled', 'Boolean', 'Enables browser RUM. When omitted, the RUM_ENABLED environment variable decides.', ''],
+    ['rum.sessionReplay.enabled', 'Boolean', 'Enables session replay. Only takes effect when RUM itself is enabled. Defaults to false.', ''],
+  ]}
+/>
+
+```yaml filename="telemetry"
+telemetry:
+  rum:
+    enabled: true
+    sessionReplay:
+      enabled: false
+```
+
+## credentials
+
+<OptionTable
+  options={[
+    ['writeFormat', 'String', 'Format used to write new stored user credentials (tool, web search, and MCP custom user variable values). Either "v3" or "legacy". Both formats are always readable; "legacy" keeps writes readable by replicas on older releases during a rolling upgrade.', 'v3'],
+  ]}
+/>
+
+```yaml filename="credentials"
+credentials:
+  writeFormat: v3
+```
+
+## toolCallPreviews
+
+Bounds the tool call output and arguments sent when a conversation loads. The client receives the start and end of each long string and fetches a part in full only when the reader opens it. Set `enabled: false` to send every load in full.
+
+<OptionTable
+  options={[
+    ['enabled', 'Boolean', 'Enables bounded previews of settled tool calls.', 'true'],
+    ['outputChars', 'Integer', 'Characters of each tool call output kept, half from the start and half from the end (256 to 1000000).', '512'],
+    ['argsChars', 'Integer', 'Characters of each serialized tool call arguments kept (256 to 1000000).', '512'],
+  ]}
+/>
+
+```yaml filename="toolCallPreviews"
+toolCallPreviews:
+  enabled: true
+  outputChars: 512
+  argsChars: 512
+```
+
+## githubCompare
+
+Controls the GitHub Compare tool, which compares commit ancestry in a public GitHub repository without a workspace. It is available to agents only and is off by default. This block rejects unknown keys.
+
+<OptionTable
+  options={[
+    ['enabled', 'Boolean', 'Makes the GitHub Compare tool available.', 'false'],
+    ['timeoutMs', 'Integer', 'Request timeout in milliseconds (1 to 30000).', '10000'],
+  ]}
+/>
+
+```yaml filename="githubCompare"
+githubCompare:
+  enabled: true
+  timeoutMs: 10000
+```
+
+## passwordHashing
+
+Password and auth token hashing runs on worker threads, off the event loop.
+
+<OptionTable
+  options={[
+    ['maxWorkers', 'Integer', 'Maximum number of hashing worker threads (1 to 32). Defaults to one less than the CPU count, at most 4.', ''],
+  ]}
+/>
+
+```yaml filename="passwordHashing"
+passwordHashing:
+  maxWorkers: 2
+```
+
+## timeouts
+
+Time budgets, in milliseconds, for outbound calls made inside a request. Each key is optional and takes a positive integer up to 2147483647. Exceeding a budget fails the call with an error naming the key.
+
+<OptionTable
+  options={[
+    ['ragMs', 'Integer', 'RAG API queries for file search and message context.', '30000'],
+    ['ocrMs', 'Integer', 'Each OCR provider call (upload, signed URL, OCR, delete).', '300000'],
+    ['actionsMs', 'Integer', 'Each action (OpenAPI tool) HTTP call.', '300000'],
+    ['moderationMs', 'Integer', 'The OpenAI moderation check that runs before a chat turn.', '10000'],
+    ['imageFetchMs', 'Integer', 'Fetching a stored image by URL to encode it for a provider.', '30000'],
+  ]}
+/>
+
+```yaml filename="timeouts"
+timeouts:
+  ragMs: 30000
+  ocrMs: 300000
+```
+
+## openapi
+
+<OptionTable
+  options={[
+    ['enabled', 'Boolean', 'Serves the OpenAPI spec and docs for the public Agents API.', 'false'],
+  ]}
+/>
+
+```yaml filename="openapi"
+openapi:
+  enabled: true
+```
+
+## skillDeletion
+
+Controls how deleted Skills are finalized and cleaned up in the background. See [Skill Deletion](/docs/configuration/librechat_yaml/object_structure/skill_sync#skill-deletion) for the keys.
+
+## mcpAppSandbox
+
+Configures the sandbox host, size limits, and rate limits for MCP Apps rendered in chat. See [MCP App Sandbox Object Structure](/docs/configuration/librechat_yaml/object_structure/mcp_app_sandbox).
+
+## balance
+
+Configures token credit balances, including starting balance, automatic refills, refill mode, and how the balance is displayed. See [Balance Object Structure](/docs/configuration/librechat_yaml/object_structure/balance).
+
 ## Additional links
 
 - [Summarization Object Structure](/docs/configuration/librechat_yaml/object_structure/summarization)
@@ -1779,55 +1938,18 @@ see: [Transactions Object Structure](/docs/configuration/librechat_yaml/object_s
 - [Web Search Object Structure](/docs/configuration/librechat_yaml/object_structure/web_search)
 - [Memory Object Structure](/docs/configuration/librechat_yaml/object_structure/memory)
 
-## credentials
+## Langfuse Prompt Synchronization
 
-`credentials.writeFormat` accepts `v3` (default) or `legacy`. New stored user credentials use a random IV per value; this release reads both formats. During mixed-version deployments, set `legacy` on every replica until all readers support v3. Existing records are not converted by changing this switch. An older release cannot recover values subsequently written as v3. See [rollback boundaries](/docs/configuration/upgrade#mixed-version-compatibility).
-
-## telemetry
-
-`telemetry.rum.enabled` and `telemetry.rum.sessionReplay.enabled` override their environment fallbacks. Omission preserves environment settings; explicit `false` disables the feature, and `sessionReplay: {}` disables replay. Replay is a separate opt-in requiring RUM, not general-purpose DLP. [Telemetry controls and privacy](/docs/configuration/upgrade#browser-telemetry) cover proxy limits and public-token deployments.
-
-## toolCallPreviews
-
-Supporting clients request bounded previews for settled tool arguments and outputs, then fetch full content when opened. Stored content is not truncated. Exports, share links, and clients not requesting previews retain full content.
+`langfuse.promptSync` configures prompt catalog synchronization. The operator must first offer it with `LANGFUSE_PROMPT_SYNC_AVAILABLE=true`, and an authorized administrator must enable the stored Base switch in **Settings → Langfuse**. A YAML value alone does not replace that active stored setting.
 
 | Field | Default | Accepted values |
 | --- | --- | --- |
-| `enabled` | `true` | Boolean; `false` restores full payloads |
-| `outputChars` | `512` | Integer `256`–`1000000` |
-| `argsChars` | `512` | Integer `256`–`1000000`; shortened arguments remain valid JSON |
+| `enabled` | Off until enabled in Settings | Boolean; deployment availability and a usable connection are also required |
+| `lockLeaseMs` | `300000` | Integer `60000`–`3600000`, milliseconds for the per-tenant sync lease |
+| `maxPages` | `50` | Integer `1`–`1000`, with up to 100 text prompts per page |
 
-## timeouts
+Synchronization is append-only. A page-capped run starts from page 1 again on retry; increase `maxPages` to reach prompts beyond the same cap. See the [Langfuse guide](/docs/configuration/langfuse#prompt-catalog).
 
-Outbound integration-call budgets are milliseconds, not a universal chat-generation timeout. Omitted keys retain their defaults. Each value must be a positive integer up to `2147483647`.
+## Admin Catalog Model Cache
 
-| Field | Default |
-| --- | --- |
-| `ragMs` | `30000` |
-| `ocrMs` | `300000` |
-| `actionsMs` | `300000` |
-| `moderationMs` | `10000` |
-| `imageFetchMs` | `30000` |
-
-## passwordHashing
-
-`passwordHashing.maxWorkers` bounds the password/token hashing pool. It accepts `1`–`32`; the default is `max(1, min(4, availableParallelism() - 1))`.
-
-## mcpAppSandbox
-
-Deployment-owned sandbox settings cannot be overridden by role, group, or user profiles. Configure `url` on a dedicated origin routed to `/api/mcp/sandbox`; App enablement remains separate through `mcpSettings.apps`.
-
-| Limit | Default |
-| --- | --- |
-| `maxSourcesPerDirective` | `32` |
-| `maxSerializedLength` | `4096` |
-| `maxPersistedAppBytes` | `1048576` |
-| `maxAdmissionRequestsPerMinute` | `240` |
-| `maxActiveViews` | `3` |
-| `maxActionPreviewChars` | `16384` |
-
-Keep these sandbox budgets separate from `rateLimits.mcpApps` browser-route request budgets.
-
-## Permission Write Leases
-
-On deployments without transactions, resource-sharing updates use a renewable per-resource lease. `permissions.leaseTtlMs` defaults to `30000` ms and accepts `1000`–`600000`. `permissions.leaseWaitMs` defaults to `3000` ms and accepts `0`–`60000`; contention past this wait returns `409`. These settings do not disable authorization checks or make unrelated admin operations transactional.
+`endpoints.catalogModelsTtlMs` defaults to `120000` milliseconds and accepts integers `0`–`3600000`. Only deployment `librechat.yaml` sets it. The admin scope catalog reuses model lists for that period while endpoint configuration is unchanged. `0` resolves models on every catalog read, but a fetched list may still come from the separate two-minute provider model-list cache.

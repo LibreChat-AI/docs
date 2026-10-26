@@ -7,18 +7,22 @@ icon: FileCode
 
 The `fileConfig` object allows you to configure file handling settings for the application, including size limits and MIME type restrictions. This section provides a detailed breakdown of the `fileConfig` object structure.
 
-There are 13 main fields under `fileConfig`:
+The main fields under `fileConfig` are:
 
   - `endpoints`
   - `skills`
   - `serverFileSizeLimit`
   - `avatarSizeLimit`
   - `imageGeneration`
+  - `clientImageResize`
   - `fileTokenLimit`
   - `fileContextSizeLimit`
   - `fileContextCharLimit`
   - `defaultLLMDeliveryPath`
   - `legacyFileUploadUX`
+  - `textFallbackWithoutTools`
+  - `codeEnvLivenessSafeWindowMs`
+  - `legacySearchProbeTimeoutMs`
   - `ocr`
   - `text`
   - `stt`
@@ -79,7 +83,10 @@ fileConfig:
   legacyFileUploadUX: false
   imageGeneration:
     percentage: 100
-    px: 1024
+  clientImageResize:
+    maxWidth: 1900
+    maxHeight: 1900
+    quality: 0.92
   ocr:
     supportedMimeTypes:
       - "^image/(jpeg|gif|png|webp|heic|heif)$"
@@ -106,13 +113,16 @@ fileConfig:
   ]}
 />
 
-`skills` supports two parameters:
+`skills` supports three parameters:
 
-- `fileSizeLimit` (Integer)
+- `fileSizeLimit` (Number)
   - Maximum size of a single Skill upload, specified in megabytes (MB).
   - **Default:** `50`
 - `importCleanupConcurrency` (Integer)
   - Maximum concurrent cleanup operations after a failed Skill archive import. Use `1` for serial cleanup.
+  - **Default:** `8`
+- `deletionCleanupConcurrency` (Integer)
+  - Maximum concurrent cleanup operations when a Skill is deleted. Use `1` for serial cleanup.
   - **Default:** `8`
 
 ```yaml filename="fileConfig / skills"
@@ -120,6 +130,7 @@ fileConfig:
   skills:
     fileSizeLimit: 50
     importCleanupConcurrency: 8
+    deletionCleanupConcurrency: 8
 ```
 
 See [Skills](/docs/features/skills) for the rest of the import rules, such as the per-file and archive-entry limits.
@@ -128,7 +139,7 @@ See [Skills](/docs/features/skills) for the rest of the import rules, such as th
 
 <OptionTable
   options={[
-    ['serverFileSizeLimit', 'Integer', 'The global maximum size for any file uploaded to the server, specified in megabytes (MB).', 'Acts as an overarching limit for file uploads across all endpoints, ensuring that no file exceeds this size server-wide.'],
+    ['serverFileSizeLimit', 'Number', 'The global maximum size for any file uploaded to the server, specified in megabytes (MB).', 'Acts as an overarching limit for file uploads across all endpoints, ensuring that no file exceeds this size server-wide.'],
   ]}
 />
 
@@ -141,7 +152,7 @@ fileConfig:
 
 <OptionTable
 options={[
-['avatarSizeLimit', 'Integer', 'The maximum size allowed for avatar images, specified in megabytes (MB).', 'Specifically tailored for user avatar uploads, allowing for control over image sizes to maintain consistent quality and loading times.'],
+['avatarSizeLimit', 'Number', 'The maximum size allowed for avatar images, specified in megabytes (MB).', 'Specifically tailored for user avatar uploads, allowing for control over image sizes to maintain consistent quality and loading times.'],
 ]}
 />
 
@@ -160,15 +171,15 @@ fileConfig:
 
 `imageGeneration` supports the following parameters:
 
-- `percentage` (Integer)
+- `percentage` (Number)
   - The output size of the generated image expressed as a percentage (e.g., `100` means 100% of base size).
   - Use this to scale the output image relative to a default or original size.
 
-- `px` (Integer)
+- `px` (Number)
   - Specifies the output image dimension in pixels (e.g., `1024`).
   - Use this to explicitly set the output size of the generated image regardless of base size.
 
-You may set only one of these parameters (`percentage` or `px`), not both, depending on your use case
+Set only one of these parameters (`percentage` or `px`), not both.
 
 Example configuration:
 
@@ -176,7 +187,28 @@ Example configuration:
 fileConfig:
   imageGeneration:
     percentage: 100
-    px: 1024
+```
+
+## clientImageResize
+
+Controls client-side resizing of images before upload, which prevents upload errors from oversized images. Users can toggle resizing in Settings > Chat. Setting `enabled` here overrides that choice for everyone and locks the toggle; omit it to leave users in control.
+
+- `enabled` (Boolean)
+  - Force resizing on (`true`) or off (`false`) for everyone. When omitted, each user decides, with resizing on by default.
+- `maxWidth` (Number)
+  - Maximum width of resized images, in pixels. Minimum `1`. **Default:** `1900`
+- `maxHeight` (Number)
+  - Maximum height of resized images, in pixels. Minimum `1`. **Default:** `1900`
+- `quality` (Number)
+  - JPEG compression quality from `0` to `1`. **Default:** `0.92`
+
+```yaml filename="fileConfig / clientImageResize"
+fileConfig:
+  clientImageResize:
+    enabled: true
+    maxWidth: 1900
+    maxHeight: 1900
+    quality: 0.92
 ```
 
 ## fileTokenLimit
@@ -257,6 +289,44 @@ The default unified uploader chooses model delivery automatically and provisions
 ```yaml filename="fileConfig / legacyFileUploadUX"
 fileConfig:
   legacyFileUploadUX: true
+```
+
+## textFallbackWithoutTools
+
+When an upload is routed to `none` (stored, available only to tools) and the turn runs no tool that can read it, LibreChat can deliver the file's extracted text instead. Set `textFallbackWithoutTools: true` to enable this. It can be set globally under `fileConfig`, or per entry under `fileConfig.endpoints` (including `default`); an endpoint value takes precedence over the global one.
+
+**Default:** `false`
+
+It applies only to message attachments whose route was inferred; a destination the user chose explicitly is never re-resolved, and files kept on an agent's tool resources never reach a prompt. Only the built-in document and plain-text extractors run, so no RAG or OCR call is made for a file meant for a tool. Existing files without extracted text are not backfilled.
+
+```yaml filename="fileConfig / textFallbackWithoutTools"
+fileConfig:
+  textFallbackWithoutTools: true
+  endpoints:
+    openAI:
+      textFallbackWithoutTools: false
+```
+
+## codeEnvLivenessSafeWindowMs
+
+Files provisioned to the code execution environment within this window (in milliseconds) skip the live availability check before reuse. Minimum `0`.
+
+**Default:** `21600000` (6 hours)
+
+```yaml filename="fileConfig / codeEnvLivenessSafeWindowMs"
+fileConfig:
+  codeEnvLivenessSafeWindowMs: 21600000
+```
+
+## legacySearchProbeTimeoutMs
+
+How long, in milliseconds, priming waits on a legacy File Search availability check before embedding the file anyway. Minimum `1`.
+
+**Default:** `5000`
+
+```yaml filename="fileConfig / legacySearchProbeTimeoutMs"
+fileConfig:
+  legacySearchProbeTimeoutMs: 5000
 ```
 
 ## ocr
@@ -416,6 +486,8 @@ This priority system allows features like "Upload as Text" to work without requi
       - The maximum size for a single file. In units of MB (e.g. use `20` for 20 megabytes)
   - `totalSizeLimit`
       - The total maximum size for all files in a single request. In units of MB (e.g. use `20` for 20 megabytes)
+  - `defaultLLMDeliveryPath`, `legacyFileUploadUX`, and `textFallbackWithoutTools`
+      - Per-endpoint overrides of the global settings of the same name described above.
   - `supportedMimeTypes`
       - A list of [Regular Expressions](https://en.wikipedia.org/wiki/Regular_expression) specifying what MIME types are allowed for upload. This can be customized to restrict file types.
 
@@ -455,7 +527,7 @@ assistants:
 **Key:**
 <OptionTable
   options={[
-    ['fileSizeLimit', 'Integer', 'The maximum size allowed for each individual file, specified in megabytes (MB).', 'This limit ensures that no single file exceeds the specified size, allowing for better resource allocation and management.'],
+    ['fileSizeLimit', 'Number', 'The maximum size allowed for each individual file, specified in megabytes (MB).', 'This limit ensures that no single file exceeds the specified size, allowing for better resource allocation and management.'],
   ]}
 />
 
@@ -471,7 +543,7 @@ YourCustomEndpointName:
 **Key:**
 <OptionTable
   options={[
-    ['totalSizeLimit', 'Integer', 'The total maximum size allowed for all files in a single request, specified in megabytes (MB).', 'This setting is crucial for preventing excessive bandwidth and storage usage by any single upload request.'],
+    ['totalSizeLimit', 'Number', 'The total maximum size allowed for all files in a single request, specified in megabytes (MB).', 'This setting is crucial for preventing excessive bandwidth and storage usage by any single upload request.'],
   ]}
 />
 

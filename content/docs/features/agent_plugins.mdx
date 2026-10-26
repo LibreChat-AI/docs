@@ -20,7 +20,7 @@ DEPLOYMENT_PLUGINS_DIR=./plugin
 DEPLOYMENT_PLUGIN_DATA_DIR=./data/plugins
 
 # Optional and disabled by default; see Command Hooks below
-DEPLOYMENT_PLUGIN_HOOKS=true
+# DEPLOYMENT_PLUGIN_HOOKS=true
 ```
 
 Relative paths are resolved from the LibreChat project root. If the default `./plugin` directory does not exist, startup continues with no plugins. If `DEPLOYMENT_PLUGINS_DIR` is set explicitly but cannot be read, startup fails so a deployment mistake is not silently ignored.
@@ -96,6 +96,14 @@ Supported transports are `stdio`, `streamable-http`, and `sse`. Remote HTTP tran
 
 For `stdio` servers, `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are expanded once in `args`, `env`, and `cwd`; both values are also added to the launched process environment. Plugin MCP configuration does not expand arbitrary variables from LibreChat's host environment. A value such as `${OPENAI_API_KEY}` remains literal through registry storage and runtime initialization. Keep credentials outside plugin files and provide them through a purpose-built authenticated service or another deployment-controlled mechanism.
 
+LibreChat validates each `mcp.json` before registering its servers:
+
+- `command` must be a single executable token: either a bare name such as `node` or a `./` path inside the plugin. Shell strings and absolute paths are rejected, and `${PLUGIN_ROOT}` is not expanded in `command`.
+- `cwd` must start with `./`, `${PLUGIN_ROOT}`, or `${PLUGIN_DATA}`, and must resolve inside the base it names.
+- `env` cannot declare `PLUGIN_ROOT` or `PLUGIN_DATA`; LibreChat sets them.
+- Remote `url` values must be absolute `http` or `https` URLs without user information or a fragment, and must use `https` unless the host is a loopback address (such as `localhost` or `127.0.0.1`).
+- A server entry with an unknown field is rejected and skipped. An unknown top-level field, or a `$schema` that does not match the supported `1.0.0` schema URL, disables MCP for the whole plugin.
+
 An MCP server declared in `librechat.yaml` takes precedence over a plugin server with the same name. Duplicate plugin server names are skipped and logged.
 
 ## Persistent Plugin Data
@@ -148,7 +156,8 @@ Declare hooks at `ai.librechat/hooks/hooks.json`:
 - The child environment contains only `PATH`, `HOME`, `LANG`, `LC_ALL`, and `TZ` when present, the three plugin path variables, and names explicitly listed in `allowedEnvVars`.
 - Exit code `0` succeeds. JSON written to standard output can return event-appropriate decisions and bounded context; plain output is treated as additional context only for `SessionStart` and `UserPromptSubmit`.
 - Exit code `2` blocks the applicable action or continuation and uses standard error as the reason. Other nonzero exits are logged and otherwise ignored.
-- LibreChat terminates the process when the hook is aborted or times out. On POSIX hosts, commands run through Bash. Windows plugins must provide `commandWindows` or select PowerShell.
+- `timeout` is in seconds, an integer from 1 to 3600.
+- LibreChat terminates the process when the hook is aborted or times out. On POSIX hosts, commands run through `bash`, which must be available on the API host. On Windows hosts they run through `powershell.exe`, so plugins must provide `commandWindows` or select PowerShell. If the shell cannot start, LibreChat logs a startup warning and blocking hooks fail closed.
 
 LibreChat translates the common Claude tool names `Bash`, `Write`, `Edit`, `Read`, and `WebSearch` and their file argument names to the corresponding LibreChat tools. A matcher written with LibreChat's native tool name keeps the native payload shape.
 

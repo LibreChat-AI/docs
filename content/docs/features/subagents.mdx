@@ -14,18 +14,18 @@ Use subagents for:
 - Multi-agent team workflows that should execute behind one delegated task
 - Parallel-style decomposition where the parent coordinates and summarizes
 
-## How Subagents Differ from Agent Chain
+## How Subagents Differ from Handoffs
 
-Agent Chain builds a multi-agent graph where agents pass results through configured chain steps. Subagents are spawned by an agent as a tool call during a run.
+Handoffs transfer the conversation from a primary agent to a specialist agent, which then continues the exchange. Subagents are spawned by an agent as a tool call during a run, do their work in isolation, and return a compact result to the parent.
 
-- **Agent Chain**: graph-level multi-agent workflow
-- **Subagents**: runtime delegation from a parent agent to isolated child runs
+- **Handoffs**: the conversation moves to another agent
+- **Subagents**: runtime delegation from a parent agent to isolated child runs, with the parent staying in control
 
-Both can use existing agents, but subagents are designed for scoped delegation from inside a single agent's reasoning loop.
+Both can use existing agents, but subagents are designed for scoped delegation from inside a single agent's reasoning loop. Legacy Agent Chains are deprecated; use Handoffs or Subagents for new orchestration. See [Agents](/docs/features/agents#handoffs).
 
 ## Enable the Capability
 
-The `subagents` capability is enabled by default. Admins can remove it from the agents endpoint capability list to disable the feature.
+The `subagents` capability is enabled by default. Admins can remove it from the agents endpoint capability list to disable the feature. The default capability list is:
 
 ```yaml filename="librechat.yaml"
 endpoints:
@@ -40,19 +40,23 @@ endpoints:
       - 'actions'
       - 'context'
       - 'skills'
+      - 'memory'
+      - 'ask_user_question'
       - 'tools'
-      - 'chain'
       - 'ocr'
 ```
 
+If you set `capabilities` yourself, list every capability you want to keep, because your list replaces the default. Background execution (`run_in_background`) is not in the default list; see [Detached Subagent Threads](#detached-subagent-threads).
+
 ## Configure an Agent
 
-In the Agent Builder, open **Advanced Settings** and enable **Subagents**.
+In the Agent Builder, open **Add tools**, choose **Subagents** in the tool library, and turn on the enable switch (**Enable subagents**).
 
 Available settings:
 
 - **Enable subagents**: adds the subagent spawn tool to the agent.
 - **Allow self-spawn**: lets the agent spawn a fresh copy of itself in an isolated context. This is enabled by default when subagents are enabled.
+- **Share files with subagents**: shares the message's files with authorized foreground subagents. This option appears only when `endpoints.agents.fileSharing.enabled` is true.
 - **Additional subagents**: selects specific agents the parent may spawn.
 
 Saved Agent teams are embedded as `subagents.graphs` in Agent create or update payloads. The current Agent Builder preserves these definitions while you edit the self-spawn and individual-Agent settings, but it does not author graph definitions. Each team names a bounded directed acyclic graph, its entry Agent, and the Agent whose result is returned to the parent:
@@ -127,7 +131,7 @@ Across later turns, LibreChat keeps prior calls from reachable child and team to
 
 ## Detached Subagent Threads
 
-When `run_in_background` is enabled for the Agents endpoint, a parent Agent can detach subagent work and continue without waiting for it. LibreChat persists each detached child with private execution lineage and a canonical transcript. Child threads stay out of normal conversation navigation and search and cannot be read directly; the authorized parent view exposes only bounded child activity.
+`run_in_background` is opt-in: add it to `endpoints.agents.capabilities` to enable it for the Agents endpoint. When it is enabled, a parent Agent can detach subagent work and continue without waiting for it. LibreChat persists each detached child with private execution lineage and a canonical transcript. Child threads stay out of normal conversation navigation and search and cannot be read directly; the authorized parent view exposes only bounded child activity.
 
 Child threads are view-only execution records. A user cannot edit or delete the canonical child in place. For a completed durable direct-Agent child, **Continue in a new chat** forks the exact completed branch into a separate normal, writable Agent conversation while leaving the original child hidden and read-only. The activity panel keeps one composer mounted throughout the run and across incoming task deliveries, preserving focus and half-typed guidance while a new task view loads. Submission remains unavailable until the task can accept controls. Text entered after settlement is carried into the fork, and a failed fork restores the draft in the panel. This action is unavailable for running, graph, anonymous-Agent, and shared views. Deleting the parent cascades to its child lineage. The parent Agent can poll, steer, queue, interrupt, cancel, collect, and later continue the canonical child through its task tools; Mongo-backed leases serialize those continuations across API replicas.
 

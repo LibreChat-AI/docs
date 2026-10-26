@@ -195,6 +195,35 @@ export const fr: UIStrings = {
       },
     },
     categories: {
+      agentic: {
+        title: 'IA agentique',
+        items: {
+          skills: {
+            title: 'Skills',
+            description: 'Instructions SKILL.md réutilisables que les agents peuvent invoquer',
+          },
+          subagents: {
+            title: 'Sous-agents',
+            description: 'Déléguez des tâches ciblées à des agents enfants isolés',
+          },
+          scheduledChats: {
+            title: 'Chats planifiés',
+            description: 'Exécutez des agents enregistrés selon un calendrier récurrent',
+          },
+          agentPlugins: {
+            title: "Plugins d'agents",
+            description: 'Paquets expérimentaux de Skills, serveurs MCP et hooks',
+          },
+          agentsApi: {
+            title: 'Agents API (bêta)',
+            description: 'Exécutez des agents et recevez des événements par programmation',
+          },
+          pullRequests: {
+            title: 'Pull requests de conversation',
+            description: 'État des pull requests et de la CI pour les chats qui exécutent du code',
+          },
+        },
+      },
       searchKnowledge: {
         title: 'Recherche et connaissances',
         items: {
@@ -252,6 +281,30 @@ export const fr: UIStrings = {
             title: 'Flux reprenables',
             description: 'Reconnexion automatique et reprise des réponses interrompues',
           },
+          composer: {
+            title: 'Zone de saisie',
+            description: 'Joignez des fichiers et activez des outils depuis la palette +',
+          },
+          settings: {
+            title: 'Paramètres personnels',
+            description: 'Gérez les préférences par utilisateur et par navigateur',
+          },
+          navigation: {
+            title: 'Barre latérale et navigation',
+            description: 'Chats, conversations épinglées, panneaux et tiroir mobile',
+          },
+          messageActions: {
+            title: 'Actions sur les messages',
+            description: 'Modifiez, relancez, citez, copiez et bifurquez les messages',
+          },
+          projects: {
+            title: 'Projets',
+            description: 'Regroupez des chats liés avec instructions et fichiers partagés',
+          },
+          smoothStreaming: {
+            title: 'Streaming fluide',
+            description: 'Affichez le texte en flux avec un fondu progressif',
+          },
         },
       },
       security: {
@@ -274,6 +327,14 @@ export const fr: UIStrings = {
           moderation: {
             title: 'Système de modération',
             description: 'Modération du contenu et contrôles de sécurité',
+          },
+          accessControl: {
+            title: "Contrôle d'accès",
+            description: 'Autorisations granulaires pour agents, prompts et serveurs MCP',
+          },
+          insights: {
+            title: "Statistiques d'administration",
+            description: "Tableau de bord d'utilisation et d'activité des agents",
           },
         },
       },
