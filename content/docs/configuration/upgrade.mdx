@@ -1,0 +1,96 @@
+---
+title: Upgrade and Rolling Deployments
+icon: RefreshCw
+description: Upgrade prerequisites, compatibility switches, and rollback boundaries for LibreChat operators.
+---
+
+## Preparing for v0.8.9-rc1
+
+Use Node.js **24.22.1** for local installs. Back up MongoDB, `librechat.yaml`, and the encryption credentials before changing versions. Keep `CREDS_KEY` and `CREDS_IV`; replacing them is not a migration. Config `1.3.18` describes this candidate; see the [config changelog](/changelog/config_v1.3.18) for the added settings.
+
+Upgrade every LibreChat API replica before enabling a feature that older replicas cannot enforce. Update compatible clients, Code API services, and attached workers separately. The LibreChat image does not upgrade an independently deployed Code API or its installed language packages.
+
+### Mixed-version compatibility
+
+| Surface                        | While incompatible replicas or clients remain                                                                          | After the rollout                                                                                                                               |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stored user credentials        | Set `credentials.writeFormat: legacy` in deployment YAML on every replica.                                             | Remove the override to use `v3` writes with a random IV per value. Both formats remain readable by this release.                                |
+| Two-factor backup codes        | Set `TWO_FACTOR_BACKUP_CODE_FORMAT=legacy` on every replica if older backends or clients cannot read strong codes.     | Remove it to issue 128-bit random, individually salted codes. Existing legacy codes remain valid until regenerated.                             |
+| Email-address changes          | Set `emailChange.enabled: false` or `ALLOW_EMAIL_CHANGE=false`. The YAML flag takes precedence.                        | Enable only after every node supports address-bound password reset links. A link issued by an older node can otherwise outlive an email change. |
+| Per-chat machine choices       | Set `CODE_ENVIRONMENT_DECISION_VERSION=0` or `endpoints.agents.statefulCodeSessions.allowEnvironmentSelection: false`. | Decision protocol v1 and machine selection are enabled by default, but only agents with an explicit machine allowlist can offer choices.        |
+| Saved-chat workspace changes   | Keep `statefulCodeSessions.conversationMoves.enabled` off; `allowAttachDetach` is a separate opt-in.                   | Enable only with protocol v1 on every API replica and compatible Code API/workers. Refresh clients afterward.                                   |
+| Remembered tool approvals      | Keep `endpoints.agents.toolApproval.agentModes: false`.                                                                | Explicitly opt in after all replicas support the mode. Administrator ask/deny rules remain authoritative.                                       |
+| Batched background completions | Set `endpoints.agents.backgroundTasks.completionReceiptBatching: false` while older replicas serve traffic.            | Remove the override to deliver ready results together.                                                                                          |
+| Renaming running chats         | Set `interface.runningChatRename: false` until older title-generation jobs drain.                                      | Remove the override to allow renaming running or placeholder-titled chats.                                                                      |
+
+Changing a write-format switch back does **not** convert already stored data. An older release cannot read credentials saved as v3 or newly issued strong backup codes. Before rollback, replace or migrate incompatible data deliberately rather than rotating encryption keys.
+
+### Authentication and security policy
+
+[Passkey sign-in](/docs/configuration/authentication) is opt-in through `ALLOW_PASSKEY_LOGIN=true` and requires HTTPS in production. Keep the relying-party ID stable: changing `PASSKEY_RP_ID` can invalidate existing registrations. `passkeys.perUserMax` overrides `MAX_PASSKEYS_PER_USER`; the default is 20.
+
+`ENFORCE_TWO_FACTOR_AUTHENTICATION` defaults to `false`. When enabled, email/password and LDAP accounts must enroll before receiving a full session. Federated providers remain responsible for their own MFA. Temporary-code budgets (`TWO_FACTOR_TEMP_MAX`, `TWO_FACTOR_TEMP_WINDOW`) are separate from setup-step budgets (`TWO_FACTOR_SETUP_MAX`, `TWO_FACTOR_SETUP_WINDOW`).
+
+System-grant assignments and widening resource-sharing changes fail closed by default when their pre-change audit write fails. Revocations are not blocked by an audit outage. Only `AUDIT_LOG_FAIL_CLOSED=false` disables that default protection. Other admin mutations have operation-specific audit ordering: an audit error does not universally imply rollback.
+
+### Admin configuration and secrets
+
+The active database Base profile overrides deployment YAML before role, group, and user profiles, regardless of Base's numeric priority. Other active profiles merge in ascending priority with deterministic ties. Removing an override restores inheritance; a tombstone suppresses an inherited value. Ordinary arrays are suppressed as a whole; supported keyed collections also allow hiding an individual named entry. Removing that tombstone restores inheritance.
+
+The admin config `changes` endpoint applies a batch to one profile atomically. Use `dryRun` to validate and `expectedRevision` for optimistic concurrency; a stale revision returns `409`. Inspect ignored results because protected settings may remain unapplied without rejecting the whole batch. This guarantee does not make role renames or other multi-document admin operations atomic.
+
+Admin-written `${ENV_VAR}` references are restricted to names referenced by deployment YAML, built-in endpoint credentials, and `CONFIG_OVERRIDE_ENV_ALLOWLIST` (comma- or space-separated). Unknown references are rejected on write and resolve to nothing at runtime. Vertex AI overrides are narrower: `endpoints.anthropic.vertex` can use only the environment names referenced by deployment YAML's own Vertex configuration, not additional names from the general allowlist. Text used literally is exempt: `interface`, `modelSpecs`, endpoint title/activity/reasoning-label prompts, summarization prompts, memory instructions, and Firecrawl change-tracking prompts.
+
+Stored web-search, MCP, and Azure credentials are bound to their destinations. A write that changes or removes a bound destination must re-enter the stored key in the same write, or remove it. Handle `secret_reentry_required` by collecting the required secret again; do not silently retry an old key against a new URL. Environment-owned and user-owned credentials cannot be redirected through an admin profile.
+
+`CONFIG_REDERIVE_ENDPOINTS` is off by default for this release. Profile overrides of Azure groups, `endpoints.anthropic.vertex`, and the Azure Assistants switch remain stored but inert until the operator enables it. Review startup diagnostics for affected profiles and unresolvable groups before enabling it on every replica. Profile Vertex settings apply only where deployment YAML configures Vertex, using its deployment-owned key file and region.
+
+Renaming a custom role moves its members, config profile, grants, and ACL entries within its tenant. Deleting it reassigns members to `USER` and removes dependent config and grants. These multi-document changes are not one atomic transaction. After failure, inspect current state before retrying; already revoked access can remain revoked.
+
+### Strict tenant authentication
+
+With `TENANT_ISOLATION_STRICT=true`, authentication and account routes need a real, non-system tenant before looking up a user. Missing tenant context is rejected with `403` and `TENANT_CONTEXT_REQUIRED`; OAuth flows use their failure redirect. Verify tenant routing at the trusted proxy or authentication boundary, including sign-in and refresh routes. Do not work around a missing tenant by disabling strict isolation or trusting arbitrary public headers.
+
+Deployment-wide startup checks, index synchronization, and permission migrations run in explicit system scope. When a migration writes a resource, it preserves that resource's tenant partition. These checks do not grant normal authentication requests a system-tenant fallback.
+
+### Shared package compatibility
+
+The refreshed shared packages use Zod 4. Custom integrations that import and compose LibreChat schemas must update their Zod usage and rebuild against the matching package versions; do not override these packages back to Zod 3. The release preserves omitted optional configuration fields and validation diagnostics; no new YAML version increment or blanket config rewrite is required for the library migration.
+
+Custom frontends importing removed legacy `@librechat/client` controls must migrate to the maintained controls. In particular, `Select`, `SelectDropDown`, `Dialog`, `DialogTemplate`, and the Radix `DropdownMenu` exports are no longer supplied. Use `OGDialog`/`OGDialogTemplate` for dialogs, `Dropdown` for single-value selectors, and `DropdownPopup` or Ariakit primitives for action menus. LibreChat's own callers have been migrated. This is a developer integration change, not a requirement to rewrite a self-hosted deployment's settings.
+
+### Browser telemetry
+
+RUM, client logs, and session replay are independent opt-ins. YAML `telemetry.rum.enabled` and `telemetry.rum.sessionReplay.enabled` take precedence over environment fallbacks; omission preserves the environment setting, and an empty YAML `sessionReplay: {}` disables replay.
+
+- `RUM_CLIENT_LOGS=true` enables scrubbed client diagnostic logs only in authenticated proxy mode.
+- `RUM_SESSION_REPLAY_ENABLED=true` opts in to replay when RUM is enabled. It supersedes the deprecated inverse `RUM_DISABLE_REPLAY` fallback.
+- `RUM_PROXY_BODY_LIMIT` defaults to `3mb`. Traces and logs share the authenticated-user budget: `RUM_PROXY_USER_MAX=240` per `RUM_PROXY_USER_WINDOW=1` minute. Excess requests return `429`.
+- Replay masks text and input values and excludes authentication screens, but is **not general-purpose DLP**. Validate with synthetic data before recording real users. Direct public-token ingestion bypasses the server's replay filtering and needs its own collector policy.
+
+`LOG_REDACTION_MAX_NODES=5000` bounds redaction work per server log record. Objects and strings weighted by length consume the budget; excess fields are replaced rather than exported unredacted. This process-level setting is read when the logger initializes.
+
+### Connected coding and MCP Apps
+
+Stateful Code sessions remain highly experimental. Browser-approved enrollment does not itself grant every agent access to a machine. Configure the attached environment, enable principal-worker enrollment and its separate `browserSetup.enabled` opt-in, configure the canonical public `instance`, start a compatible worker, and save the agent's explicit machine allowlist. New chats may choose only from that allowlist; existing conversations keep their recorded decision.
+
+The optional `endpoints.agents.pullRequests` integration needs a compatible worker reporting git state, Code API `CODEAPI_BRIDGE_LANE_GIT=true`, a repository scope, and an appropriately scoped provider token. GitHub needs read-only Pull requests, Checks, and Contents access. GitLab and Bitbucket use their provider-specific credentials. A per-user OAuth connection is a separate opt-in.
+
+New MCP Apps require `mcpSettings.apps: true`. Omission preserves legacy inline HTML behavior, while `false` disables both. Deploy the MCP App sandbox on a dedicated origin routed to `/api/mcp/sandbox`; deployment sandbox policy is not a role/group/user override. Apply the sandbox-origin and build-time setup in the [MCP configuration guide](/docs/configuration/librechat_yaml/object_structure/mcp_settings).
+
+### File-cleanup rollout
+
+`fileConfig.retainedFileCleanup` remains off by default. Enable it only after every replica and rollback target supports retained file destinations. Vector cleanup also requires `fileConfig.vectorOwnershipTrackingStart`, a UTC cutoff chosen after legacy vector writers and rollback targets have been retired, plus complete ownership proof recorded for the file at or after that cutoff. Do not backdate the cutoff or infer ownership for historical files merely to make deletion proceed.
+
+Ambiguous or pre-cutoff records fail closed. The primary file stays readable until secondary cleanup is confirmed. `fileConfig.vectorDeletionConcurrency` defaults to `4` and accepts `1`–`16` namespace deletions per file. See [file cleanup controls](/docs/configuration/librechat_yaml/object_structure/file_config#retained-file-and-vector-cleanup) before enabling them.
+
+### Other changed defaults
+
+- Enter sends messages by default. Users can change this preference in Settings.
+- Browser image resizing is on by default when `fileConfig.clientImageResize.enabled` is omitted. Explicit `true` or `false` forces the deployment-wide choice.
+- `interface.retentionMode: ephemeral` forces every chat to be temporary. Before returning to `temporary`, remove retention deadlines from records that must stop expiring; existing deadlines are not migrated automatically.
+- Temporary chats, including ephemeral-mode chats, are not traced or feedback-scored unless `langfuse.trace.temporaryChats` is enabled.
+- `interface.historyCacheTtlMs` defaults to `60000` and `historyCacheRecent` to `1`, with an additional `historyCacheMaxBytes` budget of `8388608` bytes, bounding how long recently left histories stay cached.
+- `toolCallPreviews` defaults to bounded previews for clients that request them. `outputChars` and `argsChars` default to `512`; exports and clients that do not request previews retain full content.
+
+See the [interface reference](/docs/configuration/librechat_yaml/object_structure/interface), [Agents reference](/docs/configuration/librechat_yaml/object_structure/agents), and [environment reference](/docs/configuration/dotenv) for existing options.

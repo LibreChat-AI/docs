@@ -121,7 +121,7 @@ export const es: UIStrings = {
           'Ejecutar npm run backend',
           'Abre localhost:3080 y regístrate',
         ],
-        prereqs: ['Node.js v24.16.0', 'Instancia de MongoDB'],
+        prereqs: ['Node.js v24.22.1', 'Instancia de MongoDB'],
       },
       railway: {
         tag: 'Un clic',

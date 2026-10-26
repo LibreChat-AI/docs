@@ -118,7 +118,7 @@ export const ptBR: UIStrings = {
           'Execute npm run backend',
           'Abra localhost:3080 e cadastre-se',
         ],
-        prereqs: ['Node.js v24.16.0', 'Instância MongoDB'],
+        prereqs: ['Node.js v24.22.1', 'Instância MongoDB'],
       },
       railway: {
         tag: 'Um clique',

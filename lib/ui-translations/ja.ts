@@ -121,7 +121,7 @@ export const ja: UIStrings = {
           'npm run backend を実行',
           'localhost:3080 を開いてアカウント登録',
         ],
-        prereqs: ['Node.js v24.16.0', 'MongoDB インスタンス'],
+        prereqs: ['Node.js v24.22.1', 'MongoDB インスタンス'],
       },
       railway: {
         tag: 'ワンクリック',

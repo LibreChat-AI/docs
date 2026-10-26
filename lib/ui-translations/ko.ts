@@ -118,7 +118,7 @@ export const ko: UIStrings = {
           'npm run backend 실행',
           'localhost:3080을 열고 계정 등록',
         ],
-        prereqs: ['Node.js v24.16.0', 'MongoDB 인스턴스'],
+        prereqs: ['Node.js v24.22.1', 'MongoDB 인스턴스'],
       },
       railway: {
         tag: '원클릭',

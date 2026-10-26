@@ -117,7 +117,7 @@ export const nl: UIStrings = {
           'Voer npm run backend uit',
           'Open localhost:3080 en registreer',
         ],
-        prereqs: ['Node.js v24.16.0', 'MongoDB-instantie'],
+        prereqs: ['Node.js v24.22.1', 'MongoDB-instantie'],
       },
       railway: {
         tag: 'Eén klik',

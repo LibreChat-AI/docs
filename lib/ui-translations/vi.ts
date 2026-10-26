@@ -117,7 +117,7 @@ export const vi: UIStrings = {
           'Chạy npm run backend',
           'Mở localhost:3080 và đăng ký',
         ],
-        prereqs: ['Node.js v24.16.0', 'Phiên bản MongoDB'],
+        prereqs: ['Node.js v24.22.1', 'Phiên bản MongoDB'],
       },
       railway: {
         tag: 'Một cú nhấp',

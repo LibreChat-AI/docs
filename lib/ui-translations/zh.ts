@@ -114,7 +114,7 @@ export const zh: UIStrings = {
           '运行 npm run backend',
           '打开 localhost:3080 并注册',
         ],
-        prereqs: ['Node.js v24.16.0', 'MongoDB 实例'],
+        prereqs: ['Node.js v24.22.1', 'MongoDB 实例'],
       },
       railway: {
         tag: '一键部署',
