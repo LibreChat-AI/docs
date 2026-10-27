@@ -1,368 +1,62 @@
 ---
 title: Image Generation & Editing
 icon: Image
-description: Comprehensive guide to LibreChat's built-in image generation and editing tools
+description: Generate and edit images by chatting with an agent that has an image tool, using OpenAI, Gemini, Flux, or a local Stable Diffusion server.
 ---
 
-LibreChat ships with built-in image tools that you add to an [Agent](/docs/features/agents). Each tool has its own model, price point, and setup, usually just an API key or a URL. There is no separate image page: you generate or edit images by chatting with an Agent that has an image tool enabled.
+LibreChat creates and edits images through agent tools. Give an agent an image tool, describe what you want, and the image appears in the conversation. Upload a picture with your message and the agent can change it instead of starting from scratch.
 
-<Callout type="info" title="How image generation works">
-Upload an image when you want an edit, or send a plain text prompt when you want a new image. Generated images follow the configured [`fileStrategy`](/docs/configuration/librechat_yaml/object_structure/config#filestrategy) and the tool output is sent to the LLM as part of the chat context immediately after generation.
-</Callout>
+## The image tools
 
-## Quick Start
+| Tool | What it does | Edits images |
+| --- | --- | --- |
+| OpenAI Image Tools | Generates from text and edits uploaded or earlier images with OpenAI image models. A good default. | Yes |
+| Gemini Image Tools | Generates with Google's Gemini image models, optionally using earlier images as visual context. | Yes |
+| Flux | Generates with Black Forest Labs' Flux models, including your own fine-tuned models. | No |
+| Stable Diffusion | Generates on your own Automatic1111 server, so nothing leaves your network. | No |
 
-Get image generation working in a few minutes with OpenAI Image Tools.
+Which ones you see depends on what your admin has configured.
+
+## Generate an image
 
 <Steps>
 <Step>
-
-**Create an agent.** Select **Agents** from the endpoint menu, open the Agent Builder from the side panel, and create a new agent. Give it a name like "Image Creator".
-
+Open the agent in the Agent Builder, and select **Add** next to **Tools**.
 </Step>
 <Step>
-
-**Add OpenAI Image Tools.** Open the agent's **Tools** list, select **OpenAI Image Tools**, and save the agent. This adds both image generation and image editing capabilities.
-
+Choose an image tool, such as **OpenAI Image Tools**, and save the agent. If the tool asks for an API key, your admin has left it to each user; enter your own.
 </Step>
 <Step>
-
-**Set your API key.** Add the following to your `.env` file:
-
-```bash filename=".env"
-IMAGE_GEN_OAI_API_KEY=sk-your-openai-api-key
-# Optional; defaults to gpt-image-2.5-flare
-IMAGE_GEN_OAI_MODEL=gpt-image-2.5-flare
-```
-
-</Step>
-<Step>
-
-**Restart and test.** Restart LibreChat, then send a message like "Generate an image of a sunset over mountains" to your agent.
-
-| Deployment | Command                                       |
-| ---------- | --------------------------------------------- |
-| Docker     | `docker compose down && docker compose up -d` |
-| Local      | Stop (Ctrl+C) then `npm run backend`          |
-
+Start a chat with the agent and describe the image.
 </Step>
 </Steps>
 
-<Callout type="info" title="Good to know">
-- API keys can be omitted to let users enter their own key from the UI.
-- Image outputs are sent to the LLM only immediately after generation, not on every message. The LLM otherwise gets vision context only from images attached to user messages. See [Image Storage and Handling](#image-storage-and-handling).
-- MCP server tools can also output images, though they may not always use the correct format. See the [MCP section](#model-context-protocol-mcp).
-</Callout>
+The agent turns your request into a prompt for the tool, so you can talk normally ("a poster for a bake sale, wide format, lots of pastel colors"). Shape and size requests are passed through when the tool supports them: OpenAI takes square, landscape, or portrait sizes (newer models also take custom sizes up to 4K) plus a quality level and a transparent background, Gemini takes aspect ratios such as 16:9 or 9:16 and, on newer models, a resolution up to 4K. Stable Diffusion always produces 1024x1024.
 
-## OpenAI Image Tools
+## Edit an image
 
-"OpenAI Image Tools" is an agent toolkit made up of two separate tools:
+Attach an image with **Upload Image** and ask for a change: "remove the people in the background", "make it look like a watercolor", "put this logo on a coffee mug". With OpenAI Image Tools the agent calls the editing tool; with Gemini it passes your image as context for a new generation.
 
-- **Image Generation** creates brand-new images from text prompts (no upload required).
-- **Image Editing** edits or remixes images you uploaded: change colors, add objects, extend the canvas, and more.
+You can keep going on an image the agent just produced ("now make the sky darker") without uploading anything. Every uploaded or generated image has an ID that the model refers to, and that works as long as the image is still within the conversation's context window. In a long conversation, attach the image again.
 
-Both default to `gpt-image-2.5-flare`. Use `IMAGE_GEN_OAI_MODEL` to choose a different OpenAI image model when your deployment supports it. OpenAI retires `gpt-image-1` on October 23, 2026, so remove it from `IMAGE_GEN_OAI_MODEL` if you set it explicitly. See OpenAI's [Image Generation documentation](https://platform.openai.com/docs/guides/image-generation) for more details.
+Flux and Stable Diffusion only work from text, so they cannot edit.
 
-### Generation vs. Editing
+## What the model sees
 
-| Use case                | Invokes              |
-| ----------------------- | -------------------- |
-| "Start from scratch"    | **Image Generation** |
-| "Use existing image(s)" | **Image Editing**    |
+A generated image is shown to the model once, right after it is created, so it can describe or check its own work. After that the model only sees images attached to your messages. If you want to discuss an older image several turns later, attach it again.
 
-Both tools are always available, and the agent chooses the appropriate one based on the request:
+Because the image goes back to the model, use a vision-capable model for agents with image tools. A text-only model may fail on the turn after the image is generated.
 
-- **Image Generation** creates new images from text descriptions only.
-- **Image Editing** modifies or remixes existing images using their image IDs. These can be images from the current message or previously generated and referenced images. The LLM keeps track of image IDs as long as they remain in the context window and includes them in the tool output.
+Generated images are stored like any other upload, under your admin's file storage settings. By default they are scaled down so the shorter side is at most 768 pixels, so a 4K request is saved smaller than the model made it unless your admin changes that.
 
-<Callout type="warning" title="Image editing relies on image IDs">
-- Image IDs are retained in the chat history. When files are uploaded to the current request, their IDs are added to the LLM's context before any tokens are generated.
-- Previously referenced or generated image IDs can be used for editing as long as they remain within the context window. The LLM includes any relevant IDs in the `image_ids` array when calling the editing tool.
-- You can attach previously uploaded images from the side panel without uploading them again. This also gives a vision model the image context, which can help inform the `prompt` for the editing tool.
-</Callout>
+## Images from MCP servers
 
-### Parameters
+MCP tools can return images too, for example a browser server that takes screenshots. Images that the server returns in MCP's image format show up in the chat the same way as the built-in tools' output. Some servers return only a URL to the image, which LibreChat does not treat as image output.
 
-**Image Generation**
+## Writing prompts
 
-- **prompt**: text description (required)
-- **size**: `auto` (default), `1024x1024` (square), `1536x1024` (landscape), or `1024x1536` (portrait); models that support custom dimensions, such as `gpt-image-2.5-flare`, accept any `WIDTHxHEIGHT` within their limits, for example `2048x1152` or `3840x2160`
-- **quality**: `auto` (default), `high`, `medium`, or `low`
-- **background**: `auto` (default), `transparent`, or `opaque` (transparent requires PNG or WebP format)
+Image models respond to concrete descriptions. Start with the subject and the medium (photo, oil painting, flat vector illustration), then add composition, lighting, and the details that matter. Describe what you want to see rather than listing what to avoid. If a result is close, ask for the specific change instead of rewriting the whole prompt.
 
-**Image Editing**
+## Setup
 
-- **image_ids**: array of image IDs to use as reference for editing (required)
-- **prompt**: text description of the changes (required)
-- **size**: `auto` (default), `1024x1024`, `1536x1024`, or `1024x1536`; models that support custom dimensions accept any `WIDTHxHEIGHT` within their limits, for example `3840x2160`
-- **quality**: `auto` (default), `high`, `medium`, or `low`
-
-<Callout type="info" title="Keeping large sizes">
-By default, LibreChat resizes saved images so their shorter side is at most 768 pixels, so a `3840x2160` result is stored at 1365x768. To keep the requested size, set [`fileConfig.imageGeneration`](/docs/configuration/librechat_yaml/object_structure/file_config#imagegeneration) to `percentage: 100`, or to a `px` cap large enough for your sizes.
-</Callout>
-
-### Setup
-
-Create or reuse an OpenAI key and add it to `.env`, then add "OpenAI Image Tools" to your agent's **Tools** list:
-
-```bash filename=".env"
-IMAGE_GEN_OAI_API_KEY=sk-...
-# optional extras
-IMAGE_GEN_OAI_MODEL=gpt-image-2.5-flare
-IMAGE_GEN_OAI_BASEURL=https://...
-```
-
-For Azure OpenAI, deploy an image model in your Azure OpenAI resource, then add your credentials to `.env`. Set `IMAGE_GEN_OAI_MODEL` to the deployment name:
-
-```bash filename=".env"
-IMAGE_GEN_OAI_API_KEY=your-api-key
-# optional extras
-IMAGE_GEN_OAI_MODEL=your-deployment-name
-IMAGE_GEN_OAI_BASEURL=https://your-resource-name.openai.azure.com/openai/deployments/your-deployment-name/
-IMAGE_GEN_OAI_AZURE_API_VERSION=2025-04-01-preview
-```
-
-### Advanced Configuration
-
-Customize the tool descriptions and prompt guidance with these environment variables:
-
-```bash filename=".env"
-# Image Model
-IMAGE_GEN_OAI_MODEL=gpt-image-2.5-flare
-
-# Image Generation Tool Descriptions
-IMAGE_GEN_OAI_DESCRIPTION=...
-IMAGE_GEN_OAI_PROMPT_DESCRIPTION=...
-
-# Image Editing Tool Descriptions
-IMAGE_EDIT_OAI_DESCRIPTION=...
-IMAGE_EDIT_OAI_PROMPT_DESCRIPTION=...
-```
-
-### Pricing
-
-See OpenAI's [API pricing page](https://openai.com/api/pricing/) and [Image Generation documentation](https://platform.openai.com/docs/guides/image-generation) for image generation costs.
-
-## Gemini Image Tools
-
-Gemini Image Tools integrate Google's latest image generation models, supporting both text-to-image generation and image context-aware editing.
-
-- **Text-to-image generation**: create high-quality images from detailed text descriptions.
-- **Image context support**: use existing images as context or inspiration for new generations.
-- **Image editing**: generate new images based on modifications to existing ones (include the original image ID).
-- **Multiple models**: choose `gemini-2.5-flash-image` (default) or `gemini-3-pro-image-preview`.
-- **Dual API support**: works with both simple Gemini API keys and Google Cloud Vertex AI.
-
-### Parameters
-
-- **prompt**: detailed text description of the desired image (required, up to 32,000 characters)
-- **image_ids**: optional array of image IDs to use as visual context for generation
-- **aspectRatio**: optional; one of `1:1` (default), `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`, `9:16`, `16:9`, or `21:9`
-- **imageSize**: optional; `1K` (default), `2K`, or `4K`
-
-### Setup
-
-LibreChat picks credentials in this order: the user's own key (entered in the UI), `GEMINI_API_KEY`, `GOOGLE_KEY` (shared with the Google chat endpoint), then a Vertex AI service account.
-
-For the Gemini API, get a key from [Google AI Studio](https://aistudio.google.com/app/apikey):
-
-```bash filename=".env"
-GEMINI_API_KEY=your_api_key_here
-```
-
-For Vertex AI (Google Cloud users with Vertex AI access):
-
-```bash filename=".env"
-GOOGLE_SERVICE_KEY_FILE=/path/to/service-account.json
-GOOGLE_CLOUD_LOCATION=us-central1  # optional, default: global
-```
-
-`GOOGLE_LOC` is also accepted as the location when `GOOGLE_CLOUD_LOCATION` is not set.
-
-### Model Selection
-
-```bash filename=".env"
-# Default model (fast and efficient)
-GEMINI_IMAGE_MODEL=gemini-2.5-flash-image
-
-# Higher quality model
-GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
-```
-
-### Advanced Configuration
-
-Customize tool descriptions via environment variables:
-
-```bash filename=".env"
-GEMINI_IMAGE_GEN_DESCRIPTION=...
-GEMINI_IMAGE_GEN_PROMPT_DESCRIPTION=...
-GEMINI_IMAGE_IDS_DESCRIPTION=...
-```
-
-More details are in the dedicated [Gemini Image Gen guide](/docs/configuration/tools/gemini_image_gen).
-
-## Stable Diffusion (local)
-
-Run images entirely on your own machine or server. Point LibreChat at any Automatic1111 (or compatible) endpoint and you're set.
-
-### Parameters
-
-- **prompt**: detailed keywords describing desired elements in the image (required)
-- **negative_prompt**: keywords describing elements to exclude from the image (required)
-
-The Stable Diffusion implementation uses these fixed default parameters, which produce good results for most use cases:
-
-- cfg_scale: 4.5
-- steps: 22
-- width: 1024
-- height: 1024
-
-### Setup
-
-No API key is required, just the reachable URL of your Automatic1111 WebUI:
-
-```bash filename=".env"
-SD_WEBUI_URL=http://127.0.0.1:7860  # URL to your Automatic1111 WebUI
-```
-
-More details on setting up Automatic1111 are in the dedicated [Stable Diffusion guide](/docs/configuration/tools/stable_diffusion).
-
-## Flux
-
-Cloud generator with an emphasis on speed and optional fine-tuned models.
-
-- Fast cloud-based image generation
-- Support for fine-tuned models
-- Multiple quality levels and aspect ratios
-- Raw mode for less processed, more natural-looking images
-
-### Parameters
-
-The Flux tool supports three main actions:
-
-1. **generate**: create a new image from a text prompt
-2. **generate_finetuned**: create an image using a fine-tuned model
-3. **list_finetunes**: list available custom models for the user
-
-More details are in the dedicated [Flux guide](/docs/configuration/tools/flux#parameters).
-
-### Setup
-
-Choose the **Flux** tool inside the agent. Prompts are plain text, and one call produces one image.
-
-```bash filename=".env"
-FLUX_API_KEY=flux_live_...
-FLUX_API_BASE_URL=https://api.us1.bfl.ai   # default is fine for most users
-```
-
-### Pricing
-
-See the [Flux pricing page](https://docs.bfl.ml/pricing/) for image generation costs.
-
-## Model Context Protocol (MCP)
-
-Image outputs are supported from MCP servers. For example, the [Puppeteer MCP Server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/puppeteer) can generate screenshots of web pages, which output the image in the expected format and are treated the same as LibreChat's built-in image tools.
-
-<Callout type="warning" title="MCP image support is still emerging">
-- The examples below assume LibreChat runs outside of Docker, directly using Node.js. The Model Context Protocol is a relatively new framework, and many developers are still learning how to serve their systems with uv/node for scalable distribution.
-- Few image-generating servers exist, and many have yet to adopt the correct response format for images.
-- While many MCP servers function well within Docker, the following examples do not, or not without more advanced configurations, showing some of the current inconsistency between MCP servers.
-</Callout>
-
-```yaml filename="librechat.yaml"
-mcpServers:
-  puppeteer:
-    command: npx
-    args:
-      - -y
-      - '@modelcontextprotocol/server-puppeteer'
-```
-
-The following is an example of an [Image Generation server](https://github.com/GongRzhe/Image-Generation-MCP-Server) that outputs images using the [Replicate API](https://replicate.com/account/api-tokens), but returns URLs of the images, which doesn't conform to MCP's image response standard.
-
-<Callout type="info" title="Global install required">
-For this particular server, install the `@gongrzhe/image-gen-server` package globally with `npm install -g @gongrzhe/image-gen-server`, then point to the package's compiled files as shown below.
-</Callout>
-
-```yaml filename="librechat.yaml"
-mcpServers:
-  image-gen:
-    command: 'node'
-    # First, install the package globally using npm:
-    # `npm install -g @gongrzhe/image-gen-server`
-    # Then, point to the location of the installed package,
-    # which you can find by running `npm root -g`
-    args:
-      - '{REPLACE_WITH_NODE_MODULES_LOCATION}/@gongrzhe/image-gen-server/build/index.js'
-      # Example with output from `npm root -g`:
-      # - "/home/danny/.nvm/versions/node/v24.16.0/lib/node_modules/@gongrzhe/image-gen-server/build/index.js"
-    env:
-      # Do not hardcode the API token here, use the environment variable instead
-      # The following will pick up the token from your .env file or environment
-      REPLICATE_API_TOKEN: '${REPLICATE_API_TOKEN}'
-      MODEL: 'google/imagen-3'
-```
-
-## Image Storage and Handling
-
-All generated images are:
-
-1. Saved according to the configured [`fileStrategy`](/docs/configuration/librechat_yaml/object_structure/config#filestrategy)
-2. Displayed directly in the chat interface
-3. Sent to the LLM as part of the immediate chat context following generation
-
-A few caveats apply to that last point:
-
-- This may cause issues with an LLM that does not support image inputs. An option to disable the behavior per agent is planned.
-- Outputs are sent to the LLM only upon generation, not on every message.
-- To include an image in later turns, attach it to the message from the side panel.
-- In short, the LLM gets vision context only from images attached to user messages, and from generations or edits immediately after they happen.
-
-## Proxy Support
-
-All image generation tools support proxy configuration through the `PROXY` environment variable:
-
-```bash filename=".env"
-PROXY=http://proxy-url:port
-```
-
-When `PROXY` is unset, supported server-side clients honor `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`/`no_proxy`.
-
-## Error Handling
-
-If a tool encounters an error, it returns a message explaining what went wrong. Common issues include:
-
-- Invalid API key
-- API unavailability
-- Content policy violations
-- Proxy/network issues
-- Invalid parameters
-- Unsupported image payload (see [Image Storage and Handling](#image-storage-and-handling) above)
-
-## Prompting
-
-You can customize the prompts for [OpenAI Image Tools](#advanced-configuration), but the following tips inform the default prompts the tool supplies, which is useful to know for your own writing:
-
-1. Start with the **subject** and **style** (photo, oil painting, etc.).
-2. Add **composition** and **camera/medium** ("wide-angle shot of…", "watercolour…").
-3. Mention **lighting and mood** ("golden hour", "dramatic shadows").
-4. Finish with **detail keywords** (textures, colours, expressions).
-5. Keep negatives positive: describe what should be included, not what to avoid.
-
-Example:
-
-> A cinematic photo of an antique library bathed in warm afternoon sunlight. Tall wooden shelves overflow with leather-bound books, and dust particles shimmer in the light. A single green-shaded banker's lamp illuminates an open atlas on a polished mahogany desk in the foreground. 85 mm lens, shallow depth of field, rich amber tones, ultra-high detail.
-
-## Related Pages
-
-<Cards num={3}>
-  <Cards.Card title="Agents" href="/docs/features/agents" arrow>
-    Create and configure AI agents with custom tools
-  </Cards.Card>
-  <Cards.Card title="MCP Servers" href="/docs/features/mcp" arrow>
-    Bring your own tools via Model Context Protocol
-  </Cards.Card>
-  <Cards.Card title="Gemini Image Tools" href="/docs/configuration/tools/gemini_image_gen" arrow>
-    Detailed setup guide for Google Gemini image generation
-  </Cards.Card>
-</Cards>
+Each tool needs an API key or a server URL. An admin sets these in `.env`; for the key-based tools, an admin can instead leave the key for each user to enter. Setup for each tool: [OpenAI Image Tools](/docs/configuration/tools/openai_image_gen), [Gemini Image Tools](/docs/configuration/tools/gemini_image_gen), [Flux](/docs/configuration/tools/flux), and [Stable Diffusion](/docs/configuration/tools/stable_diffusion). Where images are stored is set by [`fileStrategy`](/docs/configuration/librechat_yaml/object_structure/config#filestrategy).
