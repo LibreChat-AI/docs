@@ -1,313 +1,186 @@
 import Link from 'next/link'
-import type { LucideIcon } from 'lucide-react'
-import {
-  Bot,
-  Terminal,
-  Cable,
-  Code,
-  Globe,
-  Search,
-  FileText,
-  Brain,
-  ScanText,
-  ImageIcon,
-  Upload,
-  GitFork,
-  Download,
-  Share2,
-  Clock,
-  Link2,
-  RefreshCw,
-  Shield,
-  KeyRound,
-  LayoutDashboard,
-  ShieldCheck,
-  ArrowRight,
-  ChevronRight,
-  Sparkles,
-  Zap,
-  Network,
-  CalendarClock,
-  Puzzle,
-  Workflow,
-  GitPullRequest,
-  SquarePen,
-  Settings,
-  PanelLeft,
-  MousePointerClick,
-  FolderKanban,
-  Type,
-  Lock,
-  BarChart3,
-} from 'lucide-react'
+import type { ReactNode } from 'react'
+import { ArrowRight } from 'lucide-react'
+import type * as PageTree from 'fumadocs-core/page-tree'
 import { localizedDocsHref } from '@/lib/i18n'
-import { getUI, type UIStrings } from '@/lib/ui-i18n'
+import { docsSource } from '@/lib/source'
+import { getUI } from '@/lib/ui-i18n'
 
-type ResolvedFeature = {
-  icon: LucideIcon
-  title: string
-  description: string
+// The hub mirrors the Features sidebar: groups come from the separators in
+// content/docs/features/meta.json and every card reads its title, icon and
+// description from the page's own frontmatter. Adding or translating a page
+// updates the hub without touching this file or the UI dictionaries.
+
+const FEATURES_PATH = '/docs/features'
+
+// Pages shown with a screenshot at the top. Images live next to the page's own
+// screenshots under public/images/features/<slug>/.
+const featured = ['agents', 'mcp', 'artifacts']
+
+type Feature = {
+  slug: string
   href: string
+  title: ReactNode
+  description?: string
+  icon?: ReactNode
 }
 
-// Structural data (icon + href + dictionary key). Localized title/description
-// come from the UI dictionary so the hub follows the docs locale.
-const hero = { icon: Cable, href: '/docs/features/mcp' }
+type Group = { id: string; title: ReactNode; items: Feature[] }
 
-type HighlightKey = keyof UIStrings['featuresHub']['highlights']
-
-const highlights: { icon: LucideIcon; key: HighlightKey; href: string }[] = [
-  { icon: Bot, key: 'agents', href: '/docs/features/agents' },
-  { icon: Terminal, key: 'codeInterpreter', href: '/docs/features/code_interpreter' },
-  { icon: Code, key: 'artifacts', href: '/docs/features/artifacts' },
-  { icon: Brain, key: 'memory', href: '/docs/features/memory' },
-  { icon: Globe, key: 'webSearch', href: '/docs/features/web_search' },
-  { icon: Shield, key: 'authentication', href: '/docs/features/authentication' },
-]
-
-type CategoryKey = keyof UIStrings['featuresHub']['categories']
-
-const categories: {
-  key: CategoryKey
-  layout: 'grid' | 'list'
-  items: { icon: LucideIcon; key: string; href: string }[]
-}[] = [
-  {
-    key: 'agentic',
-    layout: 'grid',
-    items: [
-      { icon: Zap, key: 'skills', href: '/docs/features/skills' },
-      { icon: Network, key: 'subagents', href: '/docs/features/subagents' },
-      { icon: CalendarClock, key: 'scheduledChats', href: '/docs/features/scheduled_chats' },
-      { icon: Puzzle, key: 'agentPlugins', href: '/docs/features/agent_plugins' },
-      { icon: Workflow, key: 'agentsApi', href: '/docs/features/agents_api' },
-      { icon: GitPullRequest, key: 'pullRequests', href: '/docs/features/pull_requests' },
-    ],
-  },
-  {
-    key: 'searchKnowledge',
-    layout: 'grid',
-    items: [
-      { icon: Globe, key: 'webSearch', href: '/docs/features/web_search' },
-      { icon: Search, key: 'search', href: '/docs/features/search' },
-      { icon: FileText, key: 'ragApi', href: '/docs/features/rag_api' },
-      { icon: Brain, key: 'memory', href: '/docs/features/memory' },
-      { icon: ScanText, key: 'ocr', href: '/docs/features/ocr' },
-    ],
-  },
-  {
-    key: 'media',
-    layout: 'grid',
-    items: [
-      { icon: ImageIcon, key: 'imageGen', href: '/docs/features/image_gen' },
-      { icon: Upload, key: 'uploadAsText', href: '/docs/features/upload_as_text' },
-    ],
-  },
-  {
-    key: 'chat',
-    layout: 'list',
-    items: [
-      { icon: GitFork, key: 'fork', href: '/docs/features/fork' },
-      { icon: Download, key: 'importConvos', href: '/docs/features/import_convos' },
-      { icon: Share2, key: 'shareableLinks', href: '/docs/features/shareable_links' },
-      { icon: Clock, key: 'temporaryChat', href: '/docs/features/temporary_chat' },
-      { icon: Link2, key: 'urlQuery', href: '/docs/features/url_query' },
-      { icon: RefreshCw, key: 'resumableStreams', href: '/docs/features/resumable_streams' },
-      { icon: SquarePen, key: 'composer', href: '/docs/features/composer' },
-      { icon: Settings, key: 'settings', href: '/docs/features/settings' },
-      { icon: PanelLeft, key: 'navigation', href: '/docs/features/navigation' },
-      { icon: MousePointerClick, key: 'messageActions', href: '/docs/features/message_actions' },
-      { icon: FolderKanban, key: 'projects', href: '/docs/features/projects' },
-      { icon: Type, key: 'smoothStreaming', href: '/docs/features/smooth_streaming' },
-    ],
-  },
-  {
-    key: 'security',
-    layout: 'list',
-    items: [
-      { icon: Shield, key: 'authentication', href: '/docs/features/authentication' },
-      { icon: LayoutDashboard, key: 'adminPanel', href: '/docs/features/admin_panel' },
-      { icon: KeyRound, key: 'passwordReset', href: '/docs/features/password_reset' },
-      { icon: ShieldCheck, key: 'moderation', href: '/docs/features/mod_system' },
-      { icon: Lock, key: 'accessControl', href: '/docs/features/access_control' },
-      { icon: BarChart3, key: 'insights', href: '/docs/features/insights' },
-    ],
-  },
-]
-
-function SectionHeading({ children, id }: { children: React.ReactNode; id: string }) {
-  return (
-    <div className="mb-5 flex items-center gap-3">
-      <h2
-        id={id}
-        className="shrink-0 text-xs font-semibold uppercase tracking-widest text-fd-muted-foreground"
-      >
-        {children}
-      </h2>
-      <div className="h-px flex-1 bg-fd-border" aria-hidden="true" />
-    </div>
-  )
+function findFeaturesFolder(nodes: PageTree.Node[]): PageTree.Folder | undefined {
+  for (const node of nodes) {
+    if (node.type !== 'folder') continue
+    if (node.index?.url.endsWith(FEATURES_PATH)) return node
+    const nested = findFeaturesFolder(node.children)
+    if (nested) return nested
+  }
+  return undefined
 }
 
-function FeatureCard({ feature, learnMore }: { feature: ResolvedFeature; learnMore: string }) {
-  const Icon = feature.icon
+function slugOf(url: string): string {
+  return url.slice(url.lastIndexOf('/') + 1)
+}
+
+function collectGroups(lang: string): Group[] {
+  const tree = docsSource.getPageTree(lang)
+  const folder = findFeaturesFolder(tree.children)
+  if (!folder) return []
+
+  const groups: Group[] = []
+  for (const node of folder.children) {
+    if (node.type === 'separator') {
+      groups.push({ id: `group-${groups.length}`, title: node.name, items: [] })
+      continue
+    }
+    if (node.type !== 'page') continue
+    if (groups.length === 0) groups.push({ id: 'group-0', title: null, items: [] })
+    const slug = slugOf(node.url)
+    const page = docsSource.getNodePage(node, lang)
+    groups[groups.length - 1].items.push({
+      slug,
+      href: localizedDocsHref(`${FEATURES_PATH}/${slug}`, lang),
+      title: node.name,
+      description: page?.data.description,
+      icon: node.icon,
+    })
+  }
+  return groups.filter((group) => group.items.length > 0)
+}
+
+function FeaturedCard({ feature }: { feature: Feature }) {
+  const base = `/images/features/${feature.slug}/overview`
   return (
     <Link
       href={feature.href}
-      className="group flex flex-col rounded-xl border border-fd-border bg-fd-card p-5 transition-all duration-200 hover:border-fd-foreground/20 hover:shadow-lg hover:shadow-fd-foreground/[0.03]"
+      className="group flex flex-col overflow-hidden rounded-xl border border-fd-border bg-fd-card transition-colors hover:border-fd-foreground/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fd-ring"
     >
-      <div className="mb-3 inline-flex w-fit rounded-lg border border-fd-border bg-fd-background p-2 transition-colors group-hover:border-fd-foreground/20">
-        <Icon
-          className="size-4 text-fd-muted-foreground transition-colors group-hover:text-fd-foreground"
-          aria-hidden="true"
+      <div className="aspect-[16/10] overflow-hidden border-b border-fd-border bg-fd-muted">
+        {/* Decorative preview: the card title and description carry the meaning. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={`${base}-light.png`}
+          alt=""
+          loading="lazy"
+          className="image-light-theme size-full object-cover object-left-top transition-transform duration-300 group-hover:scale-[1.02] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
+        />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={`${base}-dark.png`}
+          alt=""
+          loading="lazy"
+          className="image-dark-theme size-full object-cover object-left-top transition-transform duration-300 group-hover:scale-[1.02] motion-reduce:transition-none motion-reduce:group-hover:scale-100"
         />
       </div>
-      <h3 className="mb-1 text-sm font-semibold text-fd-foreground">{feature.title}</h3>
-      <p className="mb-3 flex-1 text-xs leading-relaxed text-fd-muted-foreground">
-        {feature.description}
-      </p>
+      <div className="flex flex-1 flex-col gap-1.5 p-4">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-fd-foreground [&_svg]:size-4 [&_svg]:text-fd-muted-foreground">
+          {feature.icon}
+          {feature.title}
+        </h3>
+        {feature.description && (
+          <p className="text-sm leading-relaxed text-fd-muted-foreground">{feature.description}</p>
+        )}
+      </div>
+    </Link>
+  )
+}
+
+function FeatureLink({ feature }: { feature: Feature }) {
+  return (
+    <Link
+      href={feature.href}
+      className="group flex h-full gap-3 rounded-lg border border-fd-border bg-fd-card p-4 transition-colors hover:border-fd-foreground/25 hover:bg-fd-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fd-ring"
+    >
       <span
-        className="inline-flex items-center gap-1 text-xs font-medium text-fd-muted-foreground transition-all group-hover:gap-1.5 group-hover:text-fd-foreground"
+        className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-fd-border bg-fd-background text-fd-muted-foreground transition-colors group-hover:text-fd-foreground [&_svg]:size-4"
         aria-hidden="true"
       >
-        {learnMore}
-        <ArrowRight className="size-3 transition-transform group-hover:translate-x-0.5" />
+        {feature.icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-1 text-sm font-medium text-fd-foreground">
+          {feature.title}
+          <ArrowRight
+            className="size-3.5 opacity-0 transition-all group-hover:translate-x-0.5 group-hover:opacity-100 motion-reduce:transition-none"
+            aria-hidden="true"
+          />
+        </span>
+        {feature.description && (
+          <span className="mt-1 block text-[13px] leading-snug text-fd-muted-foreground">
+            {feature.description}
+          </span>
+        )}
       </span>
     </Link>
   )
 }
 
-function ListItem({ item, last }: { item: ResolvedFeature; last: boolean }) {
-  const Icon = item.icon
-  return (
-    <Link
-      href={item.href}
-      className={`group flex items-center gap-4 px-5 py-3.5 transition-colors hover:bg-fd-accent${last ? '' : ' border-b border-fd-border'}`}
-    >
-      <div className="shrink-0 rounded-md bg-fd-accent p-1.5 transition-colors group-hover:bg-fd-background">
-        <Icon
-          className="size-3.5 text-fd-muted-foreground transition-colors group-hover:text-fd-foreground"
-          aria-hidden="true"
-        />
-      </div>
-      <div className="min-w-0 flex-1">
-        <span className="text-sm font-medium text-fd-foreground">{item.title}</span>
-        <p className="text-xs text-fd-muted-foreground">{item.description}</p>
-      </div>
-      <ChevronRight
-        className="size-4 shrink-0 text-fd-muted-foreground/40 transition-all group-hover:translate-x-0.5 group-hover:text-fd-foreground"
-        aria-hidden="true"
-      />
-    </Link>
-  )
-}
-
-export function FeaturesHub({ lang }: { lang?: string }) {
-  const ui = getUI(lang)
-  const t = ui.featuresHub
-  const HeroIcon = hero.icon
+export function FeaturesHub({ lang = 'en' }: { lang?: string }) {
+  const t = getUI(lang).featuresHub
+  const groups = collectGroups(lang)
+  const all = groups.flatMap((group) => group.items)
+  const featuredItems = featured
+    .map((slug) => all.find((item) => item.slug === slug))
+    .filter((item): item is Feature => item !== undefined)
 
   return (
     <nav className="not-prose space-y-10" aria-label={t.ariaLabel}>
-      {/* Hero feature — MCP */}
-      <section aria-labelledby="hero-heading">
-        <SectionHeading id="hero-heading">{t.featuredHeading}</SectionHeading>
-        <Link
-          href={localizedDocsHref(hero.href, lang)}
-          className="group relative flex flex-col overflow-hidden rounded-xl border border-fd-foreground/15 bg-fd-card transition-all duration-200 hover:border-fd-foreground/25 hover:shadow-lg hover:shadow-fd-foreground/[0.04] sm:flex-row"
-        >
-          {/* Icon area */}
-          <div className="flex items-center justify-center border-b border-fd-border bg-fd-accent/50 p-8 sm:w-32 sm:border-b-0 sm:border-r">
-            <HeroIcon
-              className="size-10 text-fd-muted-foreground transition-colors group-hover:text-fd-foreground"
-              aria-hidden="true"
-            />
-          </div>
-          {/* Content */}
-          <div className="flex flex-1 flex-col justify-center p-5 sm:p-6">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <h3 className="text-base font-semibold text-fd-foreground">{t.hero.title}</h3>
-            </div>
-            <p className="mb-3 text-sm leading-relaxed text-fd-muted-foreground">
-              {t.hero.description}
-            </p>
-            <span
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-fd-foreground transition-colors group-hover:text-fd-foreground/80"
-              aria-hidden="true"
+      {featuredItems.length > 0 && (
+        <section aria-labelledby="features-featured">
+          <h2
+            id="features-featured"
+            className="mb-4 text-xs font-semibold uppercase tracking-widest text-fd-muted-foreground"
+          >
+            {t.featuredHeading}
+          </h2>
+          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {featuredItems.map((feature) => (
+              <li key={feature.slug} className="flex">
+                <FeaturedCard feature={feature} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {groups.map((group) => (
+        <section key={group.id} aria-labelledby={group.title ? group.id : undefined}>
+          {group.title && (
+            <h2
+              id={group.id}
+              className="mb-4 flex items-center gap-3 text-xs font-semibold uppercase tracking-widest text-fd-muted-foreground after:h-px after:flex-1 after:bg-fd-border"
             >
-              {ui.common.readDocs}
-              <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
-            </span>
-          </div>
-        </Link>
-      </section>
-
-      {/* Highlights — 6 top features in a 3x2 grid */}
-      <section aria-labelledby="highlights-heading">
-        <SectionHeading id="highlights-heading">
-          <span className="inline-flex items-center gap-1.5">
-            <Sparkles className="size-3" aria-hidden="true" />
-            {t.coreFeaturesHeading}
-          </span>
-        </SectionHeading>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {highlights.map((feature) => {
-            const text = t.highlights[feature.key]
-            return (
-              <FeatureCard
-                key={feature.key}
-                feature={{
-                  icon: feature.icon,
-                  href: localizedDocsHref(feature.href, lang),
-                  ...text,
-                }}
-                learnMore={ui.common.learnMore}
-              />
-            )
-          })}
-        </div>
-      </section>
-
-      {/* Category sections — mixed layouts */}
-      {categories.map((category) => {
-        const cat = t.categories[category.key]
-        const itemsText = cat.items as Record<string, { title: string; description: string }>
-        return (
-          <section key={category.key} aria-labelledby={`${category.key}-heading`}>
-            <SectionHeading id={`${category.key}-heading`}>{cat.title}</SectionHeading>
-
-            {category.layout === 'grid' ? (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {category.items.map((item) => (
-                  <FeatureCard
-                    key={item.key}
-                    feature={{
-                      icon: item.icon,
-                      href: localizedDocsHref(item.href, lang),
-                      ...itemsText[item.key],
-                    }}
-                    learnMore={ui.common.learnMore}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="overflow-hidden rounded-xl border border-fd-border">
-                {category.items.map((item, i) => (
-                  <ListItem
-                    key={item.key}
-                    item={{
-                      icon: item.icon,
-                      href: localizedDocsHref(item.href, lang),
-                      ...itemsText[item.key],
-                    }}
-                    last={i === category.items.length - 1}
-                  />
-                ))}
-              </div>
-            )}
-          </section>
-        )
-      })}
+              {group.title}
+            </h2>
+          )}
+          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {group.items.map((feature) => (
+              <li key={feature.slug}>
+                <FeatureLink feature={feature} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
     </nav>
   )
 }
