@@ -4,7 +4,7 @@ icon: Redis
 description: Setting up Redis for caching, session storage, and horizontal scaling in LibreChat
 ---
 
-This guide covers how to configure Redis for caching and session storage in LibreChat. Redis provides significant performance improvements and is **required for horizontal scaling**. If you're running multiple LibreChat instances behind a load balancer, Redis ensures consistent state across all instances.
+This guide covers how to configure Redis for caching and session storage in LibreChat. Redis provides significant performance improvements and is **required for horizontal scaling**: if you're running multiple LibreChat instances behind a load balancer, Redis ensures consistent state across all instances.
 
 ## Table of Contents
 
@@ -391,22 +391,21 @@ REDIS_KEY_PREFIX=librechat-cluster
 
 ## Resumable Streams
 
-Redis enables [Resumable Streams](/docs/features/resumable_streams) for horizontally scaled deployments. When enabled, AI responses can seamlessly reconnect and resume across server instances.
+[Resumable Streams](/docs/features/resumable_streams) keep each in-progress response in a job store so a client can reconnect and catch up. A single LibreChat instance keeps that store in memory and needs nothing configured. With several instances behind a load balancer, a reconnect can reach a different instance than the one generating, so the store has to be shared through Redis.
 
-**Important:** When `USE_REDIS=true`, resumable streams automatically use Redis for cross-instance coordination. This is the recommended setup for horizontally scaled deployments where users might connect to different server instances.
+Streams use Redis automatically when `USE_REDIS=true`. `USE_REDIS_STREAMS` overrides that: set it to `false` to keep streams in memory while Redis serves the caches, or to `true` to state it explicitly.
 
-**Note:** If you're running a single LibreChat instance, Redis for resumable streams is typically overkill; the built-in in-memory mode works fine. Redis becomes essential when you have multiple LibreChat instances behind a load balancer, where a user's reconnection might hit a different server than where their stream started.
-
-### Configuration
-
-```bash
-# Redis enabled = resumable streams automatically use Redis
+```bash filename=".env"
 USE_REDIS=true
 REDIS_URI=redis://127.0.0.1:6379
 
-# Optional: explicitly control resumable streams behavior
-# USE_REDIS_STREAMS=true  # Enabled by default when USE_REDIS=true
+# Optional: defaults to the value of USE_REDIS
+# USE_REDIS_STREAMS=true
 ```
+
+With Redis, stream chunks are written to Redis Streams, job metadata to hashes, and live events go through Pub/Sub, so any instance can serve a reconnect.
+
+Scheduled agent runs that can pause for tool approval or a question to the user require Redis streams; without them those runs fail with an error asking you to set `USE_REDIS_STREAMS=true`.
 
 ### Generation Protocol Compatibility
 
@@ -427,24 +426,15 @@ In-memory generation streams also negotiate protocol v2 automatically and do not
 
 ### Stream Delta Coalescing
 
-Redis-backed streams can batch delta publications to reduce Redis scripts, round trips, and CPU at high token rates:
+`STREAM_DELTA_COALESCE_MS` groups streamed deltas into windowed Redis writes to cut round trips at high token rates. It defaults to `25` (milliseconds), `0` publishes every delta on its own, and values are capped at `1000`. A larger window adds up to one window of delivery latency, and deltas still buffered when an instance crashes are lost. Keep it at or below the stream smoothing cadence (`streamRate`, 25 ms by default). Individual chunk frames are still published alongside batches, so subscribers that do not understand batches keep working. In-memory streams are not affected.
 
 ```bash filename=".env"
 STREAM_DELTA_COALESCE_MS=25
 ```
 
-The setting defaults to `25` milliseconds when unset. Set it explicitly to `0` to disable coalescing; values above `1000` are capped. Batching can add up to one configured window of delivery latency and may lose the buffered tail if the publishing process exits before it flushes. Individual chunk frames are retained for protocol compatibility, so this setting reduces Redis script and round-trip work without changing the subscriber frame format. In-memory generation streams are unchanged.
-
-### Key Benefits (for Horizontal Scaling)
-
-- **Cross-instance continuity**: Users can start a generation on one server and resume on another
-- **Rolling deployments**: Active streams survive server restarts
-- **Multi-tab sync**: Same conversation syncs across multiple browser tabs in a load-balanced environment
-- **Connection resilience**: Automatic reconnection regardless of which server handles the request
-
 ### Cluster Configuration
 
-For Redis Cluster deployments, LibreChat automatically uses hash-tagged keys to ensure stream operations stay within the same cluster slot:
+For Redis Cluster deployments, LibreChat uses hash-tagged keys so that a stream's keys stay in the same cluster slot:
 
 ```bash
 USE_REDIS=true
@@ -453,10 +443,12 @@ USE_REDIS_CLUSTER=true
 REDIS_URI=redis://node1:7001,redis://node2:7002,redis://node3:7003
 ```
 
-See [Resumable Streams](/docs/features/resumable_streams) for more details on this feature.
+### Troubleshooting
+
+If responses do not resume after a reconnect in a multi-instance deployment, check that every instance has the same `USE_REDIS` and `USE_REDIS_STREAMS` values and can reach Redis, for example with `redis-cli ping` from the LibreChat host.
 
 ## MCP Catalog Coordination
 
 When Redis is enabled, LibreChat coordinates application-level MCP tool catalogs across replicas. Startup publication, reconnect synchronization, and `notifications/tools/list_changed` updates use generation and revision markers so a stale replica cannot overwrite a newer catalog.
 
-Redis Cluster deployments use slot-safe catalog keys and update operations; no separate MCP Redis setting is required. See [MCP Server Management](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information) for dynamic catalog and OAuth readiness behavior.
+Redis Cluster deployments use slot-safe catalog keys and update operations; no separate MCP Redis setting is required. See [MCP server configuration](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information) for dynamic catalog and OAuth readiness behavior.

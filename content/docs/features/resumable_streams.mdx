@@ -1,126 +1,24 @@
 ---
 title: Resumable Streams
 icon: Zap
-description: Recover in-progress AI responses after a dropped connection, sync the same chat across tabs and devices, and keep streams alive across scaled-out instances.
+description: A response keeps generating when you refresh, lose your connection, or switch tabs, and picks up where it is when you come back.
 ---
 
-Resumable streams let an in-progress AI response survive a dropped connection. If the network drops, the browser refreshes, or you switch tabs or devices, LibreChat reconstructs the content that was already streamed and continues from where it left off. The same mechanism keeps multiple viewers of one conversation in sync.
+A response in LibreChat does not depend on your browser staying connected. Generation runs on the server, so if you refresh, lose the network, or close the tab, the model keeps going, and when you open the conversation again you see everything produced so far followed by the rest as it streams.
 
-## What You Get
+## What you will notice
 
-- **No lost responses.** Network drops, browser refreshes, and server restarts do not discard streamed content.
-- **Tabs stay in sync.** Open one conversation in two browser tabs and both receive the same updates in real time.
-- **Switch devices mid-stream.** Start a generation on your desktop and pick up the result on your phone.
-- **Background generations.** Start a long response, move to another tab or app, and the full response is there when you return.
-- **Shared conversations.** Every viewer of a shared chat sees content stream in at the same time.
+- Refreshing the page mid-response no longer loses it. The text already streamed comes back at once and streaming continues.
+- A dropped connection reconnects and fills in whatever arrived while you were offline, including tool calls and agent steps.
+- You can start a long response, go to another conversation or close the tab, and come back to the finished answer.
+- The same conversation open in two tabs, or on your laptop and your phone, shows the same response streaming in both.
 
-## How It Works
+## Limits
 
-When you send a message, LibreChat creates a generation job that records every streamed delta. If the connection breaks:
+The response survives your connection, not the server. If the LibreChat process handling the generation stops, the generation stops with it.
 
-1. The client detects the disconnection.
-2. On reconnect, the server rebuilds the content streamed so far from the job's recorded deltas.
-3. The missing content is delivered in a single sync event.
-4. Streaming continues from the current position.
+On a deployment that runs several LibreChat instances, resuming works across instances only when the admin has enabled Redis for streams. Without it, each instance keeps its streams in its own memory, so a reconnect routed to a different instance cannot resume the response.
 
-This runs automatically and requires no user action.
+## Setup
 
-## Deployment Modes
-
-LibreChat ships with two backends for resumable streams.
-
-### Single-Instance Mode (default)
-
-Stores stream state in memory and uses a Node.js `EventEmitter` for pub/sub. This is the default and needs no configuration. It covers local development, single-server deployments, and Docker Compose setups.
-
-### Redis Mode (production)
-
-Uses Redis Streams and Pub/Sub so stream state is shared across instances. Use it for horizontally scaled, load-balanced, or high-availability deployments, including Kubernetes clusters. With Redis, a generation started on one instance can resume on another, which keeps active streams alive through rolling deployments and auto-scaling.
-
-<Callout type="info" title="Single instance? You likely don't need Redis here">
-In-memory mode handles everything for a single LibreChat instance. Redis becomes relevant once you run multiple instances behind a load balancer. Redis is still useful for caching and session storage in single-instance deployments, just not specifically for resumable streams.
-</Callout>
-
-## Configuration
-
-### Enable Redis Streams
-
-Setting `USE_REDIS=true` makes resumable streams use Redis automatically. Use `USE_REDIS_STREAMS` to control it explicitly.
-
-```bash filename=".env"
-USE_REDIS=true
-REDIS_URI=redis://localhost:6379
-# Resumable streams use Redis automatically when USE_REDIS=true.
-# Set USE_REDIS_STREAMS to control it explicitly:
-USE_REDIS_STREAMS=true
-```
-
-### Redis Cluster
-
-For a Redis Cluster, enable cluster mode and list the nodes in `REDIS_URI`.
-
-```bash filename=".env"
-USE_REDIS_STREAMS=true
-USE_REDIS_CLUSTER=true
-REDIS_URI=redis://node1:7001,redis://node2:7002,redis://node3:7003
-```
-
-LibreChat uses hash-tagged keys so that multi-key operations land on the same cluster slot.
-
-Redis delta publications are batched by default with a 25 ms window (`STREAM_DELTA_COALESCE_MS=25`), which reduces Redis work at the cost of up to 25 ms of delivery latency. Set a different positive value to change the window (values above 1000 are capped at 1000). Only an explicit `0`, or an invalid or non-positive value, disables batching; do that only if a replica in the deployment does not support batch frames. See [Stream Delta Coalescing](/docs/configuration/redis#stream-delta-coalescing).
-
-## What Gets Reconstructed
-
-On reconnect, LibreChat aggregates the recorded delta events to rebuild:
-
-- Message content (text, tool calls, citations)
-- Agent run steps and intermediate reasoning
-- Metadata and state information
-
-The storage mechanism depends on the deployment mode:
-
-| Component | Storage Mechanism |
-|-----------|-------------------|
-| Chunks | Redis Streams (`XADD`/`XRANGE`) |
-| Job metadata | Redis Hash structures |
-| Real-time events | Redis Pub/Sub channels |
-| Expiration | Automatic TTL after stream completion |
-
-LibreChat applies a few optimizations to keep this cheap:
-
-- **Memory-first recovery.** Reconnecting to the same instance reads from local cache, avoiding a Redis round trip.
-- **Cleanup on access.** Stale job entries are removed during queries, and completed streams expire automatically.
-- **Garbage-collected storage.** In-memory mode stores stream graphs with `WeakRef`, so they are collected once a conversation ends.
-
-## Testing
-
-To confirm the feature is working, start a streaming conversation with any model, then try one of:
-
-- **Tabs.** Open the same chat in a second tab; both should sync.
-- **Disconnect.** Drop the network briefly, then reconnect.
-- **Navigation.** Navigate away mid-stream, then return.
-
-Each case should produce the complete response with no missing content.
-
-## Troubleshooting
-
-**Streams not resuming.** Confirm Redis is reachable and that `USE_REDIS_STREAMS` is set.
-
-```bash
-docker exec -it librechat-redis redis-cli ping
-# Expected: PONG
-
-echo $USE_REDIS_STREAMS
-```
-
-**Content appears duplicated.** This usually means a client version mismatch. Update to the latest version of LibreChat.
-
-**High memory use in single-instance mode.** Completed streams are garbage collected. If memory stays high, look for very long-running streams that never complete or streams that errored without cleaning up.
-
-## Related Documentation
-
-- [Redis Configuration](/docs/configuration/redis): setting up Redis for caching and horizontal scaling
-- [Agents](/docs/features/agents): AI agents with tool use
-- [Docker Deployment](/docs/local/docker): container-based deployment
-
-For implementation details, see [PR #10926](https://github.com/LibreChat-AI/LibreChat/pull/10926).
+No setup is needed for a single LibreChat instance: streams are kept in memory and resume out of the box. Deployments with more than one instance behind a load balancer need Redis, which streams use automatically once `USE_REDIS` is on; see [Redis: Resumable Streams](/docs/configuration/redis#resumable-streams).

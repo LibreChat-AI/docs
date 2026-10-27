@@ -7,7 +7,7 @@ icon: FileCode
 
 The `fileConfig` object allows you to configure file handling settings for the application, including size limits and MIME type restrictions. This section provides a detailed breakdown of the `fileConfig` object structure.
 
-The main fields under `fileConfig` are:
+The main fields under `fileConfig` covered here:
 
   - `endpoints`
   - `skills`
@@ -25,14 +25,13 @@ The main fields under `fileConfig` are:
   - `legacySearchProbeTimeoutMs`
   - `ocr`
   - `text`
-  - `stt`
 
 **Notes:**
 
 - At the time of writing, the Assistants endpoint [supports filetypes from this list](https://platform.openai.com/docs/assistants/tools/file-search#supported-files).
 - OpenAI, Azure OpenAI, Google, and Custom endpoints support files through the [RAG API.](../../rag_api.mdx)
-- OpenAI, Azure OpenAI, Anthropic, Google, and AWS Bedrock endpoints support direct file uploads via [Upload to Provider](/docs/features/ocr#5-upload-files-to-provider-direct).
-- The `ocr`, `text`, and `stt` sections control file processing for features like [Upload as Text](/docs/features/upload_as_text) and [OCR](/docs/features/ocr)
+- OpenAI, Azure OpenAI, Anthropic, Google, AWS Bedrock, and custom endpoints support direct file uploads via [Upload to Provider](/docs/features/ocr#upload-to-provider-instead).
+- The `ocr` and `text` sections control file processing for features like [Upload as Text](/docs/features/upload_as_text) and [OCR](/docs/features/ocr)
 - Any other endpoints not mentioned, like Plugins, do not support file uploads (yet).
 - The Assistants endpoint has a defined endpoint value of `assistants`. All other endpoints use the defined value `default`
   - For non-assistants endpoints, you can adjust file settings for all of them under `default`
@@ -97,14 +96,12 @@ fileConfig:
   text:
     supportedMimeTypes:
       - "^text/(plain|markdown|csv|json|xml|html|css|javascript|typescript|x-python|x-java|x-csharp|x-php|x-ruby|x-go|x-rust|x-kotlin|x-swift|x-scala|x-perl|x-lua|x-shell|x-sql|x-yaml|x-toml)$"
-  stt:
-    supportedMimeTypes:
-      - "^audio/(mp3|mpeg|mpeg3|wav|wave|x-wav|ogg|vorbis|mp4|x-m4a|flac|x-flac|webm)$"
 ```
 
 <Callout type="info" title="MIME pattern syntax">
   LibreChat evaluates administrator-configured `supportedMimeTypes` patterns on the server with an RE2-compatible, linear-time regular expression engine. Backreferences and lookaround are not supported. Every pattern is compiled with the active engine during configuration validation; an unsupported pattern rejects the configuration instead of being silently skipped.
 </Callout>
+
 ## skills
 
 <OptionTable
@@ -219,7 +216,7 @@ fileConfig:
   ]}
 />
 
-**Description:** When attaching text content, LibreChat truncates the text at runtime to the configured token limit just before prompt construction.
+**Description:** When attaching text content, LibreChat truncates the text at runtime to the configured token limit just before prompt construction. The limit applies to each file separately. Users can override it for a conversation with the **File Token Limit** model parameter. Setting it to `0` stops attached file text from being added to the prompt at all.
 
 **Default:** `100000`
 
@@ -256,39 +253,6 @@ fileConfig:
 ```yaml filename="fileConfig / fileContextCharLimit"
 fileConfig:
   fileContextCharLimit: 1000000
-```
-
-## defaultLLMDeliveryPath
-
-Controls how an upload without an explicitly selected destination enters model context. Configure it globally under `fileConfig` or override it for a named entry under `fileConfig.endpoints`.
-
-- `provider` sends the original file through the model provider's native file or media path.
-- `text` extracts or transcribes supported content and adds the resulting text to context.
-- `none` stores the file without placing it directly in model context; selected tools can still provision it when needed.
-
-`fallback` handles unmatched MIME types. `overrides` accepts exact MIME types such as `application/pdf` or wildcards such as `image/*`. Resolution prefers endpoint overrides and fallback, then global values. Without explicit configuration, images, audio, video, and PDFs prefer native provider delivery; other recoverable content uses text. LibreChat downgrades unsupported native paths to text when extraction is possible, or to `none` otherwise.
-
-```yaml filename="fileConfig / defaultLLMDeliveryPath"
-fileConfig:
-  defaultLLMDeliveryPath:
-    fallback: text
-    overrides:
-      'image/*': provider
-      'video/*': none
-  endpoints:
-    openAI:
-      defaultLLMDeliveryPath:
-        overrides:
-          application/pdf: provider
-```
-
-## legacyFileUploadUX
-
-The default unified uploader chooses model delivery automatically and provisions File Search or Code resources only when selected tools need them. Set `legacyFileUploadUX: true` globally or for an endpoint to restore the destination chooser and eager, user-selected upload behavior.
-
-```yaml filename="fileConfig / legacyFileUploadUX"
-fileConfig:
-  legacyFileUploadUX: true
 ```
 
 ## textFallbackWithoutTools
@@ -374,7 +338,10 @@ fileConfig:
 
 **Description:** The `text` section configures which file types should be processed using direct text extraction.
 
-**Note:** Text parsing is the default method used by the "Upload as Text" feature (controlled by the `context` capability). It first attempts to use the text parsing library from the RAG API, and if the RAG API is not connected, it falls back to a simpler text extraction method without requiring any external services. See [Upload as Text](/docs/features/upload_as_text) for more information.
+**Note:** Text parsing is the default method used by the "Upload as Text" feature (controlled by the `context` capability). See [Upload as Text](/docs/features/upload_as_text) for more information.
+
+- The default list matches any well-formed MIME type. Files that are already text (`text/*`, JSON, YAML, XML, SQL, shell scripts, `.eml` email and similar) are read directly. Other binary types without a parser are rejected rather than decoded into garbage.
+- If you narrow the list and the RAG API is configured (`RAG_API_URL`), files matching it are sent to the RAG API's text extraction. If the RAG API is unavailable, LibreChat falls back to its built-in document parser.
 
 ### supportedMimeTypes
 
@@ -384,7 +351,7 @@ fileConfig:
   ]}
 />
 
-**Default:** All text files, common programming languages, and `.eml` email files
+**Default:** `^[\w.-]+/[\w.-]+$` (any MIME type)
 
 ```yaml filename="fileConfig / text / supportedMimeTypes"
 fileConfig:
@@ -395,76 +362,69 @@ fileConfig:
 
 ## stt
 
-<OptionTable
-  options={[
-    ['stt', 'Object', 'Settings for Speech-to-Text (STT) audio file processing.', 'Configures which audio file types are processed using STT for transcription.'],
-  ]}
-/>
-
-**Description:** The `stt` section configures which audio file types should be processed using Speech-to-Text functionality for converting audio to text.
-
-### supportedMimeTypes
-
-<OptionTable
-  options={[
-    ['supportedMimeTypes', 'Array of Strings', 'List of MIME type patterns for audio files that should be transcribed with STT.', 'Uses regular expressions to match audio file types.'],
-  ]}
-/>
-
-**Default:** Common audio formats
-
-```yaml filename="fileConfig / stt / supportedMimeTypes"
-fileConfig:
-  stt:
-    supportedMimeTypes:
-      - "^audio/(mp3|mpeg|mpeg3|wav|wave|x-wav|ogg|vorbis|mp4|x-m4a|flac|x-flac|webm)$"
-```
-
-**Notes:**
-- Files matching `text` patterns are processed with simple text extraction
-- Files matching `ocr` patterns are processed with the provided OCR service
-- Files matching `stt` patterns are processed with Speech-to-Text transcription
-- **Processing precedence: OCR > STT > text parsing > fallback**
-- Files not matching any pattern will fall back to text parsing
+`fileConfig.stt` is not read in current versions of LibreChat; an `stt` block here is ignored. Audio files added as text are transcribed when a speech-to-text provider is configured under [`speech.stt`](/docs/configuration/librechat_yaml/object_structure/speech), using a built-in list of audio types: MP3, MPEG, WAV, OGG, Vorbis, MP4 and M4A audio, FLAC, WebM, AAC, WMA, and Opus.
 
 ## File Processing Priority
 
-LibreChat processes uploaded files based on MIME type matching with the following **priority order**:
+When a file is added as text (Upload as Text, a long paste, or agent File Context), LibreChat uses the first step that applies:
 
-1. **OCR** - If file matches `ocr.supportedMimeTypes` AND OCR is configured
-2. **STT** - If file matches `stt.supportedMimeTypes` AND STT is configured
-3. **Text Parsing** - If file matches `text.supportedMimeTypes`
-4. **Fallback** - Text parsing as last resort
+1. **OCR**: an `ocr` section exists in `librechat.yaml` and the file matches `fileConfig.ocr.supportedMimeTypes`. If the OCR service fails, the built-in document parser is tried next.
+2. **RAG API text extraction**: `text.supportedMimeTypes` has been narrowed from the default, the RAG API is configured, and the file matches the list.
+3. **Built-in document parser**: PDF, DOCX, XLS and XLSX, ODT, and ODS files. It reads text layers only.
+4. **Speech-to-text**: audio files, when an STT provider is configured.
+5. **Text parsing**: files matching `text.supportedMimeTypes`.
 
-This processing order ensures optimal extraction quality while maintaining functionality even when specialized services (OCR/STT) are not configured.
+An image or a scanned PDF with no OCR configured has no extractable text and the upload fails with a message that an OCR service is needed.
 
-### Processing Examples
+## legacyFileUploadUX
 
-**PDF file with OCR configured:**
-- File matches `ocr.supportedMimeTypes`
-- **Uses OCR** to extract text
-- Better quality for scanned PDFs and images
+<OptionTable
+  options={[
+    ['legacyFileUploadUX', 'Boolean', 'Shows the older attach menu where users pick a destination for every upload (Upload to Provider or Upload Image, Upload as Text, Upload for File Search, Upload to Code Environment).', 'Default: false. Can be set at the top level of fileConfig or per endpoint under fileConfig.endpoints.'],
+  ]}
+/>
 
-**PDF file without OCR configured:**
-- File matches `text.supportedMimeTypes` (or uses fallback)
-- **Uses text parsing** library
-- Works well for digital PDFs with selectable text
+**Description:** By default, the attach menu offers **From Local Computer** and LibreChat decides per file how the model receives it, following `defaultLLMDeliveryPath`. File Search and Code resources are provisioned only when a selected tool needs the file. With `legacyFileUploadUX: true`, users choose the destination themselves, uploads go to that destination right away, and the explicit **Upload as Text** option appears. A per-endpoint value overrides the top-level one.
 
-**Python file:**
-- File matches `text.supportedMimeTypes`
-- **Uses text parsing** (no OCR needed)
-- Direct text extraction
+```yaml filename="fileConfig / legacyFileUploadUX"
+fileConfig:
+  legacyFileUploadUX: true
+  endpoints:
+    anthropic:
+      legacyFileUploadUX: false
+```
 
-**Audio file with STT configured:**
-- File matches `stt.supportedMimeTypes`
-- **Uses STT** to transcribe audio to text
+## defaultLLMDeliveryPath
 
-**Image file without OCR configured:**
-- File matches `ocr.supportedMimeTypes` but OCR not available
-- **Falls back to text parsing**
-- Limited extraction capability without OCR
+<OptionTable
+  options={[
+    ['defaultLLMDeliveryPath', 'Object', 'How an attached file reaches the model when the user did not pick a destination.', 'Has two optional keys: fallback and overrides. Can be set at the top level of fileConfig or per endpoint under fileConfig.endpoints. Ignored when legacyFileUploadUX is true.'],
+  ]}
+/>
 
-This priority system allows features like "Upload as Text" to work without requiring OCR configuration, while still leveraging OCR when available for improved extraction quality.
+Each value is one of:
+
+- `provider`: the file is sent to the model as a native attachment (image, PDF, audio, or video input).
+- `text`: the file's text is extracted and added to the prompt, as with Upload as Text.
+- `none`: the file is stored and available to tools such as code execution or file search, but not sent to the model.
+
+`overrides` maps a MIME type, or a `type/*` wildcard, to a value. `fallback` applies to everything not listed. LibreChat checks endpoint overrides, then the endpoint fallback, then top-level overrides, then the top-level fallback, then the built-in default.
+
+The built-in default sends images, audio, video, and PDFs to the provider and everything else as text. It also adjusts for the endpoint: a PDF on a provider that cannot read PDFs is sent as text, audio or video on a provider without media support is transcribed or kept off the prompt, AWS Bedrock receives its supported document types natively, and types with no way to extract text (archives, for example) are set to `none`. Values you configure are used as written, without these adjustments.
+
+```yaml filename="fileConfig / defaultLLMDeliveryPath"
+fileConfig:
+  defaultLLMDeliveryPath:
+    fallback: text
+    overrides:
+      'image/*': provider
+      'video/*': none
+  endpoints:
+    openAI:
+      defaultLLMDeliveryPath:
+        overrides:
+          application/pdf: provider
+```
 
 ## endpoints
 
@@ -582,7 +542,7 @@ File deletion preserves the readable primary until secondary storage cleanup is 
 | ------------------------------ | ------- | -------------------------------------------------------------------------------------------------- |
 | `retainedFileCleanup`          | `false` | Opt in to cleanup using retained destination metadata after the reader rollout.                    |
 | `vectorOwnershipTrackingStart` | Unset   | UTC date-time cutoff chosen after every legacy vector writer and rollback target has been retired. |
-| `vectorDeletionConcurrency`    | `4`     | Integer `1`–`16`; maximum namespace deletions in flight per file.                                  |
+| `vectorDeletionConcurrency`    | `4`     | Integer `1` to `16`; maximum namespace deletions in flight per file.                                  |
 
 Vector deletion additionally requires complete recorded ownership and insert-time proof at or after the safe writer cutoff. Missing, invalid, future, or pre-cutoff proof fails closed and leaves the file and its vectors in place. Setting the cutoff does not repair older ownership metadata, and it must not be backdated to make ambiguous legacy files eligible.
 
