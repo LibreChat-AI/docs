@@ -8,11 +8,11 @@ description: >-
   archivos subidos por el usuario.
 ---
 
-La **API de RAG (Retrieval-Augmented Generation)** es una herramienta potente que se integra con LibreChat para proporcionar respuestas conscientes del contexto basadas en archivos subidos por el usuario.
+La **API de RAG (Retrieval-Augmented Generation)** es un servicio independiente que indexa los archivos que subes a LibreChat y devuelve los fragmentos más relevantes para una pregunta, de modo que el modelo pueda responder a partir de tus documentos y no únicamente de sus datos de entrenamiento.
 
-Aprovecha LangChain, PostgresQL + PGVector y Python FastAPI para indexar y recuperar documentos relevantes, mejorando la experiencia conversacional.
+Es una aplicación de FastAPI en Python construida sobre LangChain, que almacena los embeddings en PostgreSQL con la extensión pgvector.
 
-**Para más detalles, consulte la guía de configuración proporcionada aquí: [RAG API Configuration](/docs/configuration/rag_api)**
+**Para configurarlo, consulta [Configuración de RAG API](/docs/configuration/rag_api).**
 
 ![image](https://github.com/danny-avila/LibreChat/assets/110412045/f1298f66-bf1d-4499-a582-23430b481f17)
 
@@ -22,51 +22,22 @@ En LibreChat, RAG potencia la capacidad de **Búsqueda de archivos** ([Agentes](
 
 La API de RAG también expone una ruta `/text` que LibreChat puede usar para extraer texto de los archivos subidos; consulta [Subir como texto](/docs/features/upload_as_text#what-happens-under-the-hood) para saber cuándo se aplica.
 
-**¿Todavía confundido sobre RAG?** [Lee la sección que escribí abajo](#what-is-rag) explicando el concepto general con más detalle junto con un enlace a un video útil.
+## Cómo funciona [#how-it-works]
+
+1. **Indexación.** Cuando un archivo necesita poder buscarse (al subirlo a la Búsqueda de archivos de un agente, o cuando una ejecución de chat usa por primera vez la Búsqueda de archivos sobre un adjunto), LibreChat lo envía a la API de RAG, que divide el texto en fragmentos superpuestos (`CHUNK_SIZE` y `CHUNK_OVERLAP`), convierte cada fragmento en un embedding con el proveedor configurado y almacena los vectores en pgvector.
+2. **Recuperación.** Cuando el modelo invoca File Search, escribe una consulta de búsqueda. LibreChat pide a la RAG API los 5 fragmentos más cercanos de cada archivo adjunto y luego conserva los 10 más cercanos en total.
+3. **Respuesta.** Esos fragmentos se devuelven al modelo junto con su nombre de archivo y una puntuación de relevancia, y el modelo responde a partir de ellos. Cuando las [citas de archivos](/docs/configuration/librechat_yaml/object_structure/interface#filecitations) están habilitadas, la respuesta puede citar los archivos que utilizó.
+
+Eliminar un archivo en LibreChat también elimina sus vectores de la API de RAG.
+
+La recuperación solo encuentra pasajes semánticamente cercanos a la consulta, por lo que funciona mejor para buscar datos específicos en documentos extensos. Para preguntas que requieren un documento completo, como resumirlo, [Cargar como texto](/docs/features/upload_as_text) suele dar mejores resultados.
 
 ## ¿Qué es RAG? [#what-is-rag]
 
-RAG, o Generación Aumentada por Recuperación (Retrieval-Augmented Generation), es un marco de trabajo de IA diseñado para mejorar la calidad y la precisión de las respuestas generadas por modelos de lenguaje de gran tamaño (LLMs). Esto se logra fundamentando el LLM en fuentes externas de conocimiento, complementando la representación interna de información del modelo.
+La Generación Aumentada por Recuperación (RAG, por sus siglas en inglés) fundamenta un modelo de lenguaje en una fuente de conocimiento externa. En lugar de depender únicamente de lo que el modelo aprendió durante el entrenamiento, la aplicación primero recupera fragmentos relevantes de esa fuente y los añade al prompt; después, el modelo genera su respuesta a partir de ellos. Como el conocimiento reside fuera del modelo, puedes añadir o actualizar documentos sin necesidad de reentrenar nada.
 
-
-## Características [#features]
-
-- **Indexación de documentos**: La API de RAG indexa los archivos subidos por el usuario, creando embeddings para una recuperación eficiente.
-- **Búsqueda semántica**: Realiza una búsqueda semántica sobre los documentos indexados para encontrar la información más relevante basada en la entrada del usuario.
-- **Respuestas conscientes del contexto**: Al aumentar el prompt del usuario con información recuperada, la API permite a LibreChat generar respuestas más precisas y contextualmente relevantes.
-- **Procesamiento asíncrono**: La API admite operaciones asíncronas para mejorar el rendimiento y la escalabilidad.
-- **Configuración flexible**: Permite la personalización de varios parámetros como el tamaño de fragmento (chunk size), el solapamiento (overlap) y los modelos de embedding.
-
-### Beneficios clave de RAG [#key-benefits-of-rag]
-
-1. **Acceso a hechos actualizados y fiables**: RAG garantiza que el LLM tenga acceso a la información más actual y fiable mediante la recuperación de hechos relevantes de una base de conocimientos externa.
-2. **Transparencia y confianza**: Los usuarios pueden acceder a las fuentes del modelo, lo que les permite verificar la precisión de las respuestas generadas y fomentar la confianza en el sistema.
-3. **Reducción de la fuga de datos y alucinaciones**: Al basar el LLM en un conjunto de hechos externos y verificables, RAG reduce las posibilidades de que el modelo filtre datos confidenciales o genere información incorrecta o engañosa.
-4. **Menores costos computacionales y financieros**: RAG reduce la necesidad de entrenamiento continuo y actualización de los parámetros del modelo, lo que potencialmente disminuye los costos computacionales y financieros de ejecutar chatbots basados en LLM en un entorno empresarial.
-
-### Cómo funciona RAG [#how-rag-works]
-
-RAG consta de dos fases principales: recuperación y generación de contenido.
-
-1. **Fase de recuperación**: Los algoritmos buscan y recuperan fragmentos de información relevantes para el prompt o la pregunta del usuario desde una base de conocimientos externa. En un entorno de dominio abierto para el consumidor, estos hechos pueden provenir de documentos indexados en internet. En un entorno de dominio cerrado para empresas, normalmente se utiliza un conjunto más limitado de fuentes para mayor seguridad y fiabilidad.
-2. **Fase Generativa**: El conocimiento externo recuperado se añade al prompt del usuario y se pasa al LLM. El LLM utiliza entonces el prompt aumentado y su representación interna de sus datos de entrenamiento para sintetizar una respuesta personalizada y atractiva para el usuario. La respuesta puede enviarse a un chatbot con enlaces a sus fuentes.
-
-### Desafíos e investigación en curso [#challenges-and-ongoing-research]
-
-Aunque RAG es actualmente una de las herramientas más conocidas para fundamentar los LLM en información reciente y verificable, y para reducir los costos de reentrenamiento y actualización constantes, no es perfecta. Algunos desafíos incluyen:
-
-1. **Reconocimiento de preguntas sin respuesta**: Los LLM necesitan ser entrenados explícitamente para reconocer preguntas que no pueden responder basándose en la información disponible. Esto puede requerir un ajuste fino (fine-tuning) con miles de ejemplos de preguntas que se pueden responder y preguntas que no.
-2. **Mejora de la recuperación y generación**: La investigación en curso se centra en innovar en ambos extremos del proceso RAG: mejorar la recuperación de la información más relevante posible para alimentar al LLM y optimizar la estructura de esa información para obtener las respuestas más completas del LLM.
-
-En resumen, RAG es un marco de trabajo potente que mejora las capacidades de los LLM al basarlos en conocimiento externo y verificable. Ayuda a garantizar respuestas más precisas, actualizadas y confiables, al tiempo que reduce los costos asociados con el reentrenamiento continuo de los modelos. A medida que la investigación en esta área progresa, podemos esperar más mejoras en la calidad y eficiencia de los sistemas de IA conversacional basados en LLM.
-
-Para una explicación más detallada sobre RAG, puedes ver este video informativo de IBM en Youtube:
+Para una breve introducción al concepto, mira este video de IBM:
 
 <iframe width="560" height="315" src="https://www.youtube.com/embed/T-D1OfcDW1M?si=SDVz1Fxsoi_z4S89" title="Reproductor de video de YouTube" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen></iframe>
 
-
-## Conclusión [#conclusion]
-
-La RAG API es una potente incorporación a LibreChat, que permite obtener respuestas basadas en el contexto a partir de archivos cargados por el usuario. Al aprovechar Langchain y FastAPI, proporciona capacidades eficientes de indexación, recuperación y generación de documentos. Con sus opciones de configuración flexibles y su integración perfecta, la RAG API mejora la experiencia conversacional en LibreChat.
-
-Para obtener información más detallada sobre la RAG API, incluyendo los endpoint de la API, los formatos de solicitud/respuesta y la configuración avanzada, por favor consulte la documentación oficial de la RAG API.
+Para conocer los endpoints propios de la API de RAG y cada variable de entorno que acepta, consulta el [repositorio de la API de RAG](https://github.com/LibreChat-AI/rag-api).
