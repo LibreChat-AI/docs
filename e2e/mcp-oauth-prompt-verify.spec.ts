@@ -17,7 +17,7 @@ test.describe('MCP OAuth sign-in timing docs', () => {
     const admin = main.getByRole('link', { name: 'admin configuration overrides', exact: true })
     await expect(admin).toHaveAttribute(
       'href',
-      /\/docs\/features\/admin_panel#configuration-management$/,
+      /\/docs\/configuration\/admin_panel#configuration-overrides$/,
     )
   })
 
