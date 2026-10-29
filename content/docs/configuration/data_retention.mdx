@@ -1,0 +1,120 @@
+---
+title: Data Retention
+icon: Clock
+description: Expire temporary chats, put a delete-by date on every chat, or make every chat temporary, and what happens to existing data when you switch.
+---
+
+LibreChat can put an expiry date on conversation data and delete it automatically. The same mechanism handles [temporary chats](/docs/features/temporary_chat) that users start themselves and deployment-wide policies such as "delete every chat after 90 days". All of it is configured under `interface` in `librechat.yaml`; each key is also listed in the [interface reference](/docs/configuration/librechat_yaml/object_structure/interface#retentionmode).
+
+## Options
+
+```yaml filename="librechat.yaml"
+interface:
+  # Seeds the TEMPORARY_CHAT permission for the USER role (manage per role in the Admin Panel)
+  temporaryChat: true
+
+  # Which chats expire: "temporary" (default), "all", or "ephemeral"
+  retentionMode: 'temporary'
+
+  # Lifetime of temporary chats, in hours. Default 720 (30 days), range 1 to 8760.
+  temporaryChatRetention: 720
+
+  # Lifetime of regular chats under retentionMode "all", in hours. Defaults to temporaryChatRetention.
+  # generalChatRetention: 2160
+
+  # Under "all" or "ephemeral", keep files uploaded to agents from expiring.
+  retainAgentFiles: false
+```
+
+<OptionTable
+  options={[
+    ['retentionMode', 'String', 'Which chats receive an expiry date: "temporary", "all", or "ephemeral". See the modes below.', 'temporary'],
+    ['temporaryChatRetention', 'Number (hours)', 'How long a temporary chat is kept after it was last saved. Under "ephemeral" this is the lifetime of every chat. Range 1 to 8760.', '720'],
+    ['generalChatRetention', 'Number (hours)', 'How long regular chats are kept under "all". Ignored by the other modes. Range 1 to 8760.', 'temporaryChatRetention'],
+    ['retainAgentFiles', 'Boolean', 'Under "all" and "ephemeral", files uploaded to an agent\'s resources do not expire. Files attached to messages still expire with their chat.', 'false'],
+    ['temporaryChat', 'Boolean', 'Seeds the TEMPORARY_CHAT permission for the built-in USER role at startup. Manage the permission per role in the Admin Panel.', 'true'],
+  ]}
+/>
+
+A value outside 1 to 8760 hours in `librechat.yaml` fails config validation.
+
+The deprecated `TEMP_CHAT_RETENTION_HOURS` environment variable also sets the temporary chat lifetime. `interface.temporaryChatRetention` wins when both are set. An invalid env value falls back to 720, and an out-of-range one is clamped to 1 or 8760 with a warning in the server log.
+
+## The three modes
+
+| Mode | What expires | Shown in history and search | Users can opt out |
+| --- | --- | --- | --- |
+| `temporary` (default) | Only chats a user marks as temporary | Yes for regular chats, no for temporary ones | Yes, per chat |
+| `all` | Every chat | Yes, until each chat expires | No |
+| `ephemeral` | Every chat | No, every chat is temporary | No, the toggle is locked on |
+
+**`temporary`** keeps existing behavior. Chats a user marks as temporary (with the toggle or the **Temporary Chat by default** setting) are hidden from history and search and deleted after `temporaryChatRetention` hours. Regular chats never expire.
+
+**`all`** gives every conversation and message an expiry date without changing how chat looks to users: chats stay in history and search until they expire. Regular chats use `generalChatRetention` (or `temporaryChatRetention` if unset). Chats a user marks as temporary still behave as temporary chats. Uploaded files and shared links expire too; agent resource files are kept only with `retainAgentFiles: true`. Use this for a "keep everything for N days, then delete" policy.
+
+**`ephemeral`** makes every chat temporary for the whole deployment. Every chat is hidden from history and search, gets no generated title, and is deleted after `temporaryChatRetention` hours; `generalChatRetention` is ignored. The **Temporary Chat** toggle is shown locked on for everyone, including roles without the `TEMPORARY_CHAT` permission, and its keyboard shortcut does nothing. The server enforces this, so a client asking to save a chat as permanent is overridden. Nothing is traced to Langfuse unless you set [`langfuse.trace.temporaryChats`](/docs/configuration/langfuse#temporary-chats).
+
+## How deletion works
+
+Each conversation and message carries an `expiredAt` date; temporary ones are also flagged `isTemporary: true`. Hidden and expired records are filtered out of the history list and the search index before they are deleted.
+
+- Conversations, messages, and shared links are removed by a MongoDB TTL index on `expiredAt`. MongoDB runs this in the background, usually within about a minute of the deadline.
+- Files are removed by a periodic sweep in LibreChat, which deletes the stored file (local disk, S3, and so on) and then its record.
+
+The deadline is set when a record is saved. Each save of a conversation moves its deadline forward, so a chat in active use is not deleted. Each message keeps the deadline it got when it was saved.
+
+Under `all` and `ephemeral`, retention applies wherever chat data is written: new messages, regenerations and branches, edits, feedback, artifact edits, resumed responses, forks, duplicates, and imports.
+
+- Under `ephemeral`, forks, duplicates, and imports are always temporary. Under `all`, a copy of a temporary chat stays temporary, and other copies and imports stay visible with an expiry date.
+- A shared link takes its expiry from its conversation, so it never outlives the chat.
+- [Memories](/docs/features/memory) have no expiry and are not affected by any mode.
+
+## Switching modes
+
+Changing `retentionMode` or a retention period only affects records saved afterwards. Existing deadlines are not rewritten.
+
+- **To `all` or `ephemeral`:** existing chats get a deadline the next time they are written to. Under `ephemeral`, an older regular chat that receives a new message, edit, feedback, or branch is converted to a temporary chat on the spot: it leaves history and search and loses its bookmarks. Chats nobody touches keep their current state.
+- **Back to `temporary`:** chats saved under `all` keep their deadlines and will still be deleted. Chats saved under `ephemeral` stay temporary and keep expiring.
+
+To stop regular chats from expiring after leaving `all` or `ephemeral`, clear their deadlines in `mongosh`:
+
+```js filename="mongosh"
+db.conversations.updateMany(
+  { isTemporary: false, expiredAt: { $ne: null } },
+  { $unset: { expiredAt: 1 } },
+)
+db.messages.updateMany(
+  { isTemporary: false, expiredAt: { $ne: null } },
+  { $unset: { expiredAt: 1 } },
+)
+```
+
+After upgrading, once the `_meiliIndex_1_isTemporary_1_expiredAt_1` indexes exist on `conversations` and `messages`, you can drop the old `_meiliIndex_1_expiredAt_1` indexes from both collections. MongoDB does not drop superseded indexes on its own.
+
+## Examples
+
+Delete every chat 90 days after its last activity, keeping chats visible until then:
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'all'
+  generalChatRetention: 2160 # 90 days for regular chats
+  temporaryChatRetention: 24 # 1 day for chats users mark as temporary
+```
+
+Make every chat temporary and delete it after 24 hours:
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'ephemeral'
+  temporaryChatRetention: 24
+```
+
+Make every chat temporary for a week, but keep files attached to agents:
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'ephemeral'
+  temporaryChatRetention: 168
+  retainAgentFiles: true
+```
