@@ -1,0 +1,67 @@
+---
+title: llamay
+icon: Llamay
+description: Configure llamay as a custom endpoint in LibreChat.
+---
+
+[llamay](https://llamay.com) is a single-binary local inference server. It serves the OpenAI API at `/v1`, and Ollama's and Anthropic's APIs alongside it, on port `11435`. Install it from [llamay.com/download](https://llamay.com/download/), then pull a model and start the server:
+
+```bash
+llamay pull qwen2.5:7b
+llamay serve -m qwen2.5:7b
+```
+
+Models are named as Ollama names them (`qwen2.5:7b`, `gemma2:2b`), or by a Hugging Face reference such as `hf.co/bartowski/Qwen2.5-7B-Instruct-GGUF:Q4_K_M`. `llamay models` lists what is on disk.
+
+## Configuration
+
+Add the endpoint to the `custom` list under `endpoints` in your `librechat.yaml`. If your file already has an `endpoints.custom` list, paste only the `- name:` entry into it, keeping the same indentation:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  custom:
+    - name: "llamay"
+      # any non-empty value when llamay runs without -api-key
+      apiKey: "llamay"
+      # use 'host.docker.internal' instead of localhost if running LibreChat in a docker container
+      baseURL: "http://localhost:11435/v1/"
+      models:
+        default: ["qwen2.5:7b"]
+        # lists every model llamay has on disk, from /v1/models
+        fetch: true
+      titleConvo: true
+      titleModel: "current_model"
+      modelDisplayLabel: "llamay"
+```
+
+## Notes
+
+- Set `titleModel` to `"current_model"` so title generation reuses the conversation's model instead of loading a second one.
+- Without `-api-key`, llamay ignores the key, but LibreChat drops a custom endpoint whose `apiKey` is empty, so keep a placeholder.
+
+## Troubleshooting
+
+### LibreChat runs in Docker and cannot reach llamay
+
+`llamay serve` binds to `127.0.0.1:11435`, which a container cannot reach. Bind it to an address the container can reach and require a key, since anything that reaches the port can otherwise use it:
+
+```bash
+llamay serve -m qwen2.5:7b -addr 0.0.0.0:11435 -api-key "$LLAMAY_API_KEY"
+```
+
+Then point LibreChat at the host and pass the same key, which it sends as `Authorization: Bearer <key>`:
+
+```yaml filename="excerpt of librechat.yaml"
+- name: "llamay"
+  apiKey: "${LLAMAY_API_KEY}"
+  baseURL: "http://host.docker.internal:11435/v1/"
+  models:
+    default: ["qwen2.5:7b"]
+    fetch: true
+```
+
+On Linux, where `host.docker.internal` may be unavailable, use the host's address on the compose network and firewall port 11435 so nothing else reaches it.
+
+### The model list is empty
+
+`fetch: true` reads `/v1/models`, which lists the models llamay has on disk. Pull one with `llamay pull <model>`, or let `llamay serve -m <model>` pull it on first start. `docker compose logs api` reports the URL LibreChat tried and the error it got.
