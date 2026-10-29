@@ -5,7 +5,9 @@ icon: Brain
 
 ## Overview
 
-The `memory` object allows you to configure conversation memory and personalization features for the application. This configuration controls how the system remembers and personalizes conversations, including token limits, message context windows, and agent-based memory processing.
+The `memory` object turns on [User Memory](/docs/features/memory) and sets its limits. Adding the section is what enables memory: saved entries are then added to each user's conversations, users can manage them in the Memories panel, and the Memory tool (`set_memory` and `delete_memory`) is offered in chats and agents, as long as the `memory` capability is enabled for the agents endpoint (it is by default).
+
+Automatic memory extraction, where a separate memory agent reviews every exchange and saves facts without being asked, is a separate opt-in: set `agent.enabled: true` and give it a model.
 
 ## Example
 
@@ -35,7 +37,7 @@ memory:
     [
       'disabled',
       'Boolean',
-      'Disables memory functionality when set to true. When disabled, the system will not store or use conversation memory.',
+      'Disables memory when set to true. Saved memories are no longer added to conversations, the Memory tool is not offered, and the memory permissions are turned off for every role.',
       'disabled: false',
     ],
   ]}
@@ -81,7 +83,7 @@ memory:
     [
       'tokenLimit',
       'Number',
-      'Sets the maximum number of tokens that can be used for memory storage and processing.',
+      'Sets the maximum total size, in tokens, of all memories stored for a user. Saves that would go over it are rejected, and the Memories panel shows usage against it.',
       'tokenLimit: 2000',
     ],
   ]}
@@ -141,7 +143,7 @@ memory:
     [
       'personalize',
       'Boolean',
-      'When set to true, gives users the ability to opt in or out of using memory features. Users can toggle memory on/off in their chat interface. When false, only the user opt-out toggle is removed; memory stays on. To turn memory off, use disabled: true.',
+      'When true, users get the Use memory toggle in the Memories panel and Reference saved memories in Settings, so they can opt out of memory. When false, users cannot opt out; memory itself stays on.',
       'personalize: true',
     ],
   ]}
@@ -161,7 +163,7 @@ memory:
     [
       'messageWindowSize',
       'Number',
-      'Specifies the number of recent messages to include in the memory context window.',
+      'Number of recent messages the automatic memory agent reviews on each request. Only used when agent.enabled is true.',
       'messageWindowSize: 5',
     ],
   ]}
@@ -187,22 +189,9 @@ memory:
   ]}
 />
 
-Automatic extraction is opt-in. Set `agent.enabled: true` in either configuration format below. Omitting `enabled`, or setting it to `false`, keeps manual memory and Agent memory tools available without running the automatic memory agent on chat requests.
+Configures the automatic memory agent. It only runs when `enabled` is `true`; an `agent` block without `enabled` is ignored and LibreChat logs a warning at startup.
 
-### enabled
-
-<OptionTable
-  options={[
-    [
-      'enabled',
-      'Boolean',
-      'Enables automatic memory extraction with the configured memory agent.',
-      'enabled: true',
-    ],
-  ]}
-/>
-
-**Default:** `false`
+When enabled, the memory agent runs at the start of every chat request, alongside the main response. It reviews the last `messageWindowSize` messages (capped at `maxInputTokens`) and saves or deletes entries on its own. It is given until the main response finishes plus up to 3 seconds; if it is still running after that, its result is dropped for that request.
 
 The `agent` field supports two different configuration formats:
 
@@ -238,6 +227,19 @@ memory:
 
 When using custom agent configuration, the following fields are available:
 
+**enabled** (required to run the memory agent)
+
+<OptionTable
+  options={[
+    [
+      'enabled',
+      'Boolean',
+      'Turns on automatic memory extraction. Also accepted alongside id. Without it, the agent block has no effect.',
+      'enabled: true',
+    ],
+  ]}
+/>
+
 **provider** (required)
 
 <OptionTable
@@ -245,7 +247,7 @@ When using custom agent configuration, the following fields are available:
     [
       'provider',
       'String',
-      'Specifies the AI provider for the memory agent. Can be a built-in provider (e.g., "openAI", "anthropic", "google") or a custom endpoint name.',
+      'Specifies the AI provider for the memory agent. Can be a built-in provider (e.g., "openAI", "anthropic", "google") or a custom endpoint name, which must match the endpoint name exactly.',
       'provider: "openAI"',
     ],
   ]}
@@ -285,9 +287,11 @@ When using custom agent configuration, the following fields are available:
   ]}
 />
 
+Accepted provider values are listed in the [Model Spec endpoint field](/docs/configuration/librechat_yaml/object_structure/model_specs#endpoint), and valid model parameters per provider in [Model Spec preset fields](/docs/configuration/librechat_yaml/object_structure/model_specs#preset-fields).
+
 ## Complete Configuration Example
 
-Here's a comprehensive example showing all memory configuration options:
+An example using every memory option:
 
 ```yaml filename="librechat.yaml"
 version: 1.3.18
@@ -330,21 +334,21 @@ The memory feature supports custom endpoints. When using a custom endpoint, the 
 ```yaml filename="librechat.yaml with custom endpoint for memory"
 
 endpoints:
-    custom:
-        - name: 'Custom Memory Endpoint'
-           apiKey: 'dummy'
-           baseURL: 'https://api.gateway.ai/v1'
-           headers:
-             x-gateway-api-key: '${GATEWAY_API_KEY}'
-             x-gateway-virtual-key: '${GATEWAY_OPENAI_VIRTUAL_KEY}'
-             X-User-Identifier: '{{LIBRECHAT_USER_EMAIL}}'
-             X-Application-Identifier: 'LibreChat - Test'
-             api-key: '${TEST_CUSTOM_API_KEY}'
-           models:
-             default:
-               - 'gpt-4o-mini'
-               - 'gpt-4o'
-             fetch: false
+  custom:
+    - name: 'Custom Memory Endpoint'
+      apiKey: 'dummy'
+      baseURL: 'https://api.gateway.ai/v1'
+      headers:
+        x-gateway-api-key: '${GATEWAY_API_KEY}'
+        x-gateway-virtual-key: '${GATEWAY_OPENAI_VIRTUAL_KEY}'
+        X-User-Identifier: '{{LIBRECHAT_USER_EMAIL}}'
+        X-Application-Identifier: 'LibreChat - Test'
+        api-key: '${TEST_CUSTOM_API_KEY}'
+      models:
+        default:
+          - 'gpt-4o-mini'
+          - 'gpt-4o'
+        fetch: false
 
 memory:
   disabled: false
@@ -362,13 +366,17 @@ memory:
 
 ## Notes
 
-- Memory functionality enhances conversation continuity and personalization
-- When `personalize` is true, users get a toggle in their chat interface to control memory usage. Setting it to `false` only removes that toggle; memory stays on. Use `disabled: true` to turn memory off
-- Token limits help control memory usage and processing costs
-- `maxInputTokens` bounds the chat context sent to the automatic memory agent, while `tokenLimit` controls stored memory usage
-- Valid keys provide granular control over what information can be stored
-- Custom `instructions` replace default memory handling instructions and should be used with `validKeys`
-- `agent.enabled: true` is required for automatic memory extraction
-- Agent configuration allows customization of automatic memory processing behavior
-- When disabled, all memory features are turned off regardless of other settings
-- The message window size affects how much recent context is considered for memory updates
+- `personalize` controls whether users can opt out, not whether memory is on. Use `disabled` to turn memory off.
+- `maxInputTokens` bounds the chat context sent to the automatic memory agent, while `tokenLimit` caps the total size of stored memories.
+- Custom `instructions` replace the default memory instructions and are mainly useful together with `validKeys`.
+- Access is also controlled per role through the memory permissions (use, create, read, update, opt out). See [`interface.memories`](/docs/configuration/librechat_yaml/object_structure/interface#memories), the [Admin Panel](/docs/features/admin_panel), or the admin settings at the bottom of the Memories panel.
+
+## Troubleshooting
+
+**Memory does nothing.** Check that the `memory` section exists and `disabled` is not `true`, that the user's role has permission to use memories, and that the user has not turned off **Reference saved memories**. For the Memory tool, the `memory` capability must be in the agents endpoint `capabilities` list if you set one.
+
+**Nothing is saved automatically.** Automatic extraction needs `agent.enabled: true` and a valid `id`, or `provider` and `model`. Without it, entries are only saved when a user asks the model to remember something with the Memory tool on, or adds them by hand.
+
+**The memory agent fails on a custom endpoint.** `provider` must match the custom endpoint `name` exactly. Confirm the endpoint works for normal chats first, then check that the environment variables its headers reference are set; header placeholders are resolved the same way for memory as for chat.
+
+**Token usage is high.** Lower `maxInputTokens` or `messageWindowSize` to send less chat to the memory agent, lower `tokenLimit` to keep the stored memories (which are added to every request) small, and restrict `validKeys`.

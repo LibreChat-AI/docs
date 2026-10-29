@@ -7,7 +7,7 @@ icon: ScanText
 
 The `ocr` object allows you to configure Optical Character Recognition (OCR) settings for the application, enabling the extraction of text from images. This section provides a detailed breakdown of the `ocr` object structure.
 
-There are 5 main fields under `ocr`:
+There are 5 fields under `ocr`:
 
   - `mistralModel`
   - `apiKey`
@@ -17,22 +17,20 @@ There are 5 main fields under `ocr`:
 
 **Notes:**
 
-- If using the Mistral OCR API, you don't need to edit your `librechat.yaml` file.
-    - You only need the following environment variables to get started: `OCR_API_KEY` and `OCR_BASEURL`.
-- OCR functionality allows the application to extract text from images, which can then be processed by AI models.
-- The default strategy is `mistral_ocr`, which uses Mistral's OCR capabilities.
-- You can also configure a custom OCR service by setting the strategy to `custom_ocr`.
+- OCR is only active when `librechat.yaml` has an `ocr` section. Setting `OCR_API_KEY` alone does not turn it on. For Mistral's hosted API, `strategy: "mistral_ocr"` plus `OCR_API_KEY` in `.env` is enough, since `apiKey` and `baseURL` default to `${OCR_API_KEY}` and `${OCR_BASEURL}` (or `https://api.mistral.ai/v1` when that is unset).
+- OCR runs on files added as text: Upload as Text in chat and File Context in the Agent Builder. Agents also need the `ocr` capability in `endpoints.agents.capabilities`, which is included by default. Without it, a configured OCR strategy rejects the upload with "OCR capability is not enabled for Agents".
+- Which file types go to OCR is controlled by [`fileConfig.ocr.supportedMimeTypes`](/docs/configuration/librechat_yaml/object_structure/file_config#ocr).
+- The default strategy is `mistral_ocr`. When `mistralModel` is empty, `mistral-ocr-latest` is used.
 - Azure-deployed Mistral OCR models can be used by setting the strategy to `azure_mistral_ocr`.
 - Google Vertex AI-deployed Mistral OCR models can be used by setting the strategy to `vertexai_mistral_ocr`.
   - Requires the `GOOGLE_SERVICE_KEY_FILE` environment variable to be set with service account credentials
   - The service key can be provided as: file path, URL, base64 encoded JSON, or raw JSON string
   - Project ID and location are automatically extracted from the service account credentials
-- Local text extraction is available via `document_parser`, which extracts text from PDF, DOCX, XLS/XLSX, and OpenDocument files without any external API.
-  - Uses `pdfjs-dist`, `mammoth`, and `SheetJS` locally — no API key or base URL needed
+- Local text extraction is available via `document_parser`, which extracts text from PDF, DOCX, XLS/XLSX, ODT, and ODS files up to 15 MB without any external API.
+  - Uses `pdfjs-dist`, `mammoth`, and `SheetJS` locally, no API key or base URL needed
   - Only the `strategy` field is required; `apiKey`, `baseURL`, and `mistralModel` are ignored
-- If using the default Mistral OCR, you may optionally specify a specific Mistral model to use.
+- `custom_ocr` is accepted by the schema but has no implementation yet.
 - Environment variable parsing is supported for `apiKey`, `baseURL`, and `mistralModel` parameters.
-- A `user_provided` strategy option is planned for future releases but is not yet implemented.
 
 ## Automatic Document Parsing (No Configuration Required)
 
@@ -40,11 +38,11 @@ The built-in `document_parser` runs automatically for agent file uploads **even 
 
 The resolution logic works as follows:
 
-1. **No `ocr` config exists** — When an agent context file is uploaded and its MIME type matches a supported document type (PDF, DOCX, Excel, ODS), the `document_parser` is used directly. No OCR capability check is required for the agent.
+1. **No `ocr` config exists**: When an agent context file is uploaded and its MIME type matches a supported document type (PDF, DOCX, Excel, ODS), the `document_parser` is used directly. No OCR capability check is required for the agent.
 
-2. **`ocr` config exists** — The configured strategy (e.g., `mistral_ocr`) is tried first. If the configured strategy **fails at runtime**, the `document_parser` is used as a fallback so text extraction still succeeds for supported document types.
+2. **`ocr` config exists**: The configured strategy (e.g., `mistral_ocr`) is tried first. If the configured strategy **fails at runtime**, the `document_parser` is used as a fallback so text extraction still succeeds for supported document types.
 
-3. **Neither succeeds** — If both the configured strategy and the document parser fail (e.g., the file is an image-only PDF with no embedded text), an error is returned suggesting that an OCR service is needed.
+3. **Neither succeeds**: If both the configured strategy and the document parser fail (e.g., the file is an image-only PDF with no embedded text), an error is returned suggesting that an OCR service is needed.
 
 <Callout type="info">
 The `document_parser` handles text-based documents only. For image-based PDFs or scanned documents, you still need a configured OCR strategy (such as `mistral_ocr`) to extract text from the images within those files.
@@ -57,16 +55,6 @@ ocr:
   mistralModel: "mistral-ocr-latest"
   apiKey: "your-mistral-api-key"
   strategy: "mistral_ocr"
-```
-
-Example with custom OCR:
-
-```yaml filename="ocr with custom OCR"
-ocr:
-  apiKey: "your-custom-ocr-api-key"
-  baseURL: "https://your-custom-ocr-service.com/api"
-  allowedAddresses: ["ocr.internal:8080"]
-  strategy: "custom_ocr"
 ```
 
 Example with Azure Mistral OCR:
@@ -85,6 +73,12 @@ Example with Google Vertex AI Mistral OCR:
 ocr:
   mistralModel: "mistral-ocr-2505" # model name as deployed in Vertex AI
   strategy: "vertexai_mistral_ocr"
+```
+
+For Vertex AI, deploy a Mistral OCR model in your Google Cloud project, create a service account that can call the Vertex AI endpoint, and point `GOOGLE_SERVICE_KEY_FILE` at its key. The variable accepts a file path, a URL to fetch the key from, base64-encoded JSON, or the raw JSON string:
+
+```bash filename=".env"
+GOOGLE_SERVICE_KEY_FILE=/path/to/service-account-key.json
 ```
 
 Example with local document parser (no external API needed):
@@ -125,7 +119,7 @@ ocr:
 
 <OptionTable
   options={[
-    ['apiKey', 'String', 'The API key for the OCR service. Not used for Google Vertex AI (uses service account authentication via GOOGLE_SERVICE_KEY_FILE).', 'Optional. Defaults to the environment variable OCR_API_KEY if not specified.'],
+    ['apiKey', 'String', 'The API key for the OCR service. Not used for Google Vertex AI (uses service account authentication via GOOGLE_SERVICE_KEY_FILE).', 'Optional. Defaults to the environment variable OCR_API_KEY, but only while baseURL is unset or ${OCR_BASEURL}. With any other baseURL, set apiKey explicitly.'],
   ]}
 />
 
@@ -167,6 +161,15 @@ OCR requests block private, loopback, link-local, and cloud-metadata destination
 </Callout>
 
 
+```yaml filename="ocr / allowedAddresses"
+ocr:
+  strategy: "mistral_ocr"
+  baseURL: "http://ocr.internal:8080/v1"
+  apiKey: "${INTERNAL_OCR_KEY}"
+  allowedAddresses:
+    - "ocr.internal:8080"
+```
+
 ## strategy
 
 <OptionTable
@@ -177,13 +180,13 @@ OCR requests block private, loopback, link-local, and cloud-metadata destination
 
 ```yaml filename="ocr / strategy"
 ocr:
-  strategy: "custom_ocr"
+  strategy: "document_parser"
 ```
 
 **Available Strategies:**
 
-- `mistral_ocr`: Uses Mistral's OCR capabilities via the standard [Mistral API](/docs/features/ocr#1-mistral-ocr-default).
-- `azure_mistral_ocr`: Uses Mistral OCR models deployed on [Azure AI Foundry](/docs/features/ocr#2-azure-mistral-ocr).
-- `vertexai_mistral_ocr`: Uses Mistral OCR models deployed on [Google Cloud Vertex AI](/docs/features/ocr#3-google-vertex-ai-mistral-ocr).
+- `mistral_ocr`: Uses Mistral's OCR through the standard Mistral API.
+- `azure_mistral_ocr`: Uses Mistral OCR models deployed on Azure AI Foundry. Set `mistralModel` to your deployment name and `baseURL` to the deployment endpoint.
+- `vertexai_mistral_ocr`: Uses Mistral OCR models deployed on Google Cloud Vertex AI, authenticated with `GOOGLE_SERVICE_KEY_FILE`.
 - `document_parser`: Uses local text extraction for PDF, DOCX, XLS/XLSX, and OpenDocument files. No external API needed. Also runs automatically for agent file uploads when no `ocr` config is present, and as a fallback when a configured OCR strategy fails.
-- `custom_ocr`: Uses a custom OCR service specified by the `baseURL` [(not yet implemented)](/docs/features/ocr#future-enhancements).
+- `custom_ocr`: Reserved for a custom OCR service at `baseURL`. Not implemented yet.

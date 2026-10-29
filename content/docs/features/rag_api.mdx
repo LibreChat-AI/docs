@@ -1,39 +1,49 @@
 ---
 title: RAG API (Chat with Files)
 icon: Brain
-description: Retrieval-Augmented Generation (RAG) API for document indexing and retrieval using Langchain and FastAPI. This API integrates with LibreChat to provide context-aware responses based on user-uploaded files.
+description: Upload documents and let the model search them for the passages that answer your question.
 ---
 
-The **RAG (Retrieval-Augmented Generation) API** is a separate service that indexes the files you upload to LibreChat and returns the passages most relevant to a question, so the model can answer from your documents instead of from its training data alone.
+File search lets you upload documents and ask questions about them without pasting their contents into the chat. LibreChat sends each file to the RAG API, which splits it into chunks and indexes them; when you ask something, the model searches that index and answers from the passages it finds.
 
-It is a Python FastAPI app built on LangChain, and stores embeddings in PostgreSQL with the pgvector extension.
+Reach for it when a document is too long to read in full every turn, or when you want answers across several files at once.
 
-**To set it up, see [RAG API Configuration](/docs/configuration/rag_api).**
+## Upload a file for search
 
-![image](https://github.com/danny-avila/LibreChat/assets/110412045/f1298f66-bf1d-4499-a582-23430b481f17)
+Click **+** in the [message composer](/docs/features/composer) to open the palette, expand **More upload options**, then choose **Upload for File Search** and pick your files. Searching the palette for it works too. Uploading this way also switches on **File Search** for the chat. Large files can take a moment to index; the upload finishes once indexing is done.
 
----
+<ThemeImage
+  light="/images/features/rag_api/upload-for-file-search-light.png"
+  dark="/images/features/rag_api/upload-for-file-search-dark.png"
+  alt="The Attach and tools palette open from the message box, with the Upload for File Search option highlighted"
+/>
 
-In LibreChat, RAG powers the [Agents](/docs/features/agents#file-search) **File Search** capability (`file_search`). Files attached to an agent's File Search, or to a run that selects File Search, are indexed by the RAG API and retrieved on demand. Other chat endpoints do not use RAG indexing or retrieval, though they can still use the RAG API to extract text, as described below.
+Once the conversation has indexed files, the model gets a `file_search` tool. It decides when to call it: a question about the document triggers a search, small talk does not. The reply shows a "Searching your files" step while it runs, and when citations are enabled the passages it used appear under **Sources** with the file name, so you can open the document and check.
 
-The RAG API also exposes a `/text` route that LibreChat can use to extract text from uploads; see [Upload as Text](/docs/features/upload_as_text#what-happens-under-the-hood) for when it applies.
+## How search works
 
-## How it works
+When the model calls `file_search`, it writes a search query. LibreChat asks the RAG API for the 5 closest chunks in each attached file and keeps the 10 closest overall. Those chunks go back to the model with their file name and a relevance score, and the model answers from them.
 
-1. **Indexing.** When a file needs to be searchable (on upload to an agent's File Search, or when a chat run first uses File Search on an attachment), LibreChat sends it to the RAG API, which splits the text into overlapping chunks (`CHUNK_SIZE` and `CHUNK_OVERLAP`), turns each chunk into an embedding with the configured provider, and stores the vectors in pgvector.
-2. **Retrieval.** When the model calls File Search, it writes a search query. LibreChat asks the RAG API for the 5 closest chunks in each attached file, then keeps the 10 closest overall.
-3. **Answering.** Those chunks are returned to the model with their file name and a relevance score, and the model answers from them. When [file citations](/docs/configuration/librechat_yaml/object_structure/interface#filecitations) are enabled, the response can cite the files it used.
+Retrieval finds passages that are close in meaning to the query, so it is good at looking up specific facts in large documents. For questions that need the whole document at once, such as a summary, Upload as Text usually does better.
 
 Deleting a file in LibreChat also removes its vectors from the RAG API.
 
-Retrieval only finds passages that are semantically close to the query, so it works best for looking up specific facts in large documents. For questions that need a whole document at once, such as summarizing it, [Upload as Text](/docs/features/upload_as_text) usually gives better results.
+## Reuse files you already uploaded
 
-## What is RAG?
+Indexed files stay in your account. Open the palette and look under **Your files** to attach one to a new message or conversation without uploading it again.
 
-Retrieval-Augmented Generation grounds a language model on an external knowledge source. Instead of relying only on what the model learned during training, the application first retrieves relevant snippets from that source and adds them to the prompt, and the model then generates its answer from them. Because the knowledge lives outside the model, you can add or update documents without retraining anything.
+Files uploaded while an Assistants endpoint was active are stored with OpenAI, not indexed by the RAG API, and cannot be attached to other endpoints.
 
-For a short introduction to the concept, watch this video by IBM:
+## File search in agents
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/T-D1OfcDW1M?si=SDVz1Fxsoi_z4S89" title="YouTube video player" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen></iframe>
+For an agent, turn on [**File Search**](/docs/features/agents#file-search) in the Agent Builder and upload files there. They become the agent's knowledge base: everyone who chats with the agent can have it search those files, without uploading anything themselves. The agent has to be saved before you can add files to it.
 
-For the RAG API's own endpoints and every environment variable it accepts, see the [RAG API repository](https://github.com/LibreChat-AI/rag-api).
+## File search or upload as text
+
+[**Upload as Text**](/docs/features/upload_as_text) sits in the same menu. It extracts the file's text and puts all of it into the conversation, which works for short documents where the model should read every word. File search only sends the passages that match each query, so it scales to long documents and many files, but the model never sees the parts it did not retrieve.
+
+The RAG API also serves Upload as Text, as the text extractor for file types the built-in parser cannot read. See [how the text is extracted](/docs/features/upload_as_text#how-the-text-is-extracted).
+
+## Setup
+
+File search needs the RAG API service and a vector database. The default Docker setup includes both; an admin sets the embeddings provider and, for other installs, `RAG_API_URL`. See [RAG API configuration](/docs/configuration/rag_api), and the [RAG API repository](https://github.com/LibreChat-AI/rag-api) for the service's own endpoints and variables.
