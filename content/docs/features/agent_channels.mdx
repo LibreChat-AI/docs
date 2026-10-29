@@ -62,7 +62,7 @@ Service requests use `Authorization: Bearer <CHANNEL_SERVICE_TOKEN>` and the exa
 | Configuration | `GET /service/slack/{tenantId}/{channelId}` | Read the active channel and encrypted-at-rest credentials through an authenticated service boundary |
 | Identity | `/service/{channelId}/identity/{externalUserId}` and its ticket/confirm operations | Resolve explicit actor linking; never infer a principal from thread history |
 | Admission | `POST /service/{channelId}/runs` | Admit an idempotent event with verified team/app/actor identity |
-| Ownership | `POST /service/{channelId}/runs/claim`, then `/{runId}/renew` | Claim and renew the exact run lease |
+| Ownership | `POST /service/{channelId}/runs/claim`, then `/{runId}/renew` or `/{runId}/yield` | Claim, renew, or safely yield the exact polling lease |
 | Execution preparation | `POST /service/{channelId}/runs/{runId}/response/prepare` | Obtain the bound execution credential, request, and stable request key |
 | Response binding | `POST /service/{channelId}/runs/{runId}/response/bind` | Bind the returned Responses identity to the admitted run |
 | Progress and result | `/{runId}/advance`, `/{runId}/progress/*`, `/{runId}/plan`, `/{runId}/delivery/*`, `/{runId}/commit` | Project canonical state and record fenced delivery effects |
@@ -74,6 +74,8 @@ Service requests use `Authorization: Bearer <CHANNEL_SERVICE_TOKEN>` and the exa
 
 Run-relative paths in the table are beneath `/service/{channelId}/runs`. Lease mutations carry the exact server-issued `{ runId, owner, epoch }` fence. Treat stale leases, changed authority, and ambiguous delivery outcomes as protocol states to reconcile, not permission to mint a new run or blindly resend a Slack message.
 
+A gateway can yield a Responses-bound polling turn only after its progress writes and renewal loop have drained. The backend invalidates that polling fence and enforces a one-second reclaim cooldown; the next claim increments the epoch. This does not release the actor lane, cancel the provider, change the Response, or erase delivery evidence. Inflight or unknown remote writes cannot yield. If a host does not support yield or the request is uncertain, retain ordinary lease-expiry recovery instead of starting a new execution.
+
 Execution preparation returns an `apiKey`, `requestKey`, optional retained `responseId`, and a Responses `request` with the Agent ID, admitted input, `background: true`, `store: true`, and any authorized continuation. Submit that request to `/api/agents/v1/responses` using the bound key and `Idempotency-Key: <requestKey>`, then bind the returned response ID. Do not substitute a creator's unrestricted key, change the actor/Agent, or send the input to a channel bookkeeping route to execute it.
 
 The gateway owns Slack event verification, retry/deduplication, native message formatting, rate-limit handling, and delivery receipt reconciliation. Preserve exact event identifiers and timestamps. For feedback events, `eventTimestampUs` is an integer timestamp in microseconds; do not round it to milliseconds. Report confirmed, failed, or ambiguous side effects accurately before advancing delivery state.
@@ -83,6 +85,8 @@ The gateway owns Slack event verification, retry/deduplication, native message f
 The public run snapshot contains only an opaque action descriptor. A review request with the original verified actor, current channel revision, and exact `externalChannelId` can obtain minimal private question/tool-approval details. The backend derives the owner and Response from the run and checks the current actor link and source grant; it does not accept an arbitrary user ID. The gateway must show these details only to that actor, not publicly in a shared thread. Slack can use ephemeral choice buttons and private modals. Native tool approval is for the individual call only; unsupported/richer forms retain the browser fallback.
 
 Decision requests include that same actor, revision, external channel, and the existing Responses `decision` body. Backend decision receipts, expiry/conflict checks, full authorization preflight, and same-Response resume remain authoritative. A Slack click alone is not permission to resume work. Provider OAuth URLs remain exclusively in the authenticated browser review flow. See the [background Responses lifecycle](/docs/features/background_responses#review-a-required-action).
+
+An actor-private receipt can confirm that a question answer or per-call tool approval/decline was accepted without disclosing tool arguments or claiming completion. A saved decision whose queue publication failed must remain retryable with the exact immutable decision; it cannot be replaced by a different answer. Keep Stop available while work remains active and update public progress only through the fenced delivery protocol.
 
 Artifacts are scoped to the authorized run and actor. Limits default to five files and 10 MiB per file, with a 30-second read timeout. Do not replace an unavailable artifact with another actor's file or an unauthenticated internal download URL. Usage and cost summaries identify incomplete or unavailable coverage instead of presenting a partial subtotal as the complete thread total.
 
