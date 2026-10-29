@@ -1,0 +1,74 @@
+---
+title: スケジュールされたチャット
+icon: CalendarClock
+description: スケジュールチャットを有効にし、制限とプロジェクトルールを設定し、無人MCPアクセスを許可して、Redisとcheckpointerの要件を満たす。
+---
+
+[Scheduled Chats](/docs/features/scheduled_chats) は実験的な機能で、明示的に有効化するまでオフになっています。スケジュール実行では、誰も監視していない状態でモデル、ツール、Code Interpreter のリソースが使用されるため、有効化する前に以下のデプロイ要件を必ず確認してください。
+
+## 有効化 [#enable]
+
+`librechat.yaml` に `interface.schedules` を追加し、LibreChat を再起動してください:
+
+```yaml filename="librechat.yaml"
+interface:
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    fireConcurrency: 5
+    requireProject: false
+    # projectId: '000000000000000000000000'
+```
+
+`use` と `create` は、起動時に組み込みの `USER` ロールに対して `SCHEDULES` 権限を設定します。その後は、[管理パネル](/docs/features/admin_panel)でロールごとに管理してください。`use` を指定すると、ユーザーは自分のスケジュールを閲覧できます。`create` を指定すると、スケジュールの作成、編集、有効化、実行、削除も可能になります。その他のキーは実行時の制限です。
+
+<OptionTable
+  options={[
+    ['maxPerUser', 'Number', 'ユーザーが所有できるスケジュールの最大数（無効化されたものも含む）。0 に設定すると作成を防止します。', '10'],
+    ['minIntervalMinutes', 'Number', '同一スケジュールの2回の実行間で許容される最短の間隔。すべての実行頻度（カスタム cron を含む）に適用されます。', '60'],
+    ['autoDisableAfterFailures', 'Number', 'スケジュールが自動的に無効化されるまでの、連続した失敗実行の回数。', '5'],
+    ['fireConcurrency', 'Number', 'デプロイメント全体で、同時に受け付けられるスケジュール実行の最大数。', '5'],
+    ['requireProject', 'Boolean', 'すべてのスケジュールは、保存時および各実行の前に検証されるChat Projectに解決される必要があります。', 'false'],
+    ['projectId', 'String', 'すべてのスケジュール済み会話を1つのChat Projectに固定し、requireProjectを暗示します。', ''],
+  ]}
+/>
+
+`schedules: true` でこの機能が以下のデフォルト設定で有効になります。`schedules: false` または `use: false` は、ロール、グループ、ユーザーによる上書きでは解除できない、デプロイ全体での停止になります。
+
+プロジェクトのルールは実行のたびに再確認されます。`requireProject` を満たさなくなったスケジュール、またはそのプロジェクトが削除されたスケジュールは、プロジェクトに紐づかない会話を開始するのではなく、自動的に無効化されます。チャットプロジェクトは1人のユーザーに属するため、デプロイ全体で設定した `projectId` は、そのプロジェクトのオーナーにのみ機能します。オーナーごとに異なる送信先が必要な場合は、ロールまたはユーザーのオーバーライドで設定してください。
+
+完全なフィールドの一覧（`admissionConcurrency`、`mcpPreflightConcurrency`、`mcpPreflightTimeoutMs` を含みます。これらは生成処理とは別に、受付およびMCPの準備状況チェックを制限するために使用します）は、[`interface.schedules`](/docs/configuration/librechat_yaml/object_structure/interface#schedules) に記載されています。
+
+## 無人運用での MCP アクセス [#unattended-mcp-access]
+
+実行を開始する前に、LibreChatはスケジュールされたエージェントとそのサブエージェントが必要とするすべてのMCPツールを確認します。対話型のログインが必要になる実行は開始されず、スケジュール上で対応が必要なエージェントが表示されます。
+
+To let users authorize MCP tools for unattended runs, turn on `interface.schedules.mcpConsent`:
+
+- `mcpConsent.enabled` は、この機能を有効にします。
+- `mcpConsent.maxLifetimeHours` は認可の有効期間の上限を指定します。値は 1 から 8760 時間の範囲で設定できます。
+- `mcpConsent.resources` は、認可の対象となり得る MCP リソースを一覧で指定します。
+- `mcpConsent.readOnlyPolicy` は、サーバーとアップストリームのツール名をキーとして、信頼された読み取り専用のツール宣言を一覧にします。
+- `mcpReceiptRetry.baseMs` と `mcpReceiptRetry.maxMs` は、同意レシートの再試行におけるバックオフを設定します。
+
+ユーザーは、スケジュールエディターの **Scheduled MCP authorization** セクションを確認できます。認可は、記載されたエージェントとリソースのみを対象とし、期限が切れるまで有効です。書き込み操作が許可されることはありません。
+
+## デプロイ要件 [#deployment-requirements]
+
+Scheduled Chats は MongoDB のリース(lease)を使って処理を調整するため、複数のレプリカで作業を分担できます。また、次の要件も必要です。
+
+- **マルチレプリカ環境におけるRedis Streams。** `USE_REDIS_STREAMS=true` を設定してください。共有ストリームがない場合、スケジュールの保存は、別のレプリカが再開または停止できない作業を開始するのではなく、失敗するようになります。
+- **一時停止が可能なエージェント向けの永続チェックポインター。** スケジュール実行されるエージェントが Ask User を使用する場合、またはツールの承認が必要な場合、単一プロセスであっても Redis ストリームと共有チェックポインターが必要です。デフォルトの MongoDB [`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) は動作しますが、`type: memory` は動作しません。いずれかが欠けている場合、LibreChat はモデルを呼び出す前に、そのような実行を拒否します。
+- **標準サーバーのエントリポイント。** レガシーの実験的なクラスタ構成エントリポイントでは、スケジュールエンジンは起動しません。
+
+2つの環境変数でエンジンを制御します（[dotenv](/docs/configuration/dotenv#scheduled-chats)にも記載されています）：
+
+<OptionTable
+  options={[
+    ['SCHEDULES_SINGLE_PROCESS', 'Boolean', 'Redisなしでスケジュールされたチャットを許可します。デプロイメントが本当に単一のLibreChatプロセスのみで実行されている場合にのみ設定してください。', '# SCHEDULES_SINGLE_PROCESS=true'],
+    ['SCHEDULES_DISABLED', 'Boolean', '自動実行と「今すぐ実行」の両方を緊急停止します。スケジュールは削除されず、保持されます。', '# SCHEDULES_DISABLED=true'],
+  ]}
+/>

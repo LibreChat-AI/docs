@@ -1,0 +1,89 @@
+---
+title: コードインタープリター
+icon: SquareTerminal
+description: Code Interpreter サービスをデプロイし、LibreChat と接続して、オプションのコード機能を有効にします。
+---
+
+このページでは、[Code Interpreter](/docs/features/code_interpreter)の管理者向けの設定について説明します。コードの実行は、お客様自身でデプロイする別のサービス [ClickHouse/code-interpreter](https://github.com/ClickHouse/code-interpreter) で行われます。LibreChatはこのサービスにコードとファイルを送信し、リクエストごとに認証を行います。ここで言及されているLibreChat側の変数はすべて、[`.env`リファレンス](/docs/configuration/dotenv#code-interpreter)に記載されています。
+
+## サービスをデプロイする [#deploy-the-service]
+
+リポジトリのREADMEに従い、Docker ComposeまたはHelmでサービスを実行してください。このサービスは、APIゲートウェイ、サンドボックス化されたワーカー、ファイルサーバー、そしてTool Call Serverで構成されており、これらはLibreChatとは独立してスケールできます。ワーカーは、NsJailまたはlibkrunマイクロVMを使用してコードを隔離します。メモリとCPUの上限、アップロードサイズ、リクエストのクォータ、およびサンドボックス化されたコードのネットワークアクセスは、LibreChatではなく、このデプロイメント側で設定します。
+
+絶対に、認証なしのローカルモード(`LOCAL_MODE=true`)を公開ネットワークや本番ネットワークに露出させないでください。
+
+## LibreChat に接続する [#connect-librechat]
+
+1. `LIBRECHAT_CODE_BASEURL` を、お使いのデプロイ環境のURLに設定してください。
+2. 認証を設定します。現在のオープンソース版サービスは、ローカルモード以外では[JWT認証](#self-hosted-jwt-authentication)を想定しています。APIキーを受け付けるデプロイメントでは、代わりに`LIBRECHAT_CODE_API_KEY`を使用します。これはすべてのユーザーで共有される1つのキーで、`X-API-Key`ヘッダーで送信されます。
+3. LibreChat を再起動します。
+
+次に、コードの実行が許可されていることを確認してください:
+
+- `execute_code` は [`endpoints.agents.capabilities`](/docs/configuration/librechat_yaml/object_structure/agents#capabilities) に含まれている必要があります。デフォルトのリストにも含まれています。
+- ユーザーには実行コードの権限（run-code permission）が必要です。[`interface.runCode`](/docs/configuration/librechat_yaml/object_structure/interface#runcode)は`USER`ロールに対してこの権限を初期設定し、コードブロック上の**Run Code**ボタンを制御します。同じ権限によって、Agent Builderの**Run Code**ツールも制御されます。
+
+## セルフホスト型JWT認証 [#self-hosted-jwt-authentication]
+
+JWT認証では、LibreChatはサインイン済みユーザーの Code Interpreter リクエストごとに、短命のトークンを署名して発行します。サービスは対応する公開鍵でこのトークンを検証し、トークン内のユーザーとテナントの情報を使って、ファイルとセッションを分離します。秘密鍵はLibreChat側に保持されます。
+
+LibreChat側では:
+
+```bash filename=".env"
+CODEAPI_AUTH_PROVIDER=librechat-jwt
+CODEAPI_JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+CODEAPI_JWT_ALGORITHM=EdDSA
+CODEAPI_JWT_KID=lc-codeapi-2026-05
+CODEAPI_JWT_ISSUER=librechat
+CODEAPI_JWT_AUDIENCE=codeapi
+CODEAPI_JWT_TTL_SECONDS=300
+CODEAPI_JWT_MINT_CACHE_SECONDS=30
+CODEAPI_JWT_SINGLE_TENANT_ID=legacy
+```
+
+`CODEAPI_JWT_PRIVATE_KEY_BASE64`（base64 PEM）または`CODEAPI_JWT_PRIVATE_JWK_JSON`（秘密鍵のJWK）で、代わりに鍵を保持することもできます。署名には、Ed25519またはEd448鍵（デフォルト）を使用する`EdDSA`、もしくは`RS256`が使用されます。各変数のデフォルト値と制限は、[`.env`リファレンスのJWTセクション](/docs/configuration/dotenv#code-interpreter-jwt-authentication)に記載されています。
+
+Code Interpreter側では、対応する検証機能を設定してください:
+
+```bash filename="code-interpreter .env"
+LOCAL_MODE=false
+CODEAPI_AUTH_PROVIDER=librechat-jwt
+CODEAPI_JWT_ISSUER=librechat
+CODEAPI_JWT_AUDIENCE=codeapi
+CODEAPI_JWT_ALLOWED_ALGS=EdDSA
+CODEAPI_JWT_JWKS_JSON={"keys":[{"kty":"OKP","crv":"Ed25519","x":"...","kid":"lc-codeapi-2026-05","alg":"EdDSA"}]}
+CODEAPI_JWT_SINGLE_TENANT_ID=legacy
+```
+
+Issuer、audience、key ID、algorithm、public key、single-tenant IDは、両方のサービスで一致している必要があります。サービスは、`CODEAPI_JWT_PUBLIC_KEY`と`CODEAPI_JWT_KID`で検証用の鍵を読み込むことも、`CODEAPI_JWT_PUBLIC_KEYS_DIR`から読み込むこともできます。インラインのJWKSを使用すると、鍵のローテーションが最も簡単になります。LibreChatのトークンTTLは、サービスの`CODEAPI_JWT_MAX_TTL_SECONDS`以下(最大300秒)に設定してください。
+
+ローカルのチェックアウトの場合、Code Interpreter リポジトリには、対応する Ed25519 キーを生成し、両方の `.env` ファイルを書き出すヘルパーが用意されています:
+
+```bash
+node scripts/setup-local-auth-env.js --librechat /path/to/LibreChat
+```
+
+マルチテナント環境へのデプロイでは、認証済みのテナントコンテキストを提供し、LibreChat では `TENANT_ISOLATION_STRICT=true`、サービス側では `CODEAPI_TENANT_ISOLATION_STRICT=true` を設定してください。Strict モードでは、テナントが指定されていないリクエストをシングルテナント ID にフォールバックさせるのではなく、拒否します。
+
+別のアプリケーションをサービスと直接連携させるには、互換性のあるトークンを自分で発行し、`Authorization: Bearer <token>` として送信します。
+
+## ファイルのアップロードとプレビュー [#file-uploads-and-previews]
+
+LibreChatは、実行前に会話ファイルをサービスへアップロードし、`429`レート制限に達したアップロードを再試行します。その際、上限付きの待機時間の範囲内で`Retry-After`を尊重します。この動作は、ユーザーごと・ルートごとに[`codeApiUploadConcurrency`および`codeApiMaxRetryWaitMs`](/docs/configuration/librechat_yaml/object_structure/agents#code-api-upload-recovery)で調整できます。
+
+生成されたファイルには、`FILE_PREVIEW_MAX_EXTRACT_BYTES`(デフォルトでは 2 MiB。[インラインファイルプレビュー](/docs/configuration/dotenv#inline-file-previews)を参照)までのインラインプレビューが表示されます。エージェントがサンドボックスから読み取った画像は、1 MiB までインラインで表示されます。LibreChat が画像をできるだけ少ないリクエスト数で読み込めるよう、`LIBRECHAT_CODE_SANDBOX_OUTPUT_MAX_SIZE` をワーカーの `SANDBOX_OUTPUT_MAX_SIZE` と同じ値に設定してください。`LIBRECHAT_CODE_IMAGE_CHUNK_BYTES` は転送ウィンドウを固定するだけであり、1 MiB の上限を引き上げることはありません。
+
+プレビューは、静的な Sandpack バンドラーを経由して Artifacts パネルに表示されます。バンドラーを自前でホストする場合は、[Artifacts の設定](/docs/configuration/artifacts#self-hosting-the-sandpack-bundler)を参照してください。
+
+<Callout type="warning" title="古いコードによる出力のアップグレード">
+  以前のデプロイでは、一意の出力ファイルインデックスが存在しない時点で同じ Code Interpreter のファイル名を再生成していた可能性があり、その場合 MongoDB に重複レコードが残り、インデックスの作成を妨げることがあります。修復内容は `npm run migrate:code-file-duplicates:dry-run` でプレビューしてから、`npm run migrate:code-file-duplicates` で適用してください。
+</Callout>
+
+## オプション機能 [#optional-features]
+
+これらはそれぞれ、有効にするまでオフの状態です。
+
+- **プログラマティックツール呼び出し**: [エージェント機能](/docs/configuration/librechat_yaml/object_structure/agents#capabilities)で、`execute_code`と並べて`programmatic_tools`を追加します。サービスのツール呼び出しサーバーが必要です。
+- **バックグラウンド実行**: エージェントの機能に `run_in_background` を追加します。完了した結果の配信とキャンセルは、[`backgroundTasks`](/docs/configuration/librechat_yaml/object_structure/agents#backgroundtasks) で設定します。
+- **Stateful code sessions**: add `stateful_code_sessions` to the agents capabilities and either set [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint) to a deployment that advertises the `stateful` profile, or configure named environments. Stateless agents keep using `LIBRECHAT_CODE_BASEURL`; stateful requests never fall back to it. This feature is experimental and may change.
+- **コード環境**(接続されたマシン、個人用ワーカー、ペアリング、チャットごとのマシン選択、承認ポリシー):[`statefulCodeSessions`](/docs/configuration/librechat_yaml/object_structure/agents#statefulcodesessions) で設定します。チャットの添付ファイルを接続済みワークスペースにコピーする処理は、`endpoints.agents.workspaceAttachments` によって制限されます。`timeoutMs`(デフォルト 10000、範囲 1000〜120000)と `concurrency`(デフォルト 3、範囲 1〜16)です。

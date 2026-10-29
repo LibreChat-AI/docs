@@ -1,0 +1,74 @@
+---
+title: 定时聊天
+icon: CalendarClock
+description: '启用定时对话,设置限制和项目规则,允许无人值守的 MCP 访问,并满足 Redis 和 checkpointer 的要求。'
+---
+
+[定时对话](/docs/features/scheduled_chats)目前为实验性功能，需您主动开启后才会生效。定时运行会在无人值守的情况下占用模型、工具和代码解释器资源，因此在启用之前，请先检查下方的部署要求。
+
+## 启用 [#enable]
+
+在 `librechat.yaml` 中添加 `interface.schedules` 配置,然后重启 LibreChat:
+
+```yaml filename="librechat.yaml"
+interface:
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    fireConcurrency: 5
+    requireProject: false
+    # projectId: '000000000000000000000000'
+```
+
+`use` 和 `create` 会在启动时为内置 `USER` 角色设置 `SCHEDULES` 权限的初始值；此后,请在 [管理面板](/docs/features/admin_panel) 中按角色分别管理这些权限。`use` 允许用户查看其定时任务。`create` 还允许用户创建、编辑、启用、运行和删除定时任务。其他键为运行时限制。
+
+<OptionTable
+  options={[
+    ['maxPerUser', 'Number', '每个用户可拥有的最大计划任务数(包括已禁用的任务)。设置为 0 可禁止创建。', '10'],
+    ['minIntervalMinutes', 'Number', '同一计划两次运行之间允许的最短间隔。适用于所有执行频率,包括自定义 cron。', '60'],
+    ['autoDisableAfterFailures', 'Number', '连续失败运行次数达到此值后,计划将自动禁用。', '5'],
+    ['fireConcurrency', 'Number', '在整个部署中同时允许执行的计划任务最大数量。', '5'],
+    ['requireProject', 'Boolean', '每个计划都必须解析到一个 Chat Project,在保存时以及每次运行之前进行检查。', 'false'],
+    ['projectId', 'String', '将每个定时对话固定到一个聊天项目,并隐含 requireProject。', ''],
+  ]}
+/>
+
+`schedules: true` 会以以下默认值启用此功能。`schedules: false` 或 `use: false` 则是部署范围内的全局禁用，角色、组和用户级别的覆盖设置均无法解除该限制。
+
+项目规则会在每次运行时重新检查。如果某个计划任务不再满足 `requireProject`,或其所属项目已被删除,该任务会自行禁用,而不会启动一个未限定范围的对话。对话项目只属于单个用户,因此部署范围内的 `projectId` 仅对该项目的所有者有效;当不同所有者需要不同的目标位置时,请在角色或用户覆盖设置中进行配置。
+
+完整的字段列表(包括用于分别限制准入和 MCP 就绪检查、使其独立于生成过程的 `admissionConcurrency`、`mcpPreflightConcurrency` 和 `mcpPreflightTimeoutMs`)请参阅 [`interface.schedules`](/docs/configuration/librechat_yaml/object_structure/interface#schedules)。
+
+## 无人值守的 MCP 访问 [#unattended-mcp-access]
+
+在运行开始之前,LibreChat 会检查定时代理及其子代理所需的每个 MCP 工具。如果某次运行需要交互式登录,则该运行不会启动;定时任务会显示需要处理的代理。
+
+要让用户为无人值守的运行授权 MCP 工具,请开启 `interface.schedules.mcpConsent`:
+
+- `mcpConsent.enabled` 用于开启该功能。
+- `mcpConsent.maxLifetimeHours` 用于限制授权的最长有效期，取值范围为 1 至 8760 小时。
+- `mcpConsent.resources` 列出了可以被授权的 MCP 资源。
+- `mcpConsent.readOnlyPolicy` 列出受信任的只读工具声明,按服务器和上游工具名称进行键控。
+- `mcpReceiptRetry.baseMs` 和 `mcpReceiptRetry.maxMs` 用于设置重试同意回执（consent receipts）时的退避时间。
+
+用户随后会在计划编辑器中看到 **计划 MCP 授权** 部分。授权仅覆盖所列的智能体和资源,且仅在截止时间之前有效,且绝不允许写入操作。
+
+## 部署要求 [#deployment-requirements]
+
+定时对话通过 MongoDB 租约进行协调,因此多个副本可以共同分担工作。它们还需要:
+
+- **多副本部署中的 Redis 流。** 设置 `USE_REDIS_STREAMS=true`。若未启用共享流,保存计划将失败,而不会启动其他副本无法恢复或停止的任务。
+- **一个可以暂停的智能体所需的持久化检查点器。** 如果定时智能体可以使用 Ask User 或需要工具审批，那么即使只在单个进程上运行，也需要 Redis 流和共享的检查点器。默认的 MongoDB [`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) 可以正常工作；`type: memory` 则不行。如果缺少其中任意一项，LibreChat 会在任何模型调用之前拒绝此类运行。
+- **标准服务器入口点。** 旧版实验性集群入口点不会启动调度引擎。
+
+两个环境变量用于控制该引擎(也列在 [dotenv](/docs/configuration/dotenv#scheduled-chats) 中):
+
+<OptionTable
+  options={[
+    ['SCHEDULES_SINGLE_PROCESS', 'Boolean', '允许在不使用 Redis 的情况下使用定时聊天。仅当部署确实只运行一个 LibreChat 进程时才设置此项。', '# SCHEDULES_SINGLE_PROCESS=true'],
+    ['SCHEDULES_DISABLED', 'Boolean', '紧急停止适用于自动运行和“立即运行”。计划会被保留,不会被删除。', '# SCHEDULES_DISABLED=true'],
+  ]}
+/>

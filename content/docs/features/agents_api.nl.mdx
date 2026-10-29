@@ -1,294 +1,121 @@
 ---
 title: Agents API (Bèta)
-icon: Plug
+icon: Webhook
 description: >-
-  Voer LibreChat agents uit en verstuur geauthenticeerde events via
-  programmatische API's
+  Roep je LibreChat-agents aan vanuit scripts en andere apps, stuur ze events
+  vanuit andere systemen, en beheer agents en skills vanuit een vertrouwde
+  service.
 ---
 
-<Callout type="warning" title="Bètafunctie">
-De Agents API bevindt zich momenteel in bèta. Endpoints, request/response-formaten en gedrag kunnen veranderen naarmate we toewerken naar een stabiele release.
+De Agents API laat code buiten LibreChat met je agents communiceren. Richt elke OpenAI SDK op je instantie, geef een agent-ID mee als model, en je krijgt de volledige configuratie van de agent (instructies, tools, bestanden) via een bekende API. Gebruik dit om een agent aan te sluiten op een script, een CI-job of een ander product.
+
+Er zijn drie onderdelen:
+
+- **Inferentie**: Chat Completions en Open Responses, geauthenticeerd met een API-sleutel (of je eigen OIDC-tokens, als de beheerder dat heeft ingesteld).
+- **Agent Events**: laat een agent werk uitvoeren dat van een ander systeem komt, zoals een webhook, en houd bij of het is uitgevoerd. Alleen API-sleutels.
+- **Agentbeheer**: maak en bewerk agents en skills via een vertrouwde service, met behulp van machine-OIDC-tokens.
+
+<Callout type="warning" title="Beta">
+  Eindpunten, aanvraagformaten en antwoorden kunnen nog wijzigen tussen releases.
 </Callout>
 
-LibreChat stelt agents bloot aan externe applicaties, scripts en services via inference- en event-delivery-API's.
+## Een API-sleutel verkrijgen [#get-an-api-key]
 
-## Overzicht [#overview]
+Open **Instellingen**, ga naar **Gegevens en privacy**, en zoek **Agent API-sleutels** onder **API-sleutels**. Klik op **Beheren**, vervolgens op **API-sleutel maken**, geef de sleutel een naam, kies een vervaldatum (van 7 dagen tot 1 jaar, of nooit), en kopieer de sleutel meteen: deze wordt slechts één keer getoond.
 
-De Agents API biedt twee inferentie-interfaces, geauthenticeerde event-levering en bèta-beheerroutes:
+<ThemeImage
+  light="/images/features/agents_api/api-keys-light.png"
+  dark="/images/features/agents_api/api-keys-dark.png"
+  alt="Agent-API-sleutels in Instellingen, Gegevens & privacy, met twee sleutels inclusief vervaldatum en datum van laatste gebruik"
+/>
 
-- **OpenAI-compatibele Chat Completions**: `POST /api/agents/v1/chat/completions`
-- **Open Responses API**: `POST /api/agents/v1/responses`
-- **Agent-gebeurtenissen**: `POST /api/agents/v1/events`
-- **Agentbeheer**: `/api/agents/v1/agents`
-- **Vaardighedenbeheer**: `/api/agents/v1/skills`
+Een sleutel handelt namens jou. Alles wat je via de API kunt bereiken, kan iedereen die de sleutel bezit ook bereiken, dus verwijder sleutels die je niet meer gebruikt. Het verwijderen van een sleutel sluit applicaties die deze gebruiken onmiddellijk af.
 
-De inference-interfaces ondersteunen API-key authenticatie, optionele OIDC-authenticatie en streaming-responses. Agent Events gebruiken Remote Agents API-key authenticatie zodat LibreChat elke levering kan koppelen aan een stabiele bronidentiteit. Management-routes gebruiken daarentegen een deployment allowlist die een OIDC machine-client koppelt aan één bestaande LibreChat-gebruiker en tenant.
+Als u de sectie niet ziet, heeft uw rol geen toegang tot de Agents API gekregen.
 
-LibreChat adopteert [Open Responses](https://www.openresponses.org/) als zijn primaire API-framework voor het bedienen van agents. Hoewel de Chat Completions endpoint achterwaartse compatibiliteit biedt met bestaande OpenAI-compatibele tools, vertegenwoordigt de Open Responses endpoint de toekomstige richting.
+## Welke agents je kunt aanroepen [#which-agents-you-can-call]
 
-## De Agents API inschakelen [#enabling-the-agents-api]
+U kunt agents aanroepen die u zelf bezit of die met u zijn gedeeld. Voor de agent van iemand anders moet de eigenaar u toegang verlenen via de knop **Remote Access** (het wereldbolpictogram) in de voettekst van de Agent Builder. Dit staat los van normaal delen: het feit dat u met een agent in LibreChat kunt chatten, betekent niet dat u deze via de API kunt aanroepen.
 
-De Agents API is beveiligd achter de `remoteAgents` interface-configuratie. Alle rechten staan standaard op `false`.
+Je hebt de agent-ID nodig, die wordt weergegeven onder **Geavanceerde instellingen** in de builder, met een kopieerknop. `GET /api/agents/v1/models` geeft een lijst van de agents die je sleutel mag aanroepen, en `GET /api/agents/v1/models/{model}` geeft er één terug.
 
-```yaml filename="librechat.yaml"
-interface:
-  remoteAgents:
-    use: true
-    create: true
-```
+## Chat Completions [#chat-completions]
 
-Zie [Interfaceconfiguratie: remoteAgents](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents) voor alle beschikbare opties.
+`POST /api/agents/v1/chat/completions` volgt het OpenAI Chat Completions-formaat, zodat bestaande OpenAI-clients werken door alleen de basis-URL te wijzigen:
 
-**Let op:** Beheerders (admin users) hebben standaard alle externe agent-rechten ingeschakeld.
-
-### OpenAPI-specificatie en interactieve documentatie [#openapi-specification-and-interactive-docs]
-
-LibreChat kan de openbare Agents API-specificatie serveren op `/api/openapi.json` en interactieve Swagger UI-documentatie op `/api/docs`. Beide routes zijn standaard uitgeschakeld. Schakel ze in met de `openapi` instelling op het hoogste niveau:
-
-```yaml filename="librechat.yaml"
-openapi:
-  enabled: true
-```
-
-De specificatie omvat alleen de routes voor Agentbeheer en Skillbeheer. Inferentie (Chat Completions en Open Responses) en Agent Events-routes vallen hier niet onder. Laat de routes uitgeschakeld, tenzij je implementatie de API-documentatie beschikbaar wil stellen.
-
-## API Key Management [#api-key-management]
-
-Zodra `remoteAgents.use` en `remoteAgents.create` zijn ingeschakeld, kunnen gebruikers API-sleutels genereren vanuit de LibreChat UI. Deze sleutels verifiëren verzoeken aan de Agents API.
-
-## Authenticatie [#authentication]
-
-De Agents API ondersteunt twee authenticatiemethoden die onafhankelijk of samen kunnen worden gebruikt.
-
-### API-sleutel [#api-key]
-
-API key-authenticatie is standaard ingeschakeld. Genereer API-keys vanuit de LibreChat UI zodra `remoteAgents.use` en `remoteAgents.create` zijn ingeschakeld.
-
-```bash
-Authorization: Bearer <YOUR_API_KEY>
-```
-
-### OIDC Bearer Token [#oidc-bearer-token]
-
-Voor machine-to-machine scenario's waarbij uw infrastructuur al over een OIDC-provider beschikt, kunt u direct authenticeren met OIDC Bearer-tokens zonder een LibreChat API-sleutel.
-
-Configureer OIDC-authenticatie in `librechat.yaml`:
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    remoteApi:
-      auth:
-        apiKey:
-          enabled: false
-        oidc:
-          enabled: true
-          issuer: https://auth.example.com/realms/myrealm
-          # jwksUri is optional and auto-discovered from issuer if omitted
-          audience: my-client-id
-```
-
-Roep vervolgens de API aan met je OIDC-toegangstoken:
-
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/responses \
-  -H "Authorization: Bearer YOUR_OIDC_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "agent_abc123", "input": "Hello!"}'
-```
-
-<Callout type="info">
-  Het OIDC-token moet toebehoren aan een gebruiker die al bestaat in LibreChat. Bij het matchen wordt eerst de `sub` claim gebruikt, en vervolgens wordt teruggevallen op `email`, `preferred_username` of `upn`.
-</Callout>
-
-Zie [Agents Endpoint - remoteApi](/docs/configuration/librechat_yaml/object_structure/agents#remoteapi) voor alle configuratieopties.
-
-<Callout type="warning" title="Agent Events vereisen een API-sleutel">
-  OIDC-only authenticatie wordt niet ondersteund voor de Agent Events endpoints. Gebruik een Remote Agents API key bij het aanmaken van bindingen, het in de wachtrij plaatsen van events en het opvragen van de afleverstatus.
-</Callout>
-
-## Agent Management API [#agent-management-api]
-
-De bèta Agent Management API stelt een service in staat om Agents en hun gekoppelde resources te beheren zonder browsersessie. Deze is onafhankelijk geauthenticeerd van inferentie en Agent Events: alleen OIDC machine-tokens die zijn geconfigureerd onder [`endpoints.agents.managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi) worden geaccepteerd.
-
-Elke geconfigureerde OAuth-client is gekoppeld aan één bestaande LibreChat `userId` en `tenantId`. Na tokenverificatie wordt elk verzoek uitgevoerd als die gebruiker en behoudt het de huidige rolmogelijkheden, Agent- en Skill-ACL's, providerbeperkingen, tooltoewijzingen, bestandslimieten en tenant-isolatie van de gebruiker. Een clientkoppeling maakt de gebruiker geen beheerder en verleent geen toegang tot bronnen die de gebruiker anders niet kan beheren.
-
-### Agent Routes [#agent-routes]
-
-| Methode  | Route                                      | Doel                                         |
-| -------- | ------------------------------------------ | -------------------------------------------- |
-| `POST`   | `/api/agents/v1/agents`                    | Een Agent aanmaken                           |
-| `GET`    | `/api/agents/v1/agents`                    | Toegankelijke Agents weergeven               |
-| `GET`    | `/api/agents/v1/agents/{id}`               | Eén toegankelijke Agent lezen                |
-| `PATCH`  | `/api/agents/v1/agents/{id}`               | Een Agent bijwerken                          |
-| `DELETE` | `/api/agents/v1/agents/{id}`               | Een Agent verwijderen                        |
-| `POST`   | `/api/agents/v1/agents/{id}/files`         | Eén bronbestand voor de Agent uploaden en koppelen |
-| `GET`    | `/api/agents/v1/agents/{id}/files`         | Toegankelijke gekoppelde bestanden van de Agent weergeven |
-| `DELETE` | `/api/agents/v1/agents/{id}/files/{fileId}` | Een gekoppeld bestand van de Agent verwijderen |
-
-De payloads voor het aanmaken en bijwerken van Agents gebruiken dezelfde extern ondersteunde velden als de Agent Builder en wijzen onbekende velden op het hoogste niveau af. Voor het aanmaken is een `model` vereist; bij het bijwerken worden alleen de meegeleverde velden geaccepteerd. Reacties tonen de ondersteunde Agent-configuratie plus `id`, `provider`, nullable `model`, `version`, `createdAt` en `updatedAt`, zonder de velden voor persistentie-eigendom.
-
-Lijsten accepteren `limit` van 1 tot 100, met een standaardwaarde van 20, en een ondoorzichtige `cursor`. Wanneer `has_more` true is, geef dan de geretourneerde `after` waarde door als de volgende cursor; decodeer of construeer geen cursors in clients.
-
-```bash
-curl https://your-librechat-instance/api/agents/v1/agents?limit=20 \
-  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN"
-```
-
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/agents \
-  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Release assistant",
-    "provider": "openAI",
-    "model": "gpt-5.6",
-    "instructions": "Prepare concise release notes from verified changes."
-  }'
-```
-
-Bestandsuploads gebruiken `multipart/form-data` met één `file` en een `tool_resource` waarde zoals `context`, `file_search`, of `execute_code`. LibreChat past de implementatiecapaciteit, roltoewijzing, upload-snelheidslimiet, per-bestand, bestandsaantal en geaggregeerde groottecontroles toe voordat de resource wordt bijgevoegd. Het verwijderen van een bestand vereist bewerkingsrechten voor de Agent en verzwakt de onderliggende autorisatieregels voor bestanden niet.
-
-### Skill Routes [#skill-routes]
-
-| Method  | Route                                                | Doel                                  |
-| ------- | ---------------------------------------------------- | ------------------------------------- |
-| `GET`    | `/api/agents/v1/skills`                              | Toegankelijke Skills weergeven        |
-| `POST`   | `/api/agents/v1/skills`                              | Een Skill aanmaken                    |
-| `GET`    | `/api/agents/v1/skills/{id}`                         | Eén toegankelijke Skill lezen         |
-| `PATCH`  | `/api/agents/v1/skills/{id}`                         | Een Skill bijwerken                   |
-| `DELETE` | `/api/agents/v1/skills/{id}`                         | Een Skill verwijderen                 |
-| `GET`    | `/api/agents/v1/skills/{id}/files`                   | Bestanden in de Skill weergeven       |
-| `GET`    | `/api/agents/v1/skills/{id}/files/{relativePath}`    | Eén Skill-bestand lezen               |
-| `PUT`    | `/api/agents/v1/skills/{id}/files/{relativePath}`    | Eén ondersteund bestand aanmaken of vervangen |
-| `DELETE` | `/api/agents/v1/skills/{id}/files/{relativePath}`    | Eén Skill-bestand verwijderen         |
-
-Create accepteert `name`, `description`, `body`, en optionele `displayTitle`, `frontmatter`, `category` en `alwaysApply`. Update vereist een positief geheel getal `expectedVersion` (de huidige versie van de Skill) plus ten minste één veld om te wijzigen, wat `body` en `frontmatter` kan omvatten. Beide wijzen onbekende velden af.
-
-Skill-bewerkingen zijn beperkt tot Skills die zichtbaar zijn voor de gekoppelde gebruiker. Voor leesacties is Skill-toegang vereist, terwijl voor metadata of bestandsschrijfacties de bijbehorende bewerkings- en Skill-auteursrechten vereist zijn. Paden worden genormaliseerd onder de Skill-root; traversal, niet-ondersteunde bestanden en te grote inhoud worden geweigerd.
-
-### Fouten en authenticatie [#errors-and-authentication]
-
-Beheerreacties gebruiken gestructureerde fouten met `invalid_request`, `not_found`, `permission_denied`, `conflict` of `internal_error` codes. Autorisatiefouten voor resources kunnen worden geretourneerd als `not_found`, zodat aanroepers geen ontoegankelijke ID's kunnen achterhalen.
-
-Machine tokens moeten geldig zijn, overeenkomen met de geconfigureerde issuer, één toegestane client identificeren via `azp` of `client_id`, en voldoen aan de geconfigureerde subject-regel. Standaard moeten tokens ook overeenkomen met de geconfigureerde audience. Voor providers zoals Amazon Cognito die machine access tokens uitgeven met `client_id` in plaats van `aud`, stelt u `tokenUse: access` in, laat u `audience` weg, en vereist u de verwachte OAuth scope met `requiredScopes`. Ontbrekende configuratie of ongeldige inloggegevens resulteren in een `401`; een gekoppeld account dat wordt verwijderd, resulteert in een `409`. Zie [`managementApi.auth.oidc`](/docs/configuration/librechat_yaml/object_structure/agents#managementapiauthoidc) en [`managementApi.auth.clients`](/docs/configuration/librechat_yaml/object_structure/agents#managementapiauthclients) voor de volledige claim- en koppelingsregels.
-
-## Endpoints [#endpoints]
-
-### Chat Completions (OpenAI-compatible) [#chat-completions-openai-compatible]
-
-```
-POST /api/agents/v1/chat/completions
-```
-
-Gebruik elke OpenAI-compatibele SDK door deze te verwijzen naar je LibreChat-instantie. De `model` parameter komt overeen met een agent-ID.
-
-**Voorbeeld met curl:**
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "agent_abc123",
-    "messages": [
-      {"role": "user", "content": "Hello, what can you help me with?"}
-    ],
-    "stream": true
-  }'
-```
-
-**Voorbeeld met OpenAI SDK (Python):**
 ```python
 from openai import OpenAI
 
 client = OpenAI(
     base_url="https://your-librechat-instance/api/agents/v1",
-    api_key="YOUR_API_KEY"
+    api_key="YOUR_API_KEY",
 )
 
-response = client.chat.completions.create(
+stream = client.chat.completions.create(
     model="agent_abc123",
-    messages=[{"role": "user", "content": "Hello!"}],
-    stream=True
+    messages=[{"role": "user", "content": "Summarize yesterday's open tickets."}],
+    stream=True,
 )
 
-for chunk in response:
-    print(chunk.choices[0].delta.content, end="")
+for chunk in stream:
+    print(chunk.choices[0].delta.content or "", end="")
 ```
 
-### Modellen weergeven [#list-models]
-
-```
-GET /api/agents/v1/models
-```
-
-Geeft beschikbare agents terug als modellen. Handig om te ontdekken welke agents toegankelijk zijn met jouw API-sleutel.
-
-```
-GET /api/agents/v1/models/{model}
-```
-
-Geeft een enkele agent terug als een model-object.
-
-### Open Responses API [#open-responses-api]
-
-```
-POST /api/agents/v1/responses
-```
-
-Het Open Responses endpoint volgt de [Open Responses specification](https://www.openresponses.org/), een open inferentiestandaard geïnitieerd door OpenAI en gebouwd door de open-source AI-community. Het is ontworpen voor agent-gebaseerde workflows met native ondersteuning voor redeneren, toolgebruik, gestructureerde outputs en streaming semantische events.
+De zelfde aanvraag met curl:
 
 ```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/responses \
+curl https://your-librechat-instance/api/agents/v1/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "agent_abc123",
-    "input": "What is the weather today?"
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true
   }'
 ```
 
-Gerelateerde routes:
+## Open Responses [#open-responses]
 
-- `GET /api/agents/v1/responses/models` somt de agents op die beschikbaar zijn via de Responses API.
-- `GET /api/agents/v1/responses/{id}` haalt een opgeslagen antwoord op aan de hand van de ID.
+`POST /api/agents/v1/responses` implementeert de [Open Responses](https://www.openresponses.org/)-specificatie, die is ontworpen voor agentwerkbelastingen: redenering, toolaanroepen en gestreamde gebeurtenissen maken deel uit van het formaat in plaats van er achteraf aan te worden toegevoegd. Dit is de interface waarop LibreChat voortaan verder bouwt, dus geef er de voorkeur aan voor nieuwe integraties.
 
-#### Door de aanroeper uitgevoerde functietools [#caller-executed-function-tools]
+```bash
+curl https://your-librechat-instance/api/agents/v1/responses \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "agent_abc123", "input": "What changed in the last release?"}'
+```
 
-Het Open Responses endpoint accepteert standaard `function` tools die door de aanroeper worden aangeleverd. LibreChat stelt deze definities bloot aan het model, maar voert ze niet uit. Wanneer het model er een selecteert, bevat het antwoord een `function_call` output-item dat door de aanroeper moet worden uitgevoerd.
+`GET /api/agents/v1/responses/{id}` geeft een opgeslagen antwoord terug, en `GET /api/agents/v1/responses/models` somt de agents op die hier beschikbaar zijn.
 
-Om door te gaan, stuur een nieuw verzoek waarvan de `input` het geretourneerde `function_call` item herhaalt, gevolgd door een bijbehorend `function_call_output` item. Deze overdracht is stateless: het creëert geen onderbroken run, en `previous_response_id` alleen kan de herhaalde tool-uitwisseling niet vervangen.
+### Je eigen functietools [#your-own-function-tools]
+
+U kunt standaard `function`-tools doorgeven in een Responses-verzoek. LibreChat toont deze aan het model maar voert ze niet uit: wanneer het model er een kiest, bevat het antwoord een `function_call`-item, en voert u de functie zelf uit. Om door te gaan, stuurt u een nieuw verzoek waarvan de `input` het `function_call`-item herhaalt, gevolgd door een `function_call_output` met dezelfde `call_id`:
 
 ```json
 {
   "model": "agent_abc123",
   "input": [
-    {
-      "type": "function_call",
-      "call_id": "call_abc123",
-      "name": "lookup_order",
-      "arguments": "{\"order_id\":\"A-42\"}"
-    },
-    {
-      "type": "function_call_output",
-      "call_id": "call_abc123",
-      "output": "{\"status\":\"shipped\"}"
-    }
+    { "type": "function_call", "call_id": "call_abc123", "name": "lookup_order", "arguments": "{\"order_id\":\"A-42\"}" },
+    { "type": "function_call_output", "call_id": "call_abc123", "output": "{\"status\":\"shipped\"}" }
   ]
 }
 ```
 
-Namen van caller-tools mogen letters, cijfers, underscores en koppeltekens bevatten. Namen moeten uniek zijn en kunnen geen door de server geleverde tool vervangen. Een door de caller uitgevoerde tool moet de enige geselecteerde tool zijn in zijn beurt; als het model deze combineert met door de server uitgevoerde tools, vraagt LibreChat het model om de caller-tool opnieuw uit te voeren zonder andere tools.
+Tussen de twee verzoeken wordt niets open gehouden, en `previous_response_id` alleen is niet voldoende; je moet de aanroep en de uitvoer opnieuw afspelen. Toolnamen mogen letters, cijfers, underscores en koppeltekens bevatten, moeten uniek zijn en mogen niet een van de eigen tools van de agent overschaduwen. Een beurt die een van jouw tools aanroept, kan tegelijkertijd geen tools van de agent aanroepen; het model wordt gevraagd het opnieuw te proberen.
 
-Voor door LibreChat uitgevoerde Agent-tools dwingen beide headless inference-endpoints een ingeschakeld [`endpoints.agents.toolApproval`](/docs/configuration/librechat_yaml/object_structure/agents#toolapproval) beleid af, inclusief `deny`, `ask` en programmatische hooks. Deze aanroepen hebben geen interactief goedkeurings-/hervattingskanaal: `deny` en `ask` blokkeren de tool in plaats van een goedkeuringsprompt te openen. Configureer expliciete toestemmingen alleen voor tools die de API-client onbeheerd moet kunnen uitvoeren; wanneer het beleid is uitgeschakeld, worden de goedkeuringshooks niet uitgevoerd. Door de aanroeper uitgevoerde functie-tools blijven de verantwoordelijkheid van de aanroeper.
+### Toolgoedkeuring via de API [#tool-approval-over-the-api]
+
+Als je beheerder goedkeuring vereist voor bepaalde tools, kunnen API-aanroepen niet stoppen om iemand om toestemming te vragen. Tools die goedkeuring nodig hebben, of die geweigerd zijn, worden in plaats daarvan geblokkeerd. Beheerders moeten de tools die een onbewaakte client mag uitvoeren daarom expliciet toestaan.
 
 ## Agent Events [#agent-events]
 
-Agent Events stellen een geauthenticeerde controller of bronadapter in staat om duurzaam werk aan een Agent te leveren. Event delivery is een bèta-functionaliteit en het gedrag van de aanvraag, het antwoord en de runtime kan veranderen.
+Agent Events laten een ander systeem werk aan een agent overdragen en later terugkomen om te zien wat er is gebeurd. Dit is beta. Events gebruiken je Agents API-sleutel, die jou en de bron identificeert; alleen-OIDC-configuraties kunnen ze niet gebruiken. Ze hebben ook hun eigen rate limit, [`rateLimits.agentEvents`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits).
 
-De endpoints gebruiken de geauthenticeerde gebruiker, tenant en API-sleutel; de doel-Agent moet zichtbaar zijn voor die gebruiker onder de bestaande Remote Agents-machtigingen. Agent Event-verzoeken gebruiken ook de toegewezen [`rateLimits.agentEvents`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) bucket.
+Een gebeurtenis komt binnen in een van drie modi:
 
-### Een event afleveren [#deliver-an-event]
+- `fire` start een nieuwe conversatie met de agent.
+- `continue` voegt een beurt toe aan een onderliggende agent die je eerder hebt gekoppeld (zie hieronder).
+- `steer` voegt richtlijnen toe aan een run die nog bezig is, geïdentificeerd door het gesprek en de generatie die een `fire` heeft teruggegeven.
 
 ```http
 POST /api/agents/v1/events
@@ -310,32 +137,22 @@ Content-Type: application/json
 }
 ```
 
-Stuur exact één `Idempotency-Key` header en hergebruik deze bij het opnieuw proberen van dezelfde aflevering van brongebeurtenis naar doel. De sleutel moet 1-256 letters, cijfers of de tekens `._~:/+=-` bevatten. Het hergebruiken van een sleutel met andere afleveringsinhoud resulteert in een conflict.
+Elke aanvraag heeft één `Idempotency-Key` nodig (1 tot 256 letters, cijfers of `._~:/+=-`). Gebruik dezelfde sleutel opnieuw wanneer u dezelfde levering opnieuw probeert; het hergebruiken ervan voor andere inhoud is een conflict. LibreChat stelt de bron van de gebeurtenis in op basis van uw API-sleutel en negeert elke bron die u meestuurt. De payload wordt opgeslagen, dus houd geheimen erbuiten. Gebruik `orderingKey` wanneer gebeurtenissen over hetzelfde onderwerp in volgorde moeten worden verwerkt.
 
-De aanroeper levert de `id`, `type`, `occurredAt` en de opgeschoonde `payload` van het event. LibreChat vervangt elke door de aanroeper opgegeven `event.source` door de identiteit van de geauthenticeerde API-sleutel en leidt de gebruiker, tenant, request ID en ontvangsttijd af. Plaats geen inloggegevens of transportgeheimen in event-payloads, omdat geaccepteerde leveringen worden opgeslagen.
-
-`orderingKey` is optioneel. Gebruik een stabiele waarde wanneer leveringen van verschillende bronnen voor dezelfde resource in de juiste volgorde moeten blijven.
-
-Een succesvol verzoek retourneert `202 Accepted`, een ondoorzichtig `id` voor de aflevering, de huidige status ervan en een `Location` header. Poll die locatie:
+De respons is `202 Accepted` met een leverings-ID en een `Location` om met dezelfde sleutel te pollen:
 
 ```http
 GET /api/agents/v1/events/{delivery_id}
 Authorization: Bearer <SAME_REMOTE_AGENTS_API_KEY>
 ```
 
-De levering kan `pending`, `leased`, `succeeded` of `dead` zijn. De statusrespons bevat pogingen en tijdstempels plus een resultaat of publieke fout wanneer deze is afgehandeld; het stelt de opgeslagen payload, sorteersleutel, herhalingsgeschiedenis of worker-identiteit niet bloot. Status-toegang is beperkt tot dezelfde gebruiker, tenant en API-sleutelbron.
+Een levering heeft de status `pending`, `leased`, `succeeded` of `dead`. Voor een gebonden `continue` betekent `succeeded` alleen dat de beurt is gestart. De `handling`-status verandert daarna van `started` naar een van `applied`, `completed_no_action`, `failed` of `cancelled`. Als je een `expectedAction` meestuurt (een toolnaam en eventueel enkele van de argumenten), betekent `applied` dat LibreChat heeft gezien dat die tool is aangeroepen met overeenkomende argumenten; wat het model in tekst zegt, telt niet mee.
 
-Voor een gebonden `continue` betekent `succeeded` dat de Agent-beurt werd toegelaten, niet dat het gevraagde werk is voltooid. De status ervan stelt daarom ook een duurzame `handling` levenscyclus bloot: `started`, gevolgd door precies één van `applied`, `completed_no_action`, `failed` of `cancelled`.
+Agent Events zijn geen publieke webhook-ontvanger. Als de events afkomstig zijn van een provider die zijn webhooks ondertekent, verifieer dan de handtekening in je eigen adapter voordat je ze doorstuurt.
 
-Action-aware bronnen kunnen een `expectedAction` bevatten met een toolnaam en een optionele subset van argumenten. LibreChat rapporteert `applied` alleen wanneer die specifieke generatie is voltooid met door de host waargenomen tool-bewijs dat overeenkomt met het contract; door het model geschreven proza wordt nooit geaccepteerd als bewijs. `fire`-, `steer`- en ongebonden `continue`-leveringen wijzen `expectedAction` af.
+### Event-gestuurde kindagenten [#event-driven-child-agents]
 
-Succesvolle `fire` resultaten bevatten de conversatie- en generatie-identiteit waarop een latere `steer` gebeurtenis zich kan richten.
-
-### Event-Driven Child Agents [#event-driven-child-agents]
-
-Een extern systeem kan een bron-actor binden aan een direct onderliggende Agent, en vervolgens datzelfde onderliggende gesprek voortzetten over verschillende events heen. Gebonden voortzettingen van onderliggende processen zijn automatisch nadat de API-key identiteit, het eigendom van de binding, de ouder-kindrelatie en de autorisatiecontroles voor de Agent zijn geslaagd; er is geen afzonderlijke functie-schakelaar.
-
-Registreer de actor met dezelfde API-sleutel die de latere beurten zal afleveren:
+Om een doorlopend gesprek met een child agent over meerdere gebeurtenissen heen te behouden, bindt u deze eenmalig en stuurt u vervolgens `continue`-gebeurtenissen naar de binding:
 
 ```http
 POST /api/agents/v1/events/bindings
@@ -351,86 +168,72 @@ Content-Type: application/json
 }
 ```
 
-`actorId` kan maximaal 128 tekens bevatten. De parent moet een gewoon Agent-gesprek zijn en de target moet geconfigureerd zijn als een van de directe Subagents van die Agent of als een toegestane self-spawn. Een nieuwe binding retourneert `201`; een idempotente replay retourneert `200`. Beide antwoorden bevatten `id`, `actorId`, `agentId` en `threadId`.
-
-Verstuur latere beurten met de geretourneerde binding ID:
-
-```http
-POST /api/agents/v1/events
-Authorization: Bearer <SAME_REMOTE_AGENTS_API_KEY>
-Idempotency-Key: game-12-ply-17-hanae
-Content-Type: application/json
-
-{
-  "mode": "continue",
-  "bindingId": "evtbind_...",
-  "event": {
-    "id": "game-12-ply-17",
-    "type": "chess.turn.ready",
-    "occurredAt": 1786968000000,
-    "payload": { "gameId": "game-12", "expectedPly": 17 }
-  },
-  "input": "Your clock is running. Read the position and submit one legal move.",
-  "expectedAction": {
-    "tool": "submit_move",
-    "arguments": { "gameId": "game-12" }
-  }
-}
-```
-
-LibreChat lost de child Agent, thread, laatste branch leaf en ordering lane op vanuit de binding onmiddellijk vóór verzending. Door de aanroeper opgegeven target- en ordering-velden kunnen een gebonden continuatie niet omleiden. De `Idempotency-Key` van het verzoek wordt de stabiele publieke identiteit voor die child turn gedurende bezorgingspogingen, generatie-leasing, opgeslagen berichten, live activiteit en een latere HITL-hervatting.
-
-Elke binding heeft een automatische duurzame mailbox. Het volgende event blijft in de wachtrij staan totdat de huidige beurt `applied`, `completed_no_action`, `failed` of `cancelled` bereikt; verschillende bindingen blijven onafhankelijk en kunnen parallel draaien. Het hervatten van een checkpoint wordt alleen geprobeerd voor een compatibele geïnitialiseerde beurt. Als een checkpoint ontbreekt of niet kan worden hersteld, valt LibreChat terug op de duurzame berichtgeschiedenis zonder de controles voor ontvangst, autorisatie of verwachte actie te verzwakken.
-
-Een gebonden actor kan pauzeren voor 'Ask User' of goedkeuring van een tool. LibreChat behoudt de exacte ondertekende onderbreking voordat de lopende actie wordt blootgesteld, en de mailbox van de binding blijft geblokkeerd totdat diezelfde actor-aanroep wordt hervat of afgehandeld. Event Actors vereisen de duurzame MongoDB checkpointer; `type: memory` is niet compatibel. LibreChat onderhandelt over generatieprotocol v2 en selecteert automatisch checkpoint of geschiedenis-voortzetting. Bestaand protocol-v1 werk blijft op het duurzame-geschiedenispad totdat het is afgehandeld. Zie [Generation Protocol Compatibility](/docs/configuration/redis#generation-protocol-compatibility) voor vereisten bij implementaties met gemengde versies.
-
-### Coalescing Observational Events [#coalescing-observational-events]
-
-Bronnen die kunnen aantonen dat verschillende gebonden `continue` events uitwisselbare observaties zijn, kunnen ze dezelfde door de bron gedefinieerde `coalesce.key` geven:
+De ouderconversatie moet een normale agentconversatie zijn, en het doel moet een van de directe subagents van die agent zijn (of de agent zelf, als zelf-spawnen is toegestaan). `actorId` mag maximaal 128 tekens lang zijn. Een nieuwe binding retourneert `201`, en een herhaling retourneert `200`, beide met de binding `id`. Latere beurten verwijzen ernaar:
 
 ```json
 {
   "mode": "continue",
   "bindingId": "evtbind_...",
-  "event": {
-    "id": "championship-7-game-12-move-18",
-    "type": "chess.move.completed",
-    "occurredAt": 1786968000750,
-    "payload": { "gameId": "game-12", "ply": 18 }
-  },
-  "input": "A tournament game advanced.",
-  "coalesce": { "key": "championship-commentary" }
+  "event": { "id": "game-12-ply-17", "type": "chess.turn.ready", "occurredAt": 1786968000000, "payload": { "gameId": "game-12" } },
+  "input": "Your clock is running. Submit one legal move.",
+  "expectedAction": { "tool": "submit_move", "arguments": { "gameId": "game-12" } }
 }
 ```
 
-LibreChat verzamelt compatibele events gedurende maximaal 750 ms, met een maximum van 8 events en 512 KiB aan gecombineerde envelopes. Het child ontvangt één deterministisch batch-document, maar elk bron-event behoudt zijn eigen `Idempotency-Key`, afleveringsrecord en ontvangstbevestiging.
+Elke binding verwerkt één gebeurtenis tegelijk: de volgende wacht totdat de huidige beurt een definitieve verwerkingsstatus heeft, terwijl verschillende bindings parallel draaien. Een gekoppeld kind-item kan pauzeren voor Ask User of goedkeuring van een tool; de latere gebeurtenissen wachten tot iemand in LibreChat antwoordt. Dat vereist de duurzame MongoDB-checkpointer (de standaard). In het bovenliggende gesprek verschijnt elk gekoppeld kind-item als een rij onder het bericht dat de binding bezit, en opent het paneel met subagent-activiteit.
 
-Gebruik coalescing alleen voor niet-actiegerichte observaties. Het wordt geweigerd voor `fire`, `steer`, ongebonden `continue` en leveringen met `expectedAction`; gebruik het niet voor commando's, goedkeuringen, HITL-verzoeken, fences of gebeurtenissen waarvan de individuele timing van belang is.
+Een binding werkt alleen met de API-sleutel, gebruiker en tenant die deze heeft aangemaakt. De childthread blijft uit de chatlijst en is alleen-lezen in de app.
 
-In de geauthenticeerde ouder-conversatie verschijnt elke gekoppelde actor onder het bijbehorende ouderelement. Het Subagent-paneel kan schakelen tussen actors en beurten, eerdere activiteiten laden en een beurt uitvouwen om de volledige gekoppelde activiteit te tonen. Gebeurtenisdetails bevatten het type, de bron, het tijdstip van optreden en de verwachte actie. Zichtbare run-stappen, tools, berichten en redeneermarkeringen zijn inbegrepen, zonder de ruwe redeneertekst. De ouderindex retourneert maximaal 64 child-threads en 20 recente taken per child vanuit een begrensd bronvenster, rapporteert truncatie in plaats van volledigheid te suggereren, en beperkt de respons tot 96 KB. Het is geautoriseerd op basis van ouder, gebruiker en tenant; bindingen, bron-sleutel-ID's, lease-tokens en worker-status zijn niet inbegrepen in de projectie.
+Voor gebeurtenissen die alleen observaties zijn, zoals "een spel is verder gegaan", geef je ze dezelfde `coalesce.key`, en LibreChat batcht er tot 8 van (binnen 750 ms en 512 KiB) tot één beurt. Elke gebeurtenis krijgt nog steeds zijn eigen ontvangstbevestiging. Coalesceer geen commando's, goedkeuringen of iets met een `expectedAction`.
 
-De child thread blijft verborgen voor normale gespreksnavigatie en is alleen-lezen voor menselijke chatroutes, erft het tijdelijke of verloopbeleid van de parent, en is beperkt tot één direct-child niveau. Een binding ID alleen verleent geen toegang; continuations zijn beperkt tot de gebruiker, tenant en API key die deze heeft aangemaakt.
+## Agent Management API [#agent-management-api]
 
-### Losgekoppelde Event Actor-acties [#detached-event-actor-actions]
+De Agent Management API stelt een vertrouwde service in staat om agents en vaardigheden aan te maken, te wijzigen en te verwijderen zonder browsersessie. Deze API is in bèta en gebruikt zijn eigen authenticatie: machine-OIDC-tokens van clients die de beheerder vermeldt onder [`managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi). Elke client is gekoppeld aan één bestaande LibreChat-gebruiker en tenant, en elk verzoek handelt namens die gebruiker, met de rechten en toegang van die gebruiker. Hierdoor wordt niemand een beheerder.
 
-Event Actor-beurten kunnen in aanmerking komende Actions loskoppelen en deze duurzaam voltooien. De levering blijft in de afhandelingslevenscyclus terwijl de Action wordt uitgevoerd; duurzaam terminaal bewijs hervat de oorspronkelijke ondertekende actor-aanroep, en alleen het resulterende, door de host waargenomen tool-bewijs kan voldoen aan `expectedAction`. Replays en concurrerende replica's kunnen niet tweemaal dezelfde gereserveerde Action starten. Als LibreChat niet kan bepalen of een extern neveneffect is begonnen, plaatst het de lancering in quarantaine in plaats van deze blindelings opnieuw te proberen.
+| Methode | Route | Doel |
+| -------- | -------------------------------------------- | ---------------------------------- |
+| `POST` | `/api/agents/v1/agents` | Een agent aanmaken |
+| `GET` | `/api/agents/v1/agents` | Toegankelijke agents weergeven |
+| `GET` | `/api/agents/v1/agents/{id}` | Een agent lezen |
+| `PATCH` | `/api/agents/v1/agents/{id}` | Een agent bijwerken |
+| `DELETE` | `/api/agents/v1/agents/{id}` | Een agent verwijderen |
+| `POST` | `/api/agents/v1/agents/{id}/files` | Een bestand uploaden en koppelen |
+| `GET` | `/api/agents/v1/agents/{id}/files` | Gekoppelde bestanden weergeven |
+| `DELETE` | `/api/agents/v1/agents/{id}/files/{fileId}` | Een bestand ontkoppelen |
+| `GET` | `/api/agents/v1/skills` | Toegankelijke skills weergeven |
+| `POST` | `/api/agents/v1/skills` | Een skill aanmaken |
+| `GET` | `/api/agents/v1/skills/{id}` | Een skill lezen |
+| `PATCH` | `/api/agents/v1/skills/{id}` | Een skill bijwerken |
+| `DELETE` | `/api/agents/v1/skills/{id}` | Een skill verwijderen |
+| `GET` | `/api/agents/v1/skills/{id}/files` | Bestanden van een skill weergeven |
+| `GET` | `/api/agents/v1/skills/{id}/files/{path}` | Een skillbestand lezen |
+| `PUT` | `/api/agents/v1/skills/{id}/files/{path}` | Een skillbestand aanmaken of vervangen |
+| `DELETE` | `/api/agents/v1/skills/{id}/files/{path}` | Een skillbestand verwijderen |
 
-LibreChat schakelt dit interne voltooiingswerk automatisch in wanneer de geselecteerde ingebouwde generatie-opslag ondersteuning hiervoor adverteert. De in-memory opslag voert het opstarten, voltooien en continueren uit in één proces en kan dat werk niet herstellen nadat het proces is afgesloten. Redis-generatiestreams voegen duurzaam herstel na een herstart en replica-overdracht toe. Door de capability beheerde leverings- en herstelrecords blijven onzichtbaar voor oudere claimers tijdens een mixed-version drain; er is geen door de operator beheerde producer-vlag.
+```bash
+curl -X POST https://your-librechat-instance/api/agents/v1/agents \
+  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Release assistant",
+    "provider": "openAI",
+    "model": "gpt-5.6",
+    "instructions": "Prepare concise release notes from verified changes."
+  }'
+```
 
-## Tokengebruik bijhouden [#token-usage-tracking]
+Agentpayloads nemen dezelfde velden als de Agent Builder en weigeren onbekende velden; `model` is verplicht bij het aanmaken. Lijsten accepteren `limit` (1 tot 100, standaard 20) en een `cursor`; wanneer `has_more` true is, geef dan de geretourneerde `after` mee als volgende cursor. Bestandsuploads zijn `multipart/form-data` met één `file` en een `tool_resource` zoals `context`, `file_search` of `execute_code`, onderworpen aan de gebruikelijke uploadlimieten.
 
-Alle API-inferentieverzoeken voor Agents houden het tokengebruik bij ten opzichte van het saldo van de gebruiker wanneer tokenuitgaven zijn geconfigureerd. Zowel streaming- als niet-streaming-antwoorden aggregeren elke gefactureerde primaire-Agent en Subagent modelaanroep in de totalen op het hoogste niveau. Het antwoord bevat ook identiteitsvrije `primary` en `subagent` token-overzichten. Details over cache- en redeneertokens worden opgenomen waar de provider deze rapporteert.
+Skill create neemt `name`, `description`, `body` en optioneel `displayTitle`, `frontmatter`, `category` en `alwaysApply`. Updates moeten de huidige versie van de skill meesturen als `expectedVersion`, zodat twee schrijvers elkaars wijzigingen niet stilzwijgend kunnen overschrijven.
 
-## Roadmap [#roadmap]
+Fouten gebruiken de codes `invalid_request`, `not_found`, `permission_denied`, `conflict` en `internal_error`. Een resource waar je geen toegang toe hebt, kan worden teruggegeven als `not_found`. Onjuiste of ontbrekende inloggegevens geven `401` terug.
 
-- **Open Responses als primaire interface**: We zijn van plan het Open Responses-endpoint uit te breiden met volledige ondersteuning voor agentische lussen, toolorkestratie en streaming semantische gebeurtenissen.
-- **Anthropic Messages API**: We kunnen in de toekomst mogelijk ondersteuning toevoegen voor het Anthropic Messages API-formaat als aanvullende interface.
+Indien de beheerder dit inschakelt, wordt een OpenAPI-beschrijving van de beheerroutes aangeboden op `/api/openapi.json`, met interactieve documentatie op `/api/docs`. Deze dekt geen inferentie of events. Zie [`openapi`](/docs/configuration/librechat_yaml/object_structure/config#openapi).
 
-## Gerelateerde documentatie [#related-documentation]
+## Gebruik en facturering [#usage-and-billing]
 
-- [Agents](/docs/features/agents): Agents aanmaken en configureren
-- [Subagents](/docs/features/subagents): Directe child-Agents configureren
-- [Agents Endpoint Configuration](/docs/configuration/librechat_yaml/object_structure/agents): Event-runtime- en authenticatie-instellingen
-- [Interfaceconfiguratie: remoteAgents](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents): Toegangscontroleinstellingen
-- [Tokengebruik](/docs/configuration/token_usage): Configureren van tokenuitgaven en saldo
-- [Open Responses-specificatie](https://www.openresponses.org/): De open inferentiestandaard
+API-verzoeken tellen net zo goed mee voor je tokensaldo als chats in de app. De gebruikstotalen in het antwoord bevatten ook subagent-aanroepen, met een afzonderlijke `primary`- en `subagent`-uitsplitsing, plus cache- en redeneertokens waar de provider die rapporteert. Zie [Tokengebruik](/docs/configuration/token_usage).
+
+## Setup [#setup]
+
+De Agents API is standaard uitgeschakeld voor gewone gebruikers totdat een beheerder de Remote Agents-rechten aan hun rol toekent, hetzij in het [Admin Panel](/docs/features/admin_panel), hetzij met [`interface.remoteAgents`](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents). Beheerders hebben deze rechten standaard. API-sleutelauthenticatie is standaard ingeschakeld; om tokens van je eigen OIDC-provider te accepteren in plaats van of naast sleutels, zie [`remoteApi`](/docs/configuration/librechat_yaml/object_structure/agents#remoteapi). De Management API wordt afzonderlijk geconfigureerd onder [`managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi), en instellingen voor eventbezorging staan onder [`eventDriven`](/docs/configuration/librechat_yaml/object_structure/agents#eventdriven).

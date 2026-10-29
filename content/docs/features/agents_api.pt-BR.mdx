@@ -1,294 +1,121 @@
 ---
 title: API de Agentes (Beta)
-icon: Plug
+icon: Webhook
 description: >-
-  Execute agentes do LibreChat e entregue eventos autenticados por meio de APIs
-  programáticas
+  Chame seus agentes do LibreChat a partir de scripts e outros aplicativos,
+  envie eventos a eles a partir de outros sistemas e gerencie agentes e skills a
+  partir de um serviço confiável.
 ---
 
-<Callout type="warning" title="Recurso Beta">
-A Agents API está atualmente em beta. Endpoints, formatos de solicitação/resposta e comportamento podem mudar à medida que iteramos em direção a uma versão estável.
+A API de Agentes permite que código externo ao LibreChat converse com seus agentes. Aponte qualquer SDK da OpenAI para sua instância, passe o ID de um agente como o modelo e você terá toda a configuração do agente (instruções, ferramentas, arquivos) por trás de uma API conhecida. Use-a para integrar um agente a um script, a um job de CI ou a outro produto.
+
+Existem três partes:
+
+- **Inferência**: Chat Completions e Open Responses, autenticados com uma chave de API (ou com seus próprios tokens OIDC, caso o administrador tenha configurado isso).
+- **Eventos de Agente**: entregue trabalho a um agente a partir de outro sistema, como um webhook, e acompanhe se ele foi concluído. Somente chaves de API.
+- **Gerenciamento de Agentes**: crie e edite agentes e skills a partir de um serviço confiável, usando tokens OIDC de máquina.
+
+<Callout type="warning" title="Beta">
+  Endpoints, formatos de requisição e respostas ainda podem mudar entre versões.
 </Callout>
 
-O LibreChat expõe agentes a aplicativos, scripts e serviços externos por meio de APIs de inferência e entrega de eventos.
+## Obtenha uma API key [#get-an-api-key]
 
-## Visão geral [#overview]
+Abra **Configurações**, acesse **Dados e Privacidade** e localize **Chaves de API de Agentes** em **Chaves de API**. Clique em **Gerenciar** e, em seguida, em **Criar Chave de API**, dê um nome a ela, escolha uma validade (de 7 dias a 1 ano, ou sem expiração) e copie a chave imediatamente: ela é exibida apenas uma vez.
 
-A API de Agents fornece duas interfaces de inferência, entrega de eventos autenticada e rotas de gerenciamento beta:
+<ThemeImage
+  light="/images/features/agents_api/api-keys-light.png"
+  dark="/images/features/agents_api/api-keys-dark.png"
+  alt="Chaves de API do Agente em Configurações, Dados e Privacidade, listando duas chaves com sua data de expiração e última utilização"
+/>
 
-- **Conclusões de Chat compatíveis com OpenAI**: `POST /api/agents/v1/chat/completions`
-- **API de Respostas Abertas**: `POST /api/agents/v1/responses`
-- **Eventos de Agente**: `POST /api/agents/v1/events`
-- **Gerenciamento de Agentes**: `/api/agents/v1/agents`
-- **Gerenciamento de Skills**: `/api/agents/v1/skills`
+Uma chave age como você. Qualquer coisa que você possa acessar pela API, quem tiver a chave também poderá acessar, por isso exclua as chaves que você não usa mais. Excluir uma chave interrompe imediatamente as aplicações que a estão usando.
 
-As interfaces de inferência suportam autenticação por API-key, autenticação OIDC opcional e respostas em streaming. Os Agent Events usam autenticação por API-key de Remote Agents para que o LibreChat possa vincular cada entrega a uma identidade de origem estável. As rotas de gerenciamento, por outro lado, usam uma lista de permissões de implantação que vincula um cliente de máquina OIDC a um usuário e tenant existentes do LibreChat.
+Se você não vir a seção, seu perfil não recebeu acesso à API de Agents.
 
-O LibreChat está adotando [Open Responses](https://www.openresponses.org/) como seu framework de API principal para servir agentes. Embora o endpoint Chat Completions forneça compatibilidade retroativa com ferramentas existentes compatíveis com OpenAI, o endpoint Open Responses representa a direção futura.
+## Quais agentes você pode chamar [#which-agents-you-can-call]
 
-## Habilitando a Agents API [#enabling-the-agents-api]
+Você pode chamar agentes que você possui ou que são compartilhados com você. Para o agente de qualquer outra pessoa, o proprietário precisa conceder a você acesso pelo botão **Acesso Remoto** (o ícone de globo) no rodapé do Construtor de Agentes. Isso é separado do compartilhamento normal: poder conversar com um agente no LibreChat não permite que você o chame pela API.
 
-A Agents API está protegida pela configuração de interface `remoteAgents`. Todas as permissões são definidas como `false` por padrão.
+Você precisa do ID do agente, que é exibido em **Configurações avançadas** no construtor, com um botão de copiar. `GET /api/agents/v1/models` lista os agentes que sua chave pode chamar, e `GET /api/agents/v1/models/{model}` retorna um deles.
 
-```yaml filename="librechat.yaml"
-interface:
-  remoteAgents:
-    use: true
-    create: true
-```
+## Chat Completions [#chat-completions]
 
-Consulte [Configuração da Interface: remoteAgents](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents) para todas as opções disponíveis.
+`POST /api/agents/v1/chat/completions` segue o formato do OpenAI Chat Completions, portanto clientes OpenAI existentes funcionam apenas alterando a URL base:
 
-**Nota:** Usuários administradores têm todas as permissões de agente remoto habilitadas por padrão.
-
-### Especificação OpenAPI e Documentação Interativa [#openapi-specification-and-interactive-docs]
-
-O LibreChat pode servir a especificação pública da Agents API em `/api/openapi.json` e a documentação interativa do Swagger UI em `/api/docs`. Ambas as rotas estão desativadas por padrão. Ative-as com a configuração de nível superior `openapi`:
-
-```yaml filename="librechat.yaml"
-openapi:
-  enabled: true
-```
-
-A especificação abrange apenas as rotas de gerenciamento de Agentes e de gerenciamento de Skills. As rotas de inferência (Chat Completions e Open Responses) e de Eventos de Agentes não fazem parte dela. Mantenha as rotas desabilitadas, a menos que sua implantação pretenda expor a documentação da API.
-
-## Gerenciamento de Chaves de API [#api-key-management]
-
-Assim que `remoteAgents.use` e `remoteAgents.create` estiverem habilitados, os usuários poderão gerar chaves de API a partir da interface do LibreChat. Essas chaves autenticam as solicitações para a API de Agents.
-
-## Autenticação [#authentication]
-
-A Agents API suporta dois métodos de autenticação que podem ser usados de forma independente ou conjunta.
-
-### Chave de API [#api-key]
-
-A autenticação por chave de API está habilitada por padrão. Gere chaves de API a partir da interface do LibreChat assim que `remoteAgents.use` e `remoteAgents.create` estiverem habilitados.
-
-```bash
-Authorization: Bearer <YOUR_API_KEY>
-```
-
-### OIDC Bearer Token [#oidc-bearer-token]
-
-Para cenários máquina-a-máquina onde sua infraestrutura já possui um provedor OIDC, você pode autenticar diretamente com tokens OIDC Bearer sem uma chave de API do LibreChat.
-
-Configure a autenticação OIDC no `librechat.yaml`:
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    remoteApi:
-      auth:
-        apiKey:
-          enabled: false
-        oidc:
-          enabled: true
-          issuer: https://auth.example.com/realms/myrealm
-          # jwksUri is optional and auto-discovered from issuer if omitted
-          audience: my-client-id
-```
-
-Em seguida, chame a API com seu token de acesso OIDC:
-
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/responses \
-  -H "Authorization: Bearer YOUR_OIDC_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "agent_abc123", "input": "Hello!"}'
-```
-
-<Callout type="info">
-  O token OIDC deve pertencer a um usuário que já existe no LibreChat. A correspondência usa a claim `sub` primeiro e, em seguida, recorre a `email`, `preferred_username` ou `upn`.
-</Callout>
-
-Veja [Agents Endpoint - remoteApi](/docs/configuration/librechat_yaml/object_structure/agents#remoteapi) para todas as opções de configuração.
-
-<Callout type="warning" title="Eventos de Agente exigem uma chave de API">
-  A autenticação apenas por OIDC não é suportada para os endpoints de Agent Events. Use uma chave de API de Remote Agents ao criar bindings, enfileirar eventos e verificar o status de entrega.
-</Callout>
-
-## API de Gerenciamento de Agentes [#agent-management-api]
-
-A API de Gerenciamento de Agentes em beta permite que um serviço gerencie Agentes e seus recursos anexados sem uma sessão de navegador. Ela é autenticada independentemente da inferência e dos Eventos de Agente: apenas tokens de máquina OIDC configurados em [`endpoints.agents.managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi) são aceitos.
-
-Cada cliente OAuth configurado está vinculado a um `userId` e `tenantId` existentes no LibreChat. Após a verificação do token, cada solicitação é executada como esse usuário e mantém as capacidades de função atuais do usuário, ACLs de Agente e Skill, restrições de provedor, concessões de ferramentas, limites de arquivo e isolamento de tenant. Uma vinculação de cliente não torna o usuário um administrador nem concede acesso a recursos que o usuário não poderia gerenciar de outra forma.
-
-### Rotas de Agentes [#agent-routes]
-
-| Método   | Rota                                       | Propósito                                    |
-| -------- | ------------------------------------------ | -------------------------------------------- |
-| `POST`   | `/api/agents/v1/agents`                    | Criar um Agente                              |
-| `GET`    | `/api/agents/v1/agents`                    | Listar Agentes acessíveis                    |
-| `GET`    | `/api/agents/v1/agents/{id}`               | Ler um Agente acessível                      |
-| `PATCH`  | `/api/agents/v1/agents/{id}`               | Atualizar um Agente                          |
-| `DELETE` | `/api/agents/v1/agents/{id}`               | Excluir um Agente                            |
-| `POST`   | `/api/agents/v1/agents/{id}/files`         | Fazer upload e anexar um arquivo de recurso do Agente |
-| `GET`    | `/api/agents/v1/agents/{id}/files`         | Listar os arquivos anexados acessíveis do Agente |
-| `DELETE` | `/api/agents/v1/agents/{id}/files/{fileId}` | Remover um arquivo anexado do Agente         |
-
-Os payloads de criação e atualização de Agent usam os mesmos campos suportados externamente que o Agent Builder e rejeitam campos de nível superior desconhecidos. A criação requer um `model`; a atualização aceita apenas os campos fornecidos. As respostas expõem a configuração do Agent suportada, além de `id`, `provider`, `model` anulável, `version`, `createdAt` e `updatedAt`, sem campos de propriedade de persistência.
-
-As listas aceitam `limit` de 1 a 100, com padrão de 20, e um `cursor` opaco. Quando `has_more` for verdadeiro, passe o valor `after` retornado como o próximo cursor; não decodifique nem construa cursores nos clientes.
-
-```bash
-curl https://your-librechat-instance/api/agents/v1/agents?limit=20 \
-  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN"
-```
-
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/agents \
-  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Release assistant",
-    "provider": "openAI",
-    "model": "gpt-5.6",
-    "instructions": "Prepare concise release notes from verified changes."
-  }'
-```
-
-O upload de arquivos utiliza `multipart/form-data` com um `file` e um valor de `tool_resource` como `context`, `file_search` ou `execute_code`. O LibreChat aplica verificações de capacidade de implantação, concessão de função, limite de taxa de upload, por arquivo, contagem de arquivos e tamanho agregado antes de anexar o recurso. Remover um arquivo requer acesso de edição ao Agent e não enfraquece as regras de autorização de arquivo subjacentes.
-
-### Rotas de Habilidades [#skill-routes]
-
-| Método  | Rota                                                 | Finalidade                            |
-| ------- | ---------------------------------------------------- | ------------------------------------- |
-| `GET`    | `/api/agents/v1/skills`                              | Listar as Skills acessíveis           |
-| `POST`   | `/api/agents/v1/skills`                              | Criar uma Skill                       |
-| `GET`    | `/api/agents/v1/skills/{id}`                         | Ler uma Skill acessível               |
-| `PATCH`  | `/api/agents/v1/skills/{id}`                         | Atualizar uma Skill                   |
-| `DELETE` | `/api/agents/v1/skills/{id}`                         | Excluir uma Skill                     |
-| `GET`    | `/api/agents/v1/skills/{id}/files`                   | Listar os arquivos da Skill           |
-| `GET`    | `/api/agents/v1/skills/{id}/files/{relativePath}`    | Ler um arquivo da Skill               |
-| `PUT`    | `/api/agents/v1/skills/{id}/files/{relativePath}`    | Criar ou substituir um arquivo suportado |
-| `DELETE` | `/api/agents/v1/skills/{id}/files/{relativePath}`    | Excluir um arquivo da Skill           |
-
-Create aceita `name`, `description`, `body` e, opcionalmente, `displayTitle`, `frontmatter`, `category` e `alwaysApply`. Update exige um `expectedVersion` inteiro positivo (a versão atual da Skill) mais pelo menos um campo a ser alterado, que pode incluir `body` e `frontmatter`. Ambos rejeitam campos desconhecidos.
-
-As operações de Skill são limitadas às Skills visíveis ao usuário vinculado. Leituras exigem acesso à Skill, enquanto metadados ou gravações de arquivos exigem as permissões correspondentes de edição e autoria de Skill. Os caminhos são normalizados abaixo da raiz da Skill; travessia, arquivos não suportados e conteúdo com tamanho excessivo são rejeitados.
-
-### Erros e Autenticação [#errors-and-authentication]
-
-As respostas de gerenciamento utilizam erros estruturados com códigos `invalid_request`, `not_found`, `permission_denied`, `conflict` ou `internal_error`. Falhas de autorização de recursos podem ser retornadas como `not_found` para que os solicitantes não possam sondar IDs inacessíveis.
-
-Tokens de máquina devem estar dentro do prazo de validade, corresponder ao emissor configurado, identificar um cliente na lista de permissões através de `azp` ou `client_id` e satisfazer a regra de assunto configurada. Por padrão, os tokens também devem corresponder ao público (audience) configurado. Para provedores como o Amazon Cognito, que emitem tokens de acesso de máquina com `client_id` em vez de `aud`, defina `tokenUse: access`, omita `audience` e exija o escopo OAuth esperado com `requiredScopes`. Configurações ausentes ou credenciais inválidas retornam `401`; uma conta vinculada que esteja em processo de exclusão retorna `409`. Consulte [`managementApi.auth.oidc`](/docs/configuration/librechat_yaml/object_structure/agents#managementapiauthoidc) e [`managementApi.auth.clients`](/docs/configuration/librechat_yaml/object_structure/agents#managementapiauthclients) para as regras completas de reivindicação (claim) e vinculação.
-
-## Endpoints [#endpoints]
-
-### Chat Completions (compatível com OpenAI) [#chat-completions-openai-compatible]
-
-```
-POST /api/agents/v1/chat/completions
-```
-
-Use qualquer SDK compatível com OpenAI apontando-o para sua instância do LibreChat. O parâmetro `model` corresponde a um ID de agente.
-
-**Exemplo com curl:**
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "agent_abc123",
-    "messages": [
-      {"role": "user", "content": "Hello, what can you help me with?"}
-    ],
-    "stream": true
-  }'
-```
-
-**Exemplo com OpenAI SDK (Python):**
 ```python
 from openai import OpenAI
 
 client = OpenAI(
     base_url="https://your-librechat-instance/api/agents/v1",
-    api_key="YOUR_API_KEY"
+    api_key="YOUR_API_KEY",
 )
 
-response = client.chat.completions.create(
+stream = client.chat.completions.create(
     model="agent_abc123",
-    messages=[{"role": "user", "content": "Hello!"}],
-    stream=True
+    messages=[{"role": "user", "content": "Summarize yesterday's open tickets."}],
+    stream=True,
 )
 
-for chunk in response:
-    print(chunk.choices[0].delta.content, end="")
+for chunk in stream:
+    print(chunk.choices[0].delta.content or "", end="")
 ```
 
-### Listar Modelos [#list-models]
-
-```
-GET /api/agents/v1/models
-```
-
-Retorna os agentes disponíveis como modelos. Útil para descobrir quais agentes estão acessíveis com sua chave de API.
-
-```
-GET /api/agents/v1/models/{model}
-```
-
-Retorna um único agente como um objeto de modelo.
-
-### API de Respostas Abertas [#open-responses-api]
-
-```
-POST /api/agents/v1/responses
-```
-
-O endpoint Open Responses segue a [especificação Open Responses](https://www.openresponses.org/), um padrão de inferência aberto iniciado pela OpenAI e construído pela comunidade de IA de código aberto. Ele foi projetado para fluxos de trabalho agenticos com suporte nativo para raciocínio, uso de ferramentas, saídas estruturadas e streaming de eventos semânticos.
+A mesma requisição com curl:
 
 ```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/responses \
+curl https://your-librechat-instance/api/agents/v1/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "agent_abc123",
-    "input": "What is the weather today?"
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true
   }'
 ```
 
-Rotas relacionadas:
+## Respostas Abertas [#open-responses]
 
-- `GET /api/agents/v1/responses/models` lista os agentes disponíveis por meio da API de Responses.
-- `GET /api/agents/v1/responses/{id}` recupera uma resposta armazenada pelo ID.
+`POST /api/agents/v1/responses` implementa a especificação [Open Responses](https://www.openresponses.org/), que foi criada para cargas de trabalho de agentes: raciocínio, chamadas de ferramentas e eventos em streaming fazem parte do formato, e não são adicionados posteriormente. Esta é a interface na qual o LibreChat está sendo construído daqui para frente, por isso prefira-a em novas integrações.
 
-#### Ferramentas de Função Executadas pelo Chamador [#caller-executed-function-tools]
+```bash
+curl https://your-librechat-instance/api/agents/v1/responses \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "agent_abc123", "input": "What changed in the last release?"}'
+```
 
-O endpoint Open Responses aceita ferramentas `function` padrão fornecidas pelo chamador. O LibreChat expõe essas definições ao modelo, mas não as executa. Quando o modelo seleciona uma, a resposta contém um item de saída `function_call` para o chamador executar.
+`GET /api/agents/v1/responses/{id}` retorna uma resposta armazenada, e `GET /api/agents/v1/responses/models` lista os agentes disponíveis aqui.
 
-Para continuar, envie uma nova solicitação cujo `input` repita o item `function_call` retornado, seguido por um item `function_call_output` correspondente. Esta transferência é sem estado: ela não cria uma execução suspensa, e o `previous_response_id` por si só não pode substituir a troca de ferramentas repetida.
+### Suas próprias ferramentas de função [#your-own-function-tools]
+
+Você pode passar ferramentas `function` padrão em uma requisição Responses. O LibreChat as exibe ao modelo, mas não as executa: quando o modelo escolhe uma delas, a resposta contém um item `function_call`, e você mesmo executa a função. Para continuar, envie uma nova requisição cujo `input` repita esse item `function_call`, seguido de um `function_call_output` com o mesmo `call_id`:
 
 ```json
 {
   "model": "agent_abc123",
   "input": [
-    {
-      "type": "function_call",
-      "call_id": "call_abc123",
-      "name": "lookup_order",
-      "arguments": "{\"order_id\":\"A-42\"}"
-    },
-    {
-      "type": "function_call_output",
-      "call_id": "call_abc123",
-      "output": "{\"status\":\"shipped\"}"
-    }
+    { "type": "function_call", "call_id": "call_abc123", "name": "lookup_order", "arguments": "{\"order_id\":\"A-42\"}" },
+    { "type": "function_call_output", "call_id": "call_abc123", "output": "{\"status\":\"shipped\"}" }
   ]
 }
 ```
 
-Os nomes das ferramentas do chamador (caller tool) podem conter letras, números, sublinhados e hifens. Os nomes devem ser únicos e não podem substituir uma ferramenta fornecida pelo servidor. Uma ferramenta executada pelo chamador deve ser a única ferramenta selecionada em seu turno; se o modelo misturá-la com ferramentas executadas pelo servidor, o LibreChat solicitará que o modelo tente novamente a ferramenta do chamador isoladamente.
+Nada é mantido aberto entre as duas requisições, e apenas `previous_response_id` não é suficiente; é preciso repetir a chamada e a sua saída. Os nomes das ferramentas podem usar letras, números, sublinhados e hífens, devem ser únicos e não podem sobrepor uma das ferramentas próprias do agente. Um turno que chama uma das suas ferramentas não pode, ao mesmo tempo, chamar as ferramentas do agente; o modelo é solicitado a tentar novamente.
 
-Para ferramentas de Agente executadas pelo LibreChat, ambos os endpoints de inferência headless aplicam uma política habilitada de [`endpoints.agents.toolApproval`](/docs/configuration/librechat_yaml/object_structure/agents#toolapproval), incluindo `deny`, `ask` e hooks programáticos. Essas chamadas não possuem um canal interativo de aprovação/retomada: `deny` e `ask` bloqueiam a ferramenta em vez de abrir um prompt de aprovação. Configure permissões explícitas apenas para ferramentas que o cliente da API deve ser capaz de executar sem supervisão; quando a política está desabilitada, seus hooks de aprovação não são executados. Ferramentas de função executadas pelo chamador permanecem sob responsabilidade do chamador.
+### Aprovação de ferramentas pela API [#tool-approval-over-the-api]
+
+Se o seu administrador exigir aprovação para algumas ferramentas, as chamadas de API não podem parar para pedir a confirmação de ninguém. Ferramentas que exigiriam aprovação, ou que forem negadas, são bloqueadas em vez disso. Os administradores devem permitir explicitamente as ferramentas que um cliente não supervisionado deve executar.
 
 ## Eventos de Agente [#agent-events]
 
-Agent Events permitem que um controlador autenticado ou adaptador de origem entregue trabalho durável a um Agent. A entrega de eventos é uma funcionalidade beta e seu comportamento de solicitação, resposta e tempo de execução pode mudar.
+Agent Events permitem que outro sistema delegue trabalho a um agente e, depois, consulte o que aconteceu. Este recurso está em beta. Os eventos usam sua chave de API de Agentes, que identifica você e a origem; configurações somente com OIDC não podem utilizá-los. Eles também possuem seu próprio limite de taxa, [`rateLimits.agentEvents`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits).
 
-Os endpoints usam o usuário autenticado, o tenant e a API key; o Agent de destino deve estar visível para esse usuário sob as permissões existentes de Remote Agents. As solicitações de Agent Event também usam o bucket dedicado [`rateLimits.agentEvents`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits).
+Um evento chega em um de três modos:
 
-### Entregar um Evento [#deliver-an-event]
+- `fire` inicia uma nova conversa com o agente.
+- `continue` adiciona um turno a um agente filho que você vinculou anteriormente (veja abaixo).
+- `steer` adiciona orientações a uma execução que ainda está em andamento, identificada pela conversa e pela geração retornadas por um `fire`.
 
 ```http
 POST /api/agents/v1/events
@@ -310,32 +137,22 @@ Content-Type: application/json
 }
 ```
 
-Envie exatamente um cabeçalho `Idempotency-Key` e reutilize-o ao tentar novamente a mesma entrega de evento de origem para destino. A chave deve conter de 1 a 256 letras, números ou os caracteres `._~:/+=-`. A reutilização de uma chave com um conteúdo de entrega diferente retornará um conflito.
+Toda requisição precisa de uma única `Idempotency-Key` (de 1 a 256 letras, números ou `._~:/+=-`). Reutilize-a ao tentar novamente a mesma entrega; reutilizá-la para conteúdo diferente é um conflito. O LibreChat define a origem do evento a partir da sua chave de API e ignora qualquer origem que você enviar. O payload é armazenado, portanto mantenha segredos fora dele. Use `orderingKey` quando eventos sobre a mesma coisa precisarem ser tratados em ordem.
 
-O chamador fornece o `id`, `type`, `occurredAt` e o `payload` higienizado do evento. O LibreChat substitui qualquer `event.source` fornecido pelo chamador pela identidade da API key autenticada e deriva o usuário, tenant, ID da requisição e o tempo de recebimento. Não coloque credenciais ou segredos de transporte nos payloads de eventos, pois as entregas aceitas são persistidas.
-
-`orderingKey` é opcional. Use um valor estável quando entregas de fontes diferentes precisarem permanecer ordenadas para o mesmo recurso.
-
-Uma solicitação bem-sucedida retorna `202 Accepted`, um `id` de entrega opaco, seu status atual e um cabeçalho `Location`. Faça o polling dessa localização:
+A resposta é `202 Accepted` com um ID de entrega e um `Location` para consultar com a mesma chave:
 
 ```http
 GET /api/agents/v1/events/{delivery_id}
 Authorization: Bearer <SAME_REMOTE_AGENTS_API_KEY>
 ```
 
-A entrega pode ser `pending`, `leased`, `succeeded` ou `dead`. A resposta de status inclui tentativas e carimbos de data/hora, além de um resultado ou erro público quando finalizada; ela não expõe o payload armazenado, a chave de ordenação, o histórico de novas tentativas ou a identidade do worker. O acesso ao status é limitado ao mesmo usuário, tenant e origem da API key.
+Uma entrega pode estar `pending`, `leased`, `succeeded` ou `dead`. Para um `continue` vinculado, `succeeded` significa apenas que o turno foi iniciado. Seu status de `handling` then passa de `started` para um dos seguintes: `applied`, `completed_no_action`, `failed` ou `cancelled`. Se você enviar um `expectedAction` (o nome de uma ferramenta e, opcionalmente, alguns de seus argumentos), `applied` significa que o LibreChat viu essa ferramenta sendo chamada com argumentos correspondentes; o que o modelo diz em texto não conta.
 
-Para um `continue` vinculado, `succeeded` significa que o turno do Agent foi admitido, não que o trabalho solicitado foi concluído. Seu status, portanto, também expõe um ciclo de vida de `handling` durável: `started`, seguido por exatamente um dos seguintes: `applied`, `completed_no_action`, `failed` ou `cancelled`.
+Os eventos de agentes não são um receptor de webhooks público. Se os eventos vierem de um provedor que assina seus webhooks, verifique a assinatura no seu próprio adaptador antes de encaminhá-los.
 
-Fontes com reconhecimento de ação podem incluir uma `expectedAction` com um nome de ferramenta e um subconjunto opcional de argumentos. O LibreChat relata `applied` apenas quando essa geração exata termina com evidências de ferramenta observadas pelo host que correspondem ao contrato; textos criados pelo modelo nunca são aceitos como prova. Entregas do tipo `fire`, `steer` e `continue` não vinculadas rejeitam `expectedAction`.
+### Agentes filhos orientados a eventos [#event-driven-child-agents]
 
-Resultados `fire` bem-sucedidos incluem a identidade da conversa e da geração que um evento `steer` posterior pode direcionar.
-
-### Agentes Filhos Orientados a Eventos [#event-driven-child-agents]
-
-Um sistema externo pode vincular um ator de origem a um Agent filho direto e, em seguida, continuar essa mesma conversa do filho através de eventos. As continuações de filhos vinculados são automáticas após a verificação bem-sucedida da identidade da API-key, da propriedade da vinculação, do relacionamento pai e da autorização do Agent; não há um recurso de alternância separado.
-
-Registre o ator com a mesma API key que fornecerá seus turnos subsequentes:
+Para manter uma conversa contínua com um agente filho ao longo de muitos eventos, vincule-o uma única vez e, em seguida, envie eventos `continue` para esse vínculo:
 
 ```http
 POST /api/agents/v1/events/bindings
@@ -351,86 +168,72 @@ Content-Type: application/json
 }
 ```
 
-`actorId` pode conter até 128 caracteres. O pai deve ser uma conversa de Agent comum, e o destino deve estar configurado como um dos Subagents diretos daquele Agent ou um self-spawn permitido. Uma nova vinculação retorna `201`; uma repetição idempotente retorna `200`. Ambas as respostas incluem `id`, `actorId`, `agentId` e `threadId`.
-
-Envie turnos posteriores com o binding ID retornado:
-
-```http
-POST /api/agents/v1/events
-Authorization: Bearer <SAME_REMOTE_AGENTS_API_KEY>
-Idempotency-Key: game-12-ply-17-hanae
-Content-Type: application/json
-
-{
-  "mode": "continue",
-  "bindingId": "evtbind_...",
-  "event": {
-    "id": "game-12-ply-17",
-    "type": "chess.turn.ready",
-    "occurredAt": 1786968000000,
-    "payload": { "gameId": "game-12", "expectedPly": 17 }
-  },
-  "input": "Your clock is running. Read the position and submit one legal move.",
-  "expectedAction": {
-    "tool": "submit_move",
-    "arguments": { "gameId": "game-12" }
-  }
-}
-```
-
-O LibreChat resolve o Agent filho, thread, a última folha de ramificação e a linha de ordenação a partir da vinculação imediatamente antes do despacho. Os campos de destino e ordenação fornecidos pelo chamador não podem redirecionar uma continuação vinculada. A `Idempotency-Key` da solicitação torna-se a identidade pública estável para aquele turno filho durante novas tentativas de entrega, leasing de geração, mensagens persistidas, atividade ao vivo e uma retomada HITL posterior.
-
-Cada binding possui uma caixa de correio durável automática. Seu próximo evento permanece na fila até que o turno atual atinja `applied`, `completed_no_action`, `failed` ou `cancelled`; bindings diferentes permanecem independentes e podem ser executados em paralelo. A continuação do checkpoint é tentada apenas para um turno inicializado compatível. Se um checkpoint estiver ausente ou não puder ser restaurado, o LibreChat recorre ao histórico de mensagens duráveis sem enfraquecer as verificações de recebimento, autorização ou ação esperada.
-
-Um ator vinculado pode pausar para "Ask User" (perguntar ao usuário) ou aprovação de ferramenta. O LibreChat persiste a suspensão assinada exata antes de expor a ação pendente, e a caixa de correio da vinculação permanece bloqueada até que essa mesma invocação do ator seja retomada ou concluída. Event Actors exigem o checkpointer durável do MongoDB; `type: memory` não é compatível. O LibreChat negocia o protocolo de geração v2 e seleciona automaticamente o checkpoint ou a continuação do histórico. O trabalho existente no protocolo v1 permanece no caminho de histórico durável até ser esvaziado. Consulte [Generation Protocol Compatibility](/docs/configuration/redis#generation-protocol-compatibility) para requisitos de implantação de versões mistas.
-
-### Coalescing Observational Events [#coalescing-observational-events]
-
-Fontes que podem provar que vários eventos `continue` vinculados são observações intercambiáveis podem atribuir a eles a mesma `coalesce.key` definida pela fonte:
+The parent must be a normal agent conversation, and the target must be one of that agent's direct subagents (or the agent itself, if self-spawn is allowed). `actorId` is up to 128 characters. A new binding returns `201` and a replay returns `200`, both with the binding `id`. Later turns reference it:
 
 ```json
 {
   "mode": "continue",
   "bindingId": "evtbind_...",
-  "event": {
-    "id": "championship-7-game-12-move-18",
-    "type": "chess.move.completed",
-    "occurredAt": 1786968000750,
-    "payload": { "gameId": "game-12", "ply": 18 }
-  },
-  "input": "A tournament game advanced.",
-  "coalesce": { "key": "championship-commentary" }
+  "event": { "id": "game-12-ply-17", "type": "chess.turn.ready", "occurredAt": 1786968000000, "payload": { "gameId": "game-12" } },
+  "input": "Your clock is running. Submit one legal move.",
+  "expectedAction": { "tool": "submit_move", "arguments": { "gameId": "game-12" } }
 }
 ```
 
-O LibreChat coleta eventos compatíveis por até 750 ms, com no máximo 8 eventos e 512 KiB de envelopes combinados. O filho recebe um documento de lote determinístico, mas cada evento de origem mantém sua própria `Idempotency-Key`, registro de entrega e recibo.
+Cada binding processa um evento por vez: o próximo aguarda até que o turno atual tenha um status final de tratamento, enquanto bindings diferentes são executados em paralelo. Um filho vinculado pode pausar para Ask User ou para aprovação de ferramenta; seus eventos posteriores aguardam até que alguém responda no LibreChat. Isso requer o checkpointer durável do MongoDB (o padrão). Na conversa principal, cada filho vinculado aparece como uma linha abaixo da mensagem que possui o binding e abre o painel de atividade do subagente.
 
-Use coalescing apenas para observações que não exigem ação. Ele é rejeitado para `fire`, `steer`, `continue` não vinculado e entregas com `expectedAction`; não o utilize para comandos, aprovações, solicitações HITL, cercas (fences) ou eventos cujo tempo individual seja importante.
+Um binding só funciona com a chave de API, o usuário e o tenant que o criaram. A thread filha permanece fora da lista de chats e é somente leitura no aplicativo.
 
-Na conversa pai autenticada, cada ator vinculado aparece abaixo da mensagem pai proprietária. O painel Subagent pode alternar entre atores e turnos, carregar atividades anteriores e expandir um turno para mostrar sua atividade vinculada completa. Os detalhes do evento incluem o tipo, a origem, o horário de ocorrência e a ação esperada. Etapas de execução visíveis, ferramentas, mensagens e marcadores de raciocínio são incluídos sem o texto de raciocínio bruto. O índice pai retorna no máximo 64 threads filhas e 20 tarefas recentes por filha a partir de uma janela de origem vinculada, relata truncamento em vez de implicar completude e limita a resposta a 96 KB. Ele é autorizado por pai, usuário e locatário; vinculações, IDs de chave de origem, tokens de concessão e estado do worker não estão incluídos na projeção.
+Para eventos que são apenas observações, como "um jogo avançou", atribua a eles o mesmo `coalesce.key` e o LibreChat agrupa até 8 deles (dentro de 750 ms e 512 KiB) em um único turno. Cada evento ainda recebe seu próprio recibo. Não agrupe comandos, aprovações nem nada que tenha um `expectedAction`.
 
-O thread filho permanece oculto da navegação normal de conversas e é somente leitura para rotas de chat humanas, herda a política temporária ou de expiração do pai e é limitado a um nível de filho direto. Um ID de vinculação por si só não concede acesso; as continuações são limitadas ao usuário, locatário (tenant) e chave de API que as criou.
+## API de Gerenciamento de Agentes [#agent-management-api]
 
-### Ações do Ator de Evento Desanexado [#detached-event-actor-actions]
+A API de Gerenciamento de Agentes permite que um serviço confiável crie, altere e exclua agentes e skills sem uma sessão de navegador. Ela está em beta e utiliza autenticação própria: tokens OIDC de máquina emitidos por clientes que o administrador lista em [`managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi). Cada cliente está vinculado a um usuário e tenant existentes do LibreChat, e toda requisição age em nome desse usuário, com as permissões e o acesso dele. Ela não torna ninguém administrador.
 
-Turnos de Event Actor podem destacar Actions elegíveis e completá-las de forma durável. A entrega permanece em seu ciclo de vida de processamento enquanto a Action é executada; evidências terminais duráveis retomam a invocação original do actor assinado, e apenas a evidência da ferramenta observada pelo host resultante pode satisfazer `expectedAction`. Replays e réplicas concorrentes não podem iniciar a mesma Action reservada duas vezes. Se o LibreChat não puder determinar se um efeito colateral externo começou, ele coloca o lançamento em quarentena em vez de tentar novamente de forma cega.
+| Método | Rota | Finalidade |
+| -------- | -------------------------------------------- | ---------------------------------- |
+| `POST` | `/api/agents/v1/agents` | Criar um agente |
+| `GET` | `/api/agents/v1/agents` | Listar agentes acessíveis |
+| `GET` | `/api/agents/v1/agents/{id}` | Ler um agente |
+| `PATCH` | `/api/agents/v1/agents/{id}` | Atualizar um agente |
+| `DELETE` | `/api/agents/v1/agents/{id}` | Excluir um agente |
+| `POST` | `/api/agents/v1/agents/{id}/files` | Enviar e anexar um arquivo |
+| `GET` | `/api/agents/v1/agents/{id}/files` | Listar arquivos anexados |
+| `DELETE` | `/api/agents/v1/agents/{id}/files/{fileId}` | Desanexar um arquivo |
+| `GET` | `/api/agents/v1/skills` | Listar habilidades acessíveis |
+| `POST` | `/api/agents/v1/skills` | Criar uma habilidade |
+| `GET` | `/api/agents/v1/skills/{id}` | Ler uma habilidade |
+| `PATCH` | `/api/agents/v1/skills/{id}` | Atualizar uma habilidade |
+| `DELETE` | `/api/agents/v1/skills/{id}` | Excluir uma habilidade |
+| `GET` | `/api/agents/v1/skills/{id}/files` | Listar os arquivos de uma habilidade |
+| `GET` | `/api/agents/v1/skills/{id}/files/{path}` | Ler um arquivo de habilidade |
+| `PUT` | `/api/agents/v1/skills/{id}/files/{path}` | Criar ou substituir um arquivo de habilidade |
+| `DELETE` | `/api/agents/v1/skills/{id}/files/{path}` | Excluir um arquivo de habilidade |
 
-O LibreChat habilita esse trabalho de conclusão interno automaticamente quando o armazenamento de geração integrado selecionado anuncia suporte. O armazenamento em memória executa o lançamento, a conclusão e a continuação em um único processo e não consegue recuperar esse trabalho após o encerramento do processo. Os fluxos de geração do Redis adicionam recuperação de reinicialização durável e transferência de réplica. Os registros de entrega e recuperação de propriedade da capacidade permanecem invisíveis para solicitantes mais antigos durante um esvaziamento de versão mista; não há sinalizador de produtor gerenciado pelo operador.
+```bash
+curl -X POST https://your-librechat-instance/api/agents/v1/agents \
+  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Release assistant",
+    "provider": "openAI",
+    "model": "gpt-5.6",
+    "instructions": "Prepare concise release notes from verified changes."
+  }'
+```
 
-## Rastreamento de Uso de Tokens [#token-usage-tracking]
+Os payloads de agentes aceitam os mesmos campos do Agent Builder e rejeitam os desconhecidos; `model` é obrigatório na criação. As listagens aceitam `limit` (de 1 a 100, padrão 20) e um `cursor`; quando `has_more` for verdadeiro, passe o `after` retornado como próximo cursor. Uploads de arquivos são `multipart/form-data` com um único `file` e um `tool_resource`, como `context`, `file_search` ou `execute_code`, sujeitos aos limites usuais de upload.
 
-Todas as solicitações de inferência da API de Agents rastreiam o uso de tokens em relação ao saldo do usuário quando o gasto de tokens está configurado. Tanto as respostas com streaming quanto as sem streaming agregam cada chamada de modelo de Agent principal e Subagent faturada nos totais de nível superior. A resposta também inclui detalhamentos de tokens `primary` e `subagent` sem identificação. Detalhes de cache e tokens de raciocínio são incluídos quando o provedor os reporta.
+Skill create takes `name`, `description`, `body`, and optionally `displayTitle`, `frontmatter`, `category`, and `alwaysApply`. Updates must send the skill's current version as `expectedVersion`, so two writers cannot overwrite each other silently.
 
-## Roadmap [#roadmap]
+Os erros usam os códigos `invalid_request`, `not_found`, `permission_denied`, `conflict` e `internal_error`. Um recurso ao qual você não tem acesso pode ser retornado como `not_found`. Credenciais inválidas ou ausentes retornam `401`.
 
-- **Open Responses como interface principal**: Planejamos expandir o endpoint Open Responses com suporte completo a loops agênticos, orquestração de ferramentas e eventos semânticos de streaming.
-- **Anthropic Messages API**: Podemos adicionar suporte ao formato da Anthropic Messages API como uma interface adicional no futuro.
+Se o administrador habilitar essa opção, uma descrição OpenAPI das rotas de gerenciamento é disponibilizada em `/api/openapi.json`, com a documentação interativa em `/api/docs`. Ela não abrange inferência nem eventos. Consulte [`openapi`](/docs/configuration/librechat_yaml/object_structure/config#openapi).
 
-## Documentação Relacionada [#related-documentation]
+## Uso e faturamento [#usage-and-billing]
 
-- [Agentes](/docs/features/agents): Criando e configurando agentes
-- [Subagentes](/docs/features/subagents): Configurando Agentes filhos diretos
-- [Configuração do Endpoint de Agents](/docs/configuration/librechat_yaml/object_structure/agents): Configurações de runtime de eventos e de autenticação
-- [Configuração da Interface: remoteAgents](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents): Configurações de controle de acesso
-- [Uso de tokens](/docs/configuration/token_usage): Configurando o gasto e o saldo de tokens
-- [Especificação Open Responses](https://www.openresponses.org/): o padrão aberto de inferência
+As requisições de API são debitadas do seu saldo de tokens exatamente como os chats no aplicativo. Os totais de uso na resposta incluem as chamadas de subagentes, com uma divisão separada entre `primary` e `subagent`, além dos tokens de cache e de raciocínio sempre que o provedor os informar. Consulte [Uso de Tokens](/docs/configuration/token_usage).
+
+## Configuração [#setup]
+
+A API de Agentes fica desativada para usuários comuns até que um administrador conceda as permissões de Agentes Remotos à sua função, seja no [Painel de Administração](/docs/features/admin_panel) ou com [`interface.remoteAgents`](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents). Os administradores têm essa permissão por padrão. A autenticação por chave de API está ativada por padrão; para aceitar tokens do seu próprio provedor OIDC em vez de chaves ou junto com elas, consulte [`remoteApi`](/docs/configuration/librechat_yaml/object_structure/agents#remoteapi). A API de Gerenciamento é configurada separadamente em [`managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi), e as configurações de entrega de eventos ficam em [`eventDriven`](/docs/configuration/librechat_yaml/object_structure/agents#eventdriven).

@@ -1,0 +1,76 @@
+---
+title: Obrolan Terjadwal
+icon: CalendarClock
+description: >-
+  Aktifkan Scheduled Chats, atur batas dan aturan proyek, izinkan akses MCP
+  tanpa pengawasan, dan penuhi persyaratan Redis serta checkpointer.
+---
+
+[Scheduled Chats](/docs/features/scheduled_chats) bersifat eksperimental dan nonaktif hingga Anda mengaktifkannya secara eksplisit. Eksekusi terjadwal menggunakan sumber daya model, tool, dan Code Interpreter tanpa ada yang memantau, jadi periksa persyaratan deployment di bawah ini sebelum mengaktifkannya.
+
+## Aktifkan [#enable]
+
+Tambahkan `interface.schedules` ke `librechat.yaml` dan mulai ulang LibreChat:
+
+```yaml filename="librechat.yaml"
+interface:
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    fireConcurrency: 5
+    requireProject: false
+    # projectId: '000000000000000000000000'
+```
+
+`use` dan `create` menanamkan izin `SCHEDULES` untuk peran `USER` bawaan saat startup; setelah itu, kelola izin tersebut per peran di [Admin Panel](/docs/features/admin_panel). `use` memungkinkan pengguna melihat jadwal mereka. `create` juga memungkinkan mereka membuat, mengedit, mengaktifkan, menjalankan, dan menghapus jadwal. Kunci lainnya adalah batas runtime:
+
+<OptionTable
+  options={[
+    ['maxPerUser', 'Number', 'Jumlah maksimum jadwal yang dapat dimiliki setiap pengguna, termasuk yang dinonaktifkan. Atur ke 0 untuk mencegah pembuatan.', '10'],
+    ['minIntervalMinutes', 'Number', 'Jeda minimum yang diizinkan antara dua eksekusi dari satu jadwal. Berlaku untuk setiap jenis jadwal, termasuk cron kustom.', '60'],
+    ['autoDisableAfterFailures', 'Number', 'Jumlah eksekusi gagal berturut-turut sebelum jadwal dinonaktifkan secara otomatis.', '5'],
+    ['fireConcurrency', 'Number', 'Jumlah maksimum eksekusi terjadwal yang diizinkan berjalan bersamaan di seluruh deployment.', '5'],
+    ['requireProject', 'Boolean', 'Setiap jadwal harus diselesaikan ke sebuah Chat Project, diperiksa saat disimpan dan sebelum setiap eksekusi.', 'false'],
+    ['projectId', 'String', 'Menyematkan setiap percakapan terjadwal ke satu Chat Project dan menyiratkan requireProject.', ''],
+  ]}
+/>
+
+`schedules: true` mengaktifkan fitur ini dengan nilai default berikut. `schedules: false`, atau `use: false`, merupakan penghentian untuk seluruh deployment yang tidak dapat dicabut oleh pengaturan override pada role, group, maupun user.
+
+Aturan proyek diperiksa ulang pada setiap eksekusi. Jadwal yang tidak lagi memenuhi `requireProject`, atau yang proyeknya telah dihapus, akan menonaktifkan dirinya sendiri alih-alih memulai percakapan tanpa cakupan proyek. Chat Projects dimiliki oleh satu pengguna, sehingga `projectId` tingkat deployment hanya berfungsi untuk pemilik proyek tersebut; atur di role atau user overrides ketika pemilik membutuhkan tujuan yang berbeda.
+
+Daftar lengkap field, termasuk `admissionConcurrency`, `mcpPreflightConcurrency`, dan `mcpPreflightTimeoutMs` untuk membatasi pemeriksaan kesiapan admission dan MCP secara terpisah dari generasi, tersedia di [`interface.schedules`](/docs/configuration/librechat_yaml/object_structure/interface#schedules).
+
+## Akses MCP tanpa pengawasan [#unattended-mcp-access]
+
+Sebelum sebuah run dimulai, LibreChat memeriksa setiap alat MCP yang dibutuhkan oleh agen terjadwal beserta subagennya. Run yang memerlukan login interaktif tidak akan dimulai; jadwal akan menampilkan agen mana yang perlu ditangani.
+
+Untuk memungkinkan pengguna mengotorisasi alat MCP untuk eksekusi tanpa pengawasan, aktifkan `interface.schedules.mcpConsent`:
+
+- `mcpConsent.enabled` mengaktifkan fitur tersebut.
+- `mcpConsent.maxLifetimeHours` membatasi berapa lama sebuah otorisasi berlaku, dengan rentang nilai dari 1 hingga 8760 jam.
+- `mcpConsent.resources` mendaftar sumber daya MCP yang boleh diberi otorisasi.
+- `mcpConsent.readOnlyPolicy` mendaftarkan deklarasi tool hanya-baca yang tepercaya, dikelompokkan berdasarkan server dan nama tool di sisi upstream.
+- `mcpReceiptRetry.baseMs` dan `mcpReceiptRetry.maxMs` mengatur backoff untuk mencoba ulang tanda terima persetujuan (consent receipts).
+
+Pengguna kemudian melihat bagian **Scheduled MCP authorization** di editor jadwal. Otorisasi hanya mencakup agen dan sumber daya yang tercantum hingga batas waktunya, dan tidak pernah mengizinkan operasi tulis.
+
+## Persyaratan deployment [#deployment-requirements]
+
+Chat Terjadwal dikoordinasikan melalui lease MongoDB, sehingga beberapa replika dapat berbagi pekerjaan. Chat Terjadwal juga memerlukan:
+
+- **Redis streams dalam deployment multi-replica.** Atur `USE_REDIS_STREAMS=true`. Tanpa stream bersama, penyimpanan jadwal akan gagal, alih-alih memulai pekerjaan yang tidak dapat dilanjutkan atau dihentikan oleh replika lain.
+- **Checkpointer durabel untuk agen yang dapat dijeda.** Jika agen terjadwal dapat menggunakan Ask User atau memerlukan persetujuan tool, agen tersebut membutuhkan Redis streams dan checkpointer bersama, meskipun hanya berjalan pada satu proses. [`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) MongoDB bawaan berfungsi; `type: memory` tidak. LibreChat menolak run seperti itu sebelum pemanggilan model apa pun jika salah satunya tidak tersedia.
+- **Titik masuk server standar.** Titik masuk klaster eksperimental lama tidak memulai mesin jadwal (schedule engine).
+
+Dua variabel lingkungan mengontrol engine (juga tercantum di [dotenv](/docs/configuration/dotenv#scheduled-chats)):
+
+<OptionTable
+  options={[
+    ['SCHEDULES_SINGLE_PROCESS', 'Boolean', 'Memungkinkan Obrolan Terjadwal tanpa Redis. Atur hanya jika deployment benar-benar menjalankan satu proses LibreChat.', '# SCHEDULES_SINGLE_PROCESS=true'],
+    ['SCHEDULES_DISABLED', 'Boolean', 'Henti darurat untuk proses otomatis maupun Run now. Jadwal tetap disimpan, tidak dihapus.', '# SCHEDULES_DISABLED=true'],
+  ]}
+/>

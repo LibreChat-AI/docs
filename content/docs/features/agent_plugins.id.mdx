@@ -2,171 +2,34 @@
 title: Plugin Agen
 icon: Plug
 description: >-
-  Secara eksperimental menggabungkan deployment Skills, server MCP, dan command
-  hook ke dalam paket yang dimuat saat startup.
+  Kirim Skills, server MCP, dan lifecycle hooks yang terkait sebagai satu paket
+  yang dimuat LibreChat saat startup.
 ---
 
-Agent Plugins memungkinkan operator untuk mengemas [Skills](/docs/features/skills), [MCP servers](/docs/features/mcp), dan command hook opsional yang saling terkait ke dalam sistem berkas LibreChat. LibreChat mengimplementasikan format paket Agent Plugins `1.0.0` dan memuat setiap direktori anak langsung sebagai satu plugin saat startup.
+Sebuah Agent Plugin adalah folder di server LibreChat yang menggabungkan [Skills](/docs/features/skills), [MCP servers](/docs/features/mcp), dan command hooks opsional yang saling terkait. Operator cukup memasukkan folder tersebut ke direktori plugin dan me-restart LibreChat; tidak ada yang perlu diinstal dari UI. LibreChat mengikuti format paket Agent Plugins `1.0.0` yang terbuka, sehingga satu paket dapat dibagikan dengan alat lain yang juga mendukung format tersebut.
 
-<Callout type="warning" title="Eksperimental">
-  Agent Plugins bersifat eksperimental. Format paket, komponen yang didukung, konfigurasi, dan perilaku runtime dapat berubah selama fase eksperimen. Uji plugin sebelum menggunakannya dalam deployment produksi.
-</Callout>
+Plugin Agen bersifat eksperimental. Format paket dan perilakunya dapat berubah.
 
-## Konfigurasi Direktori [#configure-the-directories]
+## Apa yang dilihat pengguna [#what-users-see]
 
-```bash filename=".env"
-# Defaults to ./plugin relative to the LibreChat project root
-DEPLOYMENT_PLUGINS_DIR=./plugin
+Pengguna tidak pernah melihat plugin sebagai sesuatu yang berdiri sendiri. Yang mereka lihat adalah isi yang terkandung di dalamnya:
 
-# Persistent data allocated separately for each plugin manifest name
-DEPLOYMENT_PLUGIN_DATA_DIR=./data/plugins
+- Skill-nya muncul dalam daftar Skills bersama skill lainnya. Skill tersebut bersifat hanya-baca, mengikuti izin Skills yang biasa, dan dapat diaktifkan atau dinonaktifkan dengan **Available to agent** seperti skill lainnya.
+- Server MCP-nya muncul di Tool Library dan dapat ditambahkan ke agen seperti server yang didefinisikan dalam `librechat.yaml`.
+- Hook-nya berjalan di server pada titik-titik tertentu dalam proses agen, misalnya sebelum pemanggilan tool atau saat proses berhenti. Hook dapat memblokir pemanggilan tool, menambahkan konteks ke prompt, atau menghentikan proses, dan pengguna hanya melihat efeknya.
 
-# Optional and disabled by default; see Command Hooks below
-# DEPLOYMENT_PLUGIN_HOOKS=true
-```
+Jika nama skill atau server MCP bertabrakan dengan yang didefinisikan di tempat lain, definisi lainnya yang akan digunakan: skill di direktori skill deployment mandiri akan mengungguli skill plugin, dan server di `librechat.yaml` akan mengungguli server plugin.
 
-Relative paths diselesaikan dari root proyek LibreChat. Jika direktori `./plugin` default tidak ada, startup akan berlanjut tanpa plugin. Jika `DEPLOYMENT_PLUGINS_DIR` diatur secara eksplisit tetapi tidak dapat dibaca, startup akan gagal agar kesalahan deployment tidak diabaikan begitu saja.
+## Apa yang dapat dimuat oleh sebuah plugin [#what-a-plugin-can-contain]
 
-Mulai ulang LibreChat setelah menambah, menghapus, atau mengubah plugin.
+Sebuah folder plugin memiliki manifes `plugin.json` dan salah satu dari:
 
-## Tata Letak Paket [#package-layout]
+- `skills/`, satu folder per skill, masing-masing dengan `SKILL.md`.
+- `mcp.json`, definisi server MCP. Server lokal (`stdio`) dijalankan dari dalam folder plugin dan mendapatkan direktori data persisten tersendiri.
+- `ai.librechat/hooks/hooks.json`, command hooks. Proses ini berjalan di host API dan dinonaktifkan kecuali operator mengaktifkannya.
 
-Setiap anak langsung dari `DEPLOYMENT_PLUGINS_DIR` adalah satu paket plugin:
+Setiap bagian dimuat secara terpisah, sehingga `mcp.json` yang rusak tidak menghentikan skill plugin untuk dimuat. Masalah dilaporkan di log startup.
 
-```text
-plugin/
-  analytics-tools/
-    plugin.json
-    skills/
-      analyze-events/
-        SKILL.md
-        scripts/
-          analyze.py
-    mcp.json
-    ai.librechat/
-      hooks/
-        hooks.json
-    scripts/
-      guard.sh
-```
+## Pengaturan [#setup]
 
-`plugin.json` diperlukan. `skills/`, `mcp.json`, dan `ai.librechat/hooks/hooks.json` bersifat opsional dan gagal secara independen, sehingga satu komponen yang tidak valid tidak akan mencegah komponen valid lainnya dalam plugin yang sama untuk dimuat. Manifest yang tidak valid atau hilang akan menolak seluruh plugin. Diagnostik ditulis ke dalam log startup LibreChat.
-
-## Manifest [#manifest]
-
-Manifest harus menggunakan URL skema Agent Plugins `1.0.0` yang tepat:
-
-```json filename="plugin.json"
-{
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "analytics-tools",
-  "version": "1.0.0",
-  "description": "Skills and tools for analyzing event data"
-}
-```
-
-`name` juga digunakan untuk direktori data persisten plugin. Nama tersebut harus terdiri dari 1-64 karakter, diawali dan diakhiri dengan huruf kecil atau angka, hanya menggunakan huruf kecil, angka, tanda hubung, dan titik, serta tidak boleh mengandung urutan `--` atau `..` yang berurutan. Nama plugin harus unik dalam deployment.
-
-## Bundled Skills [#bundled-skills]
-
-Letakkan setiap Skill di direktori anak langsung di bawah `skills/`, dengan `SKILL.md` di root anak tersebut. LibreChat memuat entri yang valid sebagai Skill penerapan read-only dan menerapkan kemampuan Skill serta aturan akses yang normal.
-
-[`DEPLOYMENT_SKILLS_DIR`](/docs/features/skills#deployment-skills) mandiri lebih diutamakan daripada Skill plugin dengan nama yang sama. Di dalam direktori plugin, paket pertama yang mengklaim nama Skill akan menang dan konflik berikutnya akan dilewati dengan peringatan.
-
-## Server MCP Bawaan [#bundled-mcp-servers]
-
-Definisikan server MCP opsional di `mcp.json` dengan URL skema `1.0.0` yang tepat:
-
-```json filename="mcp.json"
-{
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
-  "mcpServers": {
-    "analytics": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["${PLUGIN_ROOT}/server.js"],
-      "cwd": "${PLUGIN_ROOT}",
-      "env": {
-        "PLUGIN_CACHE": "${PLUGIN_DATA}/cache"
-      }
-    }
-  }
-}
-```
-
-Transport yang didukung adalah `stdio`, `streamable-http`, dan `sse`. Transport HTTP jarak jauh harus menggunakan HTTPS kecuali untuk tujuan loopback. Nama server harus tetap tidak berubah setelah normalisasi nama alat MCP oleh LibreChat dan tidak boleh menggunakan nama objek JavaScript yang dicadangkan.
-
-Untuk server `stdio`, `${PLUGIN_ROOT}` dan `${PLUGIN_DATA}` diekspansi satu kali di dalam `args`, `env`, dan `cwd`; kedua nilai tersebut juga ditambahkan ke lingkungan proses yang dijalankan. Konfigurasi MCP plugin tidak mengekspansi variabel arbitrer dari lingkungan host LibreChat. Nilai seperti `${OPENAI_API_KEY}` akan tetap literal melalui penyimpanan registri dan inisialisasi runtime. Simpan kredensial di luar file plugin dan sediakan melalui layanan terautentikasi yang dibuat khusus atau mekanisme lain yang dikontrol oleh deployment.
-
-LibreChat memvalidasi setiap `mcp.json` sebelum mendaftarkan server-servernya:
-
-- `command` harus berupa satu token yang dapat dieksekusi: baik nama sederhana seperti `node` atau path yang diawali `./` di dalam plugin. String shell dan path absolut akan ditolak, dan `${PLUGIN_ROOT}` tidak akan di-expand di dalam `command`.
-- `cwd` harus diawali dengan `./`, `${PLUGIN_ROOT}`, atau `${PLUGIN_DATA}`, dan harus mengarah ke lokasi di dalam basis yang disebutkan.
-- `env` tidak boleh mendeklarasikan `PLUGIN_ROOT` atau `PLUGIN_DATA`; LibreChat yang menetapkannya.
-- Nilai `url` remote harus berupa URL absolut `http` atau `https` tanpa informasi pengguna (user information) atau fragmen (fragment), dan harus menggunakan `https` kecuali host-nya adalah alamat loopback (seperti `localhost` atau `127.0.0.1`).
-- Entri server dengan kolom yang tidak dikenal akan ditolak dan dilewati. Kolom tingkat atas yang tidak dikenal, atau `$schema` yang tidak cocok dengan URL skema `1.0.0` yang didukung, akan menonaktifkan MCP untuk seluruh plugin.
-
-Server MCP yang dideklarasikan dalam `librechat.yaml` memiliki prioritas lebih tinggi daripada server plugin dengan nama yang sama. Nama server plugin duplikat akan dilewati dan dicatat dalam log.
-
-## Data Plugin Persisten [#persistent-plugin-data]
-
-LibreChat membuat satu direktori di `<DEPLOYMENT_PLUGIN_DATA_DIR>/<plugin-name>` dan mengeksposnya ke komponen `stdio` sebagai `${PLUGIN_DATA}`. Gunakan direktori ini untuk status persisten milik plugin. Jangan menulis status persisten ke dalam `${PLUGIN_ROOT}`, yang harus diperlakukan sebagai konten paket.
-
-## Command Hooks [#command-hooks]
-
-Agent Plugins dapat menjalankan penangan hook `command` pada batas siklus hidup Agent. Eksekusi hook dinonaktifkan secara default. Aktifkan secara eksplisit dan mulai ulang LibreChat:
-
-```bash filename=".env"
-DEPLOYMENT_PLUGIN_HOOKS=true
-```
-
-Ketika variabel tersebut bernilai false atau tidak diatur, LibreChat akan mengabaikan dokumen hook dan mencatat peringatan saat startup; Skills dan server MCP yang valid secara independen milik plugin tersebut akan tetap dimuat.
-
-<Callout type="warning" title="Hanya kode terpercaya">
-  Command hook menjalankan proses anak yang diinstal operator pada host API LibreChat. Lingkungan yang dibatasi mengurangi paparan yang tidak disengaja namun bukan merupakan sandbox. Aktifkan hook hanya untuk paket plugin yang Anda percayai pada tingkat yang sama dengan kode LibreChat dan modul hook `toolApproval`.
-</Callout>
-
-Deklarasikan hook di `ai.librechat/hooks/hooks.json`:
-
-```json filename="ai.librechat/hooks/hooks.json"
-{
-  "description": "Reject writes outside the workspace",
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/guard.sh",
-            "timeout": 30,
-            "allowedEnvVars": ["WORKSPACE_POLICY"]
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-### Kontrak Eksekusi [#execution-contract]
-
-- LibreChat memulai perintah dari root plugin dan mengirimkan payload event yang kompatibel dengan Claude sebagai JSON pada standard input.
-- `${PLUGIN_ROOT}`, `${PLUGIN_DATA}`, dan `${CLAUDE_PLUGIN_ROOT}` diperluas satu kali di dalam `command` dan `args` serta tersedia juga untuk proses anak (child process).
-- Lingkungan anak hanya berisi `PATH`, `HOME`, `LANG`, `LC_ALL`, dan `TZ` jika ada, tiga variabel jalur plugin, dan nama-nama yang tercantum secara eksplisit dalam `allowedEnvVars`.
-- Exit code `0` berhasil. JSON yang ditulis ke output standar dapat mengembalikan keputusan yang sesuai dengan peristiwa dan konteks terbatas; output biasa hanya diperlakukan sebagai konteks tambahan untuk `SessionStart` dan `UserPromptSubmit`.
-- Exit code `2` memblokir tindakan atau kelanjutan yang berlaku dan menggunakan kesalahan standar sebagai alasannya. Exit code bukan nol lainnya dicatat dan diabaikan.
-- `timeout` dalam satuan detik, berupa bilangan bulat dari 1 hingga 3600.
-- LibreChat menghentikan proses ketika hook dibatalkan atau melewati batas waktu. Pada host POSIX, perintah dijalankan melalui `bash`, yang harus tersedia di host API. Pada host Windows, perintah dijalankan melalui `powershell.exe`, sehingga plugin harus menyediakan `commandWindows` atau memilih PowerShell. Jika shell tidak dapat dimulai, LibreChat mencatat peringatan startup dan hook yang bersifat blocking akan gagal secara tertutup (fail closed).
-
-LibreChat menerjemahkan nama alat Claude yang umum yaitu `Bash`, `Write`, `Edit`, `Read`, dan `WebSearch` serta nama argumen berkasnya ke alat LibreChat yang sesuai. Matcher yang ditulis dengan nama alat asli LibreChat akan mempertahankan bentuk payload aslinya.
-
-Peristiwa sumber yang didukung adalah `RunStart`, `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PostToolBatch`, `SubagentStart`, `Stop`, `StopFailure`, `PreCompact`, dan `PostCompact`. Peristiwa atau deklarasi yang tidak didukung akan dilewati dan dilaporkan dalam diagnostik startup. Hanya penangan `command` yang dieksekusi dalam rilis ini; penangan `prompt`, `http`, `mcp_tool`, dan `agent` tetap tidak didukung.
-
-`SessionStart` dan handler dengan `once: true` dideduplikasi per percakapan oleh penyimpanan lokal proses yang dibatasi. Dalam penyebaran multi-replika, handler sekali pakai yang sama dapat berjalan satu kali pada setiap proses. Keputusan `ask` memerlukan alur persetujuan manusia yang dapat dilanjutkan di LibreChat; ketika alur tersebut tidak tersedia, LibreChat memperketat keputusan menjadi `deny` alih-alih membiarkan proses tersebut terjeda tanpa jalur untuk melanjutkannya.
-
-## Terkait [#related]
-
-- [Skills](/docs/features/skills)
-- [Model Context Protocol](/docs/features/mcp)
-- [Agen](/docs/features/agents)
+Plugin dimuat dari `./plugin` di root proyek secara default, dan command hooks dinonaktifkan secara default. Lihat [konfigurasi Agent Plugins](/docs/configuration/agent_plugins) untuk pengaturan direktori, tata letak paket, aturan validasi manifest dan MCP, serta kontrak eksekusi hook.

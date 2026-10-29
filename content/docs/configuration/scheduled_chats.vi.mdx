@@ -1,0 +1,76 @@
+---
+title: Các cuộc trò chuyện theo lịch trình
+icon: CalendarClock
+description: >-
+  Bật Scheduled Chats, thiết lập giới hạn và quy tắc dự án, cho phép truy cập
+  MCP không cần giám sát, và đáp ứng các yêu cầu về Redis và checkpointer.
+---
+
+[Scheduled Chats](/docs/features/scheduled_chats) là tính năng thử nghiệm và bị tắt cho đến khi bạn chủ động bật. Các lượt chạy theo lịch sử dụng tài nguyên mô hình, công cụ và Code Interpreter mà không có ai theo dõi, vì vậy hãy kiểm tra các yêu cầu triển khai bên dưới trước khi bật tính năng này.
+
+## Kích hoạt [#enable]
+
+Thêm `interface.schedules` vào `librechat.yaml` và khởi động lại LibreChat:
+
+```yaml filename="librechat.yaml"
+interface:
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    fireConcurrency: 5
+    requireProject: false
+    # projectId: '000000000000000000000000'
+```
+
+`use` và `create` tạo sẵn các quyền `SCHEDULES` cho vai trò `USER` tích hợp sẵn khi khởi động; sau đó, hãy quản lý chúng theo từng vai trò trong [Admin Panel](/docs/features/admin_panel). `use` cho phép người dùng xem lịch trình của họ. `create` cũng cho phép họ tạo, chỉnh sửa, bật, chạy và xóa lịch trình. Các khóa khác là giới hạn thời gian chạy.
+
+<OptionTable
+  options={[
+    ['maxPerUser', 'Number', 'Số lượng lịch trình tối đa mà mỗi người dùng có thể sở hữu, bao gồm cả những lịch trình đã bị vô hiệu hóa. Đặt thành 0 để ngăn việc tạo mới.', '10'],
+    ['minIntervalMinutes', 'Number', 'Khoảng cách tối thiểu cho phép giữa hai lần chạy của cùng một lịch trình. Áp dụng cho mọi chu kỳ, bao gồm cron tùy chỉnh.', '60'],
+    ['autoDisableAfterFailures', 'Number', 'Số lần chạy thất bại liên tiếp trước khi lịch tự vô hiệu hóa.', '5'],
+    ['fireConcurrency', 'Number', 'Số lần chạy theo lịch được phép thực thi đồng thời tối đa trên toàn bộ triển khai.', '5'],
+    ['requireProject', 'Boolean', 'Mọi lịch biểu phải được liên kết với một Chat Project, được kiểm tra khi lưu và trước mỗi lần chạy.', 'false'],
+    ['projectId', 'String', 'Ghim mọi cuộc trò chuyện đã lên lịch vào một Dự án Trò chuyện và ngầm định requireProject.', ''],
+  ]}
+/>
+
+`schedules: true` bật tính năng này với các giá trị mặc định sau. `schedules: false`, hoặc `use: false`, là biện pháp dừng toàn bộ triển khai mà các ghi đè theo vai trò, nhóm và người dùng không thể gỡ bỏ.
+
+Các quy tắc dự án được kiểm tra lại tại mỗi lần chạy. Một lịch trình không còn đáp ứng `requireProject`, hoặc có dự án đã bị xóa, sẽ tự động vô hiệu hóa thay vì bắt đầu một cuộc trò chuyện không thuộc dự án nào. Dự án Chat thuộc về một người dùng duy nhất, vì vậy `projectId` áp dụng trên toàn hệ thống chỉ hoạt động đối với chủ sở hữu của dự án đó; hãy đặt nó trong phần ghi đè theo vai trò hoặc người dùng khi các chủ sở hữu cần các đích đến khác nhau.
+
+Danh sách đầy đủ các trường, bao gồm `admissionConcurrency`, `mcpPreflightConcurrency` và `mcpPreflightTimeoutMs` để giới hạn riêng việc tiếp nhận và kiểm tra sẵn sàng MCP so với quá trình sinh nội dung, được trình bày trong [`interface.schedules`](/docs/configuration/librechat_yaml/object_structure/interface#schedules).
+
+## Truy cập MCP không cần giám sát [#unattended-mcp-access]
+
+Trước khi một lần chạy bắt đầu, LibreChat kiểm tra mọi công cụ MCP mà agent được lên lịch và các subagent của nó cần. Một lần chạy cần đăng nhập tương tác sẽ không được khởi động; lịch biểu sẽ cho biết agent nào cần được chú ý.
+
+Để cho phép người dùng cấp quyền sử dụng công cụ MCP cho các lần chạy không cần giám sát, hãy bật `interface.schedules.mcpConsent`:
+
+- `mcpConsent.enabled` bật tính năng này.
+- `mcpConsent.maxLifetimeHours` giới hạn thời gian tối đa một ủy quyền có hiệu lực, từ 1 đến 8760 giờ.
+- `mcpConsent.resources` liệt kê các tài nguyên MCP có thể được cấp quyền truy cập.
+- `mcpConsent.readOnlyPolicy` liệt kê các khai báo công cụ chỉ đọc đáng tin cậy, được khóa theo máy chủ và tên công cụ phía upstream.
+- `mcpReceiptRetry.baseMs` và `mcpReceiptRetry.maxMs` đặt thời gian chờ lùi (backoff) khi thử lại các biên nhận đồng ý (consent receipts).
+
+Người dùng sau đó sẽ thấy phần **Scheduled MCP authorization** trong trình chỉnh sửa lịch. Một authorization chỉ bao gồm agent và các resource được liệt kê cho đến thời hạn của nó và không bao giờ cho phép ghi.
+
+## Yêu cầu triển khai [#deployment-requirements]
+
+Scheduled Chats phối hợp thông qua các lease trong MongoDB, nhờ đó nhiều replica có thể cùng chia sẻ công việc. Chúng cũng cần:
+
+- **Redis streams trong các triển khai nhiều bản sao.** Đặt `USE_REDIS_STREAMS=true`. Nếu không có stream dùng chung, việc lưu một lịch trình sẽ thất bại thay vì bắt đầu một công việc mà bản sao khác không thể tiếp tục hoặc dừng.
+- **Một checkpointer bền vững cho các agent có thể tạm dừng.** Nếu agent được lên lịch có thể sử dụng Ask User hoặc cần phê duyệt công cụ, nó cần Redis streams và một checkpointer dùng chung ngay cả khi chỉ chạy trên một tiến trình. [`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) MongoDB mặc định hoạt động được; `type: memory` thì không. LibreChat sẽ từ chối một lần chạy như vậy trước khi gọi bất kỳ mô hình nào nếu thiếu một trong hai thành phần.
+- **Điểm vào máy chủ tiêu chuẩn.** Điểm vào cụm thử nghiệm cũ không khởi động công cụ lịch trình.
+
+Hai biến môi trường điều khiển engine (cũng được liệt kê trong [dotenv](/docs/configuration/dotenv#scheduled-chats)):
+
+<OptionTable
+  options={[
+    ['SCHEDULES_SINGLE_PROCESS', 'Boolean', 'Cho phép Scheduled Chats mà không cần Redis. Chỉ đặt giá trị này khi triển khai thực sự chỉ chạy một tiến trình LibreChat.', '# SCHEDULES_SINGLE_PROCESS=true'],
+    ['SCHEDULES_DISABLED', 'Boolean', 'Dừng khẩn cấp cho cả các lần chạy tự động và Chạy ngay. Lịch được giữ lại, không bị xóa.', '# SCHEDULES_DISABLED=true'],
+  ]}
+/>

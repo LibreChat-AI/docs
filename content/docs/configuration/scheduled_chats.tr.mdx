@@ -1,0 +1,77 @@
+---
+title: Zamanlanmış Sohbetler
+icon: CalendarClock
+description: >-
+  Zamanlanmış Sohbetleri etkinleştirin, sınırları ve proje kurallarını
+  belirleyin, denetimsiz MCP erişimine izin verin ve Redis ile checkpointer
+  gereksinimlerini karşılayın.
+---
+
+[Zamanlanmış Sohbetler](/docs/features/scheduled_chats) deneyseldir ve siz etkinleştirene kadar kapalıdır. Zamanlanmış çalıştırmalar, kimse izlemeden model, araç ve Code Interpreter kaynaklarını kullanır; bu nedenle etkinleştirmeden önce aşağıdaki dağıtım gereksinimlerini kontrol edin.
+
+## Etkinleştir [#enable]
+
+`interface.schedules` alanını `librechat.yaml` dosyasına ekleyin ve LibreChat'i yeniden başlatın:
+
+```yaml filename="librechat.yaml"
+interface:
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    fireConcurrency: 5
+    requireProject: false
+    # projectId: '000000000000000000000000'
+```
+
+`use` ve `create`, başlangıçta yerleşik `USER` rolü için `SCHEDULES` izinlerini tohumlar; bundan sonra bu izinler rol bazında [Yönetici Paneli](/docs/features/admin_panel) üzerinden yönetilir. `use`, bir kullanıcının kendi zamanlamalarını görmesini sağlar. `create` ise ayrıca bu zamanlamaları oluşturma, düzenleme, etkinleştirme, çalıştırma ve silme yetkisi verir. Diğer anahtarlar çalışma zamanı sınırlarıdır:
+
+<OptionTable
+  options={[
+    ['maxPerUser', 'Number', 'Her kullanıcının sahip olabileceği maksimum zamanlama sayısı; devre dışı bırakılanlar da dahil olmak üzere sayılır. Oluşturmayı engellemek için 0 olarak ayarlayın.', '10'],
+    ['minIntervalMinutes', 'Number', 'Bir zamanlamanın iki çalıştırması arasındaki en kısa izin verilen aralık. Özel cron dahil her periyot için geçerlidir.', '60'],
+    ['autoDisableAfterFailures', 'Number', 'Bir zamanlamanın kendini devre dışı bırakmasından önceki art arda başarısız çalıştırma sayısı.', '5'],
+    ['fireConcurrency', 'Number', 'Dağıtım genelinde aynı anda kabul edilen maksimum zamanlanmış çalıştırma sayısı.', '5'],
+    ['requireProject', 'Boolean', 'Her zamanlamanın, kaydedildiğinde ve her çalıştırmadan önce kontrol edilerek bir Chat Project\'e çözümlenmesi gerekir.', 'false'],
+    ['projectId', 'String', 'Her zamanlanmış konuşmayı tek bir Chat Project\'e sabitler ve requireProject değerini ima eder.', ''],
+  ]}
+/>
+
+`schedules: true` bu özelliği aşağıdaki varsayılan ayarlarla etkinleştirir. `schedules: false` veya `use: false` ise tüm dağıtım genelinde bir durdurmadır; rol, grup ve kullanıcı geçersiz kılmaları bunu kaldıramaz.
+
+Proje kuralları her çalıştırmada yeniden kontrol edilir. `requireProject` koşulunu artık karşılamayan veya projesi silinmiş bir zamanlama, kapsamsız bir sohbet başlatmak yerine kendini devre dışı bırakır. Sohbet Projeleri tek bir kullanıcıya aittir; bu nedenle dağıtım genelindeki bir `projectId` yalnızca o projenin sahibi için çalışır. Sahiplerin farklı hedeflere ihtiyaç duyduğu durumlarda bunu rol veya kullanıcı geçersiz kılmalarında ayarlayın.
+
+Tam alan listesi; sınırlandırma için `admissionConcurrency`, `mcpPreflightConcurrency` ve `mcpPreflightTimeoutMs` dahil olmak üzere, kabul (admission) ve MCP hazırlık kontrollerini üretimden ayrı olarak sınırlamaya yönelik alanlar, [`interface.schedules`](/docs/configuration/librechat_yaml/object_structure/interface#schedules) bölümünde yer almaktadır.
+
+## Gözetimsiz MCP erişimi [#unattended-mcp-access]
+
+Bir çalıştırma başlamadan önce LibreChat, zamanlanmış agent'ın ve alt agent'larının ihtiyaç duyduğu her MCP aracını kontrol eder. Etkileşimli oturum açma gerektirecek bir çalıştırma başlatılmaz; zamanlama, hangi agent'ın dikkat gerektirdiğini gösterir.
+
+Kesintisiz çalıştırmalar için kullanıcıların MCP araçlarını yetkilendirmesine izin vermek amacıyla `interface.schedules.mcpConsent` seçeneğini etkinleştirin:
+
+- `mcpConsent.enabled` özelliği etkinleştirir.
+- `mcpConsent.maxLifetimeHours` yetkilendirmenin ne kadar süreyle geçerli kalacağını sınırlar; değer 1 ile 8760 saat arasında olabilir.
+- `mcpConsent.resources` lists the MCP resources that may be authorized.
+- `mcpConsent.readOnlyPolicy` lists trusted read-only tool declarations, keyed by server and upstream tool name.
+- `mcpReceiptRetry.baseMs` ve `mcpReceiptRetry.maxMs`, onay makbuzlarını yeniden deneme için geri çekilme (backoff) süresini ayarlar.
+
+Kullanıcılar ardından zamanlama düzenleyicisinde **Zamanlanmış MCP yetkilendirmesi** bölümünü görür. Bir yetkilendirme yalnızca listelenen agent ve kaynakları, süresi dolana kadar kapsar ve hiçbir zaman yazma işlemlerine izin vermez.
+
+## Dağıtım gereksinimleri [#deployment-requirements]
+
+Zamanlanmış Sohbetler, birden fazla replikanın işi paylaşabilmesi için MongoDB kiralamaları (leases) üzerinden koordine edilir. Ayrıca şunlara ihtiyaç duyarlar:
+
+- **Çoklu kopya dağıtımlarında Redis akışları.** `USE_REDIS_STREAMS=true` değerini ayarlayın. Paylaşılan akışlar olmadan, başka bir kopyanın devam ettiremeyeceği veya durduramayacağı bir iş başlatmak yerine zamanlama kaydetme işlemi başarısız olur.
+- **Duraklatılabilen ajanlar için kalıcı bir checkpointer.** Zamanlanmış ajan Ask User özelliğini kullanabiliyorsa veya araç onayına ihtiyaç duyuyorsa, tek bir süreçte bile Redis streams ve paylaşılan bir checkpointer gerekir. Varsayılan MongoDB [`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) çalışır; `type: memory` ise çalışmaz. Bunlardan biri eksikse LibreChat, herhangi bir model çağrısı yapılmadan önce bu çalıştırmayı reddeder.
+- **Standart sunucu giriş noktası.** Eski deneysel kümelenmiş giriş noktası zamanlama motorunu başlatmaz.
+
+Motor üzerinde denetim sağlayan iki ortam değişkeni vardır (ayrıca [dotenv](/docs/configuration/dotenv#scheduled-chats) bölümünde de listelenmiştir):
+
+<OptionTable
+  options={[
+    ['SCHEDULES_SINGLE_PROCESS', 'Boolean', 'Redis olmadan Zamanlanmış Sohbetlere izin verir. Yalnızca dağıtımınız gerçekten tek bir LibreChat işlemi çalıştırıyorsa bunu ayarlayın.', '# SCHEDULES_SINGLE_PROCESS=true'],
+    ['SCHEDULES_DISABLED', 'Boolean', 'Hem otomatik çalıştırmalar hem de Şimdi çalıştır için acil durdurma. Zamanlamalar silinmez, korunur.', '# SCHEDULES_DISABLED=true'],
+  ]}
+/>

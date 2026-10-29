@@ -1,0 +1,91 @@
+---
+title: Intérprete de código
+icon: SquareTerminal
+description: >-
+  Desplegar el servicio Code Interpreter, conectar LibreChat a él y activar las
+  funciones de código opcionales.
+---
+
+Esta página cubre el lado de administración del [Intérprete de código](/docs/features/code_interpreter). El código se ejecuta en un servicio independiente, [ClickHouse/code-interpreter](https://github.com/ClickHouse/code-interpreter), que usted despliega por su cuenta. LibreChat le envía el código y los archivos y autentica cada solicitud. Todas las variables del lado de LibreChat mencionadas aquí aparecen en la [referencia de `.env`](/docs/configuration/dotenv#code-interpreter).
+
+## Desplegar el servicio [#deploy-the-service]
+
+Siga el README del repositorio para ejecutarlo con Docker Compose o Helm. El servicio está formado por una puerta de enlace de API, workers en sandbox, un servidor de archivos y un Tool Call Server, que escalan de forma independiente de LibreChat. Los workers aíslan el código con NsJail o una microVM de libkrun. Los límites de memoria y CPU, el tamaño de carga, las cuotas de solicitudes y el acceso de red para el código en sandbox se configuran en ese despliegue, no en LibreChat.
+
+Nunca exponga el modo local sin autenticación del servicio (`LOCAL_MODE=true`) en una red pública o de producción.
+
+## Conectar LibreChat [#connect-librechat]
+
+1. Establece `LIBRECHAT_CODE_BASEURL` con la URL de tu despliegue.
+2. Configure la autenticación. El servicio actual de código abierto espera [autenticación JWT](#self-hosted-jwt-authentication) fuera del modo local. Las implementaciones que aceptan claves de API usan `LIBRECHAT_CODE_API_KEY` en su lugar, una única clave compartida por todos los usuarios y enviada en el encabezado `X-API-Key`.
+3. Reinicia LibreChat.
+
+Luego verifica que la ejecución de código esté permitida:
+
+- `execute_code` debe estar en [`endpoints.agents.capabilities`](/docs/configuration/librechat_yaml/object_structure/agents#capabilities). Está en la lista predeterminada.
+- Los usuarios necesitan el permiso de ejecución de código. [`interface.runCode`](/docs/configuration/librechat_yaml/object_structure/interface#runcode) lo asigna por defecto al rol `USER` y controla el botón **Run Code** en los bloques de código. El mismo permiso también regula la herramienta **Run Code** en el Agent Builder.
+
+## Autenticación JWT autohospedada [#self-hosted-jwt-authentication]
+
+Con la autenticación JWT, LibreChat firma un token de corta duración para el usuario que ha iniciado sesión en cada solicitud de Code Interpreter. El servicio lo verifica con la clave pública correspondiente y utiliza el usuario y el tenant incluidos en el token para mantener separados los archivos y las sesiones. La clave privada permanece en LibreChat.
+
+En el lado de LibreChat:
+
+```bash filename=".env"
+CODEAPI_AUTH_PROVIDER=librechat-jwt
+CODEAPI_JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+CODEAPI_JWT_ALGORITHM=EdDSA
+CODEAPI_JWT_KID=lc-codeapi-2026-05
+CODEAPI_JWT_ISSUER=librechat
+CODEAPI_JWT_AUDIENCE=codeapi
+CODEAPI_JWT_TTL_SECONDS=300
+CODEAPI_JWT_MINT_CACHE_SECONDS=30
+CODEAPI_JWT_SINGLE_TENANT_ID=legacy
+```
+
+`CODEAPI_JWT_PRIVATE_KEY_BASE64` (PEM en base64) o `CODEAPI_JWT_PRIVATE_JWK_JSON` (JWK privada) pueden contener la clave en su lugar. La firma usa `EdDSA` con una clave Ed25519 o Ed448 (la predeterminada) o `RS256`. Los valores predeterminados y los límites de cada variable se encuentran en la [sección de JWT de la referencia de `.env`](/docs/configuration/dotenv#code-interpreter-jwt-authentication).
+
+En el lado del Code Interpreter, configura el verificador correspondiente:
+
+```bash filename="code-interpreter .env"
+LOCAL_MODE=false
+CODEAPI_AUTH_PROVIDER=librechat-jwt
+CODEAPI_JWT_ISSUER=librechat
+CODEAPI_JWT_AUDIENCE=codeapi
+CODEAPI_JWT_ALLOWED_ALGS=EdDSA
+CODEAPI_JWT_JWKS_JSON={"keys":[{"kty":"OKP","crv":"Ed25519","x":"...","kid":"lc-codeapi-2026-05","alg":"EdDSA"}]}
+CODEAPI_JWT_SINGLE_TENANT_ID=legacy
+```
+
+El emisor, la audiencia, el ID de clave, el algoritmo, la clave pública y el ID de inquilino único deben coincidir en ambos servicios. El servicio también puede cargar las claves de verificación desde `CODEAPI_JWT_PUBLIC_KEY` con `CODEAPI_JWT_KID`, o desde `CODEAPI_JWT_PUBLIC_KEYS_DIR`; un JWKS en línea facilita al máximo la rotación de claves. Mantén el TTL del token de LibreChat en un valor igual o inferior a `CODEAPI_JWT_MAX_TTL_SECONDS` del servicio (300 como máximo).
+
+Para una copia local, el repositorio de Code Interpreter incluye un asistente que genera claves Ed25519 coincidentes y escribe ambos archivos `.env`:
+
+```bash
+node scripts/setup-local-auth-env.js --librechat /path/to/LibreChat
+```
+
+Los despliegues multi-tenant deben proporcionar un contexto de tenant autenticado y establecer `TENANT_ISOLATION_STRICT=true` en LibreChat y `CODEAPI_TENANT_ISOLATION_STRICT=true` en el servicio. El modo estricto rechaza las solicitudes sin tenant en lugar de recurrir al ID de tenant único.
+
+Integrar otra aplicación directamente con el servicio implica generar tokens compatibles por tu cuenta y enviarlos como `Authorization: Bearer <token>`.
+
+## Cargas de archivos y vistas previas [#file-uploads-and-previews]
+
+LibreChat sube los archivos de la conversación al servicio antes de una ejecución y reintenta las subidas que reciben un límite de velocidad `429`, respetando `Retry-After` dentro de una espera acotada. Puedes ajustarlo por usuario y por ruta con [`codeApiUploadConcurrency` y `codeApiMaxRetryWaitMs`](/docs/configuration/librechat_yaml/object_structure/agents#code-api-upload-recovery).
+
+Los archivos generados obtienen una vista previa en línea de hasta `FILE_PREVIEW_MAX_EXTRACT_BYTES` (2 MiB por defecto; consulta [Vistas previas de archivos en línea](/docs/configuration/dotenv#inline-file-previews)). Las imágenes que el agente lee desde el sandbox se muestran en línea hasta 1 MiB. Establece `LIBRECHAT_CODE_SANDBOX_OUTPUT_MAX_SIZE` para que coincida con `SANDBOX_OUTPUT_MAX_SIZE` del worker, de modo que LibreChat lea las imágenes en el menor número de solicitudes posible; `LIBRECHAT_CODE_IMAGE_CHUNK_BYTES` solo fija la ventana de transferencia y no aumenta el límite de 1 MiB.
+
+Las vistas previas se muestran en el panel de Artefactos mediante el empaquetador estático Sandpack. Si alojas tú mismo el empaquetador, consulta [Configuración de Artefactos](/docs/configuration/artifacts#self-hosting-the-sandpack-bundler).
+
+<Callout type="warning" title="Actualización con salidas de código antiguo">
+  Los despliegues que regeneraron el mismo nombre de archivo de Code Interpreter antes de que existiera el índice único de archivos de salida pueden tener registros duplicados en MongoDB que impiden que el índice se construya. Previsualice la reparación con `npm run migrate:code-file-duplicates:dry-run` y, a continuación, aplíquela con `npm run migrate:code-file-duplicates`.
+</Callout>
+
+## Funciones opcionales [#optional-features]
+
+Cada una de estas opciones está desactivada hasta que la actives.
+
+- **Llamada Programática a Herramientas**: añade `programmatic_tools` junto a `execute_code` en las [capacidades de agentes](/docs/configuration/librechat_yaml/object_structure/agents#capabilities). Requiere el Servidor de Llamadas a Herramientas del servicio.
+- **Ejecución en segundo plano**: añade `run_in_background` a las capacidades de los agentes. La entrega de los resultados finalizados y la cancelación se configuran en [`backgroundTasks`](/docs/configuration/librechat_yaml/object_structure/agents#backgroundtasks).
+- **Sesiones de código con estado**: añada `stateful_code_sessions` a las capacidades de los agentes y, o bien establezca [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint) apuntando a una implementación que anuncie el perfil `stateful`, o bien configure entornos con nombre. Los agentes sin estado siguen usando `LIBRECHAT_CODE_BASEURL`; las solicitudes con estado nunca recurren a él. Esta función es experimental y puede cambiar.
+- **Entornos de código** (máquinas conectadas, workers personales, emparejamiento, elección de máquina por chat, política de aprobación): se configuran en [`statefulCodeSessions`](/docs/configuration/librechat_yaml/object_structure/agents#statefulcodesessions). La copia de archivos adjuntos del chat en un espacio de trabajo conectado está limitada por `endpoints.agents.workspaceAttachments`: `timeoutMs` (por defecto 10000, rango de 1000 a 120000) y `concurrency` (por defecto 3, rango de 1 a 16).

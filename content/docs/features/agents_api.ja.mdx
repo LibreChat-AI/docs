@@ -1,292 +1,120 @@
 ---
 title: Agents API (ベータ版)
-icon: Plug
-description: LibreChatエージェントを実行し、プログラム可能なAPIを通じて認証済みイベントを配信する
+icon: Webhook
+description: >-
+  スクリプトや他のアプリから LibreChat
+  のエージェントを呼び出し、他システムからイベントを送信し、信頼できるサービスからエージェントとスキルを管理できます。
 ---
 
-<Callout type="warning" title="ベータ機能">
-Agents APIは現在ベータ版です。安定版リリースに向けて開発を進める中で、endpoint、リクエスト/レスポンスの形式、および動作が変更される可能性があります。
+Agents API を使うと、LibreChat の外部にあるコードからエージェントを呼び出せます。任意の OpenAI SDK をご利用のインスタンスに向け、モデルとしてエージェント ID を指定するだけで、エージェントの設定一式（指示、ツール、ファイル）を使い慣れた API のまま利用できます。スクリプト、CI ジョブ、別のプロダクトにエージェントを組み込む用途にご活用ください。
+
+The source text you provided ("There are three parts:") ends with a colon and does not include the three parts themselves. Please paste the complete text you would like translated, and I will translate it into 日本語 while preserving all code, markup, URLs, and the protected terms.
+
+- **推論**: Chat Completions と Open Responses。API キー(管理者が設定している場合は、ご自身の OIDC トークン)で認証します。
+- **Agent Events**: 別のシステム(Webhookなど)からエージェントに作業を渡し、その作業が完了したかどうかを追跡します。APIキーのみ。
+- **Agent Management**: 信頼されたサービスから、マシン OIDC トークンを使用してエージェントとスキルを作成・編集します。
+
+<Callout type="warning" title="ベータ">
+  エンドポイント、リクエスト形式、およびレスポンスは、リリースごとに変更される可能性があります。
 </Callout>
 
-LibreChatは、推論APIおよびイベント配信APIを通じて、エージェントを外部アプリケーション、スクリプト、およびサービスに公開します。
+## APIキーを取得する [#get-an-api-key]
 
-## 概要 [#overview]
+**設定**を開き、**Data & Privacy**に移動して、**API keys**の下にある**Agent API Keys**を見つけます。**Manage**をクリックし、次に**Create API Key**をクリックして、名前を付け、有効期限を選択します(7日から1年まで、または無期限)。キーはすぐにコピーしてください。表示されるのは一度だけです。
 
-Agents APIは、2つの推論インターフェース、認証済みイベント配信、およびベータ管理ルートを提供します：
+<ThemeImage
+  light="/images/features/agents_api/api-keys-light.png"
+  dark="/images/features/agents_api/api-keys-dark.png"
+  alt="Settings の Data & Privacy にある Agent API Keys。2 つのキーの有効期限と最終使用日を表示"
+/>
 
-- **OpenAI互換のChat Completions**: `POST /api/agents/v1/chat/completions`
-- **Open Responses API**: `POST /api/agents/v1/responses`
-- **エージェントイベント**: `POST /api/agents/v1/events`
-- **エージェント管理**: `/api/agents/v1/agents`
-- **スキル管理**: `/api/agents/v1/skills`
+キーはあなた本人として振る舞います。API を通じてあなたがアクセスできるものには、そのキーを持つ誰もがアクセスできます。そのため、もう使っていないキーは削除してください。キーを削除すると、そのキーを使用しているアプリケーションは即座に接続できなくなります。
 
-推論インターフェースは、APIキー認証、オプションのOIDC認証、およびストリーミングレスポンスをサポートしています。Agent EventsはRemote AgentsのAPIキー認証を使用するため、LibreChatは各配信を安定したソースIDに紐付けることができます。一方、管理ルートは、OIDCマシンクライアントを既存のLibreChatユーザーおよびテナントに紐付けるデプロイメント許可リストを使用します。
+セクションが表示されない場合は、お使いのロールに Agents API へのアクセス権が付与されていません。
 
-LibreChatは、エージェントを提供するための主要なAPIフレームワークとして[Open Responses](https://www.openresponses.org/)を採用しています。Chat Completions endpointは既存のOpenAI互換ツールとの後方互換性を提供しますが、Open Responses endpointは将来の方向性を表しています。
+## 呼び出し可能なエージェント [#which-agents-you-can-call]
 
-## Agents API を有効にする [#enabling-the-agents-api]
+あなたが所有している、または共有されているエージェントを呼び出すことができます。他の人のエージェントについては、所有者がエージェントビルダーのフッターにある**リモートアクセス**ボタン(地球儀アイコン)を使ってアクセス権を付与する必要があります。これは通常の共有とは別のものです。LibreChat でエージェントとチャットできることは、API を通じてそのエージェントを呼び出せることを意味しません。
 
-Agents APIは、`remoteAgents`インターフェース設定によって制限されています。すべての権限はデフォルトで`false`に設定されています。
+エージェントIDが必要です。これはビルダーの**詳細設定**に、コピーボタン付きで表示されています。`GET /api/agents/v1/models` は、お使いのキーで呼び出せるエージェントの一覧を返し、`GET /api/agents/v1/models/{model}` は1つのエージェントを返します。
 
-```yaml filename="librechat.yaml"
-interface:
-  remoteAgents:
-    use: true
-    create: true
-```
+## チャット補完 [#chat-completions]
 
-詳細なオプションについては、[インターフェース設定: remoteAgents](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents)を参照してください。
+`POST /api/agents/v1/chat/completions` は OpenAI Chat Completions 形式に従うため、ベース URL を変更するだけで既存の OpenAI クライアントをそのまま利用できます。
 
-**注:** 管理者ユーザーには、すべてのリモートエージェント権限がデフォルトで有効になっています。
-
-### OpenAPI 仕様とインタラクティブなドキュメント [#openapi-specification-and-interactive-docs]
-
-LibreChatは、パブリックなAgents API仕様を `/api/openapi.json` で、インタラクティブなSwagger UIドキュメントを `/api/docs` で提供できます。どちらのルートもデフォルトでは無効になっています。これらを有効にするには、トップレベルの `openapi` 設定を使用します：
-
-```yaml filename="librechat.yaml"
-openapi:
-  enabled: true
-```
-
-仕様書がカバーしているのは、エージェント管理とスキル管理のルートのみです。推論(Chat Completions および Open Responses)およびエージェントイベントのルートは対象外です。デプロイ環境で API ドキュメントを公開する意図がない限り、これらのルートは無効のままにしてください。
-
-## API Key Management [#api-key-management]
-
-`remoteAgents.use` および `remoteAgents.create` が有効になると、ユーザーは LibreChat UI から API キーを生成できるようになります。これらのキーは、Agents API へのリクエストを認証するために使用されます。
-
-## 認証 [#authentication]
-
-Agents APIは、個別または組み合わせて使用できる2つの認証方法をサポートしています。
-
-### API Key [#api-key]
-
-APIキー認証はデフォルトで有効になっています。`remoteAgents.use` および `remoteAgents.create` が有効になったら、LibreChat UIからAPIキーを生成してください。
-
-```bash
-Authorization: Bearer <YOUR_API_KEY>
-```
-
-### OIDC Bearer Token [#oidc-bearer-token]
-
-インフラストラクチャにすでにOIDCプロバイダーが存在するマシン間（M2M）のシナリオでは、LibreChat APIキーを使用せずに、OIDC Bearerトークンで直接認証を行うことができます。
-
-`librechat.yaml` で OIDC 認証を設定します:
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    remoteApi:
-      auth:
-        apiKey:
-          enabled: false
-        oidc:
-          enabled: true
-          issuer: https://auth.example.com/realms/myrealm
-          # jwksUri is optional and auto-discovered from issuer if omitted
-          audience: my-client-id
-```
-
-次に、OIDCアクセストークンを使用してAPIを呼び出します：
-
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/responses \
-  -H "Authorization: Bearer YOUR_OIDC_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "agent_abc123", "input": "Hello!"}'
-```
-
-<Callout type="info">
-  OIDCトークンは、LibreChatに既に存在するユーザーのものである必要があります。照合にはまず `sub` クレームが使用され、次に `email`、`preferred_username`、または `upn` が順次フォールバックとして使用されます。
-</Callout>
-
-すべての設定オプションについては、[Agents Endpoint - remoteApi](/docs/configuration/librechat_yaml/object_structure/agents#remoteapi) を参照してください。
-
-<Callout type="warning" title="Agent EventsにはAPIキーが必要です">
-  Agent Events エンドポイントでは、OIDC のみの認証はサポートされていません。バインディングの作成、イベントのエンキュー、および配信ステータスのポーリングを行う際は、Remote Agents API キーを使用してください。
-</Callout>
-
-## エージェント管理 API [#agent-management-api]
-
-ベータ版の Agent Management API を使用すると、ブラウザセッションなしでサービスが Agent およびその関連リソースを管理できるようになります。これは推論や Agent Events とは独立して認証されます。[`endpoints.agents.managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi) で設定された OIDC マシントークンのみが受け入れられます。
-
-設定された各OAuthクライアントは、既存のLibreChatの`userId`および`tenantId`に紐付けられます。トークンの検証後、すべてのリクエストはそのユーザーとして実行され、ユーザーの現在のロール権限、AgentおよびSkillのACL、プロバイダー制限、ツール付与、ファイル制限、およびテナント分離が維持されます。クライアントの紐付けによってユーザーが管理者になったり、本来管理できないリソースへのアクセス権が付与されたりすることはありません。
-
-### エージェントルート [#agent-routes]
-
-| メソッド | ルート | 目的 |
-| -------- | ------------------------------------------ | -------------------------------------------- |
-| `POST`   | `/api/agents/v1/agents`                    | エージェントの作成 |
-| `GET`    | `/api/agents/v1/agents`                    | アクセス可能なエージェントの一覧表示 |
-| `GET`    | `/api/agents/v1/agents/{id}`               | アクセス可能な特定エージェントの読み取り |
-| `PATCH`  | `/api/agents/v1/agents/{id}`               | エージェントの更新 |
-| `DELETE` | `/api/agents/v1/agents/{id}`               | エージェントの削除 |
-| `POST`   | `/api/agents/v1/agents/{id}/files`         | エージェントリソースファイルのアップロードと添付 |
-| `GET`    | `/api/agents/v1/agents/{id}/files`         | エージェントがアクセス可能な添付ファイルの一覧表示 |
-| `DELETE` | `/api/agents/v1/agents/{id}/files/{fileId}` | エージェントから添付ファイルを削除 |
-
-Agentの作成および更新のペイロードは、Agent Builderと同一の外部サポートフィールドを使用し、未知のトップレベルフィールドは拒否されます。作成には `model` が必須であり、更新では提供されたフィールドのみが受け入れられます。レスポンスには、サポートされているAgent設定に加え、`id`、`provider`、null許容の `model`、`version`、`createdAt`、および `updatedAt` が含まれますが、永続化の所有権フィールドは含まれません。
-
-リストは1から100までの `limit` を受け付け、デフォルトは20で、不透明な `cursor` を使用します。`has_more` が true の場合、返された `after` の値を次のカーソルとして渡してください。クライアント側でカーソルをデコードしたり構築したりしないでください。
-
-```bash
-curl https://your-librechat-instance/api/agents/v1/agents?limit=20 \
-  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN"
-```
-
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/agents \
-  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Release assistant",
-    "provider": "openAI",
-    "model": "gpt-5.6",
-    "instructions": "Prepare concise release notes from verified changes."
-  }'
-```
-
-ファイルアップロードは、1つの `file` と `context`、`file_search`、または `execute_code` といった `tool_resource` 値を含む `multipart/form-data` を使用します。LibreChatは、リソースを添付する前に、デプロイメント機能、ロール権限、アップロードレート制限、ファイルごとの制限、ファイル数制限、および合計サイズチェックを適用します。ファイルの削除にはAgentへの編集アクセス権が必要であり、基盤となるファイルの認可ルールを弱めることはありません。
-
-### Skill Routes [#skill-routes]
-
-| メソッド | ルート | 目的 |
-| ------- | ---------------------------------------------------- | ------------------------------------- |
-| `GET`    | `/api/agents/v1/skills`                              | アクセス可能なSkillの一覧を取得 |
-| `POST`   | `/api/agents/v1/skills`                              | Skillを作成 |
-| `GET`    | `/api/agents/v1/skills/{id}`                         | アクセス可能な1つのSkillを取得 |
-| `PATCH`  | `/api/agents/v1/skills/{id}`                         | Skillを更新 |
-| `DELETE` | `/api/agents/v1/skills/{id}`                         | Skillを削除 |
-| `GET`    | `/api/agents/v1/skills/{id}/files`                   | Skill内のファイル一覧を取得 |
-| `GET`    | `/api/agents/v1/skills/{id}/files/{relativePath}`    | Skillファイルを1つ取得 |
-| `PUT`    | `/api/agents/v1/skills/{id}/files/{relativePath}`    | サポートされているファイルを1つ作成または置換 |
-| `DELETE` | `/api/agents/v1/skills/{id}/files/{relativePath}`    | Skillファイルを1つ削除 |
-
-`name`、`description`、`body` を受け付けるほか、任意で `displayTitle`、`frontmatter`、`category`、`alwaysApply` を指定できます。Update では、正の整数の `expectedVersion`(Skill の現在のバージョン)と、変更するフィールドを少なくとも 1 つ指定する必要があります。変更可能なフィールドには `body` と `frontmatter` が含まれます。Create と Update のどちらも、未知のフィールドを含むリクエストは拒否されます。
-
-スキル操作は、バインドされたユーザーに表示されるスキルに限定されます。読み取りにはスキルへのアクセス権が必要であり、メタデータやファイルの書き込みには、対応する編集権限およびスキル作成権限が必要です。パスはスキルルート配下で正規化され、トラバーサル、サポートされていないファイル、およびサイズ超過のコンテンツは拒否されます。
-
-### エラーと認証 [#errors-and-authentication]
-
-管理レスポンスは、`invalid_request`、`not_found`、`permission_denied`、`conflict`、または `internal_error` コードを使用した構造化エラーを使用します。リソースの認可失敗は、呼び出し元がアクセスできないIDを調査できないようにするため、`not_found` として返される場合があります。
-
-マシン・トークンは、期限切れではなく、設定された発行者と一致し、`azp` または `client_id` を通じて許可リストに登録されたクライアントを特定し、設定されたサブジェクト・ルールを満たす必要があります。デフォルトでは、トークンは設定されたオーディエンスとも一致する必要があります。Amazon Cognitoのように `aud` の代わりに `client_id` を含むマシン・アクセストークンを発行するプロバイダーの場合は、`tokenUse: access` を設定し、`audience` を省略し、`requiredScopes` で必要なOAuthスコープを指定してください。設定が不足している場合や認証情報が無効な場合は `401` が返され、削除中のバインド済みアカウントの場合は `409` が返されます。クレームおよびバインディング・ルールの詳細については、[`managementApi.auth.oidc`](/docs/configuration/librechat_yaml/object_structure/agents#managementapiauthoidc) および [`managementApi.auth.clients`](/docs/configuration/librechat_yaml/object_structure/agents#managementapiauthclients) を参照してください。
-
-## Endpoints [#endpoints]
-
-### Chat Completions (OpenAI互換) [#chat-completions-openai-compatible]
-
-```
-POST /api/agents/v1/chat/completions
-```
-
-LibreChat インスタンスを指定することで、あらゆる OpenAI 互換 SDK を使用できます。`model` パラメータはエージェント ID に対応しています。
-
-**curlを使用した例:**
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "agent_abc123",
-    "messages": [
-      {"role": "user", "content": "Hello, what can you help me with?"}
-    ],
-    "stream": true
-  }'
-```
-
-**OpenAI SDK (Python) を使用した例:**
 ```python
 from openai import OpenAI
 
 client = OpenAI(
     base_url="https://your-librechat-instance/api/agents/v1",
-    api_key="YOUR_API_KEY"
+    api_key="YOUR_API_KEY",
 )
 
-response = client.chat.completions.create(
+stream = client.chat.completions.create(
     model="agent_abc123",
-    messages=[{"role": "user", "content": "Hello!"}],
-    stream=True
+    messages=[{"role": "user", "content": "Summarize yesterday's open tickets."}],
+    stream=True,
 )
 
-for chunk in response:
-    print(chunk.choices[0].delta.content, end="")
+for chunk in stream:
+    print(chunk.choices[0].delta.content or "", end="")
 ```
 
-### モデルの一覧表示 [#list-models]
-
-```
-GET /api/agents/v1/models
-```
-
-利用可能なエージェントをモデルとして返します。APIキーでどのアージェントにアクセスできるかを確認するのに便利です。
-
-```
-GET /api/agents/v1/models/{model}
-```
-
-単一のエージェントをモデルオブジェクトとして返します。
-
-### Open Responses API [#open-responses-api]
-
-```
-POST /api/agents/v1/responses
-```
-
-Open Responses endpointは、OpenAIが主導し、オープンソースAIコミュニティによって構築されたオープン推論標準である[Open Responses specification](https://www.openresponses.org/)に従っています。これは、推論、ツール使用、構造化出力、およびストリーミングセマンティックイベントをネイティブでサポートする、エージェントワークフロー向けに設計されています。
+同じリクエストをcurlで送信する場合:
 
 ```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/responses \
+curl https://your-librechat-instance/api/agents/v1/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "agent_abc123",
-    "input": "What is the weather today?"
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true
   }'
 ```
 
-関連ルート:
+## Open Responses [#open-responses]
 
-- `GET /api/agents/v1/responses/models` は、Responses API を通じて利用可能なエージェントの一覧を返します。
-- `GET /api/agents/v1/responses/{id}` は、ID を指定して保存済みのレスポンスを取得します。
+`POST /api/agents/v1/responses` は [Open Responses](https://www.openresponses.org/) 仕様を実装しており、エージェントのワークロード向けに設計されています。推論、ツール呼び出し、ストリーミングイベントは後付けではなく、フォーマットの一部として組み込まれています。LibreChat は今後この インターフェース を基盤として開発を進めるため、新規の連携にはこちらを優先して利用することを推奨します。
 
-#### Caller-Executed Function Tools [#caller-executed-function-tools]
+```bash
+curl https://your-librechat-instance/api/agents/v1/responses \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "agent_abc123", "input": "What changed in the last release?"}'
+```
 
-Open Responses endpointは、呼び出し元から提供される標準的な `function` ツールを受け入れます。LibreChatはこれらの定義をモデルに公開しますが、実行は行いません。モデルがツールを選択すると、応答には呼び出し元が実行するための `function_call` 出力項目が含まれます。
+`GET /api/agents/v1/responses/{id}` は保存されたレスポンスを返し、`GET /api/agents/v1/responses/models` はここで利用可能なエージェントを一覧表示します。
 
-続行するには、返された `function_call` アイテムと、それに続く一致する `function_call_output` アイテムを `input` でリプレイする新しいリクエストを送信してください。このハンドオフはステートレスです。中断された実行を作成するわけではなく、`previous_response_id` 単体ではリプレイされたツール交換を置き換えることはできません。
+### 独自の関数ツール [#your-own-function-tools]
+
+Responses リクエストでは、標準の `function` ツールを渡すことができます。LibreChat はこれらのツールをモデルに提示しますが、実行はしません。モデルがいずれかのツールを選択すると、レスポンスには `function_call` アイテムが含まれるため、関数はご自身で実行してください。処理を続けるには、`function_call` アイテムを繰り返したうえで、同じ `call_id` を持つ `function_call_output` を `input` に含めた新しいリクエストを送信してください。
 
 ```json
 {
   "model": "agent_abc123",
   "input": [
-    {
-      "type": "function_call",
-      "call_id": "call_abc123",
-      "name": "lookup_order",
-      "arguments": "{\"order_id\":\"A-42\"}"
-    },
-    {
-      "type": "function_call_output",
-      "call_id": "call_abc123",
-      "output": "{\"status\":\"shipped\"}"
-    }
+    { "type": "function_call", "call_id": "call_abc123", "name": "lookup_order", "arguments": "{\"order_id\":\"A-42\"}" },
+    { "type": "function_call_output", "call_id": "call_abc123", "output": "{\"status\":\"shipped\"}" }
   ]
 }
 ```
 
-Callerツールの名前には、英数字、アンダースコア、ハイフンを使用できます。名前は一意である必要があり、サーバーが提供するツールを置き換えることはできません。Callerが実行するツールは、そのターンで選択される唯一のツールである必要があります。モデルがサーバー実行ツールと混在させた場合、LibreChatはモデルに対し、そのCallerツール単体で再試行するよう要求します。
+2つのリクエストの間で何も保持されず、`previous_response_id` だけでは不十分で、呼び出しとその出力を再送する必要があります。ツール名には英字、数字、アンダースコア、ハイフンを使用でき、一意である必要があり、エージェント自身のツールと同名にすることはできません。自分のツールを呼び出すターンでは、同時にエージェントのツールを呼び出すことはできず、モデルに再試行が求められます。
 
-LibreChatが実行するエージェントツールについては、どちらのヘッドレス推論エンドポイントも、`deny`、`ask`、およびプログラムによるフックを含む、有効化された [`endpoints.agents.toolApproval`](/docs/configuration/librechat_yaml/object_structure/agents#toolapproval) ポリシーを強制します。これらの呼び出しには対話型の承認/再開チャネルがないため、`deny` および `ask` は承認プロンプトを開く代わりにツールをブロックします。APIクライアントが自動実行できるツールに対してのみ明示的な許可を設定してください。ポリシーが無効な場合、その承認フックは実行されません。呼び出し元が実行する関数ツールについては、引き続き呼び出し元の責任となります。
+### API経由でのツール承認 [#tool-approval-over-the-api]
+
+管理者が一部のツールに承認を必要としている場合、API呼び出しは誰かに確認するために停止することはできません。承認が必要なツールや拒否されたツールは、代わりにブロックされます。管理者は、無人のクライアントに実行させるツールを明示的に許可しておく必要があります。
 
 ## Agent Events [#agent-events]
 
-Agent Eventsを使用すると、認証されたコントローラーまたはソースアダプターが、Agentに対して永続的な作業を配信できるようになります。イベント配信はベータ版の機能であり、そのリクエスト、レスポンス、およびランタイムの動作は変更される可能性があります。
+Agent Eventsは、別のシステムがエージェントに作業を引き渡し、後から結果を確認できる機能です。これはベータ版です。イベントはAgents APIキーを使用し、これによって利用者とイベントの発生元が識別されます。OIDCのみの構成では利用できません。また、独自のレート制限([`rateLimits.agentEvents`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits))があります。
 
-各endpointは、認証されたユーザー、テナント、およびAPIキーを使用します。ターゲットとなるAgentは、既存のRemote Agentsの権限設定において、そのユーザーから参照可能である必要があります。Agent Eventのリクエストには、専用の [`rateLimits.agentEvents`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) バケットも使用されます。
+イベントは次の3つのモードのいずれかで届きます:
 
-### イベントを配信する [#deliver-an-event]
+- `fire` で、エージェントとの新しい会話を開始します。
+- `continue` は、先ほどバインドした子エージェントにターンを追加します(下記参照)。
+- `steer` は、`fire` が返した会話と生成の識別子によって特定される、まだ実行中の処理に対してガイダンスを追加します。
 
 ```http
 POST /api/agents/v1/events
@@ -308,32 +136,22 @@ Content-Type: application/json
 }
 ```
 
-`Idempotency-Key` ヘッダーを正確に1つ送信し、同じソースイベントからターゲットへの配信を再試行する際にはそのキーを再利用してください。キーには1〜256文字の英数字、または `._~:/+=-` の文字を含める必要があります。異なる配信内容でキーを再利用すると、競合が返されます。
+すべてのリクエストには、`Idempotency-Key` を 1 つ含める必要があります(使用可能な文字は英字、数字、`._~:/+=-` で、長さは 1〜256 文字)。同じ配信を再試行する場合は、同じキーを再利用してください。異なる内容に対して同じキーを再利用すると、競合となります。LibreChat はイベントのソースを API キーから設定し、送信されたソースは無視します。ペイロードは保存されるため、シークレットは含めないでください。同じ対象に関するイベントを順番どおりに処理する必要がある場合は、`orderingKey` を使用してください。
 
-呼び出し元はイベントの `id`、`type`、`occurredAt`、およびサニタイズされた `payload` を提供します。LibreChat は呼び出し元が提供した `event.source` を認証済み API キーのアイデンティティに置き換え、ユーザー、テナント、リクエスト ID、および受信時刻を導出します。受け入れられた配信は永続化されるため、イベントのペイロードに認証情報や転送用のシークレットを含めないでください。
-
-`orderingKey` はオプションです。異なるソースからの配信を同じリソースに対して順序立てる必要がある場合は、固定の値を使用してください。
-
-リクエストが成功すると、`202 Accepted`、不透明な配信 `id`、現在のステータス、および `Location` ヘッダーが返されます。その場所をポーリングしてください：
+レスポンスは `202 Accepted` で、配信 ID と、同じキーでポーリングするための `Location` が返されます:
 
 ```http
 GET /api/agents/v1/events/{delivery_id}
 Authorization: Bearer <SAME_REMOTE_AGENTS_API_KEY>
 ```
 
-配信は `pending`、`leased`、`succeeded`、または `dead` のいずれかになります。ステータスレスポンスには、試行回数とタイムスタンプに加え、完了時の結果またはパブリックエラーが含まれます。保存されたペイロード、順序付けキー、再試行履歴、またはワーカーIDは公開されません。ステータスへのアクセスは、同一のユーザー、テナント、および API キーソースに限定されます。
+配信のステータスは `pending`、`leased`、`succeeded`、`dead` のいずれかです。バインドされた `continue` の場合、`succeeded` はターンが開始されたことのみを意味します。その後、その `handling` ステータスは `started` から `applied`、`completed_no_action`、`failed`、`cancelled` のいずれかに移行します。`expectedAction`(ツール名と、必要に応じてその引数の一部)を送信した場合、`applied` は LibreChat がその引数が一致するツールが呼び出されたことを確認したことを意味します。モデルがテキストで何を述べるかは考慮されません。
 
-バインドされた `continue` の場合、`succeeded` はエージェントのターンが許可されたことを意味し、要求された作業が完了したことを意味するわけではありません。したがって、そのステータスは、`started` に続き、`applied`、`completed_no_action`、`failed`、または `cancelled` のいずれか1つが必ず発生する、永続的な `handling` ライフサイクルも公開します。
-
-アクション対応のソースには、ツール名とオプションの引数サブセットを含む `expectedAction` を含めることができます。LibreChat は、その正確な生成がホスト側で観測されたツールエビデンスと契約内容に一致して完了した場合にのみ `applied` を報告します。モデルが作成した文章は、証拠として決して受け入れられません。`fire`、`steer`、およびバインドされていない `continue` の配信は、`expectedAction` を拒否します。
-
-`fire` が成功すると、その後の `steer` イベントでターゲットにできる会話と生成の識別情報が返されます。
+Agent Events は公開の Webhook 受信エンドポイントではありません。イベントを提供元が Webhook に署名している場合は、転送する前に独自のアダプターで署名を検証してください。
 
 ### イベント駆動型の子エージェント [#event-driven-child-agents]
 
-外部システムは、ソースアクターを直接の子Agentにバインドし、その後同じ子会話をイベント間で継続させることができます。バインドされた子継続は、APIキーのID、バインドの所有権、親子関係、およびAgentの承認チェックが成功した後に自動的に行われます。これには個別の機能トグルは存在しません。
-
-その後のターンを配信するのと同じAPIキーを使用してアクターを登録します：
+子エージェントとの会話を複数のイベントにわたって継続するには、まず一度バインドし、その後そのバインディングに対して `continue` イベントを送信します。
 
 ```http
 POST /api/agents/v1/events/bindings
@@ -349,86 +167,72 @@ Content-Type: application/json
 }
 ```
 
-`actorId` は最大128文字まで含めることができます。親は通常の Agent 会話である必要があり、ターゲットはその Agent の直接の Subagent、または許可された自己生成（self-spawn）として構成されている必要があります。新しいバインディングは `201` を返し、べき等なリプレイは `200` を返します。どちらのレスポンスにも `id`、`actorId`、`agentId`、および `threadId` が含まれます。
-
-返されたバインディングIDを使用して、以降のターンを送信します：
-
-```http
-POST /api/agents/v1/events
-Authorization: Bearer <SAME_REMOTE_AGENTS_API_KEY>
-Idempotency-Key: game-12-ply-17-hanae
-Content-Type: application/json
-
-{
-  "mode": "continue",
-  "bindingId": "evtbind_...",
-  "event": {
-    "id": "game-12-ply-17",
-    "type": "chess.turn.ready",
-    "occurredAt": 1786968000000,
-    "payload": { "gameId": "game-12", "expectedPly": 17 }
-  },
-  "input": "Your clock is running. Read the position and submit one legal move.",
-  "expectedAction": {
-    "tool": "submit_move",
-    "arguments": { "gameId": "game-12" }
-  }
-}
-```
-
-LibreChatは、ディスパッチの直前に、バインディングから子Agent、スレッド、最新のブランチリーフ、および順序付けレーンを解決します。呼び出し元が提供したターゲットおよび順序付けフィールドは、バインドされた継続をリダイレクトすることはできません。リクエストの `Idempotency-Key` は、配信の再試行、生成リーシング、永続化されたメッセージ、ライブアクティビティ、およびその後のHITL再開全体にわたって、その子ターンの安定した公開IDとなります。
-
-各バインディングには自動的な永続メールボックスがあります。次のイベントは、現在のターンが `applied`、`completed_no_action`、`failed`、または `cancelled` に達するまでキューに入れられたままになります。異なるバインディングは独立しており、並行して実行可能です。チェックポイントの継続は、互換性のある初期化済みターンに対してのみ試行されます。チェックポイントが存在しないか復元できない場合、LibreChatは受信、承認、または期待されるアクションのチェックを弱めることなく、永続的なメッセージ履歴にフォールバックします。
-
-バインドされたアクターは、「Ask User（ユーザーへの問い合わせ）」またはツール承認のために一時停止できます。LibreChatは、保留中のアクションを公開する前に正確な署名済みサスペンションを永続化し、そのアクターの呼び出しが再開または解決されるまで、バインディングのメールボックスはブロックされたままになります。Event Actorsには永続的なMongoDBチェックポインターが必要であり、`type: memory` は互換性がありません。LibreChatは生成プロトコルv2をネゴシエートし、チェックポイントまたは履歴の継続を自動的に選択します。既存のプロトコルv1の作業は、完了するまで永続的な履歴パスに残ります。混在バージョンのデプロイ要件については、[Generation Protocol Compatibility](/docs/configuration/redis#generation-protocol-compatibility) を参照してください。
-
-### 観測イベントの統合 (Coalescing Observational Events) [#coalescing-observational-events]
-
-複数の `continue` イベントが互換性のある観測結果であることを証明できるソースには、同じソース定義の `coalesce.key` を付与することができます。
+The parent must be a normal agent conversation, and the target must be one of that agent's direct subagents (or the agent itself, if self-spawn is allowed). `actorId` is up to 128 characters. A new binding returns `201` and a replay returns `200`, both with the binding `id`. Later turns reference it:
 
 ```json
 {
   "mode": "continue",
   "bindingId": "evtbind_...",
-  "event": {
-    "id": "championship-7-game-12-move-18",
-    "type": "chess.move.completed",
-    "occurredAt": 1786968000750,
-    "payload": { "gameId": "game-12", "ply": 18 }
-  },
-  "input": "A tournament game advanced.",
-  "coalesce": { "key": "championship-commentary" }
+  "event": { "id": "game-12-ply-17", "type": "chess.turn.ready", "occurredAt": 1786968000000, "payload": { "gameId": "game-12" } },
+  "input": "Your clock is running. Submit one legal move.",
+  "expectedAction": { "tool": "submit_move", "arguments": { "gameId": "game-12" } }
 }
 ```
 
-LibreChatは、最大750ミリ秒間、最大8件のイベント、および合計512 KiBのエンベロープまで、互換性のあるイベントを収集します。子プロセスは1つの決定論的なバッチドキュメントを受け取りますが、各ソースイベントは独自の `Idempotency-Key`、配信記録、およびレシートを保持します。
+各バインディングは一度に1つのイベントを処理します。次のイベントは、現在のターンが最終的な処理ステータスになるまで待機しますが、異なるバインディングは並列に実行されます。バインドされた子エージェントは、Ask Userやツール承認のために一時停止することがあり、その後のイベントは、LibreChatで誰かが応答するまで待機します。これには、耐久性のあるMongoDBチェックポインター(デフォルト)が必要です。親の会話では、バインドされた各子エージェントは、そのバインディングを所有するメッセージの下に行として表示され、サブエージェントのアクティビティパネルが開きます。
 
-アクションを伴わない観測に対してのみ、コアレッシング（coalescing）を使用してください。`fire`、`steer`、バインドされていない`continue`、および`expectedAction`を伴う配信に対しては拒否されます。コマンド、承認、HITLリクエスト、フェンス、または個別のタイミングが重要なイベントには使用しないでください。
+バインディングは、それを作成した API キー、ユーザー、テナントに対してのみ機能します。子スレッドはチャット一覧に表示されず、アプリ内では読み取り専用になります。
 
-認証済みの親会話では、各バインドされたアクターは、それを所有する親メッセージの下に表示されます。Subagentパネルでは、アクターとターンの切り替え、過去のアクティビティの読み込み、ターンの展開によるバインドされた全アクティビティの表示が可能です。イベントの詳細には、タイプ、ソース、発生時刻、期待されるアクションが含まれます。表示可能な実行ステップ、ツール、メッセージ、推論マーカーは含まれますが、生の推論テキストは含まれません。親インデックスは、バインドされたソースウィンドウから最大64個の子スレッドと、子ごとに最大20個の最近のタスクを返し、完全であることを示唆するのではなく切り捨てを報告し、応答を96 KBに制限します。これは親、ユーザー、およびテナントによって認証されており、バインド、ソースキーID、リース・トークン、およびワーカーの状態はプロジェクションに含まれません。
+観察イベント(例:「ゲームが進んだ」など)には同じ `coalesce.key` を付与します。すると LibreChat は、750 ms 以内かつ 512 KiB 以内で届いたものを最大 8 件まで 1 つのターンにまとめます。各イベントには引き続き個別のレシートが発行されます。コマンド、承認、または `expectedAction` を持つものはまとめないでください。
 
-子スレッドは通常の会話ナビゲーションからは非表示となり、人間によるチャットルートからは読み取り専用となります。また、親スレッドの一時的または有効期限ポリシーを継承し、直接の子レベルは1つまでに制限されます。バインディングID単体ではアクセス権は付与されません。継続（continuations）は、それを作成したユーザー、テナント、およびAPIキーのスコープ内に限定されます。
+## エージェント管理 API [#agent-management-api]
 
-### 分離されたイベントアクターアクション [#detached-event-actor-actions]
+Agent Management APIは、信頼されたサービスがブラウザセッションなしでエージェントとスキルを作成、変更、削除できるようにします。このAPIはベータ版であり、独自の認証方式を使用します。管理者が[`managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi)の下に登録したクライアントによるマシンOIDCトークンを使用します。各クライアントは既存のLibreChatユーザーおよびテナントに1対1で紐付けられ、すべてのリクエストはそのユーザーの権限とアクセス範囲で実行されます。このAPIによって、誰かが管理者になることはありません。
 
-Event Actorのターンは、対象となるActionを切り離し、永続的に完了させることができます。Actionの実行中、配信はその処理ライフサイクル内に留まります。永続的な最終エビデンスが元の署名済みActor呼び出しを再開させ、ホストが観測した結果のツールエビデンスのみが `expectedAction` を満たすことができます。リプレイや競合するレプリカが、同じ予約済みActionを二度起動することはできません。LibreChatが外部の副作用が開始されたかどうかを判断できない場合、盲目的に再試行するのではなく、その起動を隔離（quarantine）します。
+| メソッド | ルート | 目的 |
+| -------- | -------------------------------------------- | ---------------------------------- |
+| `POST` | `/api/agents/v1/agents` | エージェントを作成 |
+| `GET` | `/api/agents/v1/agents` | アクセス可能なエージェントを一覧表示 |
+| `GET` | `/api/agents/v1/agents/{id}` | エージェントを読み取る |
+| `PATCH` | `/api/agents/v1/agents/{id}` | エージェントを更新 |
+| `DELETE` | `/api/agents/v1/agents/{id}` | エージェントを削除 |
+| `POST` | `/api/agents/v1/agents/{id}/files` | ファイルをアップロードして添付 |
+| `GET` | `/api/agents/v1/agents/{id}/files` | 添付ファイルを一覧表示 |
+| `DELETE` | `/api/agents/v1/agents/{id}/files/{fileId}` | ファイルの添付を解除 |
+| `GET` | `/api/agents/v1/skills` | アクセス可能なスキルを一覧表示 |
+| `POST` | `/api/agents/v1/skills` | スキルを作成 |
+| `GET` | `/api/agents/v1/skills/{id}` | スキルを読み取る |
+| `PATCH` | `/api/agents/v1/skills/{id}` | スキルを更新 |
+| `DELETE` | `/api/agents/v1/skills/{id}` | スキルを削除 |
+| `GET` | `/api/agents/v1/skills/{id}/files` | スキルのファイルを一覧表示 |
+| `GET` | `/api/agents/v1/skills/{id}/files/{path}` | スキルファイルを読み取る |
+| `PUT` | `/api/agents/v1/skills/{id}/files/{path}` | スキルファイルを作成または置換 |
+| `DELETE` | `/api/agents/v1/skills/{id}/files/{path}` | スキルファイルを削除 |
 
-LibreChatは、選択された組み込み生成ストアがサポートを通知すると、この内部補完作業を自動的に有効にします。インメモリ・ストアは、起動、補完、および継続を単一のプロセスで実行するため、プロセス終了後にその作業を復旧することはできません。Redis生成ストリームを追加すると、永続的な再起動復旧とレプリカのハンドオフが可能になります。機能が所有する配信および復旧レコードは、バージョンが混在するドレイン（排出）中、古いクレイマーからは不可視のままとなります。オペレーターが管理するプロデューサーフラグは存在しません。
+```bash
+curl -X POST https://your-librechat-instance/api/agents/v1/agents \
+  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Release assistant",
+    "provider": "openAI",
+    "model": "gpt-5.6",
+    "instructions": "Prepare concise release notes from verified changes."
+  }'
+```
 
-## トークン使用量の追跡 [#token-usage-tracking]
+エージェントのペイロードは、エージェントビルダーと同じフィールドを受け付け、未知のフィールドはすべて拒否されます。作成時には `model` が必須です。一覧取得では `limit`(1～100、デフォルトは20)と `cursor` を指定できます。`has_more` が true の場合は、返された `after` を次の cursor として渡してください。ファイルのアップロードは `multipart/form-data` 形式で、`file` を1つと、`context`、`file_search`、`execute_code` などの `tool_resource` を指定します。通常のアップロード上限が適用されます。
 
-すべてのAgents API推論リクエストは、トークン消費が設定されている場合、ユーザーの残高に対してトークン使用量を追跡します。ストリーミングおよび非ストリーミングの両方のレスポンスにおいて、課金対象となるすべてのプライマリAgentおよびSubagentのモデル呼び出しが、最上位の合計値に集計されます。レスポンスには、IDを含まない`primary`および`subagent`のトークン内訳も含まれます。プロバイダーが報告する場合、キャッシュおよび推論トークンの詳細も含まれます。
+Skill create は `name`、`description`、`body` を必須とし、`displayTitle`、`frontmatter`、`category`、`alwaysApply` は任意で指定できます。更新時には、スキルの現在のバージョンを `expectedVersion` として送信する必要があります。これにより、2 人の書き込み者が互いの変更を暗黙に上書きしてしまうことを防ぎます。
 
-## ロードマップ [#roadmap]
+エラーは `invalid_request`、`not_found`、`permission_denied`、`conflict`、`internal_error` のコードを使用します。アクセス権のないリソースは `not_found` として返される場合があります。認証情報が不正または欠落している場合は `401` を返します。
 
-- **Open Responses を主要インターフェースに**: Open Responses エンドポイントを拡張し、エージェントループ、ツールオーケストレーション、ストリーミングのセマンティックイベントを完全にサポートする予定です。
-- **Anthropic Messages API**: 将来的には、追加のインターフェースとして Anthropic Messages API 形式のサポートを追加する可能性があります。
+管理者が有効にすると、管理用ルートのOpenAPI記述が`/api/openapi.json`で提供され、インタラクティブなドキュメントは`/api/docs`で利用できます。推論およびイベントは対象外です。詳細は[`openapi`](/docs/configuration/librechat_yaml/object_structure/config#openapi)を参照してください。
 
-## 関連ドキュメント [#related-documentation]
+## 使用量と課金 [#usage-and-billing]
 
-- [Agents](/docs/features/agents): エージェントの作成と設定
-- [Subagents](/docs/features/subagents): 直接の子エージェントの設定
-- [Agents Endpoint Configuration](/docs/configuration/librechat_yaml/object_structure/agents): イベントのランタイムおよび認証設定
-- [Interface Configuration: remoteAgents](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents): アクセス制御の設定
-- [Token Usage](/docs/configuration/token_usage): トークン消費量とバランスの設定
-- [Open Responses Specification](https://www.openresponses.org/): オープンな推論標準
+APIリクエストは、アプリでのチャットと同様にトークン残高を消費します。レスポンスの使用量の合計には、サブエージェントの呼び出しが含まれ、`primary`と`subagent`に分けた内訳が示されます。また、プロバイダーが報告する場合は、キャッシュトークンと推論トークンも含まれます。詳しくは[Token Usage](/docs/configuration/token_usage)を参照してください。
+
+## セットアップ [#setup]
+
+Agents APIは、管理者がロールに Remote Agents の権限を付与するまで、一般ユーザーには無効になっています。権限の付与は、[管理パネル](/docs/features/admin_panel)から行うか、[`interface.remoteAgents`](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents) を使用して設定できます。管理者はデフォルトでこの権限を持っています。APIキー認証はデフォルトで有効になっています。キーの代わりに、またはキーと併用して独自のOIDCプロバイダーからのトークンを受け入れる場合は、[`remoteApi`](/docs/configuration/librechat_yaml/object_structure/agents#remoteapi) を参照してください。Management APIは、[`managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi) の下で個別に設定します。イベント配信の設定は、[`eventDriven`](/docs/configuration/librechat_yaml/object_structure/agents#eventdriven) の下にあります。

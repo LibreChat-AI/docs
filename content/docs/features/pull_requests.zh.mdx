@@ -1,352 +1,30 @@
 ---
 title: 对话拉取请求
 icon: GitPullRequest
-description: >-
-  显示在 GitHub、GitLab 或 Bitbucket Cloud 上运行代码的对话的拉取请求 (pull request) 或合并请求 (merge
-  request)、大小及 CI 状态。
+description: 在聊天标题栏和侧边栏中查看聊天代码工作区的拉取请求，包括其大小、状态和 CI 检查。
 ---
 
-{/*
-  TODO(maintainer): first release version for each part (do not guess).
-  TODO(maintainer): requirement 4 (where an admin sets the workspace environment's repository).
-  Add it to "Requirements" once confirmed.
-*/}
+当智能体在已附加的代码工作区中处理代码仓库时,LibreChat 会查找该工作区所在分支对应的拉取请求,并将其显示在聊天界面旁边。您无需离开对话,即可查看它是否已准备好合并、检查是否通过,并直接跳转到该请求。它支持 GitHub、GitLab(称为合并请求,即 merge request)以及 Bitbucket Cloud,每个部署实例只能使用一个提供商。
 
-当聊天在附加的工作区中运行代码时，工作线程会报告其所在的 git 分支和提交记录。LibreChat 使用该分支来查找匹配的拉取请求（GitLab 上的合并请求），并使用服务器上持有或用户自己连接的账户中的令牌，将其显示在以下两个位置：
+只有在已附加的工作区中运行代码的聊天才能创建拉取请求。普通聊天,或尚未报告分支的工作区,不会显示任何内容。
 
-- **聊天标题**:一个标签,包含拉取请求图标、其 CI 状态圆点以及拉取请求标题。悬停或聚焦该标签时会打开一张卡片。
-- **侧边栏对话列表**：行尾显示相同的图标和 CI 点。该行保留对话本身的标题；拉取请求（pull request）标题仅显示在卡片中。
+## 在聊天标题栏中 [#in-the-chat-header]
 
-Pull requests 可以来自 GitHub（默认）、GitLab 或 Bitbucket Cloud。一个部署只使用一个提供商。
-
-## 要求 [#requirements]
-
-要使聊天中显示拉取请求 (pull request)，必须满足以下所有条件：
-
-1. LibreChat 具有令牌和存储库范围（`allowedRepositories` 或 `allowAllRepositories`），或者用户可以连接他们自己的账户。请参阅 [Setup](#setup) 和 [Per-user accounts](#per-user-accounts)。
-2. 该聊天使用**附加代码工作区**（代码工作者），而非普通聊天。
-3. Worker 会报告其分支。这需要使用 `LibreChat-AI/code-interpreter` PR #311 或更高版本构建的 worker，并在 Code API 上设置 `CODEAPI_BRIDGE_LANE_GIT=true`。请参阅 [Code Interpreter](/docs/features/code_interpreter#attached-environments-and-pairing)。
-
-该功能默认开启。如果没有提供 token 或仓库范围（repository scope），它将保持休眠状态，且每个聊天界面都不会显示拉取请求，也不会报错。设置 `enabled: false` 将会强制关闭该功能，无论其他配置如何。
-
-例外情况是设置了 `token` 但其环境变量为空或缺失：此时查找将失败并返回 `NOT_CONFIGURED`，侧边栏行会显示带有重试按钮的警告图标。
-
-## 设置 [#setup]
-
-### 1. 选择提供商和主机 [#1-choose-the-provider-and-host]
-
-`provider` 选择拉取请求（pull requests）所在的位置：
-
-| `provider` | 服务 | 默认 `host` |
-| ------------------ | ------------------------------------------------------------------------------------------------------ | --------------- |
-| `github`(默认) | GitHub.com、GitHub Enterprise Server,或 GitHub Enterprise Cloud 数据驻留租户(`*.ghe.com`) | `github.com` |
-| `gitlab` | gitlab.com 上的合并请求,或自托管 GitLab 上的合并请求 | `gitlab.com` |
-| `bitbucket` | 仅限 Bitbucket Cloud | `bitbucket.org` |
-
-仅针对 GitHub Enterprise Server、`*.ghe.com` 租户或自托管的 GitLab 设置 `host`：
-
-- 这是一个主机名，绝不是 URL：不包含协议和路径，例如 `github.example.com`。
-- 允许使用 1 到 65535 之间的显式端口，例如 `git.example.com:8443`。`:443` 会被舍弃，因为它是 https 的默认端口。
-- 在 GitHub 上，LibreChat 会针对 `github.com` 调用 `api.github.com`，针对 `*.ghe.com` 租户调用 `api.<host>`，并针对 Enterprise Server 调用 `https://<host>/api/v3`。在 GitLab 上，它会调用 `https://<host>/api/v4` 和 `https://<host>/api/graphql`。
-- Bitbucket 不接受其他主机。任何非 `bitbucket.org` 的 `host` 都会关闭该功能，而不是将令牌发送到其他地方。
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      provider: 'gitlab'
-      host: 'gitlab.example.com'
-      allowedRepositories:
-        - 'platform/backend/api'
-        - 'platform/frontend/*'
-```
-
-<Callout type="info" title="仅从 librechat.yaml 读取">
-  `provider`、`host` 和 `oauth` 仅从 `librechat.yaml` 中读取。针对这些键的角色、组、用户和租户配置覆盖将被忽略，因为它们决定了令牌发送的位置以及用户授予访问权限的应用程序。覆盖设置无法将令牌重定向到其他服务。其他键（例如 `token` 和 `allowedRepositories`）仍然可以因主体（principal）而异。
-</Callout>
-
-### 2. 创建令牌 [#2-create-a-token]
-
-服务器令牌用于每个尚未连接其个人账户的用户。
-
-**GitHub**: 使用一个仅限于您想要展示的仓库的细粒度令牌（fine-grained token），并设置**只读**权限：
-
-- 拉取请求
-- 检查
-- 目录
-
-<Callout type="warning" title="权限失败模式">
-  如果没有 **Checks**，每个匹配的拉取请求都将无法加载。如果没有 **Contents**，当聊天记录所在的分支自上次命令后发生了变动，该聊天记录将无法加载，因为 LibreChat 会通过比较提交记录来确认匹配。
-</Callout>
-
-**GitLab**：一个具有 `read_api` 权限范围的个人、群组或项目访问令牌。
-
-**Bitbucket Cloud**：一种仓库、项目或工作区访问令牌，以 Bearer Token 的形式发送。LibreChat 会读取拉取请求、其差异统计（diffstat）、提交状态以及合并基点（merge base），因此请授予拉取请求和仓库的读取权限。
-
-### 3. 给 LibreChat 提供令牌 [#3-give-librechat-the-token]
-
-LibreChat 按以下顺序查找令牌：
-
-1. `token: "${MY_VAR}"` 在 `librechat.yaml` 中。这是一个环境变量**引用**；YAML 文件本身绝不会包含 token，且字面量 token 会被 schema 拒绝。
-2. 如果未设置 `token`，则会使用以下环境变量中第一个已设置的值：
-
-| 提供商 | 回退变量（按顺序） |
-| --- | --- |
-| GitHub | `GITHUB_PULL_REQUEST_TOKEN`、`GITHUB_TOKEN`、`GH_TOKEN` |
-| GitLab | `GITLAB_PULL_REQUEST_TOKEN`、`GITLAB_TOKEN` |
-| Bitbucket | `BITBUCKET_PULL_REQUEST_TOKEN` |
-
-3. 任何地方都没有 token：该功能将保持休眠状态，除非用户可以连接他们自己的账户。
-
-如果设置了 `token` 但无法解析（变量为空或缺失），则会失败并返回 `NOT_CONFIGURED`。它**不会**回退到上述变量。
-
-<Callout type="info" title="GITHUB_TOKEN 和 GITLAB_TOKEN 是常见的名称">
-  如果您的部署已经将其中之一用于其他用途，一旦设置了存储库范围 (repository scope)，它就会在此处被识别。请显式设置 `token`，或使用 `*_PULL_REQUEST_TOKEN` 变量，以避免共享它。
-</Callout>
-
-### 4. 选择它可以查询的存储库 [#4-choose-which-repositories-it-may-look-up]
-
-Worker 会报告其自身的仓库，因此服务器必须决定其令牌可用于哪些仓库。如果没有范围（scope），该功能将保持休眠状态。有两种方式：
-
-- `allowedRepositories`：一个 `owner/name` 或 `owner/*` 条目的列表（最多 256 个）。匹配不区分大小写。在 GitLab 上，条目可以是嵌套的组路径，例如 `group/sub/name` 或 `group/sub/*`。`*` 代表恰好一个段，因此 `group/*` 不匹配 `group/sub/name`。诸如 `*/*`、`*`、`owner` 或包含 `.` 或 `..` 段的条目将被 schema 拒绝。
-- `allowAllRepositories: true`：查找令牌可以读取的任何存储库。默认值为 `false`。
-
-<Callout type="warning" title="安全性：allowAllRepositories">
-  默认情况下它是关闭的，因为存储库来自 worker 而非服务器。如果开启此功能，任何能够运行代码的用户都可以将服务器的令牌指向该令牌有权读取的任何存储库，并查看拉取请求的标题、大小和检查状态。请使用仅限于您愿意展示的存储库的只读令牌。
-</Callout>
-
-### 5. 开启它 [#5-turn-it-on]
-
-无需设置任何开关。只要存在 token 和 repository 范围，或者配置了可用的 `oauth` 应用，该功能就会立即启用。无论设置了什么其他内容，`enabled: false` 都会将其关闭。
-
-### 最小示例 [#minimal-examples]
-
-GitHub，并在服务器环境中设置 `GITHUB_PULL_REQUEST_TOKEN`：
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      allowedRepositories:
-        - 'LibreChat-AI/LibreChat'
-        - 'my-org/*'
-```
-
-GitHub Enterprise Server，并带有明确的令牌引用：
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      host: 'github.example.com'
-      token: '${GHES_PULL_REQUEST_TOKEN}'
-      allowedRepositories: ['platform/*']
-```
-
-Bitbucket Cloud,在设置了 `BITBUCKET_PULL_REQUEST_TOKEN` 的情况下:
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      provider: 'bitbucket'
-      allowedRepositories: ['my-workspace/*']
-```
-
-请参阅 [`pullRequests` 参考](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) 以获取每个键的详细信息。
-
-## 用户个人账户 [#per-user-accounts]
-
-设置 `oauth` 后，每个用户都可以在 **设置 > 账户 (Settings > Account)** 下的 **拉取请求账户 (Pull request account)** 中连接他们自己的 GitHub、GitLab 或 Bitbucket 账户。这样，他们的查找操作将使用其个人的令牌、速率限制和仓库访问权限，而不是服务器的权限。
-
-- 已连接用户的令牌只能看到该用户本身有权查看的内容，因此它不受 `allowedRepositories` 的限制。
-- 尚未连接的用户仍会使用服务器令牌，并在其仓库范围内进行操作。如果没有服务器令牌，他们在连接之前将无法看到任何拉取请求。
-- 只要配置好 `oauth` 应用，即使没有服务器令牌或仓库范围，该功能也处于启用状态。
-- **Disconnect** 会移除已存储的授权。用户可以随时再次连接。
-- 如果已连接用户的令牌因提供商或密钥存储服务宕机而无法刷新，系统会将他们的查询结果报告为“不可用”（unavailable）。他们**不会**回退到服务器令牌，因为服务器令牌所能获取的信息可能少于用户自身权限下的信息。
-- 如果提供商明确拒绝刷新（授权已被撤销），则连接将被移除。此时用户将显示为未连接状态，并被视为从未连接过的用户。
-- 授权信息以加密方式存储，每个用户和提供商主机对应一条。将 `clientId` 更改为其他应用会导致现有连接失效，因此用户需要重新连接。
-
-### 配置应用 [#configure-the-app]
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      oauth:
-        clientId: '${GITHUB_PR_OAUTH_CLIENT_ID}'
-        clientSecret: '${GITHUB_PR_OAUTH_CLIENT_SECRET}'
-      # optional: the server token for users who have not connected
-      allowedRepositories: ['my-org/*']
-```
-
-| 键 | 默认值 | 范围 | 描述 |
-| ----------------------- | --------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------- |
-| `clientId` | 必填 | | 环境变量引用,绝不填写实际值。 |
-| `clientSecret` | 必填 | | 环境变量引用,绝不填写实际值。 |
-| `scope` | GitHub 上无,GitLab 上为 `read_api`,Bitbucket 上为使用方自身的范围 | | 请求的范围,以空格分隔。仅允许字母、数字、`_`、`:`、`.`、`-` 和空格,最多 256 个字符。 |
-| `flowTimeoutMinutes` | 10 | 1-60 | 用户在服务提供方处批准连接所允许的分钟数。 |
-| `requestTimeoutSeconds` | 10 | 1-60 | 代码交换或令牌刷新所允许的秒数。 |
-| `retentionDays` | 180 | 1-3650 | 连接在未被使用的情况下保留的天数。每次使用都会延长保留期。 |
-
-如果任一引用无法解析，用户将无法连接，且仅会使用服务器令牌。连接流程还需要 `JWT_SECRET`，每个 LibreChat 部署都会设置此项。
-
-将此回调 URL 注册到应用中，其中 `DOMAIN_SERVER` 是您服务器的公共 URL：
-
-```
-<DOMAIN_SERVER>/api/pull-requests/oauth/callback
-```
-
-### 注册应用 [#register-the-app]
-
-<Tabs items={["GitHub", "GitLab", "Bitbucket"]}>
-<Tabs.Tab>
-
-推荐使用 GitHub App：其用户令牌无需任何范围（scope），且仅能访问安装了该应用的仓库。
-
-<Steps>
-<Step>
-
-打开 **Settings > Developer settings > GitHub Apps > New GitHub App**，进入您的账户或组织页面。在 GitHub Enterprise Server 或 `*.ghe.com` 上，请使用该主机上的相同页面。
-
-</Step>
-<Step>
-
-将 **Callback URL** 设置为 `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`。在 **Webhook** 下，取消勾选 **Active**。
-
-</Step>
-<Step>
-
-在 **Repository permissions** 下，将 **Pull requests**、**Checks** 和 **Contents** 设置为 **Read-only**。
-
-</Step>
-<Step>
-
-创建应用，然后复制 **Client ID** 并生成一个 **client secret**。将它们存储在环境变量中，并在 `oauth.clientId` 和 `oauth.clientSecret` 中引用它们。
-
-</Step>
-<Step>
-
-在用户需要查看其存储库的账户或组织上安装该应用。
-
-</Step>
-</Steps>
-
-经典的 OAuth App 也可以使用，但需要类似 `scope: 'repo'` 的权限范围，这会授予超出只读访问权限的权限。
-
-</Tabs.Tab>
-<Tabs.Tab>
-
-<Steps>
-<Step>
-
-在 `host` 中设置的 GitLab 主机上打开 **Edit profile > Applications**（或某个组或实例的 **Applications** 页面）。
-
-</Step>
-<Step>
-
-将 **Redirect URI** 设置为 `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`，保持勾选 **Confidential**，并选择 `read_api` 范围。
-
-</Step>
-<Step>
-
-保存，然后将 **Application ID** 和 **Secret** 复制到 `oauth.clientId` 和 `oauth.clientSecret` 所引用的环境变量中。设置 `provider: 'gitlab'`，并为自托管的 GitLab 设置 `host`。
-
-</Step>
-</Steps>
-
-</Tabs.Tab>
-<Tabs.Tab>
-
-<Steps>
-<Step>
-
-在 Bitbucket Cloud 中打开 **Workspace settings > OAuth consumers > Add consumer**。
-
-</Step>
-<Step>
-
-将 **Callback URL** 设置为 `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`，并授予 **Pull requests: Read** 和 **Repositories: Read** 权限。LibreChat 不会在 Bitbucket 上请求任何 scope，因此消费者的权限即为用户所授予的权限。
-
-</Step>
-<Step>
-
-保存，然后将消费者的 **Key** 和 **Secret** 复制到 `oauth.clientId` 和 `oauth.clientSecret` 引用的环境变量中。设置 `provider: 'bitbucket'`。
-
-</Step>
-</Steps>
-
-</Tabs.Tab>
-</Tabs>
-
-## 使用副本进行扩展 [#scaling-with-replicas]
-
-每个副本都会在内存中缓存结果。如果有多个副本，请设置 `sharedCache: true`，以便它们通过 Redis 共享查询到的拉取请求和速率限制冷却时间，从而避免每个副本都为同一个答案消耗 token。
-
-- 仅在部署运行于 Redis (`USE_REDIS`) 时生效。默认值：`false`。
-- 无论哪种方式，每个副本都会在共享缓存之前保留其自己的内存缓存。
-- `sharedCacheTimeoutMs` (10-5000，默认 250) 用于限制每次共享缓存读取或写入的超时时间。如果 Redis 响应较慢，则会跳过该次操作并继续进行后续查找。
-- `sharedCacheSlots`(64-1000000,默认 65536)用于限制共享缓存所使用的 Redis 键数量上限。该值仅从 YAML 配置中读取。
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      allowedRepositories: ['my-org/*']
-      sharedCache: true
-      sharedCacheTimeoutMs: 250
-```
-
-## 调优 [#tuning]
-
-对于大多数部署而言，默认设置已经足够。
-
-| Key                        | Range     | Default | Description                                                                                                    |
-| -------------------------- | --------- | ------- | -------------------------------------------------------------------------------------------------------------- |
-| `cacheTtlSeconds`          | 5-3600    | 30      | 结果被复用的秒数，之后会再次向提供方请求。失败结果最多缓存 10 秒。 |
-| `cacheMaxEntries`          | 10-100000 | 500     | 每个凭据最多缓存的结果数，超出后将淘汰最早的结果。 |
-| `cacheMaxCredentials`      | 1-10000   | 256     | 全部部署范围内同时缓存的凭据数。超过上限时，将丢弃空闲时间最长的凭据。 |
-| `maxConcurrentLookups`     | 1-16      | 4       | 单个侧边栏请求同时运行的查询数，按凭据统计，跨请求计算。 |
-| `batchTimeoutSeconds`      | 1-120     | 20      | 单个侧边栏请求保持打开的最长时间。 |
-| `requestTimeoutSeconds`    | 1-60      | 10      | 单个提供方请求允许的最长时间。在慢速代理后面时请调高此值。 |
-| `lookupTimeoutSeconds`     | 1-120     | 30      | 整个查询（所有请求合计）允许的最长时间。 |
-| `maxCheckRunPages`         | 1-50      | 10      | 读取检查运行（GitHub）或提交状态（Bitbucket）的页数，超过后检查将被报告为运行中。 |
-| `maxCandidatePullRequests` | 1-100     | 10      | 匹配复用分支名称时，每种状态下列出的拉取请求数。 |
-| `maxCandidatePages`        | 1-10      | 1       | 每种状态下读取候选拉取请求的页数。每页对应一次请求。 |
-| `maxHeadComparisons`       | 0-20      | 3       | 搜索放弃前，与聊天上次运行时的提交进行比较的候选数。每个候选对应一次请求。 |
-
-## 用户所见 [#what-users-see]
-
-### 聊天头部标签 [#chat-header-chip]
-
-- **桌面端**:该标签位于页眉左侧,与其他左侧控件并列。它显示拉取请求图标(图标角上带有 CI 状态圆点),其后是拉取请求标题。将指针悬停或键盘聚焦于该标签时,会在其下方打开卡片;只要指针或键盘焦点仍位于卡片内,卡片就保持打开。
-- **移动端**:没有芯片。页头的溢出(三个点)菜单中有一个 `PR #number` 条目(GitLab 上为 `MR !number`),点击后会在对话框中打开同一张卡片。
-- 页眉会自动刷新：在检查运行期间或仍在计算可合并性时，大约每 20 秒刷新一次；在其他情况下，大约每 60 秒刷新一次；一旦拉取请求被合并或关闭且没有检查在运行时，则不再刷新。
+在宽屏上,标题栏左侧有一个标签(chip),其中显示拉取请求图标、角落上的一个小型 CI 状态点以及拉取请求标题。将鼠标悬停或聚焦于该标签时,会打开一张包含详细信息的卡片。只要指针或键盘焦点仍在卡片内,该卡片就会保持打开状态。
 
 <ThemeImage
   light="/images/pull-requests/hdr-ready-light.png"
   dark="/images/pull-requests/hdr-ready-dark.png"
-  alt="聊天标题栏中的芯片,显示一个可以合并、检查已通过的打开中拉取请求,其卡片展开在下方"
+  alt="聊天页眉中的标签,显示一个已打开的拉取请求且检查通过,其卡片位于其下方"
 />
 
-<ThemeImage
-  light="/images/pull-requests/mob-menu-light.png"
-  dark="/images/pull-requests/mob-menu-dark.png"
-  alt="PR #1234 条目位于小屏幕上标题栏的溢出菜单中"
-/>
+在小屏幕上不会显示标签。请打开页眉的三点菜单,选择 `PR #number` 条目(GitLab 上为 `MR !number`),即可在对话框中显示相同的卡片。
 
-<ThemeImage
-  light="/images/pull-requests/mob-dialog-light.png"
-  dark="/images/pull-requests/mob-dialog-dark.png"
-  alt="在小屏幕上以对话框形式显示的拉取请求卡片"
-/>
+页眉会自动保持最新状态:在检查进行中或服务提供方仍在确认分支能否合并时,大约每 20 秒重新检查一次;其他情况下大约每 60 秒检查一次。拉取请求被合并或关闭且没有任何正在运行的任务后,它将停止检查。
 
-### 侧边栏标记 [#sidebar-mark]
+## 在侧边栏中 [#in-the-sidebar]
 
-- 一个拉取请求图标及其 CI 状态圆点位于对话行的末尾。仅对包含拉取请求的对话显示该图标。
-- 将鼠标悬停在该行的任意位置，或聚焦或点击标记，都会在标记右侧打开同一张卡片。点击标记不会打开对话。
-- 侧边栏从不进行轮询。列表项的状态保持在上次加载时的样子，当窗口重新获得焦点且数据已超过一分钟时，它会自动刷新。
-- 拉取请求被发现后，如果刷新失败，其卡片和重试状态会被保留。在发现之前，查找失败会使侧边栏标记保持隐藏。
+带有拉取请求的对话在其行末尾同样显示相同的图标和 CI 状态点。该行保留对话自身的标题。将鼠标悬停在该行上,或聚焦或点击该标记,即可在旁边打开卡片;点击该标记不会打开对话。
 
 <ThemeImage
   light="/images/pull-requests/side-rows-light.png"
@@ -354,147 +32,47 @@ endpoints:
   alt="侧边栏中带有拉取请求标记的行:可以合并、存在冲突且检查失败、草稿且检查运行中,以及已合并的拉取请求"
 />
 
-<ThemeImage
-  light="/images/pull-requests/side-card-light.png"
-  dark="/images/pull-requests/side-card-dark.png"
-  alt="拉取请求卡片在侧边栏行右侧打开"
-/>
+侧边栏不会轮询。每一行的新鲜度取决于列表上次加载的时间;当你回到窗口且其数据超过一分钟未更新时,该行会刷新。如果某个已找到的拉取请求刷新失败,标记会保留,卡片会显示"无法刷新拉取请求",并附带一个 **Retry** 按钮。对于从未找到拉取请求的对话,即使查询失败,也不会显示任何标记。
 
-### 卡片 [#the-card]
+## 阅读卡片 [#reading-the-card]
 
-该卡片显示 `PR #number`（GitLab 上为 `MR !number`）、绿色的 `+additions`、红色的 `-deletions`、一个 **Open in GitHub**、**Open in GitLab** 或 **Open in Bitbucket** 链接、标题以及两个徽章：
+该卡片显示 `PR #number`(GitLab 上为 `MR !number`),新增行以绿色显示,删除行以红色显示,并包含一个 **Open in GitHub**、**Open in GitLab** 或 **Open in Bitbucket** 链接、标题,以及两个徽章。
 
-- **状态**:Open、Conflicts、Draft、Merged 或 Closed。当一个打开的拉取请求存在合并冲突时,Conflicts 会替代 Open。
-- **检查**:通过(Passing)、失败(Failing)、运行中(Running)或无(None)。在 GitLab 上,这指的是头部流水线(head pipeline),仅当其针对当前头部提交运行时才会计入。在 Bitbucket 上,则指提交状态(commit statuses)。
+- 状态:Open、Conflicts、Draft、Merged 或 Closed。当分支无法干净合并时,Conflicts 会替代 Open。
+- Checks:通过(Passing)、失败(Failing)、运行中(Running)或无(None)。在 GitLab 上,这指的是头部流水线(head pipeline),且仅当它针对当前提交运行时才会显示。在 Bitbucket 上,这指的是提交状态(commit statuses)。
 
-### 图标和圆点的含义 [#icon-and-dot-meaning]
+图标颜色和 CI 圆点都能一目了然地传达相同的信息:
 
-| 情况 | 图标颜色 | CI 圆点 |
-| --- | --- | --- |
-| 已打开,无冲突,检查通过 | 绿色(可合并) | 绿色 |
-| 已打开,无冲突,没有任何检查 | 绿色 | 无 |
-| 已打开,可合并性仍在计算中 | 中性色 | 由检查决定 |
-| 已打开,存在合并冲突 | 红色(无法合并) | 由检查决定 |
-| 草稿 | 中性色 | 由检查决定 |
+| 拉取请求 | 图标 | CI 指示点 |
+| ------------------------------------ | ------- | --------------- |
+| 已打开，可以合并 | 绿色 | 取决于检查结果 |
+| 已打开，可合并性尚未确定 | 中性 | 取决于检查结果 |
+| 已打开，存在合并冲突 | 红色 | 取决于检查结果 |
+| 草稿 | 中性 | 取决于检查结果 |
 | 已合并 | 紫色 | 无 |
-| 已关闭 | 中性色 | 无 |
+| 已关闭 | 中性 | 无 |
 
-CI 状态圆点:绿色表示通过,红色表示失败,琥珀色表示运行中。当没有任何检查,或拉取请求已合并或关闭时,不显示圆点。失败的检查优先级高于仍在运行的检查。当汇总中的检查运行数量多于已读取的数量时,绝不会报告为通过。
+圆点为绿色表示检查通过,红色表示检查失败,琥珀色表示检查正在运行。当仓库未报告任何检查时不显示圆点。失败的检查优先级高于仍在运行的检查。
 
-<ThemeImage
-  light="/images/pull-requests/hdr-conflict-light.png"
-  dark="/images/pull-requests/hdr-conflict-dark.png"
-  alt="带有合并冲突的打开状态拉取请求:红色图标、表示检查失败的红点,以及“Conflicts”和“Failing”徽章"
-/>
+## 您看到的是哪个拉取请求 [#which-pull-request-you-see]
 
-<ThemeImage
-  light="/images/pull-requests/hdr-draft-light.png"
-  dark="/images/pull-requests/hdr-draft-dark.png"
-  alt="草稿拉取请求：中性图标，检查运行时显示琥珀色圆点"
-/>
+工作区会显示聊天最后运行时所在的代码仓库、分支和提交,LibreChat 会查找来自该分支的拉取请求(Pull Request)。
 
-<ThemeImage
-  light="/images/pull-requests/hdr-merged-light.png"
-  dark="/images/pull-requests/hdr-merged-dark.png"
-  alt="合并的拉取请求:紫色图标,无圆点"
-/>
+- 如果聊天自身的命令输出中打印了同一仓库中拉取请求的链接(例如 `gh pr create` 打印的 URL),则会使用该拉取请求,前提是它来自该聊天所在的分支。
+- 否则，对于同一分支，未关闭的拉取请求优先于已关闭的拉取请求，因此复用分支名称时，较早的已关闭拉取请求不会掩盖当前的拉取请求。
+- 只有当拉取请求包含聊天最后一次运行时所对应的提交,该拉取请求才算有效。删除分支并复用其名称,并不会恢复旧的拉取请求。
+- 一个全新的、没有任何提交的分支不匹配任何内容。
 
-## 拉取请求是如何匹配的 [#how-a-pull-request-is-matched]
+服务器无权查询的仓库与没有拉取请求的仓库行为完全相同:不显示标记,也不报错。
 
-1. Worker 会报告聊天最后一次运行时所在的仓库、分支和提交（head）。
-2. 如果聊天本身的命令输出链接到了配置主机上该存储库的拉取请求（例如 `gh pr create` 打印的链接），只要该拉取请求的 head 是聊天的分支，系统就会直接读取该拉取请求。指向其他存储库或主机的链接将被忽略。
-3. 否则 LibreChat 会优先列出该分支的开放拉取请求，因此重复使用分支名称时，已关闭的历史记录不会掩盖开放的请求。接着它会检查来自派生仓库（forks）的开放拉取请求，然后再检查已关闭的请求。
-4. 对于已记录的提交，只有当拉取请求（pull request）的头指针指向该提交或基于该提交构建时，它才会被计入。这可以防止已删除并重用的分支名称显示旧的拉取请求。来自派生仓库（fork）的拉取请求只有在包含已记录的提交时才会被计入，因为任何人都可以使用相同的名称创建派生分支。
-5. 一个尚无提交的分支（一个全新的空分支）不匹配任何内容。
-6. 结果会根据凭据、存储库、分支和提交进行缓存。
-7. 在 GitHub 上，检查运行（check runs）是针对拉取请求（pull request）的当前头（head）进行读取的。对于来自 fork 的拉取请求，仅当该 fork 的仓库在范围内（已列出或设置了 `allowAllRepositories`）时，才会从该 fork 读取检查。否则，将读取基础仓库，且令牌（token）绝不会发送到未列出的 fork。
+## 连接您自己的账户 [#connect-your-own-account]
 
-## 行为 [#behavior]
+如果您的管理员已完成设置,您可以使用自己的 GitHub、GitLab 或 Bitbucket 账户查询拉取请求(Pull Request)。打开 **Settings**(设置),进入 **Account**(账户),在 **Connected accounts**(已连接的账户)下,点击 **Pull request account**(拉取请求账户)旁的 **Connect**(连接)。此时会在服务提供方打开登录窗口;请授权该窗口,授权完成后该行将显示 **Connected**(已连接)。如果窗口没有打开,请允许 LibreChat 弹出窗口,然后重试。
 
-### 速率限制 [#rate-limits]
+一旦连接成功,查询将使用您的账户,因此您可以查看任何您有读取权限的仓库中的拉取请求,并使用您自己的速率限制。点击 **Disconnect** 即可断开连接,您随时可以重新连接。如果服务器无法刷新您的连接(例如服务提供商宕机),您的拉取请求将显示为不可用,而不会悄悄切换到服务器的令牌。如果您在服务提供商处撤销了应用授权,LibreChat 会移除该连接,您将恢复为未连接状态。
 
-- 速率限制适用于一个提供商主机上的凭据，因此它会暂停该令牌下所有分支的查找。对于按用户划分的账户，每个用户的限制都是其各自独立的。
-- 最小暂停时间为 10 秒，如果提供商指定了等待时间，则会遵循该时间，上限为 1 小时。在 GitHub 上，如果未给出等待时间，则会触发 60 秒的二次限制暂停。
-- 在暂停期间,查询会返回 `RATE_LIMITED`。之前已发现的拉取请求会保留其重试状态;尚未发现的记录则保持隐藏。
-- 使用 `sharedCache` 时，在一个副本上开始的暂停会应用于所有副本。
+如果该行显示 **Not in use**,说明您的管理员已关闭账户连接功能,查询不再使用您的账户。点击 **Disconnect** 即可移除已保存的连接。
 
-### 滚动更新 [#rolling-upgrades]
+## 设置 [#setup]
 
-- 只有当启动配置显示服务器拥有该功能（`pullRequestsBatchVersion`）时，侧边栏才会请求批量路由。
-- 如果一个没有该路由的副本返回 404，客户端将回退到单一路由，每次调用一次，或者在服务器通告时以 `pullRequestsMaxConcurrentLookups` 的速度进行调用。这涵盖了客户端从已升级的副本接收到新的启动标志，然后连接到没有该路由的副本的情况。如果 `/api/config` 由没有该标志的副本提供服务，侧边栏将永远不会请求批处理路由，且行将保持为空，因此在依赖侧边栏标记之前，请务必升级所有副本。
-
-### 未设置时的默认值 [#defaults-when-unset]
-
-- 如果没有 token 或没有仓库范围（repository scope），且没有 `oauth` 应用，该功能将处于休眠状态：启动配置中不会有任何相关声明，不会记录任何内容，也不会显示任何内容。
-- 当在配置中关闭该功能时，现有的聊天记录不会发生变化，且客户端永远不会调用新的路由。
-
-## 安全模型 [#security-model]
-
-- Tokens 存储在服务器上。它们绝不会被发送到浏览器，且错误响应中永远不会包含提供商的响应文本、Token 或堆栈跟踪信息。
-- 服务器令牌仅用于范围内的存储库，且仅在配置的主机上使用。它绝不会发送到不在范围内的分支（fork）。
-- `provider`、`host` 和 `oauth` 仅来自 `librechat.yaml`，因此角色、组、用户或租户的覆盖设置无法将令牌发送到其他服务，也无法更改应用用户授予访问权限的对象。
-- `/api/convos` 查找路由需要经过身份验证的用户，并且是所有者受限的。缺失、过期或属于其他用户的对话，其表现形式与没有拉取请求的对话相同。
-- 使用一个仅限于您愿意展示的存储库的只读令牌。
-
-## 故障排除 [#troubleshooting]
-
-在首次发现之前,提供方失败不会在侧边栏中显示警告标记。调试日志仅记录提供方和有限的原因代码,不包含仓库标识或提供方负载。当刷新失败时,先前已发现的拉取请求仍会保留其卡片。
-
-| 症状 | 可能原因 | 解决方法 |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| 任何地方都没有标记芯片和侧边栏标记 | 没有令牌、没有仓库范围，或 `enabled: false` | 查看[设置](#setup)。登录后打开 `/api/config`，检查是否存在 `pullRequestsEnabled: true`。 |
-| 附加工作区中的某个聊天没有芯片 | 该仓库不在 `allowedRepositories` 中 | 将其添加进去，或以 `owner/*` 形式添加其所有者。超出范围的仓库与没有拉取请求的仓库表现相同。 |
-| 仅部分聊天显示芯片 | 只有附加了代码工作区且该工作区已报告分支的聊天才会有分支通道 | 确认代码 API 上已设置 `CODEAPI_BRIDGE_LANE_GIT=true`，并且工作进程构建自 code-interpreter PR #311 或更高版本。 |
-| 顶部芯片正常，侧边栏行无任何显示 | `/api/config` 中缺少 `pullRequestsBatchVersion`（旧版本构建，或标签页过期） | 重新构建或升级服务器，重启，并强制刷新页面。确认 `pullRequestsBatchVersion: 1`。 |
-| 警告图标并带有重试 | 查询失败（速率限制、提供方错误，或 `NOT_CONFIGURED`） | 重试。如果持续出现，检查令牌及其权限。 |
-| `NOT_CONFIGURED` | 已设置 `token`，但其变量为空或缺失 | 设置该变量，或移除 `token` 以使用备用变量。 |
-| 所有 GitHub 拉取请求都无法加载 | 令牌缺少 Checks 权限 | 授予只读 Checks 权限。 |
-| 仅在分支更新后失败 | 令牌缺少 Contents 权限，无法比较提交 | 授予只读 Contents 权限。 |
-| 频繁出现 `RATE_LIMITED` | 许多用户共享服务器令牌，或多个副本各自向提供方发起请求 | 提高 `cacheTtlSeconds`，降低 `maxConcurrentLookups`，配合 Redis 设置 `sharedCache: true`，或让用户连接各自的账户。 |
-| 来自分支仓库（fork）的拉取请求没有显示检查项 | 该分支仓库不在范围内，因此检查项是从基础仓库读取的 | 将分支仓库的所有者添加到 `allowedRepositories`，或设置 `allowAllRepositories: true`。 |
-| GitLab 或 Bitbucket 没有任何显示 | 未设置 `provider`，或 `host` 与项目所在的主机不匹配 | 设置 `provider`。对于自托管的 GitLab，将 `host` 设置为其主机名。Bitbucket 仅在使用默认的 `bitbucket.org` 主机时有效。 |
-| `gh pr create` 输出的链接未被识别 | 该链接指向的主机或仓库与通道所对应的不同 | 检查 `host`。只有配置的主机上以及通道所属仓库中的链接才会被识别。 |
-| 已连接的用户看到"不可用" | 提供方或密钥存储无法刷新其令牌 | 稍后重试。对于已连接的用户，查询不会回退到服务器令牌。 |
-| 某个经常被复用的分支名没有找到拉取请求 | `maxCandidatePullRequests`、`maxCandidatePages` 或 `maxHeadComparisons` 设置过低，相对于该名称被复用的频率而言，搜索在到达匹配的拉取请求之前就停止了 | 提高这些值。 |
-| 代理后面的查询缓慢或超时 | `requestTimeoutSeconds` 设置过低 | 提高该值。检查 `HTTPS_PROXY` 和 `NO_PROXY`。 |
-
-## API 参考 [#api-reference]
-
-以下 `/api/convos` 路由均需要经过身份验证的用户，且受所有者权限范围限制。启动配置端点不受所有者权限范围限制。
-
-### 获取单个对话的拉取请求 [#get-one-conversations-pull-request]
-
-`GET /api/convos/:conversationId/pull-request`
-
-- **200**: `{ "pullRequest": null }` 或 `{ "pullRequest": { number, title, url, additions, deletions, state, isDraft, mergeable, checks } }`。
-- `state` 为 `open`、`closed` 或 `merged`。`mergeable` 为 `clean`、`conflicting` 或 `unknown`。`checks` 为 `passing`、`failing`、`running` 或 `none`。
-- **503**: `{ "error": "...", "code": "NOT_CONFIGURED" | "RATE_LIMITED" | "UPSTREAM_ERROR" }`.
-- **404**: 无效的对话 ID。**500**: 带有固定文本的存储错误。
-
-### 获取多个对话的拉取请求 [#get-many-conversations-pull-requests]
-
-`POST /api/convos/pull-requests`
-
-- Body: `{ "conversationIds": ["..."] }`，包含 1 到 50 个 id。重复项会被合并。其他任何内容均返回 400 错误。
-- **200**: `{ "results": [ { "conversationId", "pullRequest" } | { "conversationId", "error": { "code" } } ] }`，按请求顺序排列。单次查找失败不会掩盖其他结果。
-- 缺少令牌只会导致需要它的条目失败。
-
-### 账户连接 [#account-connection]
-
-这些路由仅在设置了 `JWT_SECRET` 时存在。除回调路由外，所有路由都需要经过身份验证的用户。
-
-- `GET /api/pull-requests/oauth/connect`：启动连接并返回 `{ "url" }`，即需要打开的提供商页面。
-- `GET /api/pull-requests/oauth/callback`：提供商将用户重定向回来的地址。
-- `GET /api/pull-requests/oauth/status`：用户是否已连接。
-- `DELETE /api/pull-requests/oauth`：断开用户连接。
-
-### 启动配置 [#startup-config]
-
-`GET /api/config` 包含这些字段。它们由服务器设置；并非用户设置。
-
-- `pullRequestsEnabled` (布尔值)
-- `pullRequestsBatchVersion` (`1`，仅在启用该功能时存在)
-- `pullRequestsMaxConcurrentLookups` (数字，仅在启用该功能时存在)
-- `pullRequestsConnect`（`github`、`gitlab` 或 `bitbucket`，仅当用户可以连接自己的账户时出现）
-
-只有上述列出的错误代码是稳定的。
+该功能默认开启,但在管理员为 LibreChat 提供令牌和可查询的仓库列表,或设置应用以便用户连接各自的账户之前,它将保持隐藏状态。该功能还需要一个附加的代码工作区,用于报告其 git 分支。请参阅 [Pull Requests 配置](/docs/configuration/pull_requests)。

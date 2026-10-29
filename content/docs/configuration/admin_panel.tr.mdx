@@ -1,0 +1,170 @@
+---
+title: Yönetici Paneli
+icon: LayoutDashboard
+description: >-
+  LibreChat Admin Panel'i birlikte gelen Docker Compose dosyalarıyla veya
+  bağımsız bir servis olarak çalıştırın ve onu LibreChat API'nize yönlendirin.
+---
+
+[Yönetici Paneli](/docs/features/admin_panel), LibreChat'in `/api/admin` uç noktalarıyla iletişim kuran ayrı bir hizmettir. Çalışması için LibreChat v0.8.5 veya daha yeni bir sürüm, panelden LibreChat API'sine ağ erişimi ve `ADMIN` rolüne veya `access:admin` yetkinliğine sahip bir hesap gerekir. Tek kiracılı (single-tenant) dağıtımlarda kaydedilen ilk hesap yönetici olur (kiracı kapsamlı dağıtımlarda yöneticiler ayrıca tanımlanır). Diğer kullanıcıları yönetici yapmak için [Erişim Kontrolü yapılandırması](/docs/configuration/access_control#promote-another-admin) bölümüne bakın.
+
+## LibreChat ile Birlikte Gelenler [#bundled-with-librechat]
+
+Resmi `docker-compose.yml` ve `deploy-compose.yml` dosyaları, diğer yığınla birlikte başlayan bir `admin-panel` servisi (imaj `registry.librechat.ai/librechat-ai/librechat-admin-panel:latest`) içerir.
+
+| Compose dosyası | Yönetim paneli URL'si | Nasıl sunulur |
+| --------------- | --------------------- | ------------- |
+| `docker-compose.yml` | `http://localhost:3000` | Ana makinede `ADMIN_PANEL_PORT` portunda yayınlanır (varsayılan `3000`) |
+| `deploy-compose.yml` | `http://admin.localhost` | Birlikte gelen nginx üzerinden `admin.localhost` alt alan adında yönlendirilir |
+
+Panel, bir oturum sırrı (session secret) olmadan başlamayı reddeder. Bunu LibreChat'in `.env` dosyasında ayarlayın; compose dosyaları bunu panele `SESSION_SECRET` olarak iletir:
+
+```bash filename=".env"
+# At least 32 characters. Generate one with: openssl rand -hex 32
+ADMIN_PANEL_SESSION_SECRET=replace-with-a-32-char-random-string
+
+# Optional: host port for the default docker-compose.yml
+# ADMIN_PANEL_PORT=3000
+
+# Optional: set to true when the panel is served over HTTPS
+# ADMIN_PANEL_SESSION_COOKIE_SECURE=false
+```
+
+Compose dosyaları geri kalanını ayarlar: `API_SERVER_URL` `api` servisini gösterir, `VITE_API_BASE_URL` tarayıcıya yönelik yönlendirmeler için `DOMAIN_CLIENT` değerini izler ve `deploy-compose.yml`, API üzerinde `ADMIN_PANEL_URL` değerini `http://admin.localhost` olarak ayarlar; böylece SSO sonrasında yöneticiler panele geri yönlendirilir. Paneli dışarıda bırakmak için `admin-panel` servisini kaldırın veya Compose [profile](https://docs.docker.com/compose/how-tos/profiles/) içine alın.
+
+Tarayıcılar `*.localhost` adresini `127.0.0.1` olarak çözümler, bu nedenle hosts dosyanızı düzenlemeden `admin.localhost` çalışır. Gerçek bir alan adı için bir DNS kaydını ana makineye yönlendirin, `client/nginx.conf` dosyasındaki `admin.localhost` `server_name` değerini değiştirin ve `ADMIN_PANEL_URL` değerini buna uygun şekilde ayarlayın.
+
+## Bağımsız [#standalone]
+
+Kendi başına çalışması ve başka bir yerdeki bir LibreChat örneğine bağlanması için paneli doğrudan imajı kullanarak çalıştırın:
+
+```bash
+docker run -p 3000:3000 \
+  --add-host=host.docker.internal:host-gateway \
+  -e SESSION_SECRET=replace-with-a-32-char-random-string \
+  -e VITE_API_BASE_URL=http://localhost:3080 \
+  -e API_SERVER_URL=http://host.docker.internal:3080 \
+  -e SESSION_COOKIE_SECURE=false \
+  registry.librechat.ai/librechat-ai/librechat-admin-panel:latest
+```
+
+Panel, LibreChat için iki adrese ihtiyaç duyar. `VITE_API_BASE_URL`, tarayıcınızın LibreChat'e eriştiği adrestir ve oturum açma yönlendirmelerinde kullanılır. `API_SERVER_URL` ise panelin kendi sunucusunun LibreChat'e eriştiği adrestir. Bir konteyner içinde `localhost`, konteynerin kendisidir; bu nedenle LibreChat aynı ana makinede çalışıyorsa `API_SERVER_URL` için `http://host.docker.internal:3080` kullanılır (Linux'ta bu, yukarıdaki `--add-host` bayrağını gerektirir), tarayıcı ise `http://localhost:3080` adresini kullanmaya devam eder. Üretim ortamında her iki değeri de, her tarafın çözümleyebildiği DNS adlarına ayarlayın.
+
+[admin-panel deposusu](https://github.com/LibreChat-AI/admin-panel) ayrıca bir `docker-compose.yml` dosyası içerir ve Bun ile kaynak koddan çalıştırmak için talimatlar sunar (`bun install`, ardından `bun dev`).
+
+## Panel ortam değişkenleri [#panel-environment-variables]
+
+Bunlar LibreChat yerine yönetici paneli servisinde ayarlanır.
+
+<OptionTable
+  options={[
+    ['SESSION_SECRET', 'string', 'Oturum şifreleme anahtarı, en az 32 karakter. Docker ortamlarında ve üretim ortamında zorunludur; yalnızca bun dev yerleşik bir geliştirme gizli anahtarına geri döner. Birlikte gelen compose dosyalarında bu değer ADMIN_PANEL_SESSION_SECRET içinden alınır.', 'SESSION_SECRET=replace-with-a-32-char-random-string'],
+    ['VITE_API_BASE_URL', 'string', 'LibreChat API\'sinin tarayıcıya dönük URL\'si, OAuth yönlendirmeleri için kullanılır. Docker\'da zorunludur. Yerel geliştirmede varsayılan olarak http://localhost:3080 değerini alır.', 'VITE_API_BASE_URL=https://chat.example.com'],
+    ['API_SERVER_URL', 'string', 'Panel sunucusunun LibreChat\'i çağırmak için kullandığı URL; tarayıcıya dönük URL\'den farklı olduğunda (örneğin dahili bir Kubernetes servisi) kullanılır. Tanımlı değilse VITE_API_BASE_URL değerine geri döner.', 'API_SERVER_URL=http://librechat:3080'],
+    ['PORT', 'number', 'Dinlenen panelin bağlantı noktası. Varsayılan: 3000.', 'PORT=3000'],
+    ['VITE_BASE_PATH', 'string', 'Paneli bir alt yol altında sunun. Derleme zamanında ve çalışma zamanında aynı olmalıdır, bu nedenle özel bir alt yol için ayrı bir imaj derlemesi gerekir. Varsayılan: /.', 'VITE_BASE_PATH=/adminpanel'],
+    ['ADMIN_SSO_ONLY', 'boolean', 'E-posta ve şifre formunu gizleyerek yöneticilerin yalnızca SSO ile oturum açmasını sağlayın. Varsayılan: false.', 'ADMIN_SSO_ONLY=false'],
+    ['ADMIN_SSO_ENABLED', 'boolean', 'SSO düğmesini gizlemek ve LibreChat\'te OpenID yapılandırılmış olsa bile SSO otomatik yönlendirmesini atlamak için false olarak ayarlayın. ADMIN_SSO_ONLY\'ye göre önceliklidir. Varsayılan: true.', 'ADMIN_SSO_ENABLED=true'],
+    ['ADMIN_SESSION_IDLE_TIMEOUT_MS', 'number', 'Yönetici oturumunun sonlandırılmasından önceki boşta kalma süresi (milisaniye cinsinden). Varsayılan: 1800000 (30 dakika).', 'ADMIN_SESSION_IDLE_TIMEOUT_MS=1800000'],
+    ['SESSION_COOKIE_SECURE', 'boolean', 'Oturum çerezinin yalnızca HTTPS üzerinden gönderilip gönderilmeyeceği. Üretim ortamında varsayılan olarak true\'dur. Yalnızca düz HTTP dağıtımlarında false olarak ayarlayın; aksi halde tarayıcı çerezi düşürür ve OpenID oturum açma işlemi tamamlanamaz.', 'SESSION_COOKIE_SECURE=false'],
+    ['ADMIN_PANEL_TRUSTED_ORIGINS', 'string', 'Paneli çalıştıran sunucuya erişimine izin verilen, virgülle ayrılmış genel kaynaklar. Düz HTTP üzerinden, Host başlığını yeniden yazan veya varsayılan olmayan bir bağlantı noktasını kaldıran bir ters proxy arkasında gereklidir; aksi takdirde oturum açma 403 hatasıyla başarısız olur.', 'ADMIN_PANEL_TRUSTED_ORIGINS=http://admin.example.com:8080'],
+    ['ADMIN_PANEL_METRICS_SECRET', 'string', 'Prometheus /metrics uç noktasını kazımak (scrape) için gereken Bearer token. Ayarlanmadığı sürece uç nokta 401 yanıtı verir.', 'ADMIN_PANEL_METRICS_SECRET='],
+  ]}
+/>
+
+### Önbellek başlıkları [#cache-headers]
+
+Bunlar LibreChat'in kendi önbellek değişkenlerini yansıtır. Her birinin `ADMIN_PANEL_` ile başlayan sürümü önceliklidir ve bu değişken ayarlanmadığında panel ortak adı kullanmaya geri döner.
+
+<OptionTable
+  options={[
+    ['STATIC_CACHE_MAX_AGE', 'number', '/assets/ dizinindeki hash\'li dosyalar için tarayıcı max-age süresi (saniye cinsinden). ADMIN_PANEL_STATIC_CACHE_MAX_AGE bunu geçersiz kılar. Varsayılan: 172800 (2 gün).', 'STATIC_CACHE_MAX_AGE=172800'],
+    ['STATIC_CACHE_S_MAX_AGE', 'number', 'Karmaşık hale getirilmiş assetler için CDN s-maxage süresi (saniye cinsinden). ADMIN_PANEL_STATIC_CACHE_S_MAX_AGE bunu geçersiz kılar. Varsayılan: 86400 (1 gün).', 'STATIC_CACHE_S_MAX_AGE=86400'],
+    ['INDEX_CACHE_CONTROL', 'string', 'HTML sayfası için Cache-Control başlığı. ADMIN_PANEL_INDEX_CACHE_CONTROL bunu geçersiz kılar.', 'INDEX_CACHE_CONTROL=no-cache, no-store, must-revalidate'],
+    ['INDEX_PRAGMA', 'string', 'HTML sayfası için Pragma başlığı. ADMIN_PANEL_INDEX_PRAGMA bunu geçersiz kılar.', 'INDEX_PRAGMA=no-cache'],
+    ['INDEX_EXPIRES', 'string', 'HTML sayfası için Expires başlığı. ADMIN_PANEL_INDEX_EXPIRES bunu geçersiz kılar.', 'INDEX_EXPIRES=0'],
+  ]}
+/>
+
+## LibreChat ayarları [#librechat-settings]
+
+### Yönlendirme URL'si [#redirect-url]
+
+When the panel is hosted on a different URL from LibreChat, set `ADMIN_PANEL_URL` in LibreChat's `.env` to the panel's external base URL, including any path prefix and without a trailing slash. LibreChat uses it to send admins back to the panel after SSO, and shows admins an **Admin Panel** link under **Settings > General** once it is set.
+
+```bash filename=".env"
+ADMIN_PANEL_URL=https://admin.example.com/admin
+```
+
+Helm chart ile çalışırken, bunun yerine values dosyanızda `librechat.adminPanelUrl` değerini ayarlayın; chart bunu `ADMIN_PANEL_URL` olarak işler.
+
+```yaml filename="values.yaml"
+librechat:
+  adminPanelUrl: https://admin.example.com/admin
+```
+
+### Tek oturum açma (Single sign-on) [#single-sign-on]
+
+Yöneticiler, LibreChat'in kullandığı aynı OpenID Connect sağlayıcısı ile panele giriş yapabilir. Kimlik sağlayıcınızda `${DOMAIN_SERVER}/api/admin/oauth/openid/callback` adresini ek bir yönlendirme URI'si olarak kaydedin. Sağlayıcı kurulumunun geri kalanı için [OpenID Connect](/docs/configuration/authentication/OAuth2-OIDC) sayfasına bakın. Bir IdP rolünden veya grubundan `ADMIN` rolünü vermek için [.env başvurusunda](/docs/configuration/dotenv#openid-connect) listelenen `OPENID_ADMIN_ROLE` değişkenini kullanın.
+
+Google ile panele giriş, `GOOGLE_CLIENT_ID` ve `GOOGLE_CLIENT_SECRET` kullanılarak yapılır. Google'a `${DOMAIN_SERVER}/api/admin/oauth/google/callback` adresini kaydedin. Panel, süresi dolan bir yönetici token'ını yeniden giriş yapmadan yenileyebilmek için çevrimdışı erişim (offline access) ister. Her yenilemede hesabın kimliği, yasak durumu, izin verilen e-posta alan adı, kiracı (tenant) ve yönetici erişimi yeniden kontrol edilir.
+
+## Yapılandırma geçersiz kılmaları [#configuration-overrides]
+
+Geçersiz kılmalar, `librechat.yaml` üzerine eklenen profiller olarak her bir yetki sahibi (rol, grup veya kullanıcı) için ayrı ayrı saklanır; ayrıca herkese uygulanan bir Temel profil de bulunur.
+
+**Birleştirme sırası.** Temel profil, önceliğinden bağımsız olarak ilk uygulanır; ardından kalan profiller artan öncelik sırasıyla uygulanır. Eşitlik durumunda sırasıyla rol, grup, kullanıcı ve oluşturulma sırası dikkate alınır. Önceliği belirtilmeden oluşturulan bir profil, ilgili sorumlu türünün varsayılan önceliğini alır: rol 10, grup 20, kullanıcı 100 (Temel profil için 0). Önceliği içermeyen sonraki bir yazma işlemi, depolanmış önceliği korur.
+
+**Doğrulama.** Yazma işlemleri (`PUT /api/admin/config/:principalType/:principalId` ve `PATCH .../fields`), temel yapılandırmanın üzerine uygulanan `librechat.yaml` şemasına göre doğrulanır. Geçersiz bir sonuç HTTP 400 ile reddedilir ve hiçbir şey kaydedilmez:
+
+```json
+{
+  "error": "Invalid config override",
+  "code": "CONFIG_OVERRIDE_INVALID",
+  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
+}
+```
+
+Her sorun yalnızca yolu (path) ve bir kodu içerir; bu kod bir şema kodu (`invalid_type` gibi) ya da `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key`, `invalid_document` değerlerinden biridir. Gönderilen değer hiçbir zaman yer almaz. Bir alan yamasının (field patch) reddedilmesi yalnızca kendi dokunduğu veya tanıttığı sorunlar için geçerlidir.
+
+Daha sonra geçersiz hale gelen kayıtlı geçersiz kılmalar, örneğin bir yükseltme şemayı sıkılaştırdığında, kritik değildir. Yapılandırma çözümlendiğinde geçersiz alan atılır, altındaki değer uygulanır ve sunucu her alan için bir satır günlüğe yazar:
+
+```text
+[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
+```
+
+Fallback'i bir temayı geçersiz kılma teması [tema kurallarına](/docs/configuration/librechat_yaml/object_structure/theme#validation) uymadığında, temel tema da aynı şekilde devreye girer.
+
+**Gizli Bilgiler.** Yönetici API'si üzerinden yazılan kayıtlı gizli alanlar, depolamada şifrelenir ve yalnızca maskelenmiş önizlemeler olarak döndürülür: Langfuse, OCR, konuşma, web araması, Assistants, Azure Assistants, MCP sunucu kimlik bilgileri, Azure grup anahtarları ve her bir `endpoints.custom[].apiKey`. Sonraki bir düzenlemede bir gizli bilgiyi dahil etmemek, depolanan değerin korunmasını sağlar; ancak depolanan bir anahtarın gönderildiği yeri (sunucu URL'si veya temel URL gibi) değiştiren bir yazma işlemi, anahtarı yeniden içermelidir. Özel uç nokta anahtarları, `${ENV_VAR}` ve `user_provided` değerlerini olduğu gibi korur. Özel başlıklar gibi genel eşleme yapılarındaki rastgele değerler şifrelenmez; bu nedenle bu alanlarda ortam değişkeni referanslarını kullanın.
+
+**Ortam değişkeni referansları.** Override'lardaki `${ENV_VAR}` referansları; `librechat.yaml` içinde zaten referans verilen adlar, yerleşik endpoint kimlik bilgileri ve `CONFIG_OVERRIDE_ENV_ALLOWLIST` içinde listelenen adlarla sınırlıdır. Bunların dışındaki herhangi bir referans yazma sırasında reddedilir.
+
+**Yalnızca YAML ayarları.** `type: stdio` veya işlem alanlarına (`command`, `args`, `env`, `cwd`, `stderr`) sahip MCP sunucuları ile `langfuse.headers` yalnızca `librechat.yaml` dosyasında ayarlanabilir. Yönetici API'si bunlara yapılan yazma işlemlerini reddeder ve geçersiz kılmalar bunları değiştiremez veya kaldıramaz. Bkz. [Langfuse: Authenticated Proxies and Gateways](/docs/configuration/langfuse#authenticated-proxies-and-gateways).
+
+**Bölüm kapsamlı erişim.** Yapılandırma yetenekleri geniş (`read:configs`, `manage:configs`) olabileceği gibi yalnızca bir üst düzey bölümle sınırlı da olabilir (`read:configs:<section>`, `manage:configs:<section>`). Temel profilin oluşturulması, değiştirilmesi veya silinmesi her zaman geniş `manage:configs` yetkisi gerektirir; bölüm kapsamlı yönetim ise rol, grup ve kullanıcı profilleri için geçerlidir. Bkz. [Yönetici yetenekleri](/docs/configuration/access_control#admin-capabilities).
+
+## Yönetici API'si [#admin-api]
+
+Panel, bu LibreChat endpoint'leriyle iletişim kurar. Her rota yönetici erişimini ve ilgili yetenek iznini kontrol eder.
+
+| Mount | Amaç |
+| ----- | ------- |
+| `POST /api/admin/login`, `/api/admin/oauth/*` | Yönetici oturum açma (yerel ve SSO) |
+| `GET /api/admin/verify` | Yönetici oturumunu doğrular |
+| `/api/admin/users` | Kullanıcı listeleme ve arama |
+| `/api/admin/groups` | Gruplar ve üyeleri |
+| `/api/admin/roles` | Özel roller, bunların izinleri ve üyeleri |
+| `/api/admin/grants` | Sistem yetkinlik izinleri |
+| `/api/admin/config` | Temel ve kişi bazlı yapılandırma profilleri |
+| `/api/admin/skills` | GitHub skill senkronizasyon durumu, çalıştırmaları ve kimlik bilgileri |
+| `/api/admin/code-environments` | Kod ortamı çalışanlarının eşleştirilmesi ve iptali |
+| `/api/admin/langfuse` | Langfuse bağlantı ayarları ve testleri |
+| `/api/admin/audit-log` | Yetki denetim günlüğü: `GET /` (liste), `GET /export.csv`, `GET /verify` (bütünlük kontrolü), `GET /:id`. `read:audit_log` yetkisi gerektirir; yazma uç noktası yoktur |
+
+Yapılandırma okumaları: `GET /api/admin/config/meta` (dağıtım yetenekleri), `/catalog` (kapsam ve model seçenekleri), `/env-status` (ortam değişkeni referans durumu), `/effective` (çağıranın etkin yapılandırması) ve `/resolved/:principalType/:principalId` (bir principal'ın çözümlenmiş yapılandırması). Okumalar, yetkilendirmelerini ve gizli bilgi maskelemesini korur.
+
+`POST /api/admin/config/:principalType/:principalId/changes` uçbirimi, tek bir profile birden fazla değişikliği atomik olarak uygular ve bir yazma raporu döndürür. Uygulanan ve atlanan konumlar ayrı ayrı listelenir; yalnızca dağıtıma özgü yollar, tüm grubun başarısız olmasına neden olmadan atlanabilir.
+
+`POST /api/admin/config/reload` yerel yapılandırmayı yeniden yükler ve diğer örneklere geçersiz kılma (invalidation) bilgisi yayınlar. Yerel yeniden yükleme başarılı olduktan sonra yayın (broadcast) başarısız olursa `503` döndürebilir; bu bir geri alma (rollback) değildir ve diğer replikaların yeniden yüklenmemiş olabileceği anlamına gelir. Bkz. [yükseltme kılavuzu](/docs/configuration/upgrade#admin-configuration-and-secrets).
+
+Grup ve kullanıcı önizlemeleri ile etkin kullanıcı okumaları, hedefin kiracısında ve bu kiracının Base profili dahil olmak üzere çözümlenir. Kiracı kapsamlı bir çağıran, başka bir kiracıya erişemez ve rol adları çağıranın kendi bölümünü ifade eder.

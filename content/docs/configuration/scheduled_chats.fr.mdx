@@ -1,0 +1,77 @@
+---
+title: Discussions planifiées
+icon: CalendarClock
+description: >-
+  Activez les Chats planifiés, définissez les limites et les règles de projet,
+  autorisez l'accès MCP sans surveillance, et répondez aux exigences de Redis et
+  du checkpointer.
+---
+
+Les [conversations planifiées](/docs/features/scheduled_chats) sont expérimentales et désactivées tant que vous ne les activez pas explicitement. Les exécutions planifiées utilisent des ressources de modèles, d'outils et de Code Interpreter sans supervision humaine ; vérifiez donc les exigences de déploiement ci-dessous avant de les activer.
+
+## Activer [#enable]
+
+Ajoutez `interface.schedules` à `librechat.yaml` puis redémarrez LibreChat :
+
+```yaml filename="librechat.yaml"
+interface:
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    fireConcurrency: 5
+    requireProject: false
+    # projectId: '000000000000000000000000'
+```
+
+`use` et `create` initialisent les permissions `SCHEDULES` du rôle `USER` intégré au démarrage ; ensuite, gérez-les par rôle dans le [Panneau d'administration](/docs/features/admin_panel). `use` permet à un utilisateur de voir ses planifications. `create` lui permet également de les créer, de les modifier, de les activer, de les exécuter et de les supprimer. Les autres clés sont des limites d'exécution.
+
+<OptionTable
+  options={[
+    ['maxPerUser', 'Number', 'Nombre maximal de planifications que chaque utilisateur peut posséder, en comptant les planifications désactivées. Définir à 0 pour empêcher la création.', '10'],
+    ['minIntervalMinutes', 'Number', 'Écart minimal autorisé entre deux exécutions d\'une même planification. S\'applique à toutes les fréquences, y compris le cron personnalisé.', '60'],
+    ['autoDisableAfterFailures', 'Number', 'Nombre d\'exécutions échouées consécutives avant qu\'une planification se désactive automatiquement.', '5'],
+    ['fireConcurrency', 'Number', 'Nombre maximal d\'exécutions planifiées admises simultanément sur l\'ensemble du déploiement.', '5'],
+    ['requireProject', 'Boolean', 'Chaque planification doit être rattachée à un projet de chat, vérifié lors de son enregistrement et avant chaque exécution.', 'false'],
+    ['projectId', 'String', 'Épingle chaque conversation planifiée à un projet de chat unique et implique requireProject.', ''],
+  ]}
+/>
+
+`schedules: true` active la fonctionnalité avec ces valeurs par défaut. `schedules: false`, ou `use: false`, constitue un arrêt à l'échelle du déploiement que les paramètres de rôle, de groupe et d'utilisateur ne peuvent pas annuler.
+
+Les règles du projet sont vérifiées à nouveau à chaque exécution. Un planning qui ne satisfait plus `requireProject`, ou dont le projet a été supprimé, se désactive automatiquement au lieu de démarrer une conversation sans périmètre. Les projets de chat appartiennent à un seul utilisateur. Un `projectId` défini au niveau de l'ensemble du déploiement ne fonctionne donc que pour le propriétaire de ce projet. Définissez-le dans les surcharges de rôle ou d'utilisateur lorsque chaque propriétaire a besoin d'une destination différente.
+
+The full field list, including `admissionConcurrency`, `mcpPreflightConcurrency`, and `mcpPreflightTimeoutMs` for bounding admission and MCP readiness checks separately from generation, is in [`interface.schedules`](/docs/configuration/librechat_yaml/object_structure/interface#schedules).
+
+## Accès MCP sans surveillance [#unattended-mcp-access]
+
+Avant le démarrage d'une exécution, LibreChat vérifie chaque outil MCP dont l'agent planifié et ses sous-agents ont besoin. Une exécution nécessitant une connexion interactive ne démarre pas ; la planification indique alors quel agent nécessite une intervention.
+
+Pour permettre aux utilisateurs d'autoriser les outils MCP pour les exécutions sans surveillance, activez `interface.schedules.mcpConsent` :
+
+- `mcpConsent.enabled` active la fonctionnalité.
+- `mcpConsent.maxLifetimeHours` limite la durée de validité d'une autorisation, de 1 à 8760 heures.
+- `mcpConsent.resources` liste les ressources MCP pouvant être autorisées.
+- `mcpConsent.readOnlyPolicy` liste les déclarations d'outils en lecture seule jugées fiables, indexées par serveur et par nom d'outil d'origine.
+- `mcpReceiptRetry.baseMs` et `mcpReceiptRetry.maxMs` définissent le délai de temporisation (backoff) appliqué aux nouvelles tentatives d'envoi des reçus de consentement.
+
+Les utilisateurs voient alors une section **Autorisation MCP planifiée** dans l'éditeur de planification. Une autorisation ne couvre que l'agent et les ressources listés jusqu'à son échéance et n'autorise jamais les écritures.
+
+## Exigences de déploiement [#deployment-requirements]
+
+Les conversations planifiées se coordonnent via des baux MongoDB, afin que plusieurs réplicas puissent partager le travail. Elles nécessitent également :
+
+- **Flux Redis dans les déploiements multi-réplicas.** Définissez `USE_REDIS_STREAMS=true`. Sans flux partagés, l'enregistrement d'une planification échoue plutôt que de démarrer un travail qu'une autre réplique ne pourrait ni reprendre ni arrêter.
+- **Un checkpointer durable pour les agents pouvant se mettre en pause.** Si l'agent planifié peut utiliser Ask User ou nécessite une approbation d'outil, il a besoin de Redis streams et d'un checkpointer partagé, même sur un seul processus. Le [`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) MongoDB par défaut fonctionne ; `type: memory` ne fonctionne pas. LibreChat rejette une telle exécution avant tout appel au modèle si l'un des deux est absent.
+- **Le point d'entrée serveur standard.** Le point d'entrée en cluster expérimental hérité ne démarre pas le moteur de planification.
+
+Deux variables d'environnement contrôlent le moteur (également listées dans [dotenv](/docs/configuration/dotenv#scheduled-chats)) :
+
+<OptionTable
+  options={[
+    ['SCHEDULES_SINGLE_PROCESS', 'Boolean', 'Permet les conversations planifiées sans Redis. Ne l\'activez que si le déploiement exécute réellement un seul processus LibreChat.', '# SCHEDULES_SINGLE_PROCESS=true'],
+    ['SCHEDULES_DISABLED', 'Boolean', 'Arrêt d\'urgence pour les exécutions automatiques et l\'exécution immédiate. Les planifications sont conservées, non supprimées.', '# SCHEDULES_DISABLED=true'],
+  ]}
+/>

@@ -1,0 +1,292 @@
+---
+title: Pull Requests
+icon: GitPullRequest
+description: >-
+  Gib LibreChat ein Token oder eine OAuth-App, damit Chats in einem
+  Code-Workspace ihren Pull Request von GitHub, GitLab oder Bitbucket Cloud
+  anzeigen.
+---
+
+Diese Seite behandelt die Administratorseite von [Konversations-Pull-Requests](/docs/features/pull_requests). Jeder Schlüssel befindet sich unter `endpoints.agents.pullRequests` in `librechat.yaml`; die [`pullRequests`-Referenz](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) listet jeden einzelnen mit seinem Bereich und Standardwert auf, und die Umgebungsvariablen finden sich in [dotenv](/docs/configuration/dotenv#conversation-pull-requests).
+
+## Anforderungen [#requirements]
+
+Ein Chat zeigt einen Pull Request nur dann an, wenn alle der folgenden Bedingungen erfüllt sind:
+
+1. LibreChat hat ein Server-Token und einen Repository-Geltungsbereich (`allowedRepositories` oder `allowAllRepositories`), oder Benutzer können ihre eigenen Konten über `oauth` verbinden.
+2. Der Chat führt Code in einem angehängten Code-Workspace aus, nicht in einem reinen Chat.
+3. Der Workspace meldet seinen Git-Branch. Dafür wird ein Worker benötigt, der aus `LibreChat-AI/code-interpreter` ab #311 oder neuer gebaut wurde, und `CODEAPI_BRIDGE_LANE_GIT=true` muss auf der Code API gesetzt sein (nicht in LibreChat). Siehe [Code Interpreter](/docs/features/code_interpreter).
+
+Es gibt keinen Schalter, den man einschalten könnte. Ohne Token und Scope oder eine funktionierende `oauth`-App bleibt die Funktion inaktiv: Dem Client wird nichts angekündigt, und in jedem Chat wird kein Pull Request angezeigt, ohne dass eine Fehlermeldung erscheint. `enabled: false` schaltet sie unabhängig von allen anderen Einstellungen ab.
+
+## Anbieter und Host [#provider-and-host]
+
+`provider` legt fest, wo Pull Requests gespeichert werden. Eine Bereitstellung verwendet genau einen Provider.
+
+| `provider` | Dienst | Standard-`host` |
+| ------------------ | ----------------------------------------------------------------------------------------------- | --------------- |
+| `github` (Standard) | GitHub.com, GitHub Enterprise Server oder ein GitHub Enterprise Cloud Datenresidenz-Mandant (`*.ghe.com`) | `github.com` |
+| `gitlab` | Merge Requests auf gitlab.com oder einem selbst verwalteten GitLab | `gitlab.com` |
+| `bitbucket` | Nur Bitbucket Cloud | `bitbucket.org` |
+
+Setzen Sie `host` nur für GitHub Enterprise Server, einen `*.ghe.com`-Tenant oder eine selbst gehostete GitLab-Instanz:
+
+- Es ist ein Hostname, keine URL: ohne Schema und ohne Pfad, zum Beispiel `github.example.com`.
+- Ein Port von 1 bis 65535 ist zulässig, zum Beispiel `git.example.com:8443`. `:443` wird entfernt.
+- Auf GitHub ruft LibreChat `api.github.com` für `github.com`, `api.<host>` für einen `*.ghe.com`-Tenant und `https://<host>/api/v3` für Enterprise Server auf. Auf GitLab ruft es `https://<host>/api/v4` und `https://<host>/api/graphql` auf.
+- Bitbucket akzeptiert keinen anderen Host. Jeder `host` außer `bitbucket.org` deaktiviert die Funktion, anstatt das Token an einen anderen Ort zu senden.
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      provider: 'gitlab'
+      host: 'gitlab.example.com'
+      allowedRepositories:
+        - 'platform/backend/api'
+        - 'platform/frontend/*'
+```
+
+`provider`, `host`, `oauth` und `sharedCacheSlots` werden ausschließlich aus `librechat.yaml` gelesen. Überschreibungen dieser Schlüssel auf Rollen-, Gruppen-, Benutzer- oder Mandantenebene werden ignoriert, sodass eine Überschreibung kein Token an einen anderen Dienst senden und auch nicht die App austauschen kann, für die Benutzer Zugriff erhalten. Andere Schlüssel, wie `token` und `allowedRepositories`, können sich je nach Prinzipal unterscheiden.
+
+## Das Server-Token [#the-server-token]
+
+Das Server-Token wird für jeden Benutzer verwendet, der sein eigenes Konto nicht verbunden hat. Mache es schreibgeschützt und beschränke es auf die Repositories, die du anzeigen möchtest.
+
+- GitHub: Ein Fine-grained Token mit schreibgeschütztem Zugriff auf Pull requests, Checks und Contents. Ohne Checks schlägt das Laden jedes zugeordneten Pull Requests fehl. Ohne Contents schlägt das Laden eines Chats fehl, dessen Branch seit dem letzten Befehl weitergeführt wurde, da LibreChat zur Bestätigung der Übereinstimmung Commits vergleicht.
+- GitLab: ein persönlicher, Gruppen- oder Projekt-Zugriffstoken mit dem Scope `read_api`.
+- Bitbucket Cloud: ein Repository-, Projekt- oder Workspace-Zugriffstoken, das als Bearer-Token gesendet wird und Lesezugriff auf Pull Requests und Repositories hat.
+
+LibreChat sucht den Token in dieser Reihenfolge:
+
+1. `token: '${MY_VAR}'` in `librechat.yaml`. Es ist eine Referenz auf eine Umgebungsvariable; das Schema lehnt einen literalen Token ab.
+2. Wenn `token` nicht gesetzt ist, die erste der Fallback-Variablen des Anbieters, die gesetzt ist:
+
+| Anbieter  | Fallback-Variablen, in dieser Reihenfolge               |
+| --------- | ------------------------------------------------------- |
+| GitHub    | `GITHUB_PULL_REQUEST_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN` |
+| GitLab    | `GITLAB_PULL_REQUEST_TOKEN`, `GITLAB_TOKEN`             |
+| Bitbucket | `BITBUCKET_PULL_REQUEST_TOKEN`                          |
+
+Ein `token`, der gesetzt ist, aber auf eine leere oder fehlende Variable verweist, greift nicht auf einen Fallback zurück: Abfragen schlagen mit `NOT_CONFIGURED` fehl.
+
+<Callout type="warning" title="GITHUB_TOKEN und GITLAB_TOKEN sind gebräuchliche Namen">
+  Wenn Ihr Deployment bereits eine dieser Variablen für einen anderen Zweck setzt, übernimmt dieses Feature sie, sobald ein Repository-Scope vorhanden ist. Setzen Sie `token` explizit oder verwenden Sie die Variable `*_PULL_REQUEST_TOKEN`, um beide voneinander zu trennen.
+</Callout>
+
+## Repository-Umfang [#repository-scope]
+
+Der Workspace meldet sein eigenes Repository, daher muss der Server entscheiden, für welche Repositories sein Token verwendet werden darf. Ohne Scope wird das Server-Token niemals verwendet.
+
+- `allowedRepositories`: bis zu 256 Einträge im Format `owner/name` oder `owner/*`, die ohne Berücksichtigung der Groß- und Kleinschreibung abgeglichen werden. Bei GitLab funktionieren verschachtelte Gruppenpfade wie `group/sub/name` oder `group/sub/*`. `*` steht für genau ein Segment, daher stimmt `group/*` nicht mit `group/sub/name` überein. Einträge wie `*/*`, `*`, ein alleinstehendes `owner` oder Pfade mit `.`- oder `..`-Segmenten werden abgelehnt.
+- `allowAllRepositories: true`: Sucht nach jedem Repository, das der Token lesen kann. Diese Option ist standardmäßig deaktiviert, da jeder Benutzer, der Code ausführen kann, den Server-Token dann auf jedes für ihn sichtbare Repository richten und den Titel, die Größe und den Prüfstatus von Pull Requests auslesen kann.
+
+Ein Repository außerhalb des Geltungsbereichs sieht genauso aus wie ein Repository ohne Pull Request. Bei einem Pull Request aus einem Fork werden Prüfungen nur dann aus dem Fork gelesen, wenn sich der Fork im Geltungsbereich befindet; andernfalls werden sie aus dem Basis-Repository gelesen, sodass das Token niemals einen nicht aufgeführten Fork erreicht.
+
+## Beispiele [#examples]
+
+GitHub, mit gesetztem `GITHUB_PULL_REQUEST_TOKEN` in der Server-Umgebung:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowedRepositories:
+        - 'LibreChat-AI/LibreChat'
+        - 'my-org/*'
+```
+
+GitHub Enterprise Server, mit einem expliziten Token-Verweis:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      host: 'github.example.com'
+      token: '${GHES_PULL_REQUEST_TOKEN}'
+      allowedRepositories: ['platform/*']
+```
+
+Bitbucket Cloud, mit gesetztem `BITBUCKET_PULL_REQUEST_TOKEN`:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      provider: 'bitbucket'
+      allowedRepositories: ['my-workspace/*']
+```
+
+## Benutzerkonten pro Nutzer [#per-user-accounts]
+
+Mit `oauth` gesetzt, können Benutzer ihr eigenes Konto unter **Einstellungen > Konto > Pull-Request-Konto** verbinden, und ihre Abfragen laufen mit dem eigenen Token, Ratenlimit und Repository-Zugriff. Eine funktionierende `oauth`-App aktiviert die Funktion auch ohne Server-Token oder Scope.
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      oauth:
+        clientId: '${GITHUB_PR_OAUTH_CLIENT_ID}'
+        clientSecret: '${GITHUB_PR_OAUTH_CLIENT_SECRET}'
+      # optional: the server token's scope, for users who have not connected
+      allowedRepositories: ['my-org/*']
+```
+
+`clientId` und `clientSecret` sind Verweise auf Umgebungsvariablen. Wenn einer von beiden nicht aufgelöst werden kann, können sich Benutzer nicht verbinden, und es wird nur das Server-Token verwendet. Der Ablauf wird mit `JWT_SECRET` signiert, und die Callback-URL wird aus `DOMAIN_SERVER` erstellt:
+
+```
+<DOMAIN_SERVER>/api/pull-requests/oauth/callback
+```
+
+So verhalten sich verbundene Konten:
+
+- Das Token eines verbundenen Benutzers sieht nur das, was dieser Benutzer ohnehin sehen kann, daher ist es nicht an `allowedRepositories` gebunden.
+- Benutzer, die sich nicht verbunden haben, verwenden weiterhin das Server-Token im jeweiligen Geltungsbereich. Ohne Server-Token sehen sie nichts, bis sie sich verbinden.
+- Wenn das Token eines verbundenen Benutzers nicht aktualisiert werden kann, weil der Provider oder der Schlüsselspeicher nicht verfügbar ist, melden seine Abfragen den Pull Request als nicht verfügbar. Sie greifen niemals auf das Server-Token zurück.
+- Wenn der Anbieter eine Aktualisierung ablehnt, weil die Berechtigung widerrufen wurde, wird die Verbindung entfernt und der Benutzer gilt als nicht verbunden.
+- Gewährungen werden verschlüsselt gespeichert, und zwar eine pro Benutzer und Anbieter-Host. Eine Änderung von `clientId`, `provider` oder `host` führt dazu, dass bestehende Verbindungen nicht mehr berücksichtigt werden, sodass sich Benutzer erneut verbinden müssen. Eine geänderte `scope` gilt nur für neue Verbindungen.
+- Das Entfernen von `oauth` lässt gespeicherte Berechtigungen ungenutzt; Benutzer sehen **Nicht in Verwendung** und können die Verbindung trennen.
+
+`scope`, `flowTimeoutMinutes`, `requestTimeoutSeconds` und `retentionDays` sind optional; siehe die [`pullRequests.oauth`-Referenz](/docs/configuration/librechat_yaml/object_structure/agents#pullrequestsoauth).
+
+### Registrieren der App [#register-the-app]
+
+<Tabs items={["GitHub", "GitLab", "Bitbucket"]}>
+<Tabs.Tab>
+
+Eine GitHub App ist die bessere Wahl: Ihre Benutzer-Tokens benötigen keinen Scope und erreichen nur Repositories, in denen die App installiert ist.
+
+<Steps>
+<Step>
+
+Öffnen Sie **Settings > Developer settings > GitHub Apps > New GitHub App** für Ihr Konto oder Ihre Organisation. Verwenden Sie auf GitHub Enterprise Server oder `*.ghe.com` dieselbe Seite auf diesem Host.
+
+</Step>
+<Step>
+
+Setzen Sie die **Callback URL** auf `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`. Deaktivieren Sie unter **Webhook** die Option **Active**.
+
+</Step>
+<Step>
+
+Unter **Repository permissions**, setzen Sie **Pull requests**, **Checks** und **Contents** auf **Read-only**.
+
+</Step>
+<Step>
+
+Erstelle die App, kopiere die **Client ID** und generiere ein Client Secret. Trage beide in Umgebungsvariablen ein und referenziere sie über `oauth.clientId` und `oauth.clientSecret`.
+
+</Step>
+<Step>
+
+Installieren Sie die App für die Konten oder Organisationen, deren Repositories die Benutzer sehen sollen.
+
+</Step>
+</Steps>
+
+Eine klassische OAuth-App funktioniert ebenfalls, benötigt jedoch `scope: 'repo'`, was mehr als nur Lesezugriff gewährt.
+
+</Tabs.Tab>
+<Tabs.Tab>
+
+<Steps>
+<Step>
+
+Auf dem GitLab-Host, der in `host` festgelegt ist, öffnen Sie **Profil bearbeiten > Anwendungen** (oder die Seite **Anwendungen** einer Gruppe bzw. der Instanz).
+
+</Step>
+<Step>
+
+Setzen Sie **Redirect URI** auf `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`, lassen Sie **Confidential** aktiviert und wählen Sie den `read_api` Scope aus.
+
+</Step>
+<Step>
+
+Speichern Sie anschließend die **Application ID** und das **Secret** in Umgebungsvariablen, auf die `oauth.clientId` und `oauth.clientSecret` verweisen. Setzen Sie `provider: 'gitlab'` sowie `host` für eine selbst gehostete GitLab-Instanz.
+
+</Step>
+</Steps>
+
+</Tabs.Tab>
+<Tabs.Tab>
+
+<Steps>
+<Step>
+
+In Bitbucket Cloud öffnest du **Workspace-Einstellungen > OAuth-Consumer > Consumer hinzufügen**.
+
+</Step>
+<Step>
+
+Setzen Sie die **Callback URL** auf `<DOMAIN_SERVER>/api/pull-requests/oauth/callback` und gewähren Sie **Pull requests: Read** sowie **Repositories: Read**. LibreChat fordert auf Bitbucket keine Scopes an, daher entsprechen die Berechtigungen des Consumers dem, was die Benutzer gewähren.
+
+</Step>
+<Step>
+
+Speichern Sie anschließend den **Key** und das **Secret** des Consumers in Umgebungsvariablen, die von `oauth.clientId` und `oauth.clientSecret` referenziert werden. Setzen Sie `provider: 'bitbucket'`.
+
+</Step>
+</Steps>
+
+</Tabs.Tab>
+</Tabs>
+
+## Ratenbegrenzungen und Caching [#rate-limits-and-caching]
+
+Die Ergebnisse werden pro Anmeldedaten, Repository, Branch und Commit für `cacheTtlSeconds` (standardmäßig 30) zwischengespeichert. Fehler werden höchstens 10 Sekunden lang gespeichert.
+
+Ein Ratenlimit gilt für eine Anmeldeinformation auf einem Host, daher pausiert es die Abfragen für jeden Branch unter diesem Token; bei Konten pro Benutzer hat jeder Benutzer sein eigenes. Die Pause beträgt mindestens 10 Sekunden, folgt jeder vom Anbieter genannten Wartezeit bis zu 1 Stunde und beträgt 60 Sekunden bei einem sekundären GitHub-Limit, das keine nennt. Während einer Pause antworten Abfragen mit `RATE_LIMITED`.
+
+Bei mehreren Replikaten setzen Sie `sharedCache: true`, damit sie gefundene Pull Requests und Ratenbegrenzungspausen über Redis teilen, statt dass jedes Replikat dieselbe Antwort erneut mit Token bezahlt. Dies wirkt nur, wenn die Bereitstellung mit `USE_REDIS` läuft. Jedes Replikat behält seinen eigenen In-Memory-Cache davor. Ein Redis-Aufruf, der länger dauert als `sharedCacheTimeoutMs` (standardmäßig 250 ms), wird übersprungen. `sharedCacheSlots` (64 bis 1000000, Standard 65536) begrenzt die Redis-Schlüssel, die der gemeinsame Cache verwendet. Gelesen wird ausschließlich aus der YAML-Datei.
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowedRepositories: ['my-org/*']
+      sharedCache: true
+```
+
+Die übrigen Grenzwerte (Parallelität, Timeouts, wie weit bei einem wiederverwendeten Branch-Namen zurückgesucht wird und wie viele Seiten mit Prüfungen gelesen werden) haben sinnvolle Standardwerte. Sie sind in der [`pullRequests`-Referenz](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) aufgeführt.
+
+## Rollierende Upgrades [#rolling-upgrades]
+
+Die Seitenleiste verwendet eine Batch-Route und fragt diese nur ab, wenn `/api/config` das Feature `pullRequestsBatchVersion` ankündigt. Antwortet eine Replik ohne diese Route mit 404, greift der Client auf eine Abfrage pro Unterhaltung zurück. Wird `/api/config` selbst von einer Replik ohne das Flag ausgeliefert, bleiben die Markierungen in der Seitenleiste leer. Aktualisieren Sie daher alle Repliken, bevor Sie sich darauf verlassen.
+
+## Sicherheit [#security]
+
+- Token bleiben auf dem Server. Sie werden niemals an den Browser gesendet, und Fehlerantworten enthalten weder den Antworttext des Anbieters noch Tokens oder Stack Traces.
+- Das Server-Token wird nur für Repositories im Geltungsbereich und nur auf dem konfigurierten Host verwendet.
+- Die Lookup-Routen erfordern einen angemeldeten Benutzer und liefern nur Antworten zu den Unterhaltungen dieses Benutzers. Eine Unterhaltung, die fehlt, abgelaufen ist oder einem anderen Benutzer gehört, wird genauso behandelt wie eine Unterhaltung ohne Pull Request.
+
+## Fehlerbehebung [#troubleshooting]
+
+Bevor ein Pull Request gefunden wurde, zeigen Fehler bei der Suche nach dem Pull Request keine Anzeige in der Seitenleiste an. Debug-Logs erfassen den Provider und einen Grundcode, ohne Repository-Namen oder Antworten des Providers. Um zu prüfen, ob die Funktion aktiviert ist, öffnen Sie `/api/config` während Sie angemeldet sind und suchen Sie nach `pullRequestsEnabled: true`.
+
+| Symptom | Wahrscheinliche Ursache | Lösung |
+| --- | --- | --- |
+| Kein Chip und keine Markierung in der Seitenleiste | Kein Token, kein Repository-Geltungsbereich oder `enabled: false` | Token und Geltungsbereich prüfen, dann `/api/config`. |
+| Kein Chip für einen Workspace-Chat | Sein Repository ist nicht in `allowedRepositories` enthalten | Repository hinzufügen oder seinen Owner als `owner/*` eintragen. |
+| Nur einige Workspace-Chats zeigen einen Chip | Der Workspace hat keinen Branch gemeldet | Sicherstellen, dass `CODEAPI_BRIDGE_LANE_GIT=true` auf der Code API gesetzt ist und ein Worker aus code-interpreter #311 oder neuer läuft. |
+| Chip im Header funktioniert, Seitenleiste zeigt nichts | `/api/config` enthält kein `pullRequestsBatchVersion` (alter Build oder veralteter Tab) | Alle Replikate aktualisieren, neu starten und die Seite hart neu laden. |
+| `NOT_CONFIGURED` | `token` ist gesetzt, aber seine Variable ist leer oder fehlt | Variable setzen oder `token` entfernen, um die Fallback-Variablen zu verwenden. |
+| Alle GitHub-Pull-Requests können nicht geladen werden | Das Token hat keine Berechtigung für Checks | Schreibgeschützte Berechtigung für Checks gewähren. |
+| Schlägt nur fehl, nachdem sich der Branch weiterbewegt hat | Das Token hat keine Berechtigung für Contents | Schreibgeschützte Berechtigung für Contents gewähren. |
+| Häufiges `RATE_LIMITED` | Viele Benutzer teilen sich ein Token, oder Replikate fragen jeweils beim Provider an | `cacheTtlSeconds` erhöhen, `maxConcurrentLookups` senken, `sharedCache` aktivieren oder `oauth` einrichten. |
+| Der Pull-Request eines Forks zeigt keine Checks | Der Fork liegt nicht im Geltungsbereich | Owner des Forks hinzufügen oder `allowAllRepositories: true` setzen. |
+| GitLab oder Bitbucket zeigt nichts an | `provider` nicht gesetzt oder `host` stimmt nicht überein | `provider` setzen und bei selbst gehostetem GitLab `host` setzen. Bitbucket funktioniert nur auf `bitbucket.org`. |
+| Ein `gh pr create`-Link wird ignoriert | Der Link verweist auf einen anderen Host oder ein anderes Repository | Nur Links auf dem konfigurierten Host und dem Repository des Workspaces werden berücksichtigt. |
+| Verbundene Benutzer sehen den Pull-Request als nicht verfügbar | Ihr Token konnte nicht aktualisiert werden | Später erneut versuchen; verbundene Benutzer greifen niemals auf das Server-Token zurück. |
+| Kein Pull-Request bei einem stark wiederverwendeten Branch-Namen | Die Suche bricht ab, bevor sie diesen erreicht | `maxCandidatePullRequests`, `maxCandidatePages` oder `maxHeadComparisons` erhöhen. |
+| Langsame oder zeitüberschreitende Abfragen hinter einem Proxy | `requestTimeoutSeconds` ist zu niedrig | Wert erhöhen und `HTTPS_PROXY` sowie `NO_PROXY` prüfen. |
+
+## API [#api]
+
+Die beiden Konversationsrouten erfordern einen angemeldeten Benutzer und antworten nur für die Konversationen dieses Benutzers.
+
+- `GET /api/convos/:conversationId/pull-request` gibt `{ "pullRequest": null }` oder einen Pull Request mit `number`, `title`, `url`, `additions`, `deletions`, `state` (`open`, `closed`, `merged`), `isDraft`, `mergeable` (`clean`, `conflicting`, `unknown`) und `checks` (`passing`, `failing`, `running`, `none`) zurück. Fehler werden als 503 mit `code` auf `NOT_CONFIGURED`, `RATE_LIMITED` oder `UPSTREAM_ERROR` gesetzt.
+- `POST /api/convos/pull-requests` nimmt `{ "conversationIds": [...] }` mit 1 bis 50 IDs entgegen und gibt `{ "results": [...] }` in derselben Reihenfolge zurück, wobei jeder Eintrag ein `pullRequest` oder einen `error.code` enthält. Ein fehlgeschlagener Abruf verbirgt die übrigen nicht.
+
+Die Account-Routen sind nur verfügbar, wenn `JWT_SECRET` gesetzt ist: `GET /api/pull-requests/oauth/connect`, `GET /api/pull-requests/oauth/callback`, `GET /api/pull-requests/oauth/status` und `DELETE /api/pull-requests/oauth`.
+
+`/api/config` enthält `pullRequestsEnabled`, außerdem `pullRequestsBatchVersion` und `pullRequestsMaxConcurrentLookups`, wenn die Funktion aktiviert ist, sowie `pullRequestsConnect` (der Anbieter), wenn Benutzer ein Konto verbinden können. Diese Werte werden vom Server gesetzt; sie sind keine Einstellungen. Nur die oben genannten Fehlercodes sind stabil.

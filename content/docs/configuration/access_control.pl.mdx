@@ -1,0 +1,159 @@
+---
+title: Kontrola dostępu
+icon: ShieldCheck
+description: >-
+  Uprawnienia funkcji ról i ich wartości domyślne, widoczność selektora osób,
+  synchronizacja grup Entra ID, awansowanie administratorów, uprawnienia
+  administratorów oraz migracje ACL dla starszych instancji.
+---
+
+Sposób działania ról, grup i udostępniania dla użytkowników został opisany na stronie funkcji [Kontrola dostępu](/docs/features/access_control). Ta strona opisuje, co konfiguruje administrator.
+
+## Uprawnienia do funkcji [#feature-permissions]
+
+Każda rola posiada jeden zestaw przełączników dla każdego typu uprawnień. Możesz je zmieniać w trzech miejscach:
+
+- W LibreChat, za pomocą przycisku **Admin Settings** w panelach agents, prompts, MCP servers, memories i skills (tylko dla administratorów).
+- W [Panelu administratora](/docs/features/admin_panel), w sekcji **Access**, dla dowolnej roli, w tym ról niestandardowych.
+- W bloku [`interface`](/docs/configuration/librechat_yaml/object_structure/interface) pliku `librechat.yaml`. Te klucze inicjalizują uprawnienia wbudowanej roli `USER` wyłącznie podczas uruchamiania, więc nie mogą określać różnych ustawień dla niestandardowych ról.
+
+Tabela wymienia każdy typ uprawnień, klucz `interface`, który go inicjuje, jego akcje oraz to, które akcje ma domyślnie rola `USER`.
+
+| Typ uprawnienia | Klucz `interface` | Akcje | Domyślnie włączone dla `USER` |
+| --------------- | ----------------- | ----- | ----------------------------- |
+| `AGENTS` | `agents` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | `USE`, `CREATE` |
+| `PROMPTS` | `prompts` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | `USE`, `CREATE` |
+| `MCP_SERVERS` | `mcpServers` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`, `CONFIGURE_OBO` | `USE`, `CREATE` |
+| `SKILLS` | `skills` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | `USE`, `CREATE` |
+| `REMOTE_AGENTS` | `remoteAgents` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | brak |
+| `SHARED_LINKS` | `sharedLinks` | `CREATE`, `SHARE`, `SHARE_PUBLIC` | `CREATE`, `SHARE` |
+| `SCHEDULES` | `schedules` | `USE`, `CREATE` | `USE`, `CREATE` |
+| `MEMORIES` | `memories` | `USE`, `CREATE`, `UPDATE`, `READ`, `OPT_OUT` | wszystkie |
+| `BOOKMARKS` | `bookmarks` | `USE` | `USE` |
+| `MULTI_CONVO` | `multiConvo` | `USE` | `USE` |
+| `TEMPORARY_CHAT` | `temporaryChat` | `USE` | `USE` |
+| `RUN_CODE` | `runCode` | `USE` | `USE` |
+| `WEB_SEARCH` | `webSearch` | `USE` | `USE` |
+| `FILE_SEARCH` | `fileSearch` | `USE` | `USE` |
+| `FILE_CITATIONS` | `fileCitations` | `USE` | `USE` |
+| `MARKETPLACE` | `marketplace` | `USE` | brak |
+| `PEOPLE_PICKER` | `peoplePicker` | `VIEW_USERS`, `VIEW_GROUPS`, `VIEW_ROLES` | wszystkie |
+
+`SHARE` pozwala udostępniać rolę konkretnym użytkownikom, grupom lub rolom; `SHARE_PUBLIC` pozwala udostępniać ją wszystkim użytkownikom instancji. `CONFIGURE_OBO` umożliwia skonfigurowanie wymiany tokenów On-Behalf-Of na serwerze MCP, która przekazuje delegowane tokeny użytkowników do tego serwera, dlatego jest domyślnie wyłączona.
+
+## Selektor osób [#people-picker]
+
+Akcje `PEOPLE_PICKER` określają, jakie rodzaje podmiotów (principal) rola może wyszukiwać w oknie: udostępniania. Ukrywanie ról jest powszechne, gdy udostępnianie według roli ma pozostać zadaniem administratora.
+
+```yaml filename="librechat.yaml"
+interface:
+  peoplePicker:
+    users: true
+    groups: true
+    roles: false
+```
+
+To wyłącznie zmienia to, co pokazuje wyszukiwarka. Istniejące udostępnienia z ukrytym typem podmiotu nadal działają. Zobacz [`interface.peoplePicker`](/docs/configuration/librechat_yaml/object_structure/interface#peoplepicker).
+
+## Synchronizacja grup Entra ID [#entra-id-group-sync]
+
+Grupy z Microsoft Entra ID są synchronizowane z LibreChat, gdy użytkownik loguje się przez OpenID Connect z Entra i `OPENID_REUSE_TOKENS=true`. LibreChat odczytuje przynależność użytkownika do grup z Microsoft Graph przy każdym logowaniu i zapisuje każdą grupę wraz z jej identyfikatorem obiektu Entra, dzięki czemu grupa, z którą udostępniono zasoby, pozostaje tą samą grupą nawet po zmianie nazwy. Dostawcę skonfigurujesz w sekcji [Azure / Entra ID](/docs/configuration/authentication/OAuth2-OIDC/azure), a ponowne użycie tokenów w sekcji [OpenID Connect Token Reuse](/docs/configuration/authentication/OAuth2-OIDC/token-reuse).
+
+## Awansuj innego administratora [#promote-another-admin]
+
+W instalacji jednodzierżawczej (single-tenant) pierwsze zarejestrowane konto otrzymuje rolę `ADMIN`. Instalacje z wieloma dzierżawcami (tenant-scoped) nigdy nie awansują pierwszego użytkownika; administratorów dzierżawców należy tworzyć za pomocą zaufanego procesu administracyjnego. Aby nadać uprawnienia administratora innemu istniejącemu użytkownikowi, skorzystaj ze strony **Users** w Panelu Administratora lub ustaw rolę bezpośrednio w MongoDB:
+
+```js filename="mongosh"
+db.users.updateOne({ email: 'USER_EMAIL_ADDRESS' }, { $set: { role: 'ADMIN' } })
+```
+
+Poproś użytkownika o ponowne wylogowanie się i zalogowanie. W przypadku OpenID Connect możesz także przypisać rolę `ADMIN` na podstawie roli lub grupy z IdP za pomocą `OPENID_ADMIN_ROLE`; zobacz [dokumentację .env](/docs/configuration/dotenv#openid-connect).
+
+## Możliwości administratora [#admin-capabilities]
+
+Uprawnienia są przydzielane użytkownikowi, grupie lub roli na stronie **Grants** w Panelu Administratora. Użytkownicy z rolą `ADMIN` posiadają wszystkie z nich domyślnie; każdy inny użytkownik potrzebuje uprawnienia `access:admin` oraz uprawnień odpowiadających zarządzanym obszarom. Każde uprawnienie `manage:` implikuje odpowiadające mu uprawnienie `read:`, także w ramach poszczególnych sekcji: `manage:configs:endpoints` przyznaje również `read:configs:endpoints`. Osoba posiadająca wyłącznie dostęp do konfiguracji ograniczony do wybranych sekcji otrzymuje odpowiedzi dotyczące konfiguracji przefiltrowane do sekcji, które może odczytywać; jeśli nie ma żadnego uprawnienia do odczytu konfiguracji, otrzymuje kod odpowiedzi `403`.
+
+| Możliwość | Umożliwia |
+| ---------- | ------ |
+| `access:admin` | Logowanie do Panelu administracyjnego |
+| `read:users`, `manage:users` | Przeglądanie i zmienianie kont użytkowników |
+| `read:groups`, `manage:groups` | Przeglądanie i zmienianie grup oraz ich członków |
+| `read:roles`, `manage:roles` | Przeglądanie i zmienianie ról oraz ich uprawnień |
+| `read:configs`, `manage:configs` | Przeglądanie i zmienianie konfiguracji; `read:configs:<section>` oraz `manage:configs:<section>` ograniczają to do jednej sekcji najwyższego poziomu w `librechat.yaml` |
+| `assign:configs:user`, `assign:configs:group`, `assign:configs:role` | Przypisywanie nadpisań konfiguracji do tego rodzaju podmiotów |
+| `read:agents`, `manage:agents` | Przeglądanie i moderowanie wszystkich agentów |
+| `read:prompts`, `manage:prompts` | Przeglądanie i moderowanie wszystkich promptów |
+| `read:skills`, `manage:skills` | Przeglądanie i moderowanie wszystkich umiejętności |
+| `read:sharedlinks`, `manage:sharedlinks` | Przeglądanie i moderowanie wszystkich udostępnionych linków |
+| `manage:mcpservers` | Zarządzanie serwerami MCP na poziomie całej instancji |
+| `manage:code_environments` | Rejestrowanie i odwoływanie workerów wykonywania kodu należących do wdrożenia |
+| `read:usage` | Przeglądanie danych o wykorzystaniu |
+| `read:insights` | Przeglądanie [Insights](/docs/features/insights) dla wszystkich agentów |
+| `read:audit_log` | Przeglądanie, weryfikowanie i eksportowanie dziennika audytu przyznawanych uprawnień. Dziennik działa wyłącznie w trybie dopisywania, dlatego nie istnieje jego odpowiednik `manage:` |
+
+`read:assistants` i `manage:assistants` również istnieją, ale są zarezerwowane; na razie nic ich nie egzekwuje.
+
+## Pamięć podręczna członkostwa w grupach [#group-membership-cache]
+
+Aby sprawdzić uprawnienia, LibreChat wyszukuje grupy, do których należy użytkownik, i zapisuje wynik w pamięci podręcznej na pięć minut. Zmiany członkostwa w grupach natychmiast czyszczą odpowiednie wpisy. Rola użytkownika nie jest buforowana. Błędy pamięci podręcznej lub blokad przekierowują zapytanie do bazy danych i nigdy nie blokują sprawdzenia uprawnień.
+
+<OptionTable
+  options={[
+    ['USER_PRINCIPALS_CACHE_TTL_MS', 'number', 'Czas, w milisekundach, przez jaki członkostwa użytkownika w grupach są przechowywane w pamięci podręcznej. 0 wyłącza pamięć podręczną. Domyślnie: 300000 (5 minut).', 'USER_PRINCIPALS_CACHE_TTL_MS=300000'],
+    ['USER_PRINCIPALS_LOCK_TTL_MS', 'number', 'Wyłącznie wdrożenia Redis. Czas życia blokady w milisekundach, który zapobiega jednoczesnemu odbudowywaniu tego samego wpisu pamięci podręcznej przez kilka replik. 0 wyłącza wyłącznie blokowanie. Domyślnie: 5000.', 'USER_PRINCIPALS_LOCK_TTL_MS=5000'],
+    ['USER_PRINCIPALS_LOCK_WAIT_MS', 'number', 'Tylko wdrożenia Redis. Czas w milisekundach, przez jaki replika czeka, aż inna replika zakończy budowanie wpisu. Domyślnie USER_PRINCIPALS_LOCK_TTL_MS.', 'USER_PRINCIPALS_LOCK_WAIT_MS=5000'],
+  ]}
+/>
+
+## Statystyki administratora [#admin-insights]
+
+Panel [Insights](/docs/features/insights) jest domyślnie wyłączony. Ustaw `ENABLE_INSIGHTS=true` w pliku `.env` i uruchom ponownie LibreChat; dopóki panel jest wyłączony, trasy Insights zwracają odpowiedź `404`, a pozycja w pasku bocznym pozostaje ukryta.
+
+Administratorzy mogą otworzyć ją od razu po jej włączeniu. Aby udostępnić ją innym osobom, należy albo przyznać uprawnienie `read:insights` (dla każdego agenta) w Panelu administracyjnym, albo włączyć opcję **View insights** dla wybranych osób lub grup w oknie udostępniania danego agenta. Tylko administratorzy mogą przyznać opcję **View insights**, osoba musi też mieć dostęp do samego agenta, a nie można jej przyznać wszystkim. Insights wyświetla imiona i nazwiska, adresy e-mail oraz pierwszą wiadomość z ostatnich rozmów, dlatego przyznawaj to uprawnienie z odpowiednią ostrożnością.
+
+Każde zapytanie w sekcji Insights jest ograniczone do tenanta przeglądającego, a niestandardowe zakresy dat są ograniczone do 30 dni.
+
+## Migracja z wersji sprzed ACL [#migrating-from-pre-acl-versions]
+
+Wersje przed v0.8.0-rc3 używały prostszego modelu własności dla agentów i promptów. Po aktualizacji uruchom migracje, aby istniejący agenci i prompty pozostały dostępne; LibreChat wyświetla ostrzeżenie podczas uruchamiania, jeśli wykryje niezmigrowanych agentów. Udostępnione linki zostały później przeniesione do tego samego systemu, dlatego instancje, które mają udostępnione linki z okresu sprzed tej zmiany, powinny również uruchomić migrację udostępnionych linków.
+
+Zacznij od próbnego uruchomienia, aby zobaczyć, co zostałoby zmienione, a następnie uruchom migrację. Warianty `:batch` przetwarzają po 50 rekordów naraz, co pomaga przy dużych bazach danych.
+
+<Tabs items={['docker-compose.yml', 'deploy-compose.yml', 'Lokalny']}>
+  <Tabs.Tab>
+
+```bash
+docker compose exec api npm run migrate:agent-permissions:dry-run
+docker compose exec api npm run migrate:agent-permissions
+docker compose exec api npm run migrate:prompt-permissions:dry-run
+docker compose exec api npm run migrate:prompt-permissions
+docker compose exec api npm run migrate:shared-link-permissions:dry-run
+docker compose exec api npm run migrate:shared-link-permissions
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```bash
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:agent-permissions:dry-run"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:agent-permissions"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:prompt-permissions:dry-run"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:prompt-permissions"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:shared-link-permissions:dry-run"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:shared-link-permissions"
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```bash
+npm run migrate:agent-permissions:dry-run
+npm run migrate:agent-permissions
+npm run migrate:prompt-permissions:dry-run
+npm run migrate:prompt-permissions
+npm run migrate:shared-link-permissions:dry-run
+npm run migrate:shared-link-permissions
+```
+
+  </Tabs.Tab>
+</Tabs>

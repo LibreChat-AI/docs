@@ -1,0 +1,76 @@
+---
+title: Geplande chats
+icon: CalendarClock
+description: >-
+  Schakel Scheduled Chats in, stel limieten en projectregels in, sta onbeheerde
+  MCP-toegang toe en voldoe aan de Redis- en checkpointer-vereisten.
+---
+
+[Geplande chats](/docs/features/scheduled_chats) zijn experimenteel en staan uit totdat u ze inschakelt. Geplande uitvoeringen gebruiken model-, tool- en Code Interpreter-resources zonder dat iemand toezicht houdt. Controleer daarom de onderstaande implementatievereisten voordat u ze inschakelt.
+
+## Inschakelen [#enable]
+
+Voeg `interface.schedules` toe aan `librechat.yaml` en herstart LibreChat:
+
+```yaml filename="librechat.yaml"
+interface:
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    fireConcurrency: 5
+    requireProject: false
+    # projectId: '000000000000000000000000'
+```
+
+`use` en `create` zaaien de `SCHEDULES`-rechten voor de ingebouwde `USER`-rol bij het opstarten; daarna beheer je ze per rol in het [Admin Panel](/docs/features/admin_panel). `use` laat een gebruiker zijn schema's zien. `create` laat hen daarnaast schema's aanmaken, bewerken, inschakelen, uitvoeren en verwijderen. De overige sleutels zijn runtime-limieten:
+
+<OptionTable
+  options={[
+    ['maxPerUser', 'Number', 'Maximaal aantal schema\'s dat elke gebruiker kan bezitten, inclusief uitgeschakelde schema\'s. Stel in op 0 om het aanmaken te voorkomen.', '10'],
+    ['minIntervalMinutes', 'Number', 'Kortst toegestane tijd tussen twee uitvoeringen van één schema. Geldt voor elk interval, inclusief aangepaste cron.', '60'],
+    ['autoDisableAfterFailures', 'Number', 'Opeenvolgende mislukte runs voordat een schema zichzelf uitschakelt.', '5'],
+    ['fireConcurrency', 'Number', 'Maximaal aantal geplande runs dat tegelijkertijd wordt toegelaten in de hele deployment.', '5'],
+    ['requireProject', 'Boolean', 'Elk schema moet naar een Chat Project worden herleid, wat wordt gecontroleerd bij het opslaan en vóór elke uitvoering.', 'false'],
+    ['projectId', 'String', 'Koppelt elke geplande conversatie aan één Chat Project en impliceert requireProject.', ''],
+  ]}
+/>
+
+`schedules: true` schakelt de functie in met deze standaardinstellingen. `schedules: false` of `use: false` is een stop voor de hele implementatie die rol-, groeps- en gebruikersoverschrijvingen niet kunnen opheffen.
+
+Projectregels worden bij elke uitvoering opnieuw gecontroleerd. Een schema dat niet langer voldoet aan `requireProject`, of waarvan het project is verwijderd, schakelt zichzelf uit in plaats van een niet-gekoppelde conversatie te starten. Chat Projects behoren toe aan één gebruiker, dus een `projectId` op implementatieniveau werkt alleen voor de eigenaar van dat project; stel deze in via rol- of gebruikersoverrides wanneer eigenaren verschillende bestemmingen nodig hebben.
+
+De volledige veldenlijst, inclusief `admissionConcurrency`, `mcpPreflightConcurrency` en `mcpPreflightTimeoutMs` voor het afzonderlijk begrenzen van toelating- en MCP-gereedheidscontroles ten opzichte van generatie, staat in [`interface.schedules`](/docs/configuration/librechat_yaml/object_structure/interface#schedules).
+
+## Onbewaakte MCP-toegang [#unattended-mcp-access]
+
+Voordat een run start, controleert LibreChat elke MCP-tool die de geplande agent en zijn subagents nodig hebben. Een run die een interactieve login zou vereisen, wordt niet gestart; het schema toont welke agent aandacht nodig heeft.
+
+Om gebruikers MCP-tools te laten autoriseren voor onbewaakte runs, schakel je `interface.schedules.mcpConsent` in:
+
+- `mcpConsent.enabled` schakelt de functie in.
+- `mcpConsent.maxLifetimeHours` beperkt hoe lang een autorisatie geldig blijft, van 1 tot 8760 uur.
+- `mcpConsent.resources` geeft de MCP-resources weer die mogelijk geautoriseerd mogen worden.
+- `mcpConsent.readOnlyPolicy` lijst vertrouwde alleen-lezen tool-declaraties op, gesorteerd op server en upstream-toolnaam.
+- `mcpReceiptRetry.baseMs` en `mcpReceiptRetry.maxMs` stellen de backoff in voor het opnieuw proberen van toestemmingsbewijzen.
+
+Gebruikers zien vervolgens een sectie **Geplande MCP-autorisatie** in de planningseditor. Een autorisatie geldt alleen voor de vermelde agent en bronnen tot de uiterste datum en staat nooit schrijfacties toe.
+
+## Implementatievereisten [#deployment-requirements]
+
+Scheduled Chats coördineren via MongoDB-leases, zodat meerdere replica's het werk kunnen delen. Ze hebben daarnaast ook nodig:
+
+- **Redis-streams in deployments met meerdere replicas.** Stel `USE_REDIS_STREAMS=true` in. Zonder gedeelde streams mislukt het opslaan van een schema, in plaats van dat er werk wordt gestart dat een andere replica niet kan hervatten of stoppen.
+- **Een duurzame checkpointer voor agents die kunnen pauzeren.** Als de geplande agent Ask User kan gebruiken of goedkeuring voor tools nodig heeft, zijn Redis-streams en een gedeelde checkpointer nodig, zelfs op een enkel proces. De standaard MongoDB [`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) werkt; `type: memory` niet. LibreChat weigert zo'n run voordat er een modelaanroep plaatsvindt als een van beide ontbreekt.
+- **Het standaard serverstartpunt.** Het verouderde experimentele geclusterde startpunt start de planningsengine niet.
+
+Twee omgevingsvariabelen bepalen de engine (ook vermeld in [dotenv](/docs/configuration/dotenv#scheduled-chats)):
+
+<OptionTable
+  options={[
+    ['SCHEDULES_SINGLE_PROCESS', 'Boolean', 'Maakt geplande chats mogelijk zonder Redis. Stel dit alleen in wanneer de implementatie daadwerkelijk één LibreChat-proces draait.', '# SCHEDULES_SINGLE_PROCESS=true'],
+    ['SCHEDULES_DISABLED', 'Boolean', 'Noodstop voor zowel automatische uitvoeringen als Nu uitvoeren. Schema\'s blijven behouden, ze worden niet verwijderd.', '# SCHEDULES_DISABLED=true'],
+  ]}
+/>

@@ -1,0 +1,170 @@
+---
+title: Bảng điều khiển quản trị
+icon: LayoutDashboard
+description: >-
+  Chạy LibreChat Admin Panel bằng các tệp Docker Compose đi kèm hoặc như một
+  dịch vụ độc lập, và trỏ nó tới LibreChat API của bạn.
+---
+
+[Admin Panel](/docs/features/admin_panel) là một dịch vụ riêng biệt giao tiếp với các endpoint `/api/admin` của LibreChat. Dịch vụ này yêu cầu LibreChat v0.8.5 trở lên, kết nối mạng từ panel tới API của LibreChat, và một tài khoản có vai trò `ADMIN` hoặc khả năng `access:admin`. Trong triển khai single-tenant, tài khoản đầu tiên được đăng ký sẽ là admin (các triển khai tenant-scoped sẽ cấp quyền admin riêng biệt); xem [cấu hình Access Control](/docs/configuration/access_control#promote-another-admin) để nâng cấp các tài khoản khác.
+
+## Đi kèm với LibreChat [#bundled-with-librechat]
+
+`docker-compose.yml` và `deploy-compose.yml` chính thức bao gồm một dịch vụ `admin-panel` (image `registry.librechat.ai/librechat-ai/librechat-admin-panel:latest`) và dịch vụ này sẽ khởi động cùng với các thành phần còn lại của stack.
+
+| Tệp Compose | URL bảng quản trị | Cách phục vụ |
+| ------------ | --------------- | ---------------- |
+| `docker-compose.yml` | `http://localhost:3000` | Được publish trên cổng máy chủ `ADMIN_PANEL_PORT` (mặc định `3000`) |
+| `deploy-compose.yml` | `http://admin.localhost` | Được định tuyến qua nginx đi kèm trên subdomain `admin.localhost` |
+
+Bảng điều khiển sẽ không khởi động nếu thiếu session secret. Hãy đặt giá trị này trong `.env` của LibreChat; các tệp compose sẽ truyền nó vào bảng điều khiển dưới dạng `SESSION_SECRET`:
+
+```bash filename=".env"
+# At least 32 characters. Generate one with: openssl rand -hex 32
+ADMIN_PANEL_SESSION_SECRET=replace-with-a-32-char-random-string
+
+# Optional: host port for the default docker-compose.yml
+# ADMIN_PANEL_PORT=3000
+
+# Optional: set to true when the panel is served over HTTPS
+# ADMIN_PANEL_SESSION_COOKIE_SECURE=false
+```
+
+Các tệp Compose thiết lập phần còn lại: `API_SERVER_URL` trỏ đến dịch vụ `api`, `VITE_API_BASE_URL` theo giá trị của `DOMAIN_CLIENT` cho các chuyển hướng phía trình duyệt, và `deploy-compose.yml` đặt `ADMIN_PANEL_URL` thành `http://admin.localhost` trên API để quản trị viên được chuyển hướng trở lại bảng điều khiển sau khi đăng nhập SSO. Để không sử dụng bảng điều khiển, hãy xóa dịch vụ `admin-panel` hoặc đặt nó sau một [profile](https://docs.docker.com/compose/how-tos/profiles/) của Compose.
+
+Trình duyệt phân giải `*.localhost` thành `127.0.0.1`, vì vậy `admin.localhost` hoạt động mà không cần chỉnh sửa tệp hosts. Đối với tên miền thực, hãy trỏ một bản ghi DNS tới máy chủ, thay đổi `server_name` của `admin.localhost` trong `client/nginx.conf`, và đặt `ADMIN_PANEL_URL` cho khớp với tên miền đó.
+
+## Độc lập [#standalone]
+
+Để chạy bảng điều khiển một mình, trỏ tới một phiên bản LibreChat ở nơi khác, hãy sử dụng trực tiếp image:
+
+```bash
+docker run -p 3000:3000 \
+  --add-host=host.docker.internal:host-gateway \
+  -e SESSION_SECRET=replace-with-a-32-char-random-string \
+  -e VITE_API_BASE_URL=http://localhost:3080 \
+  -e API_SERVER_URL=http://host.docker.internal:3080 \
+  -e SESSION_COOKIE_SECURE=false \
+  registry.librechat.ai/librechat-ai/librechat-admin-panel:latest
+```
+
+Bảng điều khiển cần hai địa chỉ cho LibreChat. `VITE_API_BASE_URL` là địa chỉ mà trình duyệt của bạn truy cập đến LibreChat, và được dùng cho các chuyển hướng đăng nhập. `API_SERVER_URL` là địa chỉ mà máy chủ của chính bảng điều khiển truy cập đến LibreChat. Bên trong container, `localhost` chính là container đó, vì vậy khi LibreChat chạy trên cùng một máy chủ, `API_SERVER_URL` sử dụng `http://host.docker.internal:3080` (trên Linux cần thêm cờ `--add-host` ở trên), trong khi trình duyệt vẫn giữ `http://localhost:3080`. Trong môi trường production, hãy đặt cả hai thành các tên DNS mà mỗi phía có thể phân giải.
+
+[admin-panel repository](https://github.com/LibreChat-AI/admin-panel) cũng có một `docker-compose.yml`, và hướng dẫn chạy từ mã nguồn bằng Bun (`bun install`, sau đó `bun dev`).
+
+## Biến môi trường của Panel [#panel-environment-variables]
+
+Các thiết lập này được đặt trên dịch vụ bảng quản trị, không phải trên LibreChat.
+
+<OptionTable
+  options={[
+    ['SESSION_SECRET', 'string', 'Khóa mã hóa phiên, tối thiểu 32 ký tự. Bắt buộc khi chạy trong Docker và môi trường production; chỉ lệnh bun dev mới dùng khóa bí mật phát triển tích hợp sẵn. Trong các tệp compose đi kèm, giá trị này lấy từ ADMIN_PANEL_SESSION_SECRET.', 'SESSION_SECRET=replace-with-a-32-char-random-string'],
+    ['VITE_API_BASE_URL', 'string', 'URL hướng tới trình duyệt của API LibreChat, được dùng cho các chuyển hướng OAuth. Bắt buộc khi chạy trong Docker. Mặc định là http://localhost:3080 khi phát triển cục bộ.', 'VITE_API_BASE_URL=https://chat.example.com'],
+    ['API_SERVER_URL', 'string', 'URL mà máy chủ panel dùng để gọi LibreChat, khi khác với URL mà trình duyệt truy cập (ví dụ một dịch vụ Kubernetes nội bộ). Mặc định sẽ dùng VITE_API_BASE_URL.', 'API_SERVER_URL=http://librechat:3080'],
+    ['PORT', 'number', 'Cổng mà bảng điều khiển lắng nghe. Mặc định: 3000.', 'PORT=3000'],
+    ['VITE_BASE_PATH', 'string', 'Phục vụ bảng điều khiển dưới một đường dẫn con. Phải giống nhau tại thời điểm build và thời điểm chạy, vì vậy đường dẫn con tùy chỉnh cần có một bản build image riêng. Mặc định: /.', 'VITE_BASE_PATH=/adminpanel'],
+    ['ADMIN_SSO_ONLY', 'boolean', 'Ẩn biểu mẫu email và mật khẩu để quản trị viên chỉ có thể đăng nhập bằng SSO. Mặc định: false.', 'ADMIN_SSO_ONLY=false'],
+    ['ADMIN_SSO_ENABLED', 'boolean', 'Đặt thành false để ẩn nút SSO và bỏ qua tự động chuyển hướng SSO ngay cả khi LibreChat đã cấu hình OpenID. Tùy chọn này có độ ưu tiên cao hơn ADMIN_SSO_ONLY. Mặc định: true.', 'ADMIN_SSO_ENABLED=true'],
+    ['ADMIN_SESSION_IDLE_TIMEOUT_MS', 'number', 'Thời gian chờ không hoạt động tính bằng mili giây trước khi phiên quản trị viên kết thúc. Mặc định: 1800000 (30 phút).', 'ADMIN_SESSION_IDLE_TIMEOUT_MS=1800000'],
+    ['SESSION_COOKIE_SECURE', 'boolean', 'Cookie phiên có chỉ được truyền qua HTTPS hay không. Mặc định là true trong môi trường production. Chỉ đặt thành false cho các triển khai HTTP thuần, nếu không trình duyệt sẽ bỏ cookie và quá trình đăng nhập OpenID sẽ không thể hoàn tất.', 'SESSION_COOKIE_SECURE=false'],
+    ['ADMIN_PANEL_TRUSTED_ORIGINS', 'string', 'Danh sách các nguồn công khai (origin) được phép gọi máy chủ bảng điều khiển, phân tách bằng dấu phẩy. Cần thiết khi chạy qua HTTP thường sau reverse proxy có viết lại header Host hoặc bỏ cổng không mặc định; nếu không, đăng nhập sẽ thất bại với lỗi 403.', 'ADMIN_PANEL_TRUSTED_ORIGINS=http://admin.example.com:8080'],
+    ['ADMIN_PANEL_METRICS_SECRET', 'string', 'Bearer token bắt buộc để thu thập (scrape) endpoint /metrics của Prometheus. Khi chưa được đặt, endpoint sẽ trả về 401.', 'ADMIN_PANEL_METRICS_SECRET='],
+  ]}
+/>
+
+### Tiêu đề bộ nhớ đệm (Cache headers) [#cache-headers]
+
+Các biến này phản chiếu các biến cache của chính LibreChat. Phiên bản có tiền tố `ADMIN_PANEL_` của mỗi biến sẽ được ưu tiên, và bảng điều khiển sẽ dùng tên chung khi biến đó không được đặt.
+
+<OptionTable
+  options={[
+    ['STATIC_CACHE_MAX_AGE', 'number', 'Thời gian tồn tại tối đa của trình duyệt (max-age, tính bằng giây) đối với các tệp đã băm trong /assets/. ADMIN_PANEL_STATIC_CACHE_MAX_AGE sẽ ghi đè giá trị này. Mặc định: 172800 (2 ngày).', 'STATIC_CACHE_MAX_AGE=172800'],
+    ['STATIC_CACHE_S_MAX_AGE', 'number', 'Thời gian s-maxage của CDN tính bằng giây cho các tài nguyên có mã băm. ADMIN_PANEL_STATIC_CACHE_S_MAX_AGE sẽ ghi đè giá trị này. Mặc định: 86400 (1 ngày).', 'STATIC_CACHE_S_MAX_AGE=86400'],
+    ['INDEX_CACHE_CONTROL', 'string', 'Header Cache-Control cho trang HTML. ADMIN_PANEL_INDEX_CACHE_CONTROL ghi đè giá trị này.', 'INDEX_CACHE_CONTROL=no-cache, no-store, must-revalidate'],
+    ['INDEX_PRAGMA', 'string', 'Header pragma cho trang HTML. ADMIN_PANEL_INDEX_PRAGMA sẽ ghi đè giá trị này.', 'INDEX_PRAGMA=no-cache'],
+    ['INDEX_EXPIRES', 'string', 'Header Expires cho trang HTML. ADMIN_PANEL_INDEX_EXPIRES sẽ ghi đè giá trị này.', 'INDEX_EXPIRES=0'],
+  ]}
+/>
+
+## Cài đặt LibreChat [#librechat-settings]
+
+### URL chuyển hướng [#redirect-url]
+
+Khi bảng quản trị được lưu trữ trên một URL khác với LibreChat, hãy đặt `ADMIN_PANEL_URL` trong tệp `.env` của LibreChat thành URL gốc bên ngoài của bảng quản trị, bao gồm mọi tiền tố đường dẫn và không có dấu gạch chéo ở cuối. LibreChat sử dụng biến này để chuyển quản trị viên quay lại bảng quản trị sau khi đăng nhập SSO, và sau khi biến được đặt, LibreChat sẽ hiển thị liên kết **Admin Panel** cho quản trị viên trong **Settings > General**.
+
+```bash filename=".env"
+ADMIN_PANEL_URL=https://admin.example.com/admin
+```
+
+Với Helm chart, hãy đặt `librechat.adminPanelUrl` trong file values của bạn; chart sẽ render giá trị này thành `ADMIN_PANEL_URL`.
+
+```yaml filename="values.yaml"
+librechat:
+  adminPanelUrl: https://admin.example.com/admin
+```
+
+### Đăng nhập một lần [#single-sign-on]
+
+Quản trị viên có thể đăng nhập vào bảng điều khiển bằng cùng nhà cung cấp OpenID Connect mà LibreChat sử dụng. Đăng ký `${DOMAIN_SERVER}/api/admin/oauth/openid/callback` làm URI chuyển hướng bổ sung với nhà cung cấp danh tính của bạn. Xem [OpenID Connect](/docs/configuration/authentication/OAuth2-OIDC) để biết phần còn lại của việc thiết lập nhà cung cấp. Để cấp vai trò `ADMIN` dựa trên vai trò hoặc nhóm của IdP, hãy sử dụng `OPENID_ADMIN_ROLE` (được liệt kê trong [tham chiếu .env](/docs/configuration/dotenv#openid-connect)).
+
+Đăng nhập Google vào bảng điều khiển sử dụng `GOOGLE_CLIENT_ID` và `GOOGLE_CLIENT_SECRET`. Đăng ký `${DOMAIN_SERVER}/api/admin/oauth/google/callback` với Google. Bảng điều khiển yêu cầu truy cập ngoại tuyến để có thể làm mới token quản trị đã hết hạn mà không cần đăng nhập lại; mỗi lần làm mới, hệ thống lại kiểm tra danh tính tài khoản, trạng thái cấm, miền email được phép, tenant và quyền quản trị.
+
+## Ghi đè cấu hình [#configuration-overrides]
+
+Các ghi đè được lưu theo từng chủ thể (vai trò, nhóm hoặc người dùng) dưới dạng hồ sơ nằm trên `librechat.yaml`, cùng với một hồ sơ Cơ sở (Base) áp dụng cho tất cả mọi người.
+
+**Thứ tự gộp.** Hồ sơ Base được áp dụng trước tiên bất kể mức ưu tiên của nó, sau đó là các hồ sơ còn lại theo thứ tự mức ưu tiên tăng dần; khi bằng nhau thì xét theo thứ tự: vai trò, nhóm, người dùng, rồi thứ tự tạo. Một hồ sơ được tạo mà không có mức ưu tiên sẽ nhận mức mặc định theo loại đối tượng gán: vai trò là 10, nhóm là 20, người dùng là 100 (Base là 0). Khi một lần ghi sau đó bỏ qua mức ưu tiên, mức ưu tiên đã lưu sẽ được giữ nguyên.
+
+**Xác thực.** Các thao tác ghi (`PUT /api/admin/config/:principalType/:principalId` và `PATCH .../fields`) được kiểm tra hợp lệ dựa trên schema của `librechat.yaml` được áp dụng lên trên cấu hình cơ sở. Nếu kết quả không hợp lệ, yêu cầu sẽ bị từ chối với HTTP 400 và không có gì được lưu:
+
+```json
+{
+  "error": "Invalid config override",
+  "code": "CONFIG_OVERRIDE_INVALID",
+  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
+}
+```
+
+Mỗi vấn đề chỉ bao gồm đường dẫn (path) và một mã lỗi (code): một mã lỗi schema như `invalid_type`, hoặc `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key`, `invalid_document`; không bao giờ bao gồm giá trị đã gửi. Một bản vá trường (field patch) chỉ bị từ chối khi các vấn đề đó liên quan đến hoặc được chính bản vá đó đưa vào.
+
+Các ghi đè đã lưu trữ sau này trở nên không hợp lệ, chẳng hạn sau khi một bản nâng cấp làm chặt schema, sẽ không gây lỗi nghiêm trọng. Trường không hợp lệ sẽ bị loại bỏ khi cấu hình được phân giải, giá trị bên dưới sẽ được áp dụng, và máy chủ ghi một dòng nhật ký cho mỗi trường.
+
+```text
+[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
+```
+
+Một theme ghi đè không đáp ứng [các quy tắc theme](/docs/configuration/librechat_yaml/object_structure/theme#validation) sẽ quay về theme cơ sở theo cách tương tự.
+
+**Bí mật.** Các trường bí mật đã đăng ký được ghi qua admin API sẽ được mã hóa khi lưu trữ và chỉ được trả về dưới dạng bản xem trước đã che. Bao gồm: Langfuse, OCR, giọng nói, tìm kiếm web, Assistants, Azure Assistants, thông tin xác thực máy chủ MCP, khóa nhóm Azure và từng `endpoints.custom[].apiKey`. Nếu bỏ qua một bí mật trong lần chỉnh sửa sau, giá trị đã lưu sẽ được giữ nguyên. Tuy nhiên, một thao tác ghi làm thay đổi nơi khóa đã lưu được gửi đến (chẳng hạn URL máy chủ hoặc URL cơ sở) bắt buộc phải nhập lại khóa đó. Khóa của endpoint tùy chỉnh có giá trị `${ENV_VAR}` và `user_provided` sẽ được giữ nguyên như hiện tại. Các giá trị tùy ý trong những map chung như header tùy chỉnh không được mã hóa, vì vậy hãy sử dụng tham chiếu biến môi trường tại đó.
+
+**Tham chiếu biến môi trường.** Các tham chiếu `${ENV_VAR}` trong overrides chỉ được giới hạn ở những tên mà `librechat.yaml` đã tham chiếu, thông tin xác thực endpoint tích hợp sẵn, và các tên được liệt kê trong `CONFIG_OVERRIDE_ENV_ALLOWLIST`. Mọi tham chiếu khác sẽ bị từ chối khi ghi.
+
+**Cài đặt chỉ có trong YAML.** Các máy chủ MCP có `type: stdio` hoặc các trường tiến trình (`command`, `args`, `env`, `cwd`, `stderr`) và `langfuse.headers` chỉ có thể được thiết lập trong `librechat.yaml`. API quản trị sẽ từ chối các thao tác ghi vào chúng, và các ghi đè không thể thay thế hoặc xóa chúng. Xem [Langfuse: Authenticated Proxies and Gateways](/docs/configuration/langfuse#authenticated-proxies-and-gateways).
+
+**Truy cập giới hạn theo mục.** Quyền hạn cấu hình có thể rộng (`read:configs`, `manage:configs`) hoặc chỉ giới hạn trong một mục cấp cao nhất (`read:configs:<section>`, `manage:configs:<section>`). Việc tạo, thay đổi hoặc xóa hồ sơ Base luôn yêu cầu quyền `manage:configs` rộng; quản lý theo mục chỉ áp dụng cho hồ sơ theo vai trò, nhóm và người dùng. Xem [Quyền quản trị](/docs/configuration/access_control#admin-capabilities).
+
+## Admin API [#admin-api]
+
+Bảng điều khiển giao tiếp với các endpoint LibreChat sau đây. Mọi route đều kiểm tra quyền quản trị viên và khả năng liên quan.
+
+| Mount | Mục đích |
+| ----- | ------- |
+| `POST /api/admin/login`, `/api/admin/oauth/*` | Đăng nhập quản trị viên (cục bộ và SSO) |
+| `GET /api/admin/verify` | Xác thực phiên quản trị viên |
+| `/api/admin/users` | Liệt kê và tìm kiếm người dùng |
+| `/api/admin/groups` | Nhóm và thành viên của nhóm |
+| `/api/admin/roles` | Vai trò tùy chỉnh, quyền hạn và thành viên của vai trò |
+| `/api/admin/grants` | Cấp quyền năng lực hệ thống |
+| `/api/admin/config` | Hồ sơ cấu hình cơ bản và theo từng principal |
+| `/api/admin/skills` | Trạng thái đồng bộ, lần chạy và thông tin xác thực của skill GitHub |
+| `/api/admin/code-environments` | Ghép đôi và thu hồi các worker môi trường mã |
+| `/api/admin/langfuse` | Cài đặt kết nối Langfuse và kiểm tra kết nối |
+| `/api/admin/audit-log` | Nhật ký kiểm toán cấp quyền: `GET /` (danh sách), `GET /export.csv`, `GET /verify` (kiểm tra tính toàn vẹn), `GET /:id`. Yêu cầu `read:audit_log`; không có endpoint ghi |
+
+Các thao tác đọc cấu hình: `GET /api/admin/config/meta` (khả năng triển khai), `/catalog` (phạm vi và tùy chọn mô hình), `/env-status` (trạng thái tham chiếu biến môi trường), `/effective` (cấu hình hiệu lực của người gọi), và `/resolved/:principalType/:principalId` (cấu hình đã được phân giải của một chủ thể). Các thao tác đọc vẫn giữ nguyên cơ chế ủy quyền và che giấu thông tin bí mật.
+
+`POST /api/admin/config/:principalType/:principalId/changes` áp dụng nhiều thay đổi cho một hồ sơ (profile) theo cơ chế nguyên tử (atomic) và trả về một báo cáo ghi (write report). Hãy kiểm tra báo cáo này: các vị trí đã áp dụng và các vị trí bị bỏ qua được liệt kê riêng biệt, và các đường dẫn chỉ dành cho triển khai (deployment-only) có thể bị bỏ qua mà không làm thất bại toàn bộ lô (batch).
+
+`POST /api/admin/config/reload` tải lại cấu hình cục bộ và phát tín hiệu vô hiệu hóa cache đến các instance khác. Endpoint này có thể trả về `503` sau khi việc tải lại cục bộ đã thành công nếu việc phát tín hiệu thất bại; đây không phải là hoàn tác (rollback), và các replica khác có thể chưa tải lại cấu hình. Xem [hướng dẫn nâng cấp](/docs/configuration/upgrade#admin-configuration-and-secrets).
+
+Xem trước nhóm và người dùng, cũng như các thao tác đọc người dùng có hiệu lực, được xử lý trong tenant của mục tiêu, bao gồm cả hồ sơ Base của tenant đó. Một caller có phạm vi tenant không thể truy cập tenant khác, và tên vai trò đề cập đến phân vùng của chính caller.

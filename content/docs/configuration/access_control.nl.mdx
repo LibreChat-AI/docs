@@ -1,0 +1,159 @@
+---
+title: Toegangscontrole
+icon: ShieldCheck
+description: >-
+  Rolfunctie-machtigingen en hun standaardwaarden, zichtbaarheid van de
+  personenkiezer, Entra ID-groepssynchronisatie, admins promoveren,
+  admin-mogelijkheden en de ACL-migraties voor oudere instanties.
+---
+
+Hoe rollen, groepen en delen zich gedragen voor gebruikers wordt beschreven op de functiepagina [Toegangsbeheer](/docs/features/access_control). Deze pagina behandelt wat een beheerder instelt.
+
+## Functierechten [#feature-permissions]
+
+Elke rol heeft één set schakelaars per machtigingstype. Je kunt ze op drie plaatsen wijzigen:
+
+- In LibreChat, via de knop **Admin Settings** in de panelen voor agents, prompts, MCP servers, memories en skills (alleen voor beheerders).
+- In het [Admin Panel](/docs/features/admin_panel), onder **Access**, voor elke rol, inclusief aangepaste rollen.
+- In het [`interface`](/docs/configuration/librechat_yaml/object_structure/interface)-blok van `librechat.yaml`. Deze sleutels bepalen de startmachtigingen van de ingebouwde `USER`-rol, en alleen bij het opstarten. Daardoor kunnen ze geen verschillende instellingen per aangepaste rol uitdrukken.
+
+De tabel toont elk machtigingstype, de `interface`-sleutel waarmee het wordt ingesteld, de bijbehorende acties en welke acties de rol `USER` standaard heeft.
+
+| Permissietype | `interface`-sleutel | Acties | Standaard ingeschakeld voor `USER` |
+| --------------- | --------------- | ------- | ------------------------ |
+| `AGENTS` | `agents` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | `USE`, `CREATE` |
+| `PROMPTS` | `prompts` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | `USE`, `CREATE` |
+| `MCP_SERVERS` | `mcpServers` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`, `CONFIGURE_OBO` | `USE`, `CREATE` |
+| `SKILLS` | `skills` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | `USE`, `CREATE` |
+| `REMOTE_AGENTS` | `remoteAgents` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | geen |
+| `SHARED_LINKS` | `sharedLinks` | `CREATE`, `SHARE`, `SHARE_PUBLIC` | `CREATE`, `SHARE` |
+| `SCHEDULES` | `schedules` | `USE`, `CREATE` | `USE`, `CREATE` |
+| `MEMORIES` | `memories` | `USE`, `CREATE`, `UPDATE`, `READ`, `OPT_OUT` | alle |
+| `BOOKMARKS` | `bookmarks` | `USE` | `USE` |
+| `MULTI_CONVO` | `multiConvo` | `USE` | `USE` |
+| `TEMPORARY_CHAT` | `temporaryChat` | `USE` | `USE` |
+| `RUN_CODE` | `runCode` | `USE` | `USE` |
+| `WEB_SEARCH` | `webSearch` | `USE` | `USE` |
+| `FILE_SEARCH` | `fileSearch` | `USE` | `USE` |
+| `FILE_CITATIONS` | `fileCitations` | `USE` | `USE` |
+| `MARKETPLACE` | `marketplace` | `USE` | geen |
+| `PEOPLE_PICKER` | `peoplePicker` | `VIEW_USERS`, `VIEW_GROUPS`, `VIEW_ROLES` | alle |
+
+`SHARE` laat een rol delen met specifieke gebruikers, groepen of rollen; `SHARE_PUBLIC` laat delen met iedereen op de instantie. `CONFIGURE_OBO` maakt het mogelijk om On-Behalf-Of-tokenuitwisseling in te stellen op een MCP-server, waarbij de gedelegeerde tokens van gebruikers naar die server worden doorgestuurd. Deze optie staat daarom standaard uit.
+
+## Personenkiezer [#people-picker]
+
+De `PEOPLE_PICKER`-acties bepalen welke soorten principals een rol kan vinden in de zoekfunctie van het deelvenster. Het verbergen van rollen is gebruikelijk wanneer het delen op basis van rol een taak van beheerders moet blijven.
+
+```yaml filename="librechat.yaml"
+interface:
+  peoplePicker:
+    users: true
+    groups: true
+    roles: false
+```
+
+Dit wijzigt alleen wat de zoekfunctie toont. Bestaande deelacties met een verborgen principaltype blijven werken. Zie [`interface.peoplePicker`](/docs/configuration/librechat_yaml/object_structure/interface#peoplepicker).
+
+## Entra ID-groepssynchronisatie [#entra-id-group-sync]
+
+Groepen uit Microsoft Entra ID worden gesynchroniseerd naar LibreChat wanneer een gebruiker zich aanmeldt via OpenID Connect met Entra en `OPENID_REUSE_TOKENS=true`. LibreChat leest de groepslidmaatschappen van de gebruiker uit Microsoft Graph bij elke aanmelding en slaat elke groep op met zijn Entra-objectID, zodat een groep die gedeeld wordt dezelfde groep blijft, ook als deze wordt hernoemd. Stel de provider in met [Azure / Entra ID](/docs/configuration/authentication/OAuth2-OIDC/azure) en token reuse met [OpenID Connect Token Reuse](/docs/configuration/authentication/OAuth2-OIDC/token-reuse).
+
+## Een andere beheerder aanstellen [#promote-another-admin]
+
+In een single-tenant deployment krijgt het eerst geregistreerde account de rol `ADMIN`. Tenant-scoped deployments promoveren nooit hun eerste gebruiker; beheerders van een tenant worden aangemaakt via een vertrouwde administratieve procedure. Om een andere bestaande gebruiker tot beheerder te maken, gebruik je de pagina **Users** in het Admin Panel, of stel je de rol rechtstreeks in MongoDB in:
+
+```js filename="mongosh"
+db.users.updateOne({ email: 'USER_EMAIL_ADDRESS' }, { $set: { role: 'ADMIN' } })
+```
+
+Laat de gebruiker daarna uitloggen en opnieuw inloggen. Met OpenID Connect kunt u `ADMIN` ook toewijzen op basis van een rol of groep van de IdP met `OPENID_ADMIN_ROLE`; zie de [.env-referentie](/docs/configuration/dotenv#openid-connect).
+
+## Beheerdersmogelijkheden [#admin-capabilities]
+
+Capaciteiten worden aan een gebruiker, groep of rol toegekend via de pagina **Grants** van het Admin Panel. Gebruikers met de rol `ADMIN` bezitten ze allemaal impliciet; iedereen anders heeft naast de capaciteiten voor wat hij beheert ook `access:admin` nodig. Elke `manage:`-capaciteit impliceert de bijbehorende `read:`-capaciteit, ook per sectie: `manage:configs:endpoints` verleent ook `read:configs:endpoints`. Iemand met alleen sectiegerichte configuratietoegang krijgt configuratieantwoorden gefilterd tot de secties die hij kan lezen; zonder enige configuratieleestoegang krijgt hij `403`.
+
+| Capaciteit | Staat toe |
+| ---------- | --------- |
+| `access:admin` | Inloggen op het Admin Panel |
+| `read:users`, `manage:users` | Bekijken en wijzigen van gebruikersaccounts |
+| `read:groups`, `manage:groups` | Bekijken en wijzigen van groepen en hun leden |
+| `read:roles`, `manage:roles` | Bekijken en wijzigen van rollen en hun rechten |
+| `read:configs`, `manage:configs` | Bekijken en wijzigen van configuratie; `read:configs:<section>` en `manage:configs:<section>` beperken dit tot één bovenliggende `librechat.yaml`-sectie |
+| `assign:configs:user`, `assign:configs:group`, `assign:configs:role` | Configuratie-overschrijvingen toewijzen aan dat type principal |
+| `read:agents`, `manage:agents` | Bekijken en modereren van elke agent |
+| `read:prompts`, `manage:prompts` | Bekijken en modereren van elke prompt |
+| `read:skills`, `manage:skills` | Bekijken en modereren van elke skill |
+| `read:sharedlinks`, `manage:sharedlinks` | Bekijken en modereren van elke gedeelde link |
+| `manage:mcpservers` | Beheren van MCP-servers voor de hele instantie |
+| `manage:code_environments` | Registreren en intrekken van door de implementatie beheerde code-uitvoeringswerkers |
+| `read:usage` | Bekijken van gebruiksgegevens |
+| `read:insights` | Bekijken van [Insights](/docs/features/insights) voor elke agent |
+| `read:audit_log` | Bekijken, verifiëren en exporteren van het auditlogboek van toekenningen. Het is alleen-toevoegen, dus er is geen `manage:`-tegenhanger |
+
+`read:assistants` en `manage:assistants` bestaan ook, maar zijn gereserveerd; er wordt nog niets mee afgedwongen.
+
+## Groepslidmaatschap-cache [#group-membership-cache]
+
+Om rechten te controleren, zoekt LibreChat op tot welke groepen een gebruiker behoort en slaat het resultaat vijf minuten in de cache op. Wijzigingen in het lidmaatschap van een groep wissen de betrokken items meteen. De rol van de gebruiker wordt niet in de cache opgeslagen. Fouten in de cache of bij het vergrendelen vallen terug op de database en blokkeren nooit een rechtencontrole.
+
+<OptionTable
+  options={[
+    ['USER_PRINCIPALS_CACHE_TTL_MS', 'number', 'Hoe lang, in milliseconden, het lidmaatschap van groepen van een gebruiker in de cache wordt bewaard. 0 schakelt de cache uit. Standaard: 300000 (5 minuten).', 'USER_PRINCIPALS_CACHE_TTL_MS=300000'],
+    ['USER_PRINCIPALS_LOCK_TTL_MS', 'number', 'Alleen Redis-implementaties. Vergrendelingsduur in milliseconden die voorkomt dat meerdere replicas tegelijkertijd dezelfde cacheвermelding opnieuw opbouwen. 0 schakelt alleen de vergrendeling uit. Standaard: 5000.', 'USER_PRINCIPALS_LOCK_TTL_MS=5000'],
+    ['USER_PRINCIPALS_LOCK_WAIT_MS', 'number', 'Alleen Redis-implementaties. Hoe lang, in milliseconden, een replica wacht totdat een andere replica het item heeft opgebouwd. Standaard ingesteld op USER_PRINCIPALS_LOCK_TTL_MS.', 'USER_PRINCIPALS_LOCK_WAIT_MS=5000'],
+  ]}
+/>
+
+## Admin Insights [#admin-insights]
+
+Het [Insights](/docs/features/insights)-dashboard is standaard uitgeschakeld. Stel `ENABLE_INSIGHTS=true` in `.env` in en start LibreChat opnieuw; zolang het uitstaat, geven de Insights-routes `404` terug en blijft het menu-item in de zijbalk verborgen.
+
+Beheerders kunnen het openen zodra het is ingeschakeld. Om anderen toegang te geven, kun je `read:insights` (voor elke agent) toekennen via het Admin Panel, of **View insights** inschakelen voor specifieke personen of groepen in het deelvenster van de agent. Alleen beheerders kunnen **View insights** toekennen, de persoon moet ook toegang hebben tot de agent zelf, en het kan niet aan iedereen worden toegekend. Insights toont namen, e-mailadressen en het eerste bericht van recente gesprekken, dus ken het op de juiste manier toe.
+
+Elke Insights-query is beperkt tot de tenant van de gebruiker, en aangepaste datumbereiken zijn beperkt tot 30 dagen.
+
+## Migreren vanaf versies vóór ACL [#migrating-from-pre-acl-versions]
+
+Versies vóór v0.8.0-rc3 gebruikten een eenvoudiger eigendomsmodel voor agents en prompts. Voer na het upgraden de migraties uit, zodat bestaande agents en prompts toegankelijk blijven; LibreChat geeft bij het opstarten een waarschuwing wanneer het niet-gemigreerde agents aantreft. Gedeelde links zijn later naar hetzelfde systeem overgezet, dus instanties die gedeelde links hebben van vóór die tijd moeten ook de migratie voor gedeelde links uitvoeren.
+
+Begin met een proefrun om te zien wat er zou veranderen, en voer daarna de migratie uit. De `:batch`-varianten verwerken 50 records per keer, wat helpt bij grote databases.
+
+<Tabs items={['docker-compose.yml', 'deploy-compose.yml', 'Lokaal']}>
+  <Tabs.Tab>
+
+```bash
+docker compose exec api npm run migrate:agent-permissions:dry-run
+docker compose exec api npm run migrate:agent-permissions
+docker compose exec api npm run migrate:prompt-permissions:dry-run
+docker compose exec api npm run migrate:prompt-permissions
+docker compose exec api npm run migrate:shared-link-permissions:dry-run
+docker compose exec api npm run migrate:shared-link-permissions
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```bash
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:agent-permissions:dry-run"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:agent-permissions"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:prompt-permissions:dry-run"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:prompt-permissions"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:shared-link-permissions:dry-run"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:shared-link-permissions"
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```bash
+npm run migrate:agent-permissions:dry-run
+npm run migrate:agent-permissions
+npm run migrate:prompt-permissions:dry-run
+npm run migrate:prompt-permissions
+npm run migrate:shared-link-permissions:dry-run
+npm run migrate:shared-link-permissions
+```
+
+  </Tabs.Tab>
+</Tabs>

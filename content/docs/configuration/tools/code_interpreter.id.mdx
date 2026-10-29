@@ -1,0 +1,91 @@
+---
+title: Code Interpreter
+icon: SquareTerminal
+description: >-
+  Deploy layanan Code Interpreter, hubungkan LibreChat ke layanan tersebut, dan
+  aktifkan fitur kode opsional.
+---
+
+Halaman ini membahas sisi admin dari [Code Interpreter](/docs/features/code_interpreter). Kode dijalankan di layanan terpisah, [ClickHouse/code-interpreter](https://github.com/ClickHouse/code-interpreter), yang Anda deploy sendiri. LibreChat mengirimkan kode dan file ke layanan tersebut serta mengautentikasi setiap permintaan. Setiap variabel di sisi LibreChat yang disebutkan di sini tercantum dalam [referensi `.env`](/docs/configuration/dotenv#code-interpreter).
+
+## Men-deploy layanan [#deploy-the-service]
+
+Ikuti README repositori untuk menjalankannya dengan Docker Compose atau Helm. Layanan ini terdiri dari API gateway, worker sandbox, file server, dan Tool Call Server, yang dapat diskalakan secara independen dari LibreChat. Worker mengisolasi kode dengan NsJail atau microVM libkrun. Batas memori dan CPU, ukuran unggahan, kuota permintaan, dan akses jaringan untuk kode sandbox diatur pada deployment tersebut, bukan di LibreChat.
+
+Jangan pernah mengekspos mode lokal tanpa autentikasi layanan (`LOCAL_MODE=true`) pada jaringan publik atau produksi.
+
+## Hubungkan LibreChat [#connect-librechat]
+
+1. Setel `LIBRECHAT_CODE_BASEURL` ke URL deployment Anda.
+2. Siapkan autentikasi. Layanan open-source saat ini memerlukan [autentikasi JWT](#self-hosted-jwt-authentication) di luar mode lokal. Deployment yang menerima API key menggunakan `LIBRECHAT_CODE_API_KEY` sebagai gantinya, yaitu satu key yang dibagikan untuk semua pengguna dan dikirim melalui header `X-API-Key`.
+3. Restart LibreChat.
+
+Kemudian periksa bahwa eksekusi kode diizinkan:
+
+- `execute_code` harus berada dalam [`endpoints.agents.capabilities`](/docs/configuration/librechat_yaml/object_structure/agents#capabilities). Nilai ini sudah ada dalam daftar default.
+- Pengguna memerlukan izin run-code. [`interface.runCode`](/docs/configuration/librechat_yaml/object_structure/interface#runcode) menetapkan izin tersebut untuk peran `USER` dan mengontrol tombol **Run Code** pada blok kode. Izin yang sama juga mengatur tool **Run Code** di Agent Builder.
+
+## Autentikasi JWT yang Di-hosting Sendiri [#self-hosted-jwt-authentication]
+
+Dengan autentikasi JWT, LibreChat menandatangani token berumur pendek untuk pengguna yang sedang masuk pada setiap permintaan Code Interpreter. Layanan memeriksa token tersebut terhadap kunci publik yang sesuai dan menggunakan pengguna serta tenant di dalam token untuk memisahkan file dan sesi. Kunci privat tetap berada di LibreChat.
+
+Di sisi LibreChat:
+
+```bash filename=".env"
+CODEAPI_AUTH_PROVIDER=librechat-jwt
+CODEAPI_JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+CODEAPI_JWT_ALGORITHM=EdDSA
+CODEAPI_JWT_KID=lc-codeapi-2026-05
+CODEAPI_JWT_ISSUER=librechat
+CODEAPI_JWT_AUDIENCE=codeapi
+CODEAPI_JWT_TTL_SECONDS=300
+CODEAPI_JWT_MINT_CACHE_SECONDS=30
+CODEAPI_JWT_SINGLE_TENANT_ID=legacy
+```
+
+`CODEAPI_JWT_PRIVATE_KEY_BASE64` (PEM berbasis base64) atau `CODEAPI_JWT_PRIVATE_JWK_JSON` (JWK privat) dapat digunakan untuk menyimpan kunci sebagai gantinya. Penandatanganan menggunakan `EdDSA` dengan kunci Ed25519 atau Ed448 (default), atau `RS256`. Nilai default dan batasan untuk setiap variabel tersedia di [bagian JWT pada referensi `.env`](/docs/configuration/dotenv#code-interpreter-jwt-authentication).
+
+Di sisi Code Interpreter, konfigurasikan verifier yang sesuai:
+
+```bash filename="code-interpreter .env"
+LOCAL_MODE=false
+CODEAPI_AUTH_PROVIDER=librechat-jwt
+CODEAPI_JWT_ISSUER=librechat
+CODEAPI_JWT_AUDIENCE=codeapi
+CODEAPI_JWT_ALLOWED_ALGS=EdDSA
+CODEAPI_JWT_JWKS_JSON={"keys":[{"kty":"OKP","crv":"Ed25519","x":"...","kid":"lc-codeapi-2026-05","alg":"EdDSA"}]}
+CODEAPI_JWT_SINGLE_TENANT_ID=legacy
+```
+
+Issuer, audience, key ID, algoritma, public key, dan single-tenant ID harus cocok di kedua layanan. Layanan ini juga dapat memuat kunci verifier dari `CODEAPI_JWT_PUBLIC_KEY` dengan `CODEAPI_JWT_KID`, atau dari `CODEAPI_JWT_PUBLIC_KEYS_DIR`; JWKS inline membuat rotasi kunci menjadi paling mudah. Pastikan TTL token LibreChat berada di bawah atau sama dengan `CODEAPI_JWT_MAX_TTL_SECONDS` milik layanan (maksimal 300).
+
+Untuk checkout lokal, repositori Code Interpreter memiliki helper yang menghasilkan kunci Ed25519 yang cocok dan menulis kedua file `.env`:
+
+```bash
+node scripts/setup-local-auth-env.js --librechat /path/to/LibreChat
+```
+
+Deployment multi-tenant sebaiknya menyediakan konteks tenant yang terautentikasi dan mengatur `TENANT_ISOLATION_STRICT=true` di LibreChat serta `CODEAPI_TENANT_ISOLATION_STRICT=true` di layanan. Mode strict menolak permintaan tanpa tenant, alih-alih kembali menggunakan ID single-tenant.
+
+Mengintegrasikan aplikasi lain secara langsung dengan layanan berarti membuat token yang kompatibel sendiri dan mengirimkannya sebagai `Authorization: Bearer <token>`.
+
+## Unggah dan pratinjau file [#file-uploads-and-previews]
+
+LibreChat mengunggah file percakapan ke layanan sebelum sebuah proses dijalankan dan mencoba ulang unggahan yang terkena batas laju `429`, dengan menghormati `Retry-After` dalam rentang waktu tunggu yang dibatasi. Anda dapat menyesuaikannya per pengguna dan per rute dengan [`codeApiUploadConcurrency` dan `codeApiMaxRetryWaitMs`](/docs/configuration/librechat_yaml/object_structure/agents#code-api-upload-recovery).
+
+File yang dihasilkan mendapatkan pratinjau inline hingga `FILE_PREVIEW_MAX_EXTRACT_BYTES` (2 MiB secara default; lihat [Pratinjau File Inline](/docs/configuration/dotenv#inline-file-previews)). Gambar yang dibaca agent dari sandbox ditampilkan secara inline hingga 1 MiB. Atur `LIBRECHAT_CODE_SANDBOX_OUTPUT_MAX_SIZE` agar sesuai dengan `SANDBOX_OUTPUT_MAX_SIZE` pada worker sehingga LibreChat membaca gambar dengan jumlah permintaan sesedikit mungkin. `LIBRECHAT_CODE_IMAGE_CHUNK_BYTES` hanya menetapkan jendela transfer dan tidak menaikkan batas 1 MiB.
+
+Pratinjau dirender di panel Artifacts melalui bundler Sandpack statis. Jika Anda melakukan self-hosting bundler, lihat [konfigurasi Artifacts](/docs/configuration/artifacts#self-hosting-the-sandpack-bundler).
+
+<Callout type="warning" title="Upgrade dengan kode lama menghasilkan output">
+  Deployment yang meregenerasi nama file Code Interpreter yang sama sebelum indeks output-file unik ada mungkin memiliki rekaman MongoDB duplikat yang membuat indeks tidak dapat dibangun. Pratinjau perbaikan dengan `npm run migrate:code-file-duplicates:dry-run`, lalu terapkan dengan `npm run migrate:code-file-duplicates`.
+</Callout>
+
+## Fitur opsional [#optional-features]
+
+Setiap item ini nonaktif sampai Anda mengaktifkannya.
+
+- **Programmatic Tool Calling**: tambahkan `programmatic_tools` bersama `execute_code` di dalam [agents capabilities](/docs/configuration/librechat_yaml/object_structure/agents#capabilities). Memerlukan Tool Call Server dari layanan tersebut.
+- **Eksekusi latar belakang**: tambahkan `run_in_background` ke kemampuan agen. Pengiriman hasil yang telah selesai dan pembatalan diatur melalui [`backgroundTasks`](/docs/configuration/librechat_yaml/object_structure/agents#backgroundtasks).
+- **Sesi kode stateful**: tambahkan `stateful_code_sessions` ke kapabilitas agents, lalu atur salah satu dari berikut: [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint) ke deployment yang mengiklankan profil `stateful`, atau konfigurasikan named environments. Agents stateless tetap menggunakan `LIBRECHAT_CODE_BASEURL`; permintaan stateful tidak pernah kembali (fallback) ke sana. Fitur ini bersifat eksperimental dan dapat berubah.
+- **Lingkungan kode** (mesin terlampir, pekerja pribadi, pairing, pilihan mesin per chat, kebijakan persetujuan): dikonfigurasi melalui [`statefulCodeSessions`](/docs/configuration/librechat_yaml/object_structure/agents#statefulcodesessions). Penyalinan lampiran chat ke ruang kerja terlampir dibatasi oleh `endpoints.agents.workspaceAttachments`: `timeoutMs` (default 10000, rentang 1000 hingga 120000) dan `concurrency` (default 3, rentang 1 hingga 16).

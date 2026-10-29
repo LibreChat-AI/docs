@@ -1,0 +1,171 @@
+---
+title: Panel de administración
+icon: LayoutDashboard
+description: >-
+  Ejecuta el Panel de Administración de LibreChat con los archivos de Docker
+  Compose incluidos o como un servicio independiente, y apúntalo a tu API de
+  LibreChat.
+---
+
+El [Panel de administración](/docs/features/admin_panel) es un servicio independiente que se comunica con los endpoints `/api/admin` de LibreChat. Requiere LibreChat v0.8.5 o posterior, acceso de red desde el panel a la API de LibreChat y una cuenta con el rol `ADMIN` o la capacidad `access:admin`. En una implementación de inquilino único, la primera cuenta registrada es un administrador (las implementaciones con ámbito de inquilino aprovisionan a los administradores por separado); consulta la [configuración de Control de acceso](/docs/configuration/access_control#promote-another-admin) para promover a otros.
+
+## Incluido con LibreChat [#bundled-with-librechat]
+
+El `docker-compose.yml` y el `deploy-compose.yml` oficiales incluyen un servicio `admin-panel` (imagen `registry.librechat.ai/librechat-ai/librechat-admin-panel:latest`) que se inicia junto con el resto de la pila.
+
+| Archivo Compose | URL del panel de administración | Cómo se sirve |
+| --------------- | ------------------------------- | ------------- |
+| `docker-compose.yml` | `http://localhost:3000` | Publicado en el puerto del host `ADMIN_PANEL_PORT` (por defecto `3000`) |
+| `deploy-compose.yml` | `http://admin.localhost` | Enrutado a través del nginx incluido en el subdominio `admin.localhost` |
+
+El panel se niega a iniciar sin un secreto de sesión. Configúralo en el archivo `.env` de LibreChat; los archivos de compose lo pasan al panel como `SESSION_SECRET`:
+
+```bash filename=".env"
+# At least 32 characters. Generate one with: openssl rand -hex 32
+ADMIN_PANEL_SESSION_SECRET=replace-with-a-32-char-random-string
+
+# Optional: host port for the default docker-compose.yml
+# ADMIN_PANEL_PORT=3000
+
+# Optional: set to true when the panel is served over HTTPS
+# ADMIN_PANEL_SESSION_COOKIE_SECURE=false
+```
+
+Los archivos de Compose establecen el resto: `API_SERVER_URL` apunta al servicio `api`, `VITE_API_BASE_URL` sigue a `DOMAIN_CLIENT` para las redirecciones orientadas al navegador, y `deploy-compose.yml` establece `ADMIN_PANEL_URL` como `http://admin.localhost` en la API para que los administradores sean devueltos al panel después del SSO. Para omitir el panel, elimine el servicio `admin-panel` o colóquelo detrás de un [profile](https://docs.docker.com/compose/how-tos/profiles/) de Compose.
+
+Los navegadores resuelven `*.localhost` a `127.0.0.1`, por lo que `admin.localhost` funciona sin editar tu archivo hosts. Para un dominio real, apunta un registro DNS al host, cambia el `server_name` de `admin.localhost` en `client/nginx.conf` y define `ADMIN_PANEL_URL` para que coincida.
+
+## Independiente [#standalone]
+
+Para ejecutar el panel por sí solo, apuntando a una instancia de LibreChat en otro lugar, utiliza la imagen directamente:
+
+```bash
+docker run -p 3000:3000 \
+  --add-host=host.docker.internal:host-gateway \
+  -e SESSION_SECRET=replace-with-a-32-char-random-string \
+  -e VITE_API_BASE_URL=http://localhost:3080 \
+  -e API_SERVER_URL=http://host.docker.internal:3080 \
+  -e SESSION_COOKIE_SECURE=false \
+  registry.librechat.ai/librechat-ai/librechat-admin-panel:latest
+```
+
+El panel necesita dos direcciones para LibreChat. `VITE_API_BASE_URL` es la dirección a la que accede tu navegador y se usa para las redirecciones de inicio de sesión. `API_SERVER_URL` es la dirección a la que accede el servidor del propio panel. Dentro de un contenedor, `localhost` hace referencia al propio contenedor; por tanto, cuando LibreChat se ejecuta en el mismo host, `API_SERVER_URL` usa `http://host.docker.internal:3080` (en Linux esto requiere la opción `--add-host` mencionada anteriormente), mientras que el navegador mantiene `http://localhost:3080`. En producción, configura ambas con los nombres DNS que cada lado pueda resolver.
+
+El [repositorio admin-panel](https://github.com/LibreChat-AI/admin-panel) también tiene un `docker-compose.yml` e instrucciones para ejecutarlo desde el código fuente con Bun (`bun install` y luego `bun dev`).
+
+## Variables de entorno del panel [#panel-environment-variables]
+
+Estas se configuran en el servicio del panel de administración, no en LibreChat.
+
+<OptionTable
+  options={[
+    ['SESSION_SECRET', 'string', 'Clave de cifrado de sesión, de al menos 32 caracteres. Obligatoria en Docker y en producción; solo bun dev usa un secreto de desarrollo integrado como alternativa. En los archivos compose incluidos, este valor proviene de ADMIN_PANEL_SESSION_SECRET.', 'SESSION_SECRET=replace-with-a-32-char-random-string'],
+    ['VITE_API_BASE_URL', 'string', 'URL del navegador de la API de LibreChat, utilizada para las redirecciones de OAuth. Obligatoria en Docker. Por defecto es http://localhost:3080 en el desarrollo local.', 'VITE_API_BASE_URL=https://chat.example.com'],
+    ['API_SERVER_URL', 'string', 'URL que usa el servidor del panel para llamar a LibreChat, cuando difiere de la que usa el navegador (por ejemplo, un servicio interno de Kubernetes). Si no se define, recurre a VITE_API_BASE_URL.', 'API_SERVER_URL=http://librechat:3080'],
+    ['PORT', 'number', 'Puerto en el que escucha el panel. Predeterminado: 3000.', 'PORT=3000'],
+    ['VITE_BASE_PATH', 'string', 'Sirve el panel bajo una subruta. Debe ser el mismo en tiempo de compilación y en tiempo de ejecución, por lo que una subruta personalizada necesita su propia compilación de imagen. Valor por defecto: /.', 'VITE_BASE_PATH=/adminpanel'],
+    ['ADMIN_SSO_ONLY', 'boolean', 'Oculta el formulario de correo electrónico y contraseña para que los administradores solo puedan iniciar sesión mediante SSO. Valor predeterminado: false.', 'ADMIN_SSO_ONLY=false'],
+    ['ADMIN_SSO_ENABLED', 'boolean', 'Establézcalo en false para ocultar el botón de SSO y omitir la redirección automática de SSO, incluso cuando LibreChat tenga OpenID configurado. Tiene prioridad sobre ADMIN_SSO_ONLY. Valor predeterminado: true.', 'ADMIN_SSO_ENABLED=true'],
+    ['ADMIN_SESSION_IDLE_TIMEOUT_MS', 'number', 'Tiempo de inactividad en milisegundos antes de que finalice una sesión de administrador. Valor predeterminado: 1800000 (30 minutos).', 'ADMIN_SESSION_IDLE_TIMEOUT_MS=1800000'],
+    ['SESSION_COOKIE_SECURE', 'boolean', 'Si la cookie de sesión es solo HTTPS. Su valor predeterminado es true en producción. Establézcala en false únicamente en despliegues HTTP simples; de lo contrario, el navegador descarta la cookie y el inicio de sesión con OpenID no puede completarse.', 'SESSION_COOKIE_SECURE=false'],
+    ['ADMIN_PANEL_TRUSTED_ORIGINS', 'string', 'Orígenes públicos separados por comas que pueden llamar al servidor del panel. Es necesario sobre HTTP sin cifrar detrás de un proxy inverso que reescribe el encabezado Host o elimina un puerto no predeterminado; de lo contrario, el inicio de sesión falla con un error 403.', 'ADMIN_PANEL_TRUSTED_ORIGINS=http://admin.example.com:8080'],
+    ['ADMIN_PANEL_METRICS_SECRET', 'string', 'Token Bearer requerido para acceder al endpoint /metrics de Prometheus. Mientras no esté configurado, el endpoint responde con 401.', 'ADMIN_PANEL_METRICS_SECRET='],
+  ]}
+/>
+
+### Encabezados de caché [#cache-headers]
+
+Estas variables reflejan las variables de caché propias de LibreChat. La versión `ADMIN_PANEL_` de cada una tiene prioridad, y el panel recurre al nombre compartido cuando no está definida.
+
+<OptionTable
+  options={[
+    ['STATIC_CACHE_MAX_AGE', 'number', 'Edad máxima del navegador (max-age) en segundos para los archivos con hash en /assets/. ADMIN_PANEL_STATIC_CACHE_MAX_AGE la sobrescribe. Valor predeterminado: 172800 (2 días).', 'STATIC_CACHE_MAX_AGE=172800'],
+    ['STATIC_CACHE_S_MAX_AGE', 'number', 'CDN s-maxage en segundos para los recursos con hash. ADMIN_PANEL_STATIC_CACHE_S_MAX_AGE lo sobrescribe. Valor predeterminado: 86400 (1 día).', 'STATIC_CACHE_S_MAX_AGE=86400'],
+    ['INDEX_CACHE_CONTROL', 'string', 'Encabezado Cache-Control para la página HTML. ADMIN_PANEL_INDEX_CACHE_CONTROL lo sobrescribe.', 'INDEX_CACHE_CONTROL=no-cache, no-store, must-revalidate'],
+    ['INDEX_PRAGMA', 'string', 'Encabezado Pragma para la página HTML. ADMIN_PANEL_INDEX_PRAGMA lo sobrescribe.', 'INDEX_PRAGMA=no-cache'],
+    ['INDEX_EXPIRES', 'string', 'Encabezado Expires para la página HTML. ADMIN_PANEL_INDEX_EXPIRES lo sobrescribe.', 'INDEX_EXPIRES=0'],
+  ]}
+/>
+
+## Configuración de LibreChat [#librechat-settings]
+
+### URL de redirección [#redirect-url]
+
+Cuando el panel se aloja en una URL diferente a la de LibreChat, establece `ADMIN_PANEL_URL` en el archivo `.env` de LibreChat con la URL base externa del panel, incluyendo cualquier prefijo de ruta y sin barra final. LibreChat la utiliza para devolver a los administradores al panel después del inicio de sesión único (SSO), y les muestra un enlace **Panel de administración** en **Configuración > General** una vez que está definida.
+
+```bash filename=".env"
+ADMIN_PANEL_URL=https://admin.example.com/admin
+```
+
+Con el chart de Helm, configura `librechat.adminPanelUrl` en tu archivo de valores en su lugar; el chart lo renderiza como `ADMIN_PANEL_URL`.
+
+```yaml filename="values.yaml"
+librechat:
+  adminPanelUrl: https://admin.example.com/admin
+```
+
+### Inicio de sesión único [#single-sign-on]
+
+Los administradores pueden iniciar sesión en el panel con el mismo proveedor de OpenID Connect que utiliza LibreChat. Registra `${DOMAIN_SERVER}/api/admin/oauth/openid/callback` como una URI de redirección adicional en tu proveedor de identidad. Consulta [OpenID Connect](/docs/configuration/authentication/OAuth2-OIDC) para el resto de la configuración del proveedor. Para conceder el rol `ADMIN` a partir de un rol o grupo del IdP, utiliza `OPENID_ADMIN_ROLE` (incluido en la [referencia de .env](/docs/configuration/dotenv#openid-connect)).
+
+El inicio de sesión con Google en el panel usa `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET`. Registra `${DOMAIN_SERVER}/api/admin/oauth/google/callback` en Google. El panel solicita acceso sin conexión para poder renovar un token de administrador caducado sin un nuevo inicio de sesión; en cada renovación se vuelven a comprobar la identidad de la cuenta, su estado de bloqueo, el dominio de correo electrónico permitido, el tenant y el acceso de administrador.
+
+## Anulaciones de configuración [#configuration-overrides]
+
+Los overrides se almacenan por principal (rol, grupo o usuario) como perfiles sobre `librechat.yaml`, además de un perfil Base que se aplica a todos.
+
+**Orden de fusión.** El perfil Base se aplica primero independientemente de su prioridad, y después los perfiles restantes en orden ascendente de prioridad; en caso de empate, se aplica el rol, luego el grupo, luego el usuario y, por último, el orden de creación. Un perfil creado sin prioridad recibe la prioridad predeterminada de su tipo de principal: rol 10, grupo 20, usuario 100 (Base es 0). Una escritura posterior que omita la prioridad conserva la almacenada.
+
+**Validación.** Las escrituras (`PUT /api/admin/config/:principalType/:principalId` y `PATCH .../fields`) se validan contra el esquema de `librechat.yaml` aplicado sobre la configuración base. Si el resultado no es válido, la operación se rechaza con HTTP 400 y no se guarda nada:
+
+```json
+{
+  "error": "Invalid config override",
+  "code": "CONFIG_OVERRIDE_INVALID",
+  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
+}
+```
+
+Cada problema solo incluye la ruta y un código (un código de esquema como `invalid_type`, o `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key`, `invalid_document`), nunca el valor enviado. Un parche de campo solo se rechaza por los problemas que afecta o introduce.
+
+Los overrides almacenados que se vuelven inválidos más adelante, por ejemplo después de una actualización que endurece el esquema, no son fatales. El campo inválido se descarta al resolver la configuración, se aplica el valor subyacente y el servidor registra una línea por cada campo:
+
+```text
+[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
+```
+
+Un tema de anulación que no cumple con las [reglas del tema](/docs/configuration/librechat_yaml/object_structure/theme#validation) recurre al tema base de la misma manera.
+
+**Secretos.** Los campos secretos registrados que se escriben a través de la API de administración se cifran en reposo y solo se devuelven como vistas previas enmascaradas: Langfuse, OCR, voz, búsqueda web, Assistants, Azure Assistants, credenciales de servidores MCP, claves de grupo de Azure y cada `endpoints.custom[].apiKey`. Si se omite un secreto en una edición posterior, se conserva el valor almacenado; sin embargo, una escritura que cambie el destino al que se envía una clave almacenada (como una URL del servidor o una URL base) debe incluir de nuevo la clave. Las claves de endpoints personalizados que contienen `${ENV_VAR}` o `user_provided` se mantienen tal cual. Los valores arbitrarios en mapas genéricos, como los encabezados personalizados, no se cifran, por lo que en esos casos se deben usar referencias a variables de entorno.
+
+**Referencias de entorno.** Las referencias `${ENV_VAR}` en las sobrescrituras están limitadas a los nombres que `librechat.yaml` ya referencia, a las credenciales de endpoint integradas y a los nombres listados en `CONFIG_OVERRIDE_ENV_ALLOWLIST`. Cualquier otra referencia se rechaza al escribir.
+
+**Configuración solo en YAML.** Los servidores MCP con `type: stdio` o campos de proceso (`command`, `args`, `env`, `cwd`, `stderr`) y `langfuse.headers` solo pueden configurarse en `librechat.yaml`. La API de administración rechaza las escrituras en ellos, y las anulaciones no pueden reemplazarlos ni eliminarlos. Consulta [Langfuse: Authenticated Proxies and Gateways](/docs/configuration/langfuse#authenticated-proxies-and-gateways).
+
+**Acceso con alcance por sección.** Las capacidades de configuración pueden ser amplias (`read:configs`, `manage:configs`) o limitarse a una sección de nivel superior (`read:configs:<section>`, `manage:configs:<section>`). Crear, modificar o eliminar el perfil Base siempre requiere el permiso amplio `manage:configs`; la gestión con alcance por sección se aplica a los perfiles de rol, grupo y usuario. Consulta [Capacidades de administración](/docs/configuration/access_control#admin-capabilities).
+
+## API de administración [#admin-api]
+
+El panel se comunica con estos endpoints de LibreChat. Cada ruta verifica el acceso de administrador y la capacidad correspondiente.
+
+| Montaje | Propósito |
+| ----- | ------- |
+| `POST /api/admin/login`, `/api/admin/oauth/*` | Inicio de sesión de administrador (local y SSO) |
+| `GET /api/admin/verify` | Valida la sesión de administrador |
+| `/api/admin/users` | Listado y búsqueda de usuarios |
+| `/api/admin/groups` | Grupos y sus miembros |
+| `/api/admin/roles` | Roles personalizados, sus permisos y miembros |
+| `/api/admin/grants` | Concesiones de capacidades del sistema |
+| `/api/admin/config` | Perfiles de configuración base y por principal |
+| `/api/admin/skills` | Estado, ejecuciones y credenciales de sincronización de skills de GitHub |
+| `/api/admin/code-environments` | Emparejamiento y revocación de workers de entornos de código |
+| `/api/admin/langfuse` | Configuración de conexión con Langfuse y pruebas |
+| `/api/admin/audit-log` | Registro de auditoría de concesiones: `GET /` (listado), `GET /export.csv`, `GET /verify` (verificación de integridad), `GET /:id`. Requiere `read:audit_log`; no existen endpoints de escritura |
+
+La configuración se lee mediante: `GET /api/admin/config/meta` (capacidades de la implementación), `/catalog` (ámbito y opciones de modelos), `/env-status` (estado de las referencias de entorno), `/effective` (la configuración efectiva del solicitante) y `/resolved/:principalType/:principalId` (la configuración resuelta de un principal). Las lecturas mantienen su autorización y el enmascaramiento de secretos.
+
+`POST /api/admin/config/:principalType/:principalId/changes` aplica varios cambios a un perfil de forma atómica y devuelve un informe de escritura. Compruébalo: las ubicaciones aplicadas y las omitidas se listan por separado, y las rutas exclusivas de despliegue pueden omitirse sin que el lote falle.
+
+`POST /api/admin/config/reload` recarga la configuración local y envía una invalidación a las demás instancias. Puede devolver `503` aunque la recarga local haya tenido éxito si falla el envío de la invalidación; eso no es una reversión, y es posible que otras réplicas no se hayan recargado. Consulta la [guía de actualización](/docs/configuration/upgrade#admin-configuration-and-secrets).
+
+Las vistas previas de grupos y usuarios, así como las lecturas de usuarios efectivos, se resuelven en el tenant del destino, incluido el perfil Base de ese tenant. Un llamador con alcance de tenant no puede acceder a otro tenant, y los nombres de rol se refieren a la partición del propio llamador.

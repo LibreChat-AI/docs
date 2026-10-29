@@ -1,0 +1,76 @@
+---
+title: Chat pianificate
+icon: CalendarClock
+description: >-
+  Attiva le Scheduled Chats, imposta limiti e regole di progetto, consenti
+  l'accesso MCP non presidiato e soddisfa i requisiti di Redis e checkpointer.
+---
+
+[Chat programmate](/docs/features/scheduled_chats) sono sperimentali e disattivate finché non le abiliti esplicitamente. Le esecuzioni programmate utilizzano risorse di modelli, strumenti e Code Interpreter senza che nessuno le supervisioni, quindi controlla i requisiti di distribuzione indicati di seguito prima di attivarle.
+
+## Abilita [#enable]
+
+Aggiungi `interface.schedules` a `librechat.yaml` e riavvia LibreChat:
+
+```yaml filename="librechat.yaml"
+interface:
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    fireConcurrency: 5
+    requireProject: false
+    # projectId: '000000000000000000000000'
+```
+
+`use` e `create` inizializzano i permessi `SCHEDULES` per il ruolo predefinito `USER` all'avvio; successivamente, gestiscili per ruolo nel [Pannello di amministrazione](/docs/features/admin_panel). `use` consente a un utente di visualizzare le proprie pianificazioni. `create` consente inoltre di crearle, modificarle, abilitarle, eseguirle ed eliminarle. Le altre chiavi sono limiti di runtime:
+
+<OptionTable
+  options={[
+    ['maxPerUser', 'Number', 'Numero massimo di pianificazioni che ogni utente può possedere, incluse quelle disabilitate. Impostare a 0 per impedirne la creazione.', '10'],
+    ['minIntervalMinutes', 'Number', 'Intervallo minimo consentito tra due esecuzioni della stessa pianificazione. Si applica a ogni cadenza, inclusa la cron personalizzata.', '60'],
+    ['autoDisableAfterFailures', 'Number', 'Esecuzioni consecutive non riuscite prima che una pianificazione si disattivi automaticamente.', '5'],
+    ['fireConcurrency', 'Number', 'Numero massimo di esecuzioni pianificate ammesse contemporaneamente in tutta la distribuzione.', '5'],
+    ['requireProject', 'Boolean', 'Ogni pianificazione deve essere associata a un Chat Project, verificato al momento del salvataggio e prima di ogni esecuzione.', 'false'],
+    ['projectId', 'String', 'Fissa ogni conversazione pianificata a un unico Progetto di Chat e implica requireProject.', ''],
+  ]}
+/>
+
+`schedules: true` abilita la funzionalità con questi valori predefiniti. `schedules: false`, oppure `use: false`, è un blocco a livello di distribuzione che nessuna impostazione di ruolo, gruppo o utente può annullare.
+
+Le regole del progetto vengono ricontrollate a ogni esecuzione. Una pianificazione che non soddisfa più `requireProject`, oppure il cui progetto è stato eliminato, si disabilita automaticamente invece di avviare una conversazione senza ambito. I progetti di chat appartengono a un solo utente, quindi un `projectId` valido a livello di distribuzione funziona solo per il proprietario di quel progetto; impostalo negli override di ruolo o utente quando i proprietari hanno bisogno di destinazioni diverse.
+
+L'elenco completo dei campi, inclusi `admissionConcurrency`, `mcpPreflightConcurrency` e `mcpPreflightTimeoutMs` per limitare separatamente le verifiche di ammissione e di prontezza MCP rispetto alla generazione, è disponibile in [`interface.schedules`](/docs/configuration/librechat_yaml/object_structure/interface#schedules).
+
+## Accesso MCP non presidiato [#unattended-mcp-access]
+
+Prima dell'avvio di un'esecuzione, LibreChat verifica ogni strumento MCP di cui l'agente pianificato e i suoi subagenti hanno bisogno. Un'esecuzione che richiederebbe un accesso interattivo non viene avviata; la pianificazione indica quale agente richiede attenzione.
+
+Per consentire agli utenti di autorizzare gli strumenti MCP per le esecuzioni senza supervisione, attiva `interface.schedules.mcpConsent`:
+
+- `mcpConsent.enabled` attiva la funzionalità.
+- `mcpConsent.maxLifetimeHours` limita la durata massima di un'autorizzazione, da 1 a 8760 ore.
+- `mcpConsent.resources` elenca le risorse MCP che possono essere autorizzate.
+- `mcpConsent.readOnlyPolicy` elenca le dichiarazioni degli strumenti di sola lettura considerati attendibili, indicizzate per server e per nome dello strumento upstream.
+- `mcpReceiptRetry.baseMs` e `mcpReceiptRetry.maxMs` impostano il ritardo di backoff per il nuovo tentativo di invio delle ricevute di consenso.
+
+Gli utenti vedono quindi una sezione **Scheduled MCP authorization** nell'editor delle pianificazioni. Un'autorizzazione copre solo l'agente e le risorse elencate fino alla sua scadenza e non consente mai scritture.
+
+## Requisiti di distribuzione [#deployment-requirements]
+
+Le chat pianificate si coordinano tramite lease di MongoDB, così più repliche possono condividere il lavoro. Richiedono inoltre:
+
+- **Stream Redis nei deployment con più repliche.** Imposta `USE_REDIS_STREAMS=true`. Senza stream condivisi, il salvataggio di una pianificazione non riesce, anziché avviare un lavoro che un'altra replica non potrebbe riprendere o interrompere.
+- **Un checkpointer durevole per gli agenti che possono mettersi in pausa.** Se l'agente pianificato può usare Ask User o richiede l'approvazione degli strumenti, servono Redis streams e un checkpointer condiviso, anche con un singolo processo. Il [`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) predefinito basato su MongoDB funziona; `type: memory` no. LibreChat rifiuta un'esecuzione di questo tipo prima di qualsiasi chiamata al modello se manca uno dei due.
+- **Il punto di ingresso standard del server.** Il vecchio punto di ingresso sperimentale in cluster non avvia il motore di pianificazione.
+
+Due variabili d'ambiente controllano il motore (elencate anche in [dotenv](/docs/configuration/dotenv#scheduled-chats)):
+
+<OptionTable
+  options={[
+    ['SCHEDULES_SINGLE_PROCESS', 'Boolean', 'Consente le chat pianificate senza Redis. Impostarlo solo quando la distribuzione esegue effettivamente un solo processo LibreChat.', '# SCHEDULES_SINGLE_PROCESS=true'],
+    ['SCHEDULES_DISABLED', 'Boolean', 'Arresto di emergenza sia per le esecuzioni automatiche sia per Esegui ora. Le pianificazioni vengono mantenute, non eliminate.', '# SCHEDULES_DISABLED=true'],
+  ]}
+/>

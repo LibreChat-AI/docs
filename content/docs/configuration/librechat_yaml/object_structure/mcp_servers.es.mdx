@@ -166,7 +166,7 @@ mcpServers:
     [
       'chatMenu',
       'Boolean',
-      '(Opcional) Cuando es false, excluye el servidor MCP del selector de chat habitual y lo rechaza en las selecciones de chat proporcionadas por el selector. Los Agentes guardados y las Model Specs asignadas explícitamente pueden seguir usándolo. Su valor predeterminado es true.',
+      '(Opcional) Cuando se establece en `false`, oculta el servidor MCP del compositor de chat y rechaza las solicitudes de chat que lo seleccionen. Los agentes aún pueden usarlo. El valor predeterminado es `true`.',
       'chatMenu: false',
     ],
     [
@@ -378,6 +378,8 @@ mcpServers:
 
 Utilice el paso directo (direct passthrough) solo cuando se confíe en que el servidor MCP recibirá el token de acceso ascendente del usuario. La autenticación explícita MCP OAuth, el [intercambio en nombre de](#obo) y la autenticación mediante clave de API de administrador tienen prioridad sobre este encabezado. LibreChat resuelve el token de sesión activo antes de conectarse y actualiza la conexión una vez después de un `401` o `403`. No vuelve a ejecutar automáticamente la llamada a la herramienta rechazada porque es posible que el servidor ya la haya ejecutado; vuelva a intentar la herramienta deliberadamente una vez que la recuperación sea exitosa. Si el token no se puede actualizar, el usuario debe iniciar sesión nuevamente.
 
+`{{LIBRECHAT_GRAPH_ACCESS_TOKEN}}` intercambia el token de acceso reutilizable de OpenID del usuario por un token de Microsoft Graph mediante el flujo on-behalf-of. Los ámbitos solicitados provienen de [`GRAPH_API_SCOPES`](/docs/configuration/dotenv#microsoft-graph-api--entra-id-integration), que por defecto es `https://graph.microsoft.com/.default` y es independiente de `OPENID_GRAPH_SCOPES` (búsqueda de personas y grupos).
+
 - **Ejemplo:**
   ```yaml
   headers:
@@ -436,7 +438,7 @@ requestHeaders:
       custom_header: 'X-API-Key'
   ```
 
-Para los servidores creados en la UI y compartidos que utilizan `apiKey.source: user`, las claves guardadas están vinculadas al destino de la solicitud normalizado. Cambiar la ruta de la URL o la consulta, el proxy, el transporte, el formato/encabezado de autorización, o el cliente/destino OAuth configurado requiere que los usuarios ingresen nuevas claves; las ediciones equivalentes o cosméticas las conservan. Las claves heredadas existentes siguen funcionando en su límite sin cambios. Solo se pueden sustituir las variables de credenciales declaradas actualmente, incluso en `requestHeaders`; un nombre generado antiguo inyectado no puede reutilizar su clave. Complete la actualización en **cada réplica de API**, incluidos los escritores de configuración. Consulte [Credential Variables for UI-Created Servers](/docs/features/mcp#credential-variables-for-ui-created-servers) para conocer el flujo de entrada de claves existente.
+Para servidores compartidos creados desde la interfaz de usuario que usan `apiKey.source: user`, las claves guardadas quedan vinculadas al destino de la solicitud normalizado. Cambiar la ruta o la consulta de la URL, el proxy, el transporte, el formato o encabezado de autorización, o el cliente OAuth o destino OAuth configurado, requiere que los usuarios introduzcan nuevas claves; las ediciones equivalentes o puramente cosméticas conservan las claves existentes. Las claves heredadas existentes siguen funcionando en su límite sin cambios. Solo las variables de credenciales actualmente declaradas pueden sustituirse, incluido en `requestHeaders`; un nombre generado antiguo inyectado no puede reutilizar su clave. Complete la actualización en **todas las réplicas de la API**, incluidos los escritores de configuración. Consulte [Crear un servidor desde la interfaz de usuario](/docs/features/mcp#create-a-server-from-the-ui) para ver lo que observan los usuarios.
 
 #### `iconPath` [#iconpath]
 
@@ -446,8 +448,16 @@ Para los servidores creados en la UI y compartidos que utilizan `apiKey.source: 
 #### `chatMenu` [#chatmenu]
 
 - **Tipo:** Booleano (Opcional)
-- **Descripción:** Cuando se establece en `false`, excluye al servidor MCP del selector de chat habitual y de las solicitudes de chat proporcionadas por el selector. Permanece disponible para los Agents guardados y los Model Specs que lo asignen explícitamente.
-- **Valor predeterminado:** `true` (El servidor MCP puede seleccionarse en el chat normal)
+- **Descripción:** Cuando se establece en `false`, el servidor se omite de la sección **MCP Servers** del compositor de chat, y las solicitudes de chat que lo mencionen son rechazadas. Los agentes aún pueden usar el servidor, al igual que una especificación de modelo (model spec) que lo incluya.
+- **Valor predeterminado:** `true`
+- **Ejemplo:**
+  ```yaml
+  mcpServers:
+    internal-tools:
+      command: npx
+      args: ['-y', 'internal-mcp-server']
+      chatMenu: false # only available in the Agent Builder
+  ```
 
 #### `serverInstructions` [#serverinstructions]
 
@@ -492,20 +502,24 @@ Para los servidores creados en la UI y compartidos que utilizan `apiKey.source: 
 #### `timeout` [#timeout]
 
 - **Tipo:** Entero (Opcional)
-- **Descripción:** Tiempo de espera en milisegundos para las solicitudes al servidor MCP. Debe ser un entero no negativo. Para las conexiones `sse`, este mismo valor también limita la conexión inicial, que espera hasta 120000 ms (2 minutos) cuando `timeout` no está definido.
+- **Descripción:** Tiempo de espera en milisegundos para las solicitudes a servidores MCP, incluidas las llamadas a herramientas. Debe ser un entero no negativo.
 - **Valor predeterminado:** `60000` (60 segundos)
+- **Nota:** Si las llamadas largas a herramientas siguen cortándose, revisa los tiempos de espera (timeouts) de cualquier proxy inverso que esté delante de LibreChat o del servidor MCP (nginx, Traefik, etc.).
+- **Ejemplo:**
+  ```yaml
+  mcpServers:
+    data-processor:
+      type: streamable-http
+      url: https://api.example.com/mcp
+      initTimeout: 15000 # 15 seconds to connect
+      timeout: 60000 # 60 seconds per tool call
+  ```
 
 #### `initTimeout` [#inittimeout]
 
 - **Tipo:** Entero (Opcional)
-- **Descripción:** Tiempo de espera en milisegundos para la inicialización del servidor MCP. Debe ser un número entero no negativo.
+- **Descripción:** Tiempo de espera en milisegundos para la inicialización del servidor MCP. Debe ser un entero no negativo. No limita el tiempo que tiene un usuario para completar un inicio de sesión OAuth; eso corresponde a `MCP_OAUTH_HANDLING_TIMEOUT` (consulte [URL de callback de OAuth](#oauth-callback-url)).
 - **Valor predeterminado:** `30000` (30 segundos)
-
-#### `sseReadTimeout` [#ssereadtimeout]
-
-- **Tipo:** Entero (Opcional, para los tipos `sse` y `streamable-http`)
-- **Descripción:** Tiempo de espera en milisegundos para el cuerpo del flujo SSE `GET` de larga duración. Si no llegan datos dentro de este intervalo, el flujo se cancela. Debe ser un entero positivo.
-- **Valor predeterminado:** `300000` (5 minutos)
 
 #### `requiresOAuth` [#requiresoauth]
 
@@ -543,21 +557,9 @@ Habilite la coordinación solo después de que cada réplica se haya actualizado
     - `sensitive`: Booleano (Opcional) - Controla si el valor se trata como un secreto y se oculta en la UI. Por defecto, se oculta/trata como secreto cuando se omite; establézcalo en `false` para campos que no sean secretos, como IDs de proyecto o URLs base.
 - **Uso en `headers` y `env`:**
   - Una vez definidas bajo `customUserVars`, estas variables pueden ser referenciadas en las secciones `headers` (para los tipos `sse` y `streamable-http`) o `env` (para el tipo `stdio`) utilizando la sintaxis `{{VARIABLE_NAME}}`.
-  - Los usuarios proporcionan estos valores a través de la interfaz de usuario. Se puede acceder a estos ajustes de dos maneras:
-    - **Desde la entrada de chat**: En la sección **MCP Servers** de la [paleta **+** del composer](/docs/features/composer#turn-on-tools-skills-and-mcp-servers), los servidores configurables tienen un control **Configure** en su fila. Al seleccionarlo, se abre un diálogo para gestionar las credenciales de ese servidor. Seleccionar un servidor que aún necesite credenciales abre el mismo diálogo.
-      <img
-        src="/images/mcp/mcp_per_user_vars_assistant_dialog.png"
-        alt="Configuración de variables por usuario de MCP - Diálogo de acceso del asistente"
-        width={800}
-      />
-    - **Desde el panel de configuración**: Una sección dedicada de "MCP Settings" en el panel derecho enumera todos los servidores MCP con variables personalizadas definibles. Los usuarios pueden hacer clic en un servidor para abrir el cuadro de diálogo de configuración y establecer o actualizar sus credenciales para ese servidor MCP específico.
-      <img
-        src="/images/mcp/mcp_per_user_vars_side_panel.png"
-        alt="Configuración de variables por usuario de MCP - Acceso al panel de ajustes"
-        width={300}
-      />
-  - Los servidores creados en la interfaz de usuario solo resuelven las variables que declaran en `customUserVars`. No resuelven las referencias `${ENV_VAR}` ni los marcadores `{{LIBRECHAT_USER_*}}`.
-  - Estos valores proporcionados por el usuario se almacenan de forma segura, asociados con el usuario individual y el servidor MCP específico, y se sustituyen en tiempo de ejecución.
+  - Los usuarios introducen estos valores la primera vez que se conectan al servidor y pueden modificarlos más adelante con **Configure** en el compositor del chat o en **MCP Settings**. Consulta [Credentials and variables](/docs/features/mcp#credentials-and-variables).
+  - Estos valores proporcionados por el usuario se almacenan por usuario y por servidor MCP, y se sustituyen en tiempo de ejecución.
+  - Si las variables no están disponibles cuando LibreChat se inicia (por ejemplo, un token de acceso personal de GitHub), también puedes configurar [`startup: false`](#startup) para que LibreChat no intente conectarse hasta que un usuario lo haga.
 - **Ejemplo:**
   ```yaml
   customUserVars:
@@ -615,8 +617,8 @@ Consulte [OpenID Connect Token Reuse](/docs/configuration/authentication/OAuth2-
   - `authorization_url`: String - La URL del endpoint de autorización OAuth
   - `token_url`: String - La URL del endpoint de token OAuth
   - `client_id`: String - Identificador de cliente OAuth
-  - `client_secret`: String - Secreto de cliente OAuth. Requiere `client_id`, y un `client_id` con un `client_secret` también requiere tanto `authorization_url` como `token_url`.
-  - `redirect_uri`: String - [URI de redirección de OAuth](/docs/features/mcp#oauth-callback-url). Por defecto es `/api/mcp/{serverName}/oauth/callback`.
+  - `client_secret`: String - secreto del cliente OAuth
+  - `redirect_uri`: String - [URI de redirección OAuth](#oauth-callback-url) (p. ej. `http://localhost:3080/api/mcp/${serverName}/oauth/callback`)
   - `scope`: String - Alcances de OAuth (separados por espacios)
 - **Subclaves adicionales:**
   - `grant_types_supported`: Matriz de Strings - Tipos de concesión admitidos (por defecto `["authorization_code", "refresh_token"]`)
@@ -694,7 +696,7 @@ Las solicitudes HTTP de descubrimiento, registro, token y revocación de OAuth d
   - El [capacidad de agente](/docs/configuration/librechat_yaml/object_structure/agents#capabilities) `deferred_tools` debe estar habilitada. Cuando la capacidad `run_in_background` está habilitada, una herramienta seleccionada que opta por la ejecución en segundo plano mantiene la solicitud al inicio del turno, ya que una llamada desvinculada no puede esperar a que se inicie sesión.
   - `on_use` requiere un [`oauthToolCatalog`](#oauthtoolcatalog) declarado. Sin uno, el servidor mantiene el prompt de inicio del turno, incluso para un usuario que se haya conectado antes.
   - Las herramientas ofrecidas antes del inicio de sesión deben incluir cada herramienta seleccionada; de lo contrario, el aviso permanece al inicio del turno. Esto corresponde al catálogo declarado o, cuando una conexión anterior dejó una lista de herramientas del usuario, a esa lista.
-  - Solo los servidores configurados por el operador son elegibles: los definidos en `librechat.yaml` o añadidos mediante [sobrescrituras de configuración de administrador](/docs/features/admin_panel#configuration-management). Los servidores que los usuarios crean en la interfaz conservan el aviso al inicio del turno. El aviso se mantiene al inicio del turno para un servidor que utiliza `obo`, `customUserVars`, `requestHeaders`, o marcadores de posición por usuario o por solicitud (`{{LIBRECHAT_USER_*}}`, `{{LIBRECHAT_OPENID_*}}`, `{{LIBRECHAT_GRAPH_*}}`, `{{LIBRECHAT_BODY_*}}`) en su configuración de conexión.
+  - Solo los servidores configurados por el operador son elegibles: aquellos definidos en `librechat.yaml` o añadidos mediante [sobrescrituras de configuración de administrador](/docs/configuration/admin_panel#configuration-overrides). Los servidores que los usuarios crean en la interfaz mantienen el mensaje al inicio del turno. El mensaje permanece al inicio del turno para un servidor que utiliza `obo`, `customUserVars`, `requestHeaders` o marcadores de posición por usuario o por solicitud (`{{LIBRECHAT_USER_*}}`, `{{LIBRECHAT_OPENID_*}}`, `{{LIBRECHAT_GRAPH_*}}`, `{{LIBRECHAT_BODY_*}}`) en su configuración de conexión.
   - Aplica tanto si OAuth se configura de antemano (`oauth`, `requiresOAuth: true`) como si se detecta cuando el servidor rechaza la conexión.
   - No disponible en los servidores que los usuarios crean desde la interfaz.
 - **Ejemplo:**
@@ -769,9 +771,60 @@ Las solicitudes HTTP de descubrimiento, registro, token y revocación de OAuth d
   - **`websocket`**: Se conecta a un servidor MCP externo a través de WebSocket.
   - **`sse`**: Se conecta a un servidor MCP externo a través de Server-Sent Events (SSE).
   - **`streamable-http`**: Se conecta a un servidor MCP externo a través de HTTP con soporte para respuestas en streaming.
+  - `stdio` ejecuta un proceso en el host de LibreChat y es adecuado para configuraciones locales de un solo usuario. `sse` es el transporte remoto anterior. Para implementaciones multiusuario o de producción, utiliza `streamable-http`.
 - **Direcciones internas/locales:**
   - **Importante**: Los servidores MCP que utilizan direcciones IP internas (p. ej., `172.24.1.165`, `192.168.1.100`) o dominios locales (p. ej., `mcp-server`, `host.docker.internal`) **deben** ser permitidos explícitamente. Utilice [`mcpSettings.allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/mcp_settings#allowedaddresses) para servicios específicos de host:puerto privados cuando desee que los destinos públicos sigan siendo accesibles, o [`mcpSettings.allowedDomains`](/docs/configuration/librechat_yaml/object_structure/mcp_settings#alloweddomains) cuando desee una lista blanca estricta.
   - Consulta [MCP Settings](/docs/configuration/librechat_yaml/object_structure/mcp_settings) para obtener detalles sobre la configuración.
+
+## URL de devolución de llamada de OAuth [#oauth-callback-url]
+
+Cuando un servidor utiliza OAuth, el proveedor redirige de vuelta a LibreChat en:
+
+```text
+${DOMAIN_SERVER}/api/mcp/<server-name>/oauth/callback
+```
+
+`<server-name>` es la clave bajo `mcpServers`. Por ejemplo, un servidor llamado `salesforce` con `DOMAIN_SERVER=https://chat.example.com` usa `https://chat.example.com/api/mcp/salesforce/oauth/callback`. Una instalación local con Docker suele usar `http://localhost:3080` como base. Para los servidores creados desde la interfaz, el identificador generado del servidor ocupa el lugar de la clave, y LibreChat muestra la **URI de redireccionamiento** completa una vez creado el servidor.
+
+Registra esta URL exacta en el proveedor de OAuth. Otras rutas de callback de LibreChat, como `/api/oauth/callback` o `/api/oauth/openid/callback`, no funcionan para MCP.
+
+Si el proveedor admite el registro dinámico de clientes, el servidor no necesita ningún bloque `oauth`; LibreChat se registra a sí mismo como cliente la primera vez que un usuario se conecta:
+
+```yaml
+mcpServers:
+  # No refresh tokens: users sign in again when the token expires
+  paypal:
+    type: sse
+    url: https://mcp.paypal.com/sse
+    initTimeout: 150000
+  # Issues refresh tokens: LibreChat renews access automatically
+  spotify:
+    type: streamable-http
+    url: https://mcp-spotify-oauth-example.account.workers.dev/mcp
+    initTimeout: 150000
+```
+
+Los usuarios tienen 10 minutos para completar el inicio de sesión, y LibreChat mantiene el flujo pendiente durante 15 minutos. Puedes cambiar estos valores con `MCP_OAUTH_HANDLING_TIMEOUT` y `MCP_OAUTH_FLOW_TTL` en `.env` (consulta [Variables de entorno de MCP](/docs/configuration/dotenv#mcp-model-context-protocol)). El TTL del flujo siempre se mantiene al menos un minuto más que el tiempo de espera de gestión, de modo que una devolución de llamada que llegue cerca del límite todavía encuentre su flujo.
+
+## Servidores creados en la interfaz [#servers-created-in-the-ui]
+
+Los usuarios cuyo rol tenga el permiso `CREATE` (consulte [`interface.mcpServers`](/docs/configuration/librechat_yaml/object_structure/interface#mcpservers)) pueden añadir servidores desde **MCP Settings** sin editar este archivo. Estos servidores se almacenan en la base de datos y se diferencian de los servidores definidos en YAML en algunos aspectos:
+
+- Solo los transportes remotos (`streamable-http` y `sse`) están disponibles. Los servidores `stdio` deben definirse aquí.
+- Los marcadores `${ENV_VAR}`, `{{LIBRECHAT_USER_*}}`, `{{LIBRECHAT_OPENID_*}}`, `{{LIBRECHAT_GRAPH_*}}` y `{{LIBRECHAT_BODY_*}}` se eliminan de sus encabezados, ya que el servidor puede ser compartido con otros usuarios. Solo se conservan los marcadores de `customUserVars`.
+- Las URL de los endpoints OAuth deben ser URL literales; las referencias `${ENV_VAR}` son rechazadas.
+- Elegir una clave de API que cada usuario proporciona crea una entrada `customUserVars` llamada `MCP_API_KEY_<hash>` y el encabezado correspondiente. Los servidores guardados antes de este cambio pueden conservar el nombre heredado `MCP_API_KEY` hasta que cambien su URL o su autenticación. Consulta [`apiKey`](#apikey) para ver qué ediciones hacen que los usuarios tengan que introducir su clave de nuevo.
+- Un servidor con una clave de API (compartida o por usuario) se trata como autenticado mediante clave de API y omite la detección automática de OAuth, a menos que también tenga una configuración de OAuth. Si un servidor con clave de API guardado por una versión anterior permanece en **Needs Auth**, edítelo y guárdelo una vez para actualizar sus metadatos almacenados.
+- Los clientes OAuth y los tokens almacenados están vinculados a la URL del servidor y a la configuración del cliente OAuth y del endpoint. Si se modifican, los usuarios deben volver a iniciar sesión, y el editor debe volver a introducir un secreto de cliente almacenado al cambiar la URL, el ID de cliente, la URL de autorización, la URL del token o el método de intercambio de tokens.
+- `oauthPrompt` y `oauthToolCatalog` no están disponibles.
+- [`mcpSettings`](/docs/configuration/librechat_yaml/object_structure/mcp_settings) se aplican restricciones de dominio y dirección.
+- Los servidores nuevos y editados entran en vigor sin necesidad de reiniciar. Un servidor OAuth se guarda desconectado hasta que un usuario inicie sesión.
+
+Para el conjunto completo de marcadores de posición, define el servidor en `librechat.yaml`.
+
+## Buscar servidores [#finding-servers]
+
+[Smithery](https://smithery.ai) enumera servidores MCP públicos. En la página de un servidor, la sección **Connect** puede generar un comando de instalación para el cliente de LibreChat que escribe la entrada en `librechat.yaml`; reinicia LibreChat después. Las [guías de servidores MCP](/docs/mcp_servers) explican cómo configurar servidores específicos.
 
 ## Ejemplos [#examples]
 
@@ -874,7 +927,7 @@ my-mcp-server:
       description: "Get your API key <a href='https://example.com/api-keys' target='_blank'>here</a>." # This description appears below the input
 ```
 
-**NOTA:** Consulta [MCP Server Initialization](/docs/features/mcp#server-initialization) para obtener más información sobre la inicialización de servidores basada en la interfaz de usuario.
+Consulta [Credenciales y variables](/docs/features/mcp#credentials-and-variables) para ver lo que los usuarios ven cuando conectan un servidor con `customUserVars`.
 
 ### Servidor MCP con icono personalizado [#mcp-server-with-custom-icon]
 
@@ -999,11 +1052,14 @@ Las configuraciones de `mcpServers` permiten a LibreChat interactuar dinámicame
 ## Información adicional [#additional-information]
 
 - **Comportamiento predeterminado:**
-  - La inicialización ocurre al iniciar, y la aplicación debe reiniciarse para que los cambios surtan efecto.
+  - Los servidores en `librechat.yaml` se inicializan al arrancar, por lo que los cambios en este archivo requieren reiniciar. Los servidores creados en la interfaz de usuario no.
+  - Los servidores que envían `notifications/tools/list_changed` pueden agregar o quitar herramientas mientras están en ejecución; LibreChat vuelve a obtener la lista de herramientas desde la conexión activa sin necesidad de reiniciar.
+  - Cuando un usuario presiona **Detener** durante una llamada a una herramienta, LibreChat cancela la solicitud MCP. Los servidores Streamable HTTP reciben `notifications/cancelled` y deben respetarla para detener su propio trabajo. Las llamadas a herramientas que se ejecutan en segundo plano no se cancelan.
   - Si se especifican tanto `url` como `command`, el `type` debe definirse explícitamente para evitar ambigüedades.
 - **Soporte multiusuario:**
   - El MCPManager ahora admite conexiones distintas a nivel de usuario y a nivel de aplicación, lo que permite una gestión de conexiones adecuada por usuario.
   - Las conexiones de usuario se rastrean y gestionan por separado, con el establecimiento y la limpieza adecuados.
+  - Con Redis habilitado, el estado del flujo OAuth y el catálogo de herramientas MCP se comparten entre réplicas, incluidas las implementaciones de Redis Cluster. Consulta [Coordinación de actualización de OAuth](#oauth-refresh-coordination) para la actualización de tokens entre réplicas.
   - Utilice marcadores de posición de campos de usuario dinámicos en encabezados, URLs y variables de entorno:
     - `{{LIBRECHAT_USER_ID}}` - Identificador único del usuario
     - `{{LIBRECHAT_USER_EMAIL}}` - Dirección de correo electrónico del usuario
@@ -1011,7 +1067,7 @@ Las configuraciones de `mcpServers` permiten a LibreChat interactuar dinámicame
     - `{{LIBRECHAT_USER_ROLE}}` - Rol del usuario (p. ej., "user", "admin")
     - Y muchos más campos (consulta la sección de encabezados para ver la lista completa)
 - **Gestión de inactividad del usuario:**
-  - Las conexiones de usuario son monitoreadas por actividad y serán desconectadas después de 15 minutos de inactividad.
+  - Las conexiones de usuario se supervisan en busca de actividad y se desconectarán después de 15 minutos de inactividad. Puedes cambiar este valor con `MCP_USER_CONNECTION_IDLE_TIMEOUT` (milisegundos).
 - **Variables de entorno:**
   - **En `env` (para el tipo `stdio`):** Útil para configurar entornos de ejecución específicos o configuraciones requeridas por el proceso del servidor MCP.
   - **En `headers` (para los tipos `sse` y `streamable-http`):** Utilice la sintaxis `${ENV_VAR}` para hacer referencia a variables de entorno en los valores de los encabezados.

@@ -1,0 +1,77 @@
+---
+title: Geplante Chats
+icon: CalendarClock
+description: >-
+  Aktiviere geplante Chats, lege Limits und Projektregeln fest, erlaube
+  unbeaufsichtigten MCP-Zugriff und erfülle die Anforderungen für Redis und
+  Checkpointer.
+---
+
+[Geplante Chats](/docs/features/scheduled_chats) sind experimentell und bleiben deaktiviert, bis Sie sie aktiv einschalten. Geplante Ausführungen verbrauchen Ressourcen für Modelle, Tools und Code Interpreter, ohne dass sie jemand überwacht. Prüfen Sie daher die folgenden Bereitstellungsanforderungen, bevor Sie sie aktivieren.
+
+## Aktivieren [#enable]
+
+Füge `interface.schedules` zu `librechat.yaml` hinzu und starte LibreChat neu:
+
+```yaml filename="librechat.yaml"
+interface:
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    fireConcurrency: 5
+    requireProject: false
+    # projectId: '000000000000000000000000'
+```
+
+`use` und `create` legen beim Start die `SCHEDULES`-Berechtigungen für die integrierte Rolle `USER` fest; danach verwalten Sie diese pro Rolle im [Admin-Panel](/docs/features/admin_panel). `use` ermöglicht einem Benutzer, seine Zeitpläne einzusehen. `create` erlaubt zusätzlich, diese zu erstellen, zu bearbeiten, zu aktivieren, auszuführen und zu löschen. Die übrigen Schlüssel sind Laufzeitlimits:
+
+<OptionTable
+  options={[
+    ['maxPerUser', 'Number', 'Maximale Anzahl an Zeitplänen, die jeder Benutzer besitzen kann, einschließlich deaktivierter. Auf 0 setzen, um die Erstellung zu verhindern.', '10'],
+    ['minIntervalMinutes', 'Number', 'Kürzester zulässiger Abstand zwischen zwei Ausführungen desselben Zeitplans. Gilt für jeden Rhythmus, einschließlich benutzerdefiniertem Cron.', '60'],
+    ['autoDisableAfterFailures', 'Number', 'Aufeinanderfolgende fehlgeschlagene Ausführungen, bevor sich ein Zeitplan selbst deaktiviert.', '5'],
+    ['fireConcurrency', 'Number', 'Maximale Anzahl geplanter Ausführungen, die im gesamten Deployment gleichzeitig zugelassen werden.', '5'],
+    ['requireProject', 'Boolean', 'Jeder Zeitplan muss einem Chat-Projekt zugeordnet sein, was beim Speichern und vor jeder Ausführung überprüft wird.', 'false'],
+    ['projectId', 'String', 'Fixiert jede geplante Unterhaltung an ein einzelnes Chat-Projekt und impliziert requireProject.', ''],
+  ]}
+/>
+
+`schedules: true` aktiviert die Funktion mit diesen Standardwerten. `schedules: false` oder `use: false` ist ein bereitstellungsweiter Stopp, den Rollen-, Gruppen- und Benutzerüberschreibungen nicht aufheben können.
+
+Projektregeln werden bei jedem Durchlauf erneut geprüft. Ein Zeitplan, der `requireProject` nicht mehr erfüllt oder dessen Projekt gelöscht wurde, deaktiviert sich selbst, anstatt eine unscoped Unterhaltung zu starten. Chat-Projekte gehören jeweils einem einzelnen Benutzer. Daher funktioniert eine deploymentweite `projectId` nur für den Eigentümer dieses Projekts. Setzen Sie sie in den Rollen- oder Benutzer-Overrides, wenn verschiedene Eigentümer unterschiedliche Ziele benötigen.
+
+Die vollständige Feldliste, einschließlich `admissionConcurrency`, `mcpPreflightConcurrency` und `mcpPreflightTimeoutMs` zur getrennten Begrenzung von Zulassungs- und MCP-Bereitschaftsprüfungen gegenüber der Generierung, finden Sie unter [`interface.schedules`](/docs/configuration/librechat_yaml/object_structure/interface#schedules).
+
+## Unbeaufsichtigter MCP-Zugriff [#unattended-mcp-access]
+
+Bevor ein Lauf startet, prüft LibreChat jedes MCP-Tool, das der geplante Agent und seine Subagenten benötigen. Ein Lauf, der eine interaktive Anmeldung erfordern würde, wird nicht gestartet; der Zeitplan zeigt an, welcher Agent Aufmerksamkeit benötigt.
+
+Um Benutzern zu erlauben, MCP-Tools für unbeaufsichtigte Ausführungen zu autorisieren, aktivieren Sie `interface.schedules.mcpConsent`:
+
+- `mcpConsent.enabled` aktiviert die Funktion.
+- `mcpConsent.maxLifetimeHours` begrenzt, wie lange eine Autorisierung gültig ist, von 1 bis 8760 Stunden.
+- `mcpConsent.resources` listet die MCP-Ressourcen auf, die autorisiert werden dürfen.
+- `mcpConsent.readOnlyPolicy` listet vertrauenswürdige Deklarationen schreibgeschützter Tools auf, geordnet nach Server und vorgelagertem Tool-Namen.
+- `mcpReceiptRetry.baseMs` und `mcpReceiptRetry.maxMs` legen den Backoff für die Wiederholung von Einwilligungsbelegen fest.
+
+Benutzer sehen anschließend im Zeitplan-Editor einen Abschnitt **Geplante MCP-Autorisierung**. Eine Autorisierung gilt nur für den aufgeführten Agenten und die aufgeführten Ressourcen bis zu ihrer Frist und erlaubt niemals Schreibzugriffe.
+
+## Bereitstellungsanforderungen [#deployment-requirements]
+
+Geplante Chats werden über MongoDB-Leases koordiniert, sodass mehrere Replicas die Arbeit gemeinsam übernehmen können. Außerdem benötigen sie:
+
+- **Redis-Streams in Multi-Replica-Bereitstellungen.** Setze `USE_REDIS_STREAMS=true`. Ohne gemeinsame Streams schlägt das Speichern eines Zeitplans fehl, anstatt Arbeit zu starten, die ein anderer Replica nicht fortsetzen oder stoppen könnte.
+- **Ein dauerhafter Checkpointer für Agenten, die pausieren können.** Wenn der geplante Agent das Tool „Ask User“ verwenden kann oder eine Tool-Freigabe benötigt, braucht er Redis-Streams und einen gemeinsam genutzten Checkpointer, auch bei einem einzelnen Prozess. Der Standard-[`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) auf MongoDB funktioniert; `type: memory` dagegen nicht. LibreChat lehnt einen solchen Lauf ab, bevor ein Modellaufruf erfolgt, wenn eines davon fehlt.
+- **Der standardmäßige Server-Einstiegspunkt.** Der veraltete experimentelle Cluster-Einstiegspunkt startet die Schedule-Engine nicht.
+
+Zwei Umgebungsvariablen steuern die Engine (ebenfalls aufgeführt in [dotenv](/docs/configuration/dotenv#scheduled-chats)):
+
+<OptionTable
+  options={[
+    ['SCHEDULES_SINGLE_PROCESS', 'Boolean', 'Ermöglicht geplante Chats ohne Redis. Nur setzen, wenn die Bereitstellung tatsächlich mit einem einzigen LibreChat-Prozess läuft.', '# SCHEDULES_SINGLE_PROCESS=true'],
+    ['SCHEDULES_DISABLED', 'Boolean', 'Notstopp für sowohl automatische Läufe als auch „Jetzt ausführen“. Zeitpläne bleiben erhalten und werden nicht gelöscht.', '# SCHEDULES_DISABLED=true'],
+  ]}
+/>

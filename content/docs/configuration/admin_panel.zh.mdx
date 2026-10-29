@@ -1,0 +1,168 @@
+---
+title: 管理面板
+icon: LayoutDashboard
+description: '使用随附的 Docker Compose 文件或作为独立服务运行 LibreChat 管理面板,并将其指向您的 LibreChat API。'
+---
+
+[Admin Panel](/docs/features/admin_panel) 是一个独立服务,用于与 LibreChat 的 `/api/admin` 端点通信。它需要 LibreChat v0.8.5 或更高版本、从管理面板到 LibreChat API 的网络访问权限,以及具有 `ADMIN` 角色或 `access:admin` 能力的账户。在单租户部署中,第一个注册的账户即为管理员(租户范围的部署需要单独配置管理员);如需提升其他用户的权限,请参阅 [Access Control configuration](/docs/configuration/access_control#promote-another-admin)。
+
+## LibreChat 内置 [#bundled-with-librechat]
+
+官方的 `docker-compose.yml` 和 `deploy-compose.yml` 都包含一个 `admin-panel` 服务(镜像为 `registry.librechat.ai/librechat-ai/librechat-admin-panel:latest`),它会随整个技术栈一同启动。
+
+| 编排文件 | 管理面板 URL | 服务方式 |
+| ------------ | --------------- | ---------------- |
+| `docker-compose.yml` | `http://localhost:3000` | 发布到主机端口 `ADMIN_PANEL_PORT`(默认 `3000`) |
+| `deploy-compose.yml` | `http://admin.localhost` | 通过内置 nginx 在 `admin.localhost` 子域名下路由 |
+
+面板在没有会话密钥的情况下将拒绝启动。请在 LibreChat 的 `.env` 中进行设置;compose 文件会将其以 `SESSION_SECRET` 的名称传递给面板:
+
+```bash filename=".env"
+# At least 32 characters. Generate one with: openssl rand -hex 32
+ADMIN_PANEL_SESSION_SECRET=replace-with-a-32-char-random-string
+
+# Optional: host port for the default docker-compose.yml
+# ADMIN_PANEL_PORT=3000
+
+# Optional: set to true when the panel is served over HTTPS
+# ADMIN_PANEL_SESSION_COOKIE_SECURE=false
+```
+
+其余配置由 Compose 文件设置:`API_SERVER_URL` 指向 `api` 服务,`VITE_API_BASE_URL` 跟随 `DOMAIN_CLIENT`,用于面向浏览器的重定向;`deploy-compose.yml` 在 API 上将 `ADMIN_PANEL_URL` 设置为 `http://admin.localhost`,以便管理员在 SSO 登录后被重定向回管理面板。若要不启用管理面板,可以移除 `admin-panel` 服务,或将其放入 Compose [profile](https://docs.docker.com/compose/how-tos/profiles/) 中。
+
+浏览器会将 `*.localhost` 解析为 `127.0.0.1`,因此无需编辑 hosts 文件即可访问 `admin.localhost`。若使用真实域名,请将 DNS 记录指向主机,修改 `client/nginx.conf` 中 `admin.localhost` 的 `server_name`,并将 `ADMIN_PANEL_URL` 设置为与之匹配的值。
+
+## 独立部署 [#standalone]
+
+要单独运行该面板，并让其指向其他位置的 LibreChat 实例，请直接使用该镜像：
+
+```bash
+docker run -p 3000:3000 \
+  --add-host=host.docker.internal:host-gateway \
+  -e SESSION_SECRET=replace-with-a-32-char-random-string \
+  -e VITE_API_BASE_URL=http://localhost:3080 \
+  -e API_SERVER_URL=http://host.docker.internal:3080 \
+  -e SESSION_COOKIE_SECURE=false \
+  registry.librechat.ai/librechat-ai/librechat-admin-panel:latest
+```
+
+面板需要为 LibreChat 提供两个地址。`VITE_API_BASE_URL` 是你的浏览器访问 LibreChat 的地址,用于登录重定向。`API_SERVER_URL` 是面板自身的服务器访问 LibreChat 的地址。在容器内,`localhost` 指的是容器本身,因此当 LibreChat 与面板运行在同一主机上时,`API_SERVER_URL` 应使用 `http://host.docker.internal:3080`(在 Linux 上需要使用上文中的 `--add-host` 参数),而浏览器则保持使用 `http://localhost:3080`。在生产环境中,请将两者都设置为各自一端能够解析的 DNS 名称。
+
+[admin-panel 仓库](https://github.com/LibreChat-AI/admin-panel)中也包含一个 `docker-compose.yml`,并提供了使用 Bun 从源码运行的说明(`bun install`,然后 `bun dev`)。
+
+## 面板环境变量 [#panel-environment-variables]
+
+这些设置需要在管理面板服务中配置,而不是在 LibreChat 中配置。
+
+<OptionTable
+  options={[
+    ['SESSION_SECRET', 'string', '会话加密密钥,至少 32 个字符。在 Docker 和生产环境中必须设置;仅 bun dev 会回退到内置的开发用密钥。在随附的 compose 文件中,该值来自 ADMIN_PANEL_SESSION_SECRET。', 'SESSION_SECRET=replace-with-a-32-char-random-string'],
+    ['VITE_API_BASE_URL', 'string', 'Browser-facing URL of the LibreChat API, used for OAuth redirects. Required in Docker. Defaults to http://localhost:3080 in local development.', 'VITE_API_BASE_URL=https://chat.example.com'],
+    ['API_SERVER_URL', 'string', '面板服务器用于调用 LibreChat 的 URL,当其与浏览器访问的地址不同时使用(例如内部 Kubernetes 服务)。若未设置,则回退到 VITE_API_BASE_URL。', 'API_SERVER_URL=http://librechat:3080'],
+    ['PORT', 'number', '监听的端口。默认值:3000。', 'PORT=3000'],
+    ['VITE_BASE_PATH', 'string', '将面板部署在子路径下。构建时与运行时的设置必须一致,因此自定义子路径需要单独构建镜像。默认值:/。', 'VITE_BASE_PATH=/adminpanel'],
+    ['ADMIN_SSO_ONLY', 'boolean', '隐藏电子邮件和密码表单,使管理员只能通过 SSO 登录。默认值:false。', 'ADMIN_SSO_ONLY=false'],
+    ['ADMIN_SSO_ENABLED', 'boolean', '将此项设置为 false 时,即使 LibreChat 已配置 OpenID,也会隐藏 SSO 按钮并跳过 SSO 自动重定向。其优先级高于 ADMIN_SSO_ONLY。默认值:true。', 'ADMIN_SSO_ENABLED=true'],
+    ['ADMIN_SESSION_IDLE_TIMEOUT_MS', 'number', '空闲时间（毫秒）：管理员会话结束前的空闲超时时长。默认值：1800000（30 分钟）。', 'ADMIN_SESSION_IDLE_TIMEOUT_MS=1800000'],
+    ['SESSION_COOKIE_SECURE', 'boolean', '会话 Cookie 是否仅限 HTTPS。在生产环境中默认为 true。仅在纯 HTTP 部署时才将其设置为 false,否则浏览器会丢弃该 Cookie,导致 OpenID 登录无法完成。', 'SESSION_COOKIE_SECURE=false'],
+    ['ADMIN_PANEL_TRUSTED_ORIGINS', 'string', '允许调用面板服务器的公共源列表（以逗号分隔）。在通过 HTTP 且位于反向代理之后、代理会重写 Host 请求头或丢弃非默认端口时需要配置此项；否则登录会失败并返回 403。', 'ADMIN_PANEL_TRUSTED_ORIGINS=http://admin.example.com:8080'],
+    ['ADMIN_PANEL_METRICS_SECRET', 'string', '用于抓取 Prometheus /metrics 端点所需的 Bearer 令牌。未设置时,该端点返回 401。', 'ADMIN_PANEL_METRICS_SECRET='],
+  ]}
+/>
+
+### 缓存标头 [#cache-headers]
+
+这些变量与 LibreChat 自身的缓存变量保持一致。每个变量的 `ADMIN_PANEL_` 版本优先生效;若未设置,管理面板会回退到共享的变量名。
+
+<OptionTable
+  options={[
+    ['STATIC_CACHE_MAX_AGE', 'number', '浏览器对 /assets/ 中带哈希值文件的最大缓存时间（秒）。ADMIN_PANEL_STATIC_CACHE_MAX_AGE 可覆盖此值。默认值：172800（2 天）。', 'STATIC_CACHE_MAX_AGE=172800'],
+    ['STATIC_CACHE_S_MAX_AGE', 'number', '哈希资源的 CDN s-maxage 时长（秒）。ADMIN_PANEL_STATIC_CACHE_S_MAX_AGE 可覆盖该值。默认值：86400（1 天）。', 'STATIC_CACHE_S_MAX_AGE=86400'],
+    ['INDEX_CACHE_CONTROL', 'string', '用于 HTML 页面的 Cache-Control 响应头。ADMIN_PANEL_INDEX_CACHE_CONTROL 会覆盖该设置。', 'INDEX_CACHE_CONTROL=no-cache, no-store, must-revalidate'],
+    ['INDEX_PRAGMA', 'string', '为 HTML 页面设置的 Pragma 响应头。ADMIN_PANEL_INDEX_PRAGMA 会覆盖该设置。', 'INDEX_PRAGMA=no-cache'],
+    ['INDEX_EXPIRES', 'string', 'HTML 页面的 Expires 响应头。ADMIN_PANEL_INDEX_EXPIRES 会覆盖该值。', 'INDEX_EXPIRES=0'],
+  ]}
+/>
+
+## LibreChat 设置 [#librechat-settings]
+
+### 重定向 URL [#redirect-url]
+
+当面板托管在与 LibreChat 不同的 URL 上时，请在 LibreChat 的 `.env` 文件中将 `ADMIN_PANEL_URL` 设置为面板的外部基础 URL（包括任何路径前缀，末尾不带斜杠）。LibreChat 使用该值在 SSO 登录后将管理员重定向回面板，并且设置后，管理员可以在 **设置 > 常规** 下看到 **管理面板** 链接。
+
+```bash filename=".env"
+ADMIN_PANEL_URL=https://admin.example.com/admin
+```
+
+使用 Helm Chart 时,请改为在 values 文件中设置 `librechat.adminPanelUrl`;Chart 会将其渲染为 `ADMIN_PANEL_URL`。
+
+```yaml filename="values.yaml"
+librechat:
+  adminPanelUrl: https://admin.example.com/admin
+```
+
+### 单点登录 [#single-sign-on]
+
+管理员可以使用 LibreChat 所用的同一 OpenID Connect 提供商登录管理面板。请在您的身份提供商处将 `${DOMAIN_SERVER}/api/admin/oauth/openid/callback` 注册为额外的重定向 URI。有关提供商设置的其余部分,请参阅 [OpenID Connect](/docs/configuration/authentication/OAuth2-OIDC)。要根据 IdP 角色或组授予 `ADMIN` 角色,请使用 `OPENID_ADMIN_ROLE`(列于 [.env 参考](/docs/configuration/dotenv#openid-connect) 中)。
+
+通过 Google 登录管理面板需要使用 `GOOGLE_CLIENT_ID` 和 `GOOGLE_CLIENT_SECRET`。请在 Google 中注册 `${DOMAIN_SERVER}/api/admin/oauth/google/callback`。面板会请求离线访问权限,以便在管理员令牌过期时无需重新登录即可刷新令牌;每次刷新时,都会重新检查账户的身份、封禁状态、允许的电子邮件域名、租户以及管理员访问权限。
+
+## 配置覆盖 [#configuration-overrides]
+
+覆盖配置按主体(角色、群组或用户)以配置档案的形式存储在 `librechat.yaml` 之上,另有一个适用于所有人的基础(Base)配置档案。
+
+**合并顺序。** 无论其优先级如何，基础配置文件（Base）都会最先应用，随后按优先级从低到高依次应用其余配置文件；优先级相同时，依次按角色、群组、用户和创建顺序排序。创建配置文件时如未设置优先级，则使用其主体类型的默认值：角色为 10，群组为 20，用户为 100（Base 为 0）。后续写入时若省略优先级，则保留已存储的优先级。
+
+**验证。** 写入操作(`PUT /api/admin/config/:principalType/:principalId` 和 `PATCH .../fields`)会根据应用于基础配置之上的 `librechat.yaml` 架构进行验证。若结果无效,将返回 HTTP 400 并拒绝写入,且不会保存任何内容:
+
+```json
+{
+  "error": "Invalid config override",
+  "code": "CONFIG_OVERRIDE_INVALID",
+  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
+}
+```
+
+每个问题仅包含路径和一个代码(例如模式代码 `invalid_type`,或 `missing_merge_key`、`duplicate_merge_key`、`indexed_merge_key_write`、`union_dropped_key`、`invalid_document`),而不包含提交的值。字段补丁只有在其触及或引入的问题时才会被拒绝。
+
+存储的覆盖配置如果之后失效（例如升级后架构变得更严格），并不会导致致命错误。解析配置时会丢弃无效字段，该字段下层的值会生效，并且服务器会为每个字段输出一行日志。
+
+```text
+[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
+```
+
+一个覆盖主题如果未通过[主题规则](/docs/configuration/librechat_yaml/object_structure/theme#validation)的校验,同样会回退到基础主题。
+
+**机密信息。** 通过管理员 API 写入的已注册机密字段会在存储时加密，并且仅以掩码预览的形式返回。这些字段包括：Langfuse、OCR、语音、网络搜索、Assistants、Azure Assistants、MCP 服务器凭据、Azure 组密钥，以及每个 `endpoints.custom[].apiKey`。在后续编辑中省略某个机密字段会保留已存储的值，但如果某次写入会改变已存储密钥的发送目标（例如服务器 URL 或基础 URL），则该写入必须重新包含该密钥。自定义端点密钥会保持 `${ENV_VAR}` 和 `user_provided` 值不变。通用映射（例如自定义请求头）中的任意值不会被加密，因此请在这些位置使用环境变量引用。
+
+**环境变量引用。** 覆盖配置中的 `${ENV_VAR}` 引用仅限于以下名称:`librechat.yaml` 中已引用的名称、内置端点凭据,以及 `CONFIG_OVERRIDE_ENV_ALLOWLIST` 中列出的名称。任何其他引用在写入时都会被拒绝。
+
+**仅限 YAML 配置的设置。** 类型为 `type: stdio` 的 MCP 服务器，或包含进程字段（`command`、`args`、`env`、`cwd`、`stderr`）的 MCP 服务器，以及 `langfuse.headers`，只能在 `librechat.yaml` 中进行设置。管理员 API 会拒绝对这些字段的写入，覆盖配置也无法替换或移除它们。请参阅 [Langfuse：身份验证代理和网关](/docs/configuration/langfuse#authenticated-proxies-and-gateways)。
+
+**按节划分的访问权限。** 配置能力可以是全局的(`read:configs`、`manage:configs`),也可以限定于某个顶级节(`read:configs:<section>`、`manage:configs:<section>`)。创建、修改或删除基础配置文件始终需要全局的 `manage:configs` 权限;按节管理仅适用于角色、组和用户配置文件。请参阅[管理员能力](/docs/configuration/access_control#admin-capabilities)。
+
+## 管理 API [#admin-api]
+
+该面板与以下 LibreChat 端点通信。每个路由都会检查管理员权限以及相应的功能权限。
+
+| Mount | 用途 |
+| ----- | ------- |
+| `POST /api/admin/login`, `/api/admin/oauth/*` | 管理员登录(本地及 SSO) |
+| `GET /api/admin/verify` | 验证管理员会话 |
+| `/api/admin/users` | 用户列表与搜索 |
+| `/api/admin/groups` | 用户组及其成员 |
+| `/api/admin/roles` | 自定义角色、其权限及成员 |
+| `/api/admin/grants` | 系统能力授权 |
+| `/api/admin/config` | 基础配置及按主体划分的配置方案 |
+| `/api/admin/skills` | GitHub 技能同步状态、运行记录及凭据 |
+| `/api/admin/code-environments` | 配对与撤销代码环境工作节点 |
+| `/api/admin/langfuse` | Langfuse 连接设置及测试 |
+| `/api/admin/audit-log` | 授权审计日志:`GET /`(列表)、`GET /export.csv`(导出)、`GET /verify`(完整性校验)、`GET /:id`(详情)。需要 `read:audit_log` 权限;不提供任何写入接口 |
+
+配置读取接口包括:`GET /api/admin/config/meta`(部署能力)、`/catalog`(作用域与模型选项)、`/env-status`(环境变量引用状态)、`/effective`(调用者的有效配置)以及 `/resolved/:principalType/:principalId`(某个主体的解析后配置)。读取操作仍保留其鉴权与密钥脱敏机制。
+
+`POST /api/admin/config/:principalType/:principalId/changes` 会以原子方式对单个配置档案应用多项变更，并返回一份写入报告。请检查该报告：已应用与已跳过的位置分别列出；仅限部署的路径可以被跳过，而不会导致整个批次失败。
+
+`POST /api/admin/config/reload` 会重新加载本地配置，并向其他实例广播失效通知。如果本地重新加载成功而广播失败，它可能返回 `503`；这并不代表回滚，其他副本也可能尚未完成重新加载。请参阅[升级指南](/docs/configuration/upgrade#admin-configuration-and-secrets)。
+
+分组与用户预览以及有效用户读取，均在目标所属的租户内解析，包括该租户的基础配置文件（Base profile）。租户范围内的调用方无法访问其他租户，角色名称仅指调用方自身所在的分区。

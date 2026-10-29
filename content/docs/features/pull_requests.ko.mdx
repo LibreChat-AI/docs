@@ -1,352 +1,30 @@
 ---
 title: 대화 풀 리퀘스트
 icon: GitPullRequest
-description: >-
-  GitHub, GitLab 또는 Bitbucket Cloud의 연결된 작업 공간에서 코드를 실행하는 채팅에 대해 풀 리퀘스트(pull
-  request) 또는 머지 리퀘스트(merge request), 크기 및 CI 상태를 표시합니다.
+description: '채팅의 코드 워크스페이스에 대한 풀 리퀘스트를 크기, 상태, CI 검사와 함께 채팅 헤더와 사이드바에서 확인하세요.'
 ---
 
-{/*
-  TODO(maintainer): first release version for each part (do not guess).
-  TODO(maintainer): requirement 4 (where an admin sets the workspace environment's repository).
-  Add it to "Requirements" once confirmed.
-*/}
+에이전트가 첨부된 코드 워크스페이스의 저장소에서 작업할 때, LibreChat은 워크스페이스가 위치한 브랜치에 대한 풀 리퀘스트를 찾아 채팅 옆에 표시합니다. 대화를 벗어나지 않고도 병합 준비 상태인지, 체크가 통과했는지 확인할 수 있으며, 해당 풀 리퀘스트로 바로 이동할 수 있습니다. GitHub, GitLab(여기서는 머지 리퀘스트라고 부름), Bitbucket Cloud를 지원하며, 배포 환경마다 하나의 제공자를 사용합니다.
 
-채팅이 연결된 작업 공간(workspace)에서 코드를 실행할 때, 워커(worker)는 현재 위치한 git 브랜치와 커밋을 보고합니다. LibreChat은 해당 브랜치를 사용하여 서버에 보관된 토큰이나 사용자가 직접 연결한 계정을 통해 일치하는 풀 리퀘스트(GitLab의 경우 머지 리퀘스트)를 찾고, 이를 다음 두 곳에 표시합니다:
+작업 공간에 연결된 상태에서 코드를 실행한 채팅만 풀 리퀘스트를 가질 수 있습니다. 일반 채팅이거나 아직 브랜치를 보고하지 않은 작업 공간은 아무것도 표시되지 않습니다.
 
-- **채팅 헤더**: 풀 리퀘스트 아이콘, CI 상태 점, 그리고 풀 리퀘스트 제목이 표시되는 칩입니다. 칩에 마우스를 올리거나 포커스하면 카드가 열립니다.
-- **사이드바 대화 목록**: 행 끝에 동일한 아이콘과 CI 점이 표시됩니다. 행은 대화 고유의 제목을 유지하며, 풀 리퀘스트 제목은 카드에만 나타납니다.
+## 채팅 헤더에서 [#in-the-chat-header]
 
-풀 리퀘스트는 GitHub(기본값), GitLab, 또는 Bitbucket Cloud에서 가져올 수 있습니다. 하나의 배포에서는 하나의 제공자만 사용합니다.
-
-## 요구 사항 [#requirements]
-
-채팅에 풀 리퀘스트가 표시되려면 다음 조건이 모두 충족되어야 합니다:
-
-1. LibreChat은 토큰 및 저장소 범위(`allowedRepositories` 또는 `allowAllRepositories`)를 가지거나, 사용자가 자신의 계정을 직접 연결합니다. [Setup](#setup) 및 [Per-user accounts](#per-user-accounts)를 참조하세요.
-2. 이 채팅은 단순한 채팅이 아닌 **연결된 코드 작업 공간**(코드 워커)을 사용합니다.
-3. 워커는 자신의 브랜치를 보고합니다. 이를 위해서는 `LibreChat-AI/code-interpreter` PR #311 이상에서 빌드된 워커가 필요하며, Code API에 `CODEAPI_BRIDGE_LANE_GIT=true`가 설정되어 있어야 합니다. [Code Interpreter](/docs/features/code_interpreter#attached-environments-and-pairing)를 참조하세요.
-
-이 기능은 기본적으로 켜져 있습니다. 토큰이나 저장소 범위(repository scope)가 없으면 비활성 상태로 유지되며, 모든 채팅에서 오류 없이 단순히 풀 리퀘스트가 없다고 표시됩니다. `enabled: false`로 설정하면 다른 설정과 관계없이 이 기능이 꺼집니다.
-
-예외적으로 `token`은 설정되어 있으나 해당 환경 변수가 비어 있거나 누락된 경우, 조회 시 `NOT_CONFIGURED` 오류가 발생하며 사이드바 행에 재시도 버튼이 포함된 경고 아이콘이 표시됩니다.
-
-## 설정 [#setup]
-
-### 1. 공급자 및 호스트 선택 [#1-choose-the-provider-and-host]
-
-`provider`는 풀 리퀘스트가 위치할 곳을 선택합니다:
-
-| `provider` | 서비스 | 기본 `host` |
-| ------------------ | ------------------------------------------------------------------------------------------------------ | --------------- |
-| `github` (기본값) | GitHub.com, GitHub Enterprise Server, 또는 GitHub Enterprise Cloud 데이터 상주 테넌트(`*.ghe.com`) | `github.com` |
-| `gitlab` | gitlab.com 또는 자체 관리형 GitLab의 병합 요청(Merge Request) | `gitlab.com` |
-| `bitbucket` | Bitbucket Cloud 전용 | `bitbucket.org` |
-
-GitHub Enterprise Server, `*.ghe.com` 테넌트 또는 자체 관리형 GitLab의 경우에만 `host`를 설정하세요:
-
-- URL이 아닌 호스트 이름입니다: 스킴(scheme)이나 경로(path)를 포함하지 않으며, 예시로 `github.example.com`과 같습니다.
-- An explicit port is allowed, from 1 to 65535, for example `git.example.com:8443`. `:443` is dropped, since it is the default for https.
-- GitHub에서 LibreChat은 `github.com`의 경우 `api.github.com`을, `*.ghe.com` 테넌트의 경우 `api.<host>`를, Enterprise Server의 경우 `https://<host>/api/v3`를 호출합니다. GitLab에서는 `https://<host>/api/v4` 및 `https://<host>/api/graphql`을 호출합니다.
-- Bitbucket은 다른 호스트를 허용하지 않습니다. `bitbucket.org` 이외의 `host`는 토큰이 다른 곳으로 전송되는 대신 해당 기능을 비활성화합니다.
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      provider: 'gitlab'
-      host: 'gitlab.example.com'
-      allowedRepositories:
-        - 'platform/backend/api'
-        - 'platform/frontend/*'
-```
-
-<Callout type="info" title="librechat.yaml에서만 읽기">
-  `provider`, `host` 및 `oauth`는 `librechat.yaml`에서만 읽어옵니다. 이러한 키에 대한 역할(Role), 그룹(Group), 사용자(User) 및 테넌트(Tenant) 구성 재정의는 무시되는데, 이는 토큰이 전송되는 위치와 사용자가 액세스 권한을 부여하는 앱을 결정하기 때문입니다. 재정의를 통해 토큰을 다른 서비스로 리디렉션할 수는 없습니다. `token` 및 `allowedRepositories`와 같은 다른 키는 주체(principal)별로 여전히 다를 수 있습니다.
-</Callout>
-
-### 2. 토큰 생성 [#2-create-a-token]
-
-서버 토큰은 자신의 계정을 연결하지 않은 모든 사용자를 위해 사용됩니다.
-
-**GitHub**: 표시하려는 저장소로 제한된 세분화된(fine-grained) 토큰을 사용하고, **읽기 전용(read-only)** 권한을 설정하세요:
-
-- Pull requests
-- 확인 사항
-- 목차
-
-<Callout type="warning" title="권한 실패 모드">
-  **Checks**가 없으면 일치하는 모든 pull request가 로드되지 않습니다. **Contents**가 없으면 마지막 명령 이후 브랜치가 변경된 채팅은 로드되지 않는데, 이는 LibreChat이 커밋을 비교하여 일치를 확인하기 때문입니다.
-</Callout>
-
-**GitLab**: `read_api` 스코프가 포함된 개인, 그룹 또는 프로젝트 액세스 토큰.
-
-**Bitbucket Cloud**: 저장소, 프로젝트 또는 워크스페이스 액세스 토큰을 사용하며, 이 토큰은 Bearer 토큰으로 전송됩니다. LibreChat은 풀 리퀘스트, diffstat, 커밋 상태 및 merge base 정보를 읽으므로, 풀 리퀘스트와 저장소에 대한 읽기 권한을 부여하세요.
-
-### 3. LibreChat에 토큰 제공하기 [#3-give-librechat-the-token]
-
-LibreChat은 다음 순서로 토큰을 찾습니다:
-
-1. `token: "${MY_VAR}"` (은/는) `librechat.yaml` 내에 있습니다. 이는 환경 변수 **참조**입니다. YAML은 토큰 자체를 포함하지 않으며, 리터럴 토큰은 스키마에 의해 거부됩니다.
-2. `token`이 설정되지 않은 경우, 다음 환경 변수 중 먼저 설정된 값이 사용됩니다:
-
-| 제공자 | 대체 변수 (우선순위 순) |
-| --------- | ------------------------------------------------------- |
-| GitHub | `GITHUB_PULL_REQUEST_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN` |
-| GitLab | `GITLAB_PULL_REQUEST_TOKEN`, `GITLAB_TOKEN` |
-| Bitbucket | `BITBUCKET_PULL_REQUEST_TOKEN` |
-
-3. 어디에도 토큰이 없습니다: 사용자가 자신의 계정을 직접 연결할 수 없는 한, 이 기능은 비활성 상태로 유지됩니다.
-
-설정되었으나 해석되지 않는(변수가 비어 있거나 누락된) `token`은 `NOT_CONFIGURED` 오류와 함께 실패합니다. 이는 위의 변수로 대체(fallback)되지 **않습니다**.
-
-<Callout type="info" title="GITHUB_TOKEN 및 GITLAB_TOKEN은 일반적인 이름입니다">
-  배포 환경에서 이미 다른 용도로 이를 사용 중인 경우, repository scope가 설정되는 즉시 여기서 감지됩니다. 공유를 방지하려면 `token`을 명시적으로 설정하거나 `*_PULL_REQUEST_TOKEN` 변수를 사용하세요.
-</Callout>
-
-### 4. 검색할 저장소를 선택하세요 [#4-choose-which-repositories-it-may-look-up]
-
-worker는 자체 저장소를 보고하므로, 서버는 해당 토큰을 어떤 저장소에 사용할 수 있는지 결정해야 합니다. scope가 없으면 이 기능은 비활성화 상태로 유지됩니다. 여기에는 두 가지 방법이 있습니다:
-
-- `allowedRepositories`: `owner/name` 또는 `owner/*` 항목의 목록입니다(최대 256개). 일치는 대소문자를 구분하지 않습니다. GitLab의 경우, 항목은 `group/sub/name` 또는 `group/sub/*`와 같은 중첩된 그룹 경로일 수 있습니다. `*`는 정확히 하나의 세그먼트를 의미하므로, `group/*`는 `group/sub/name`과 일치하지 않습니다. `*/*`, `*`, `owner`와 같은 항목이나 `.` 또는 `..` 세그먼트를 포함하는 항목은 스키마에 의해 거부됩니다.
-- `allowAllRepositories: true`: 토큰이 읽을 수 있는 모든 저장소를 조회합니다. 기본값은 `false`입니다.
-
-<Callout type="warning" title="보안: allowAllRepositories">
-  기본적으로 꺼져 있는 이유는 저장소가 서버가 아닌 워커(worker)에서 가져오기 때문입니다. 이 기능이 켜져 있으면, 코드를 실행할 수 있는 모든 사용자가 서버의 토큰을 해당 토큰이 읽을 수 있는 모든 저장소로 지정하여 풀 리퀘스트 제목, 크기 및 확인 상태를 볼 수 있게 됩니다. 공개하려는 저장소로 범위가 제한된 읽기 전용 토큰을 사용하십시오.
-</Callout>
-
-### 5. 활성화하기 [#5-turn-it-on]
-
-설정할 스위치는 없습니다. 토큰과 리포지토리 범위가 있거나 작동하는 `oauth` 앱이 있으면 이 기능은 즉시 활성화됩니다. `enabled: false`로 설정하면 다른 설정과 관계없이 기능이 꺼집니다.
-
-### 최소 예시 [#minimal-examples]
-
-GitHub, 서버 환경에 `GITHUB_PULL_REQUEST_TOKEN`이 설정된 경우:
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      allowedRepositories:
-        - 'LibreChat-AI/LibreChat'
-        - 'my-org/*'
-```
-
-GitHub Enterprise Server, 명시적 토큰 참조 포함:
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      host: 'github.example.com'
-      token: '${GHES_PULL_REQUEST_TOKEN}'
-      allowedRepositories: ['platform/*']
-```
-
-Bitbucket Cloud, `BITBUCKET_PULL_REQUEST_TOKEN`이 설정된 경우:
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      provider: 'bitbucket'
-      allowedRepositories: ['my-workspace/*']
-```
-
-모든 키에 대한 내용은 [`pullRequests` 참조](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests)를 확인하세요.
-
-## 사용자별 계정 [#per-user-accounts]
-
-`oauth`가 설정되면, 각 사용자는 **설정 > 계정(Settings > Account)**의 **Pull request 계정(Pull request account)** 항목에서 자신의 GitHub, GitLab 또는 Bitbucket 계정을 연결할 수 있습니다. 이렇게 하면 서버의 토큰, 속도 제한 및 저장소 액세스 권한 대신 사용자의 토큰, 속도 제한 및 저장소 액세스 권한을 사용하여 조회가 실행됩니다.
-
-- 연결된 사용자의 토큰은 해당 사용자가 이미 볼 수 있는 내용만 확인할 수 있으므로, `allowedRepositories`의 제한을 받지 않습니다.
-- 아직 연결하지 않은 사용자는 여전히 리포지토리 범위 내에서 서버 토큰을 사용합니다. 서버 토큰이 없으면 연결할 때까지 풀 리퀘스트를 볼 수 없습니다.
-- `oauth` 앱이 정상적으로 작동하면, 서버 토큰이나 리포지토리 범위(scope)가 없어도 이 기능이 활성화됩니다.
-- **Disconnect**는 저장된 권한을 제거합니다. 사용자는 언제든지 다시 연결할 수 있습니다.
-- 연결된 사용자의 토큰을 공급자나 키 저장소의 문제로 새로 고칠 수 없는 경우, 해당 조회는 풀 리퀘스트를 사용할 수 없는 것으로 보고합니다. 사용자의 토큰보다 권한이 낮을 수 있는 서버 토큰으로 대체(fallback)하지 **않습니다**.
-- 제공자가 갱신을 확실히 거부하는 경우(권한이 취소됨), 연결이 제거됩니다. 그러면 사용자는 연결되지 않은 것으로 표시되며, 연결하지 않은 다른 모든 사용자와 동일하게 처리됩니다.
-- Grants는 사용자 및 제공자 호스트당 하나씩 암호화되어 저장됩니다. `clientId`를 다른 앱으로 변경하면 기존 연결이 연결되지 않은 것으로 간주되므로, 사용자는 다시 연결해야 합니다.
-
-### 앱 구성하기 [#configure-the-app]
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      oauth:
-        clientId: '${GITHUB_PR_OAUTH_CLIENT_ID}'
-        clientSecret: '${GITHUB_PR_OAUTH_CLIENT_SECRET}'
-      # optional: the server token for users who have not connected
-      allowedRepositories: ['my-org/*']
-```
-
-| 키 | 기본값 | 범위 | 설명 |
-| ----------------------- | --------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------- |
-| `clientId` | required | | 환경 변수 참조이며, 값 자체를 입력하지 않습니다. |
-| `clientSecret` | required | | 환경 변수 참조이며, 값 자체를 입력하지 않습니다. |
-| `scope` | GitHub에서는 없음, GitLab에서는 `read_api`, Bitbucket에서는 소비자 측에서 정의한 값 | | 요청할 범위(scope)를 공백으로 구분하여 지정합니다. 문자, 숫자, `_`, `:`, `.`, `-` 및 공백만 허용되며, 최대 256자까지 입력할 수 있습니다. |
-| `flowTimeoutMinutes` | 10 | 1-60 | 사용자가 제공자(provider)에서 연결을 승인하는 데 허용되는 시간(분)입니다. |
-| `requestTimeoutSeconds` | 10 | 1-60 | 코드 교환 또는 토큰 갱신에 허용되는 시간(초)입니다. |
-| `retentionDays` | 180 | 1-3650 | 사용되지 않은 연결을 보관하는 기간(일)입니다. 사용될 때마다 보관 기간이 연장됩니다. |
-
-두 참조 중 하나라도 확인되지 않으면 사용자는 연결할 수 없으며 서버 토큰만 사용됩니다. 연결 흐름에는 모든 LibreChat 배포에서 설정하는 `JWT_SECRET`도 필요합니다.
-
-`DOMAIN_SERVER`가 서버의 공용 URL일 때, 이 콜백 URL을 앱에 등록하세요:
-
-```
-<DOMAIN_SERVER>/api/pull-requests/oauth/callback
-```
-
-### 앱 등록하기 [#register-the-app]
-
-<Tabs items={["GitHub", "GitLab", "Bitbucket"]}>
-<Tabs.Tab>
-
-GitHub App 사용을 권장합니다. GitHub App의 사용자 토큰은 별도의 범위(scope)가 필요 없으며, 앱이 설치된 저장소에만 접근할 수 있습니다.
-
-<Steps>
-<Step>
-
-계정 또는 조직에 대해 **Settings > Developer settings > GitHub Apps > New GitHub App**을 엽니다. GitHub Enterprise Server 또는 `*.ghe.com`의 경우, 해당 호스트의 동일한 페이지를 사용하세요.
-
-</Step>
-<Step>
-
-**Callback URL**을 `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`으로 설정하세요. **Webhook** 아래에서 **Active**를 선택 해제하세요.
-
-</Step>
-<Step>
-
-**Repository permissions** 아래에서 **Pull requests**, **Checks**, 그리고 **Contents**를 **Read-only**로 설정하세요.
-
-</Step>
-<Step>
-
-앱을 생성한 다음, **Client ID**를 복사하고 **client secret**을 생성하세요. 이를 환경 변수에 저장하고 `oauth.clientId` 및 `oauth.clientSecret`에서 참조하세요.
-
-</Step>
-<Step>
-
-사용자가 저장소를 볼 수 있어야 하는 계정이나 조직에 앱을 설치하세요.
-
-</Step>
-</Steps>
-
-클래식 OAuth App도 작동하지만, 읽기 권한 이상의 권한을 부여하는 `scope: 'repo'`와 같은 scope가 필요합니다.
-
-</Tabs.Tab>
-<Tabs.Tab>
-
-<Steps>
-<Step>
-
-`host`에 설정된 GitLab 호스트에서 **Edit profile > Applications**(또는 그룹이나 인스턴스의 **Applications** 페이지)를 엽니다.
-
-</Step>
-<Step>
-
-**Redirect URI**를 `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`으로 설정하고, **Confidential**을 체크한 상태로 유지한 다음, `read_api` 스코프를 선택하세요.
-
-</Step>
-<Step>
-
-저장한 후, **Application ID**와 **Secret**을 복사하여 `oauth.clientId` 및 `oauth.clientSecret`에서 참조하는 환경 변수에 입력하세요. 자체 호스팅 GitLab의 경우 `provider: 'gitlab'` 및 `host`를 설정하세요.
-
-</Step>
-</Steps>
-
-</Tabs.Tab>
-<Tabs.Tab>
-
-<Steps>
-<Step>
-
-Bitbucket Cloud에서 **Workspace settings > OAuth consumers > Add consumer**를 엽니다.
-
-</Step>
-<Step>
-
-**Callback URL**을 `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`으로 설정하고, **Pull requests: Read** 및 **Repositories: Read** 권한을 부여하세요. LibreChat은 Bitbucket에서 어떠한 스코프도 요청하지 않으므로, 소비자의 권한은 사용자가 부여하는 권한에 따라 결정됩니다.
-
-</Step>
-<Step>
-
-저장한 후, 소비자의 **Key**와 **Secret**을 복사하여 `oauth.clientId` 및 `oauth.clientSecret`에서 참조하는 환경 변수에 입력하세요. `provider: 'bitbucket'`으로 설정하세요.
-
-</Step>
-</Steps>
-
-</Tabs.Tab>
-</Tabs>
-
-## 복제본을 통한 확장 (Scaling with replicas) [#scaling-with-replicas]
-
-각 복제본은 결과를 메모리에 캐시합니다. 여러 복제본을 사용하는 경우, `sharedCache: true`로 설정하여 Redis를 통해 조회된 풀 리퀘스트와 속도 제한 쿨다운을 공유하도록 하세요. 이렇게 하면 각 복제본이 동일한 답변에 대해 토큰을 중복으로 소모하지 않게 됩니다.
-
-- `USE_REDIS`를 사용하여 배포가 실행될 때만 적용됩니다. 기본값: `false`.
-- 어느 쪽이든 각 복제본은 공유 캐시 앞단에 자체적인 인메모리 캐시를 유지합니다.
-- `sharedCacheTimeoutMs` (10-5000, 기본값 250)는 각 공유 캐시 읽기 또는 쓰기 작업의 제한 시간을 설정합니다. Redis가 느릴 경우 해당 작업은 건너뛰며, 조회는 Redis 없이 계속 진행됩니다.
-- `sharedCacheSlots` (64-1000000, 기본값 65536)은 공유 캐시가 사용하는 Redis 키의 개수를 제한합니다. YAML에서만 읽어옵니다.
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      allowedRepositories: ['my-org/*']
-      sharedCache: true
-      sharedCacheTimeoutMs: 250
-```
-
-## 튜닝 [#tuning]
-
-대부분의 배포 환경에서는 기본 설정으로 충분합니다.
-
-| Key                        | Range     | Default | Description                                                                                                    |
-| -------------------------- | --------- | ------- | -------------------------------------------------------------------------------------------------------------- |
-| `cacheTtlSeconds`          | 5-3600    | 30      | 제공자에게 다시 요청하기 전까지 결과를 재사용하는 시간(초)입니다. 실패는 최대 10초 동안 기억됩니다. |
-| `cacheMaxEntries`          | 10-100000 | 500     | 자격 증명별로 캐시되는 결과 수입니다. 이 수를 넘으면 가장 오래된 항목이 제거됩니다.                                                    |
-| `cacheMaxCredentials`      | 1-10000   | 256     | 배포 전체에서 동시에 캐시되는 자격 증명 수입니다. 이 수를 넘으면 가장 오랫동안 유휴 상태였던 자격 증명이 제거됩니다.                          |
-| `maxConcurrentLookups`     | 1-16      | 4       | 사이드바 요청 하나가 동시에 실행하는 조회 수입니다. 요청과 관계없이 자격 증명별로 집계됩니다.                              |
-| `batchTimeoutSeconds`      | 1-120     | 20      | 사이드바 요청 하나가 열려 있을 수 있는 최대 시간입니다.                                                                        |
-| `requestTimeoutSeconds`    | 1-60      | 10      | 제공자 요청 하나가 소요될 수 있는 최대 시간입니다. 느린 프록시 뒤에 있는 경우 값을 높이세요.                                           |
-| `lookupTimeoutSeconds`     | 1-120     | 30      | 모든 요청을 합친 전체 조회가 소요될 수 있는 최대 시간입니다.                                                      |
-| `maxCheckRunPages`         | 1-50      | 10      | 체크가 실행 중으로 보고되기 전에 읽는 체크 런(GitHub) 또는 커밋 상태(Bitbucket) 페이지 수입니다.        |
-| `maxCandidatePullRequests` | 1-100     | 10      | 재사용된 브랜치 이름을 매칭할 때 상태별로 나열되는 풀 리퀘스트 수입니다.                                             |
-| `maxCandidatePages`        | 1-10      | 1       | 상태별로 읽는 후보 페이지 수입니다. 각 페이지는 요청 하나입니다.                                                  |
-| `maxHeadComparisons`       | 0-20      | 3       | 검색을 중단하기 전까지 채팅이 마지막으로 실행된 커밋과 비교하는 후보 수입니다. 각 비교는 요청 하나입니다.      |
-
-## 사용자가 보는 것 [#what-users-see]
-
-### 채팅 헤더 칩 [#chat-header-chip]
-
-- **데스크톱**: 칩은 헤더 왼쪽, 다른 왼쪽 컨트롤 옆에 위치합니다. 풀 리퀘스트 아이콘과 그 모서리에 CI 점이 함께 표시되며, 그 다음에 풀 리퀘스트 제목이 나타납니다. 칩에 마우스를 올리거나 포커스를 맞추면 그 아래에 카드가 열리며, 포인터 또는 키보드 포커스가 카드 안에 있는 동안에는 카드가 계속 열려 있습니다.
-- **모바일**: 칩이 없습니다. 헤더의 더보기(점 세 개) 메뉴에 있는 `PR #number` 항목(GitLab에서는 `MR !number`)을 누르면 같은 카드가 대화 상자에서 열립니다.
-- 헤더는 자동으로 새로고침됩니다: 검사가 실행 중이거나 병합 가능 여부가 계산되는 동안에는 약 20초마다, 그 외의 경우에는 약 60초마다 새로고침되며, 풀 리퀘스트가 병합되거나 검사가 실행되지 않은 상태로 닫히면 더 이상 새로고침되지 않습니다.
+넓은 화면에서는 헤더 왼쪽의 칩에 풀 리퀘스트 아이콘, 모서리의 작은 CI 점, 그리고 풀 리퀘스트 제목이 표시됩니다. 칩에 마우스를 올리거나 포커스를 맞추면 세부 정보가 담긴 카드가 열립니다. 포인터나 키보드 포커스가 카드 안에 있는 동안에는 카드가 계속 열려 있습니다.
 
 <ThemeImage
   light="/images/pull-requests/hdr-ready-light.png"
   dark="/images/pull-requests/hdr-ready-dark.png"
-  alt="채팅 헤더 칩: 병합 가능하고 검사를 통과한 열린 풀 리퀘스트, 그 아래에 카드가 열린 상태"
+  alt="열린 풀 리퀘스트(Pull Request)에 대해 체크가 통과된 상태를 보여주는 채팅 헤더 칩과, 그 아래에 펼쳐진 카드"
 />
 
-<ThemeImage
-  light="/images/pull-requests/mob-menu-light.png"
-  dark="/images/pull-requests/mob-menu-dark.png"
-  alt="PR #1234 항목이 작은 화면에서 헤더의 오버플로 메뉴에 표시되는 모습"
-/>
+작은 화면에서는 칩이 표시되지 않습니다. 헤더의 점 세 개 메뉴를 열고 `PR #number` 항목(GitLab에서는 `MR !number`)을 선택하면 같은 카드가 대화 상자에 표시됩니다.
 
-<ThemeImage
-  light="/images/pull-requests/mob-dialog-light.png"
-  dark="/images/pull-requests/mob-dialog-dark.png"
-  alt="작은 화면에서 대화 상자에 표시되는 풀 리퀘스트 카드"
-/>
+헤더는 스스로 최신 상태를 유지합니다. 검사가 실행 중이거나 제공자가 브랜치를 병합할 수 있는지 판단하는 중일 때는 약 20초마다, 그렇지 않은 경우에는 약 60초마다 다시 확인합니다. 풀 리퀘스트가 병합되었거나 닫혔고 실행 중인 작업이 남아 있지 않으면 확인을 멈춥니다.
 
-### 사이드바 표시 [#sidebar-mark]
+## 사이드바에서 [#in-the-sidebar]
 
-- 대화 행의 끝에는 CI 상태 점이 표시된 풀 리퀘스트 아이콘이 있습니다. 이 아이콘은 풀 리퀘스트가 연결된 대화에만 나타납니다.
-- 행 어디에든 마우스를 올리거나, 표시(mark)에 포커스를 두거나 클릭하면 표시 오른쪽에 같은 카드가 열립니다. 표시를 클릭해도 대화는 열리지 않습니다.
-- 사이드바는 절대 폴링(polling)하지 않습니다. 행(row)의 데이터는 목록이 마지막으로 로드되었을 때의 상태를 유지하며, 창이 다시 포커스를 얻었을 때 데이터가 1분 이상 경과했다면 새로고침됩니다.
-- Pull request가 발견된 후에는 refresh가 실패하더라도 해당 카드와 재시도 상태가 유지됩니다. 발견되기 전에는 조회 실패 시 사이드바 표시가 숨겨진 상태로 남습니다.
+풀 리퀘스트가 있는 대화에는 행 끝에 같은 아이콘과 CI 점이 표시됩니다. 행에는 해당 대화 고유의 제목이 그대로 유지됩니다. 행에 마우스를 올리거나, 표시를 포커스하거나 클릭하면 옆에 카드가 열립니다. 표시를 클릭해도 대화는 열리지 않습니다.
 
 <ThemeImage
   light="/images/pull-requests/side-rows-light.png"
@@ -354,147 +32,51 @@ endpoints:
   alt="사이드바에서 풀 리퀘스트 표시가 있는 행: 병합 준비 완료, 실패한 검사와 충돌이 있는 항목, 검사가 실행 중인 초안, 병합된 풀 리퀘스트"
 />
 
-<ThemeImage
-  light="/images/pull-requests/side-card-light.png"
-  dark="/images/pull-requests/side-card-dark.png"
-  alt="풀 리퀘스트 카드가 사이드바 행의 오른쪽에 열림"
-/>
+사이드바는 주기적으로 폴링(polling)하지 않습니다. 각 행은 목록이 마지막으로 로드된 시점의 데이터를 기준으로 표시되며, 창으로 다시 돌아왔을 때 해당 데이터가 1분 이상 지났다면 새로고침됩니다. 이미 찾은 풀 리퀘스트에 대해 새로고침이 실패하면 표시(마크)는 그대로 유지되고, 카드에는 "풀 리퀘스트를 새로고침하지 못했습니다"라는 문구와 **Retry** 버튼이 나타납니다. 풀 리퀘스트를 한 번도 찾지 못한 대화는 조회가 실패했더라도 어떠한 표시도 나타나지 않습니다.
 
-### 카드 [#the-card]
+## 카드 읽는 방법 [#reading-the-card]
 
-카드는 `PR #number` (GitLab의 경우 `MR !number`), 녹색으로 표시된 `+additions`, 적색으로 표시된 `-deletions`, **Open in GitHub**, **Open in GitLab** 또는 **Open in Bitbucket** 링크, 제목, 그리고 두 개의 배지를 보여줍니다:
+카드에는 `PR #number`(GitLab에서는 `MR !number`)가 표시되며, 추가된 줄은 초록색, 삭제된 줄은 빨간색으로 나타납니다. 또한 **Open in GitHub**, **Open in GitLab** 또는 **Open in Bitbucket** 링크, 제목, 그리고 두 개의 배지가 포함됩니다.
 
-- **상태**: Open, Conflicts, Draft, Merged 또는 Closed. 열려 있는 풀 리퀘스트에 병합 충돌이 있으면 Open 대신 Conflicts로 표시됩니다.
-- **체크**: Passing, Failing, Running, 또는 None. GitLab에서는 현재 head 커밋에 대해 실행된 경우에만 집계되는 head 파이프라인입니다. Bitbucket에서는 커밋 상태입니다.
+- 상태: Open, Conflicts, Draft, Merged, Closed. 브랜치가 깔끔하게 병합될 수 없는 경우 Open 대신 Conflicts가 표시됩니다.
+- 체크: Passing, Failing, Running 또는 None. GitLab에서는 헤드 파이프라인을 의미하며, 이 파이프라인이 현재 커밋에 대해 실행된 경우에만 표시됩니다. Bitbucket에서는 커밋 상태(commit statuses)를 의미합니다.
 
-### 아이콘과 점의 의미 [#icon-and-dot-meaning]
+아이콘 색상과 CI 점은 한눈에 같은 정보를 요약해 보여 줍니다:
 
-| 상황 | 아이콘 색상 | CI 점 |
-| --- | --- | --- |
-| 열림, 충돌 없음, 검사 통과 | 녹색 (병합 준비 완료) | 녹색 |
-| 열림, 충돌 없음, 검사 없음 | 녹색 | 없음 |
-| 열림, 병합 가능 여부 계산 중 | 중립 | 검사에 따름 |
-| 열림, 병합 충돌 | 빨간색 (병합 불가) | 검사에 따름 |
-| 초안 | 중립 | 검사에 따름 |
+| Pull request | 아이콘 | CI 점 |
+| ------------------------------------ | ------- | --------------- |
+| 열림, 병합 가능 | 초록색 | 체크 결과에 따름 |
+| 열림, 병합 가능 여부 아직 확인되지 않음 | 중립 | 체크 결과에 따름 |
+| 열림, 병합 충돌 있음 | 빨간색 | 체크 결과에 따름 |
+| 초안 | 중립 | 체크 결과에 따름 |
 | 병합됨 | 보라색 | 없음 |
 | 닫힘 | 중립 | 없음 |
 
-CI 점 색상: 통과는 초록색, 실패는 빨간색, 실행 중은 주황색입니다. 검사가 없거나 풀 리퀘스트가 병합 또는 닫힌 경우에는 점이 표시되지 않습니다. 실패한 검사는 아직 실행 중인 검사보다 우선합니다. 읽은 검사 실행 수보다 더 많은 검사 실행이 포함된 롤업은 결코 통과로 보고되지 않습니다.
+점이 초록색이면 검사를 통과한 것이고, 빨간색이면 실패한 것이며, 주황색(앰버)이면 실행 중인 것입니다. 저장소에서 보고된 검사가 없으면 점이 표시되지 않습니다. 실패한 검사는 아직 실행 중인 검사보다 우선순위가 높습니다.
 
-<ThemeImage
-  light="/images/pull-requests/hdr-conflict-light.png"
-  dark="/images/pull-requests/hdr-conflict-dark.png"
-  alt="병합 충돌이 있는 열린 풀 리퀘스트: 빨간색 아이콘, 실패한 검사를 나타내는 빨간색 점, 그리고 Conflicts 및 Failing 배지"
-/>
+## 어떤 Pull Request가 보이는지 [#which-pull-request-you-see]
 
-<ThemeImage
-  light="/images/pull-requests/hdr-draft-light.png"
-  dark="/images/pull-requests/hdr-draft-dark.png"
-  alt="초안 풀 리퀘스트: 중립 아이콘, 검사가 실행되는 동안 노란색 점 표시"
-/>
+워크스페이스는 채팅이 마지막으로 실행된 저장소, 브랜치, 커밋을 보고하며, LibreChat은 해당 브랜치에서 풀 리퀘스트를 찾습니다:
 
-<ThemeImage
-  light="/images/pull-requests/hdr-merged-light.png"
-  dark="/images/pull-requests/hdr-merged-dark.png"
-  alt="병합된 풀 리퀘스트: 보라색 아이콘, 점 없음"
-/>
+- 채팅 자체 명령 출력에 같은 저장소의 풀 리퀘스트 링크(예: `gh pr create`가 출력하는 URL)가 표시되어 있다면, 그 풀 리퀘스트가 채팅의 브랜치에서 생성된 것인 한 해당 풀 리퀘스트가 사용됩니다.
+- 그렇지 않으면 같은 브랜치에 대해 열려 있는 풀 리퀘스트가 닫힌 풀 리퀘스트보다 우선되므로, 재사용된 브랜치 이름의 오래된 닫힌 풀 리퀘스트가 현재의 풀 리퀘스트를 가리지 않습니다.
+- PR은 채팅이 마지막으로 실행된 커밋을 포함하고 있을 때에만 유효하게 인정됩니다. 브랜치를 삭제하고 같은 이름을 다시 사용한다고 해서 이전 PR이 되살아나지는 않습니다.
+- 아직 커밋이 없는 새 브랜치는 아무것과도 일치하지 않습니다.
 
-## 풀 리퀘스트가 매칭되는 방식 [#how-a-pull-request-is-matched]
+서버가 조회할 수 없도록 허용되지 않은 저장소는 풀 리퀘스트가 없는 저장소와 똑같이 동작합니다. 표시도 없고 오류도 없습니다.
 
-1. 워커는 채팅이 마지막으로 실행된 리포지토리, 브랜치 및 커밋(head)을 보고합니다.
-2. 채팅 자체의 명령 출력 결과가 구성된 호스트의 해당 저장소에 대한 pull request로 연결되는 경우(예: `gh pr create`가 출력하는 링크), 해당 pull request의 head가 채팅의 브랜치라면 해당 pull request를 직접 읽어옵니다. 다른 저장소나 다른 호스트에 대한 링크는 무시됩니다.
-3. 그렇지 않으면 LibreChat은 해당 브랜치에 대한 열린 풀 리퀘스트를 먼저 나열하므로, 재사용된 브랜치 이름의 닫힌 기록이 열린 기록을 숨길 수 없습니다. 그런 다음 포크에서 열린 풀 리퀘스트를 확인하고, 그 후 닫힌 풀 리퀘스트를 확인합니다.
-4. 기록된 커밋이 있는 경우, 풀 리퀘스트는 해당 커밋이 헤드(head)이거나 그 위에 빌드된 경우에만 유효한 것으로 간주됩니다. 이는 삭제 후 재사용된 브랜치 이름이 이전 풀 리퀘스트를 표시하지 않도록 방지합니다. 포크(fork)에서 생성된 풀 리퀘스트는 누구나 동일한 이름의 포크 브랜치를 열 수 있기 때문에, 기록된 커밋을 포함하고 있을 때만 유효한 것으로 간주됩니다.
-5. 아직 커밋이 없는 브랜치(새롭고 비어 있는 브랜치)는 아무것도 일치하지 않습니다.
-6. 결과는 자격 증명, 저장소, 브랜치 및 커밋별로 캐시됩니다.
-7. GitHub에서 체크 실행(check runs)은 풀 리퀘스트의 현재 헤드(head)를 기준으로 읽어옵니다. 포크(fork)에서 생성된 풀 리퀘스트의 경우, 해당 포크의 저장소가 범위 내에 있을 때(목록에 포함되어 있거나 `allowAllRepositories`로 설정된 경우)에만 체크를 읽어옵니다. 그렇지 않은 경우에는 기본 저장소(base repository)를 읽으며, 토큰이 목록에 없는 포크로 전달되는 일은 없습니다.
+## 본인 계정 연결하기 [#connect-your-own-account]
 
-## 동작 [#behavior]
+관리자가 설정해 둔 경우, 본인의 GitHub, GitLab 또는 Bitbucket 계정으로 풀 리퀘스트를 조회할 수 있습니다. **설정**을 열고 **계정**으로 이동한 후 **연결된 계정**에서 **풀 리퀘스트 계정** 옆의 **연결**을 클릭합니다. 제공업체의 로그인 창이 열리면 승인하세요. 승인이 완료되면 해당 행에 **연결됨**이 표시됩니다. 로그인 창이 열리지 않으면 LibreChat에 대한 팝업을 허용한 후 다시 시도하세요.
 
-### 속도 제한 (Rate limits) [#rate-limits]
+연결이 완료되면 조회는 사용자의 계정을 사용하므로, 읽을 수 있는 모든 저장소의 풀 리퀘스트를 본인의 속도 제한 아래에서 확인할 수 있습니다. **연결 해제**를 누르면 연결이 제거되며, 언제든지 다시 연결할 수 있습니다. 서버가 연결을 갱신할 수 없는 경우(예: 제공자 서비스 중단), 서버의 토큰으로 조용히 전환되지 않고 풀 리퀘스트가 사용 불가로 표시됩니다. 제공자에서 앱 권한을 취소하면 LibreChat은 연결을 제거하고 사용자는 다시 미연결 상태로 돌아갑니다.
 
-- 속도 제한은 하나의 공급자 호스트에 있는 자격 증명에 적용되므로, 해당 토큰 아래의 모든 브랜치에 대한 조회가 일시 중지됩니다. 사용자별 계정의 경우, 각 사용자의 제한은 해당 사용자에게만 적용됩니다.
-- 최소 일시 중지 시간은 10초이며, 제공업체가 지정한 대기 시간이 적용되되 최대 1시간으로 제한됩니다. GitHub에서는 대기 시간이 지정되지 않은 2차 제한 시 60초 동안 일시 중지됩니다.
-- 일시 중지 중에는 조회 시 `RATE_LIMITED`로 응답합니다. 이전에 발견된 풀 리퀘스트는 재시도 상태를 그대로 유지하며, 아직 발견되지 않은 항목은 계속 숨겨진 상태로 남습니다.
-- `sharedCache`를 사용하면, 한 복제본에서 시작된 일시 중지가 모든 복제본에 적용됩니다.
+If the row says **Not in use**, your admin has turned off account connections and lookups no longer use your account. Click **Disconnect** to remove the stored connection.
 
-### 롤링 업데이트 (Rolling upgrades) [#rolling-upgrades]
+Wait—I must correct myself. The translation should be provided, not the source repeated. Here is the translation:
 
-- 사이드바는 서버가 해당 기능을 가지고 있다고 시작 설정(`pullRequestsBatchVersion`)에서 명시할 때만 배치 경로를 요청합니다.
-- 경로가 없는 복제본이 404를 반환하면, 클라이언트는 단일 경로로 대체되어 한 번에 하나씩 호출하거나 서버가 광고한 경우 `pullRequestsMaxConcurrentLookups`에 따라 호출합니다. 이는 업그레이드된 복제본으로부터 새로운 시작 플래그를 받은 클라이언트가 해당 경로가 없는 복제본에 도달하는 경우를 처리합니다. 만약 `/api/config`가 플래그가 없는 복제본에 의해 제공되는 경우, 사이드바는 배치 경로를 요청하지 않아 행이 비어 있는 상태로 유지되므로, 사이드바 표시 기능에 의존하기 전에 모든 복제본을 업그레이드하십시오.
+If the row says **사용 안 함**, 관리자가 계정 연결을 비활성화하여 더 이상 조회 시 사용자 계정이 사용되지 않습니다. 저장된 연결을 제거하려면 **연결 해제**를 클릭하세요.
 
-### 설정되지 않았을 때의 기본값 [#defaults-when-unset]
+## 설정 [#setup]
 
-- 토큰이나 리포지토리 범위가 없고 `oauth` 앱이 없는 경우, 해당 기능은 비활성 상태가 됩니다. 시작 구성에서 아무것도 광고되지 않으며, 아무것도 기록되지 않고, 아무것도 표시되지 않습니다.
-- 설정에서 이 기능을 끄면 기존 채팅은 변경되지 않으며 클라이언트는 새로운 경로를 호출하지 않습니다.
-
-## 보안 모델 [#security-model]
-
-- 토큰은 서버에 상주합니다. 토큰은 브라우저로 전송되지 않으며, 오류 응답에는 공급자의 응답 텍스트, 토큰 또는 스택 추적이 포함되지 않습니다.
-- 서버 토큰은 범위 내의 저장소에 대해서만, 그리고 구성된 호스트에서만 사용됩니다. 범위에 포함되지 않은 포크(fork)로는 절대 전송되지 않습니다.
-- `provider`, `host` 및 `oauth`는 `librechat.yaml`에서만 가져오므로, 역할(role), 그룹(group), 사용자(user) 또는 테넌트(tenant) 재정의를 통해 다른 서비스로 토큰을 보내거나 앱 사용자가 액세스 권한을 부여하는 대상을 변경할 수 없습니다.
-- `/api/convos` 조회 경로는 인증된 사용자가 필요하며 소유자 범위로 제한됩니다. 존재하지 않거나, 만료되었거나, 다른 사용자에게 속한 대화는 풀 리퀘스트가 없는 대화와 동일하게 처리됩니다.
-- 공개하려는 리포지토리로 제한된 읽기 전용 토큰을 사용하세요.
-
-## 문제 해결 [#troubleshooting]
-
-초기 탐색 이전에는 제공자 오류가 사이드바 경고 표시를 만들지 않습니다. 디버그 로그에는 저장소 식별 정보나 제공자 페이로드 없이 제공자와 제한된 범위의 이유 코드만 기록됩니다. 이전에 탐색된 풀 리퀘스트는 새로고침이 실패해도 카드가 유지됩니다.
-
-| 증상 | 가능한 원인 | 해결 방법 |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| 어디에도 칩과 사이드바 표시가 없음 | 토큰이 없거나, 저장소 범위가 없거나, `enabled: false` 설정됨 | [Setup](#setup)을 확인하세요. 로그인한 상태에서 `/api/config`를 열어 `pullRequestsEnabled: true`가 있는지 확인하세요. |
-| 연결된 작업 공간의 일부 채팅에 칩이 없음 | `allowedRepositories`에 해당 저장소가 없음 | 저장소를 추가하거나, 소유자를 `owner/*` 형식으로 추가하세요. 범위 밖의 저장소는 풀 리퀘스트가 없는 저장소와 똑같이 보입니다. |
-| 일부 채팅에만 칩이 표시됨 | 브랜치를 보고한 코드 작업 공간이 연결된 채팅에만 레인이 있음 | Code API에서 `CODEAPI_BRIDGE_LANE_GIT=true`가 설정되어 있는지, 그리고 code-interpreter PR #311 이상으로 빌드된 워커를 사용하는지 확인하세요. |
-| 헤더 칩은 작동하지만 사이드바 행에는 아무것도 표시되지 않음 | `/api/config`에 `pullRequestsBatchVersion`이 없음 (오래된 빌드 또는 오래된 탭) | 서버를 다시 빌드하거나 업그레이드한 뒤 재시작하고 강력 새로고침을 하세요. `pullRequestsBatchVersion: 1`인지 확인하세요. |
-| 경고 아이콘과 재시도 | 조회 실패 (속도 제한, 제공자 오류, 또는 `NOT_CONFIGURED`) | 재시도하세요. 계속 발생하면 토큰과 그 권한을 확인하세요. |
-| `NOT_CONFIGURED` | `token`은 설정되어 있지만 해당 변수가 비어 있거나 없음 | 변수를 설정하거나, 대체 변수를 사용하도록 `token`을 제거하세요. |
-| 모든 GitHub 풀 리퀘스트 로드 실패 | 토큰에 Checks 권한이 없음 | 읽기 전용 Checks 권한을 부여하세요. |
-| 브랜치가 이후에 변경된 뒤에만 실패 | 토큰에 Contents 권한이 없어 커밋을 비교할 수 없음 | 읽기 전용 Contents 권한을 부여하세요. |
-| `RATE_LIMITED`가 자주 발생 | 많은 사용자가 서버 토큰을 공유하거나, 복제본마다 제공자에 요청함 | `cacheTtlSeconds`를 높이고, `maxConcurrentLookups`를 낮추고, Redis와 함께 `sharedCache: true`를 설정하거나, 사용자가 자신의 계정을 연결하도록 하세요. |
-| 포크의 풀 리퀘스트에 체크가 표시되지 않음 | 포크가 범위에 포함되지 않아 기본 저장소에서 체크를 읽음 | 포크 소유자를 `allowedRepositories`에 추가하거나, `allowAllRepositories: true`를 설정하세요. |
-| GitLab 또는 Bitbucket에 아무것도 표시되지 않음 | `provider`가 설정되지 않았거나, `host`가 프로젝트가 있는 호스트와 일치하지 않음 | `provider`를 설정하세요. 자체 호스팅 GitLab이라면 `host`를 해당 호스트 이름으로 설정하세요. Bitbucket은 기본 `bitbucket.org` 호스트에서만 작동합니다. |
-| `gh pr create`가 출력한 링크가 인식되지 않음 | 링크가 레인의 호스트나 저장소와 다른 곳을 가리킴 | `host`를 확인하세요. 설정된 호스트와 레인 저장소에 대한 링크만 인정됩니다. |
-| 연결된 사용자에게 "unavailable"이 표시됨 | 제공자 또는 키 저장소가 사용자의 토큰을 갱신하지 못함 | 나중에 다시 시도하세요. 연결된 사용자의 경우 조회 시 서버 토큰으로 대체되지 않습니다. |
-| 여러 번 재사용된 브랜치 이름인데 풀 리퀘스트가 없음 | 이름이 재사용되는 빈도에 비해 `maxCandidatePullRequests`, `maxCandidatePages` 또는 `maxHeadComparisons`가 너무 낮아서, 검색이 일치하는 풀 리퀘스트에 도달하기 전에 중단됨 | 값을 높이세요. |
-| 프록시 뒤에서 조회가 느리거나 시간 초과됨 | `requestTimeoutSeconds`가 너무 낮음 | 값을 높이세요. `HTTPS_PROXY`와 `NO_PROXY`를 확인하세요. |
-
-## API 참조 [#api-reference]
-
-아래의 `/api/convos` 경로는 모두 인증된 사용자가 필요하며 소유자 범위로 제한됩니다. 시작 구성(startup config) 엔드포인트는 소유자 범위로 제한되지 않습니다.
-
-### 하나의 대화에 대한 풀 리퀘스트 가져오기 [#get-one-conversations-pull-request]
-
-`GET /api/convos/:conversationId/pull-request`
-
-- **200**: `{ "pullRequest": null }` 또는 `{ "pullRequest": { number, title, url, additions, deletions, state, isDraft, mergeable, checks } }`.
-- `state`는 `open`, `closed` 또는 `merged`입니다. `mergeable`은 `clean`, `conflicting` 또는 `unknown`입니다. `checks`는 `passing`, `failing`, `running` 또는 `none`입니다.
-- **503**: `{ "error": "...", "code": "NOT_CONFIGURED" | "RATE_LIMITED" | "UPSTREAM_ERROR" }`.
-- **404**: 잘못된 대화 ID입니다. **500**: 고정 텍스트가 포함된 저장소 오류입니다.
-
-### 여러 대화의 풀 리퀘스트 가져오기 [#get-many-conversations-pull-requests]
-
-`POST /api/convos/pull-requests`
-
-- 본문: `{ "conversationIds": ["..."] }`, 1개에서 50개의 id를 포함합니다. 중복된 항목은 병합됩니다. 그 외의 형식은 400 오류를 반환합니다.
-- **200**: `{ "results": [ { "conversationId", "pullRequest" } | { "conversationId", "error": { "code" } } ] }`, 요청된 순서대로입니다. 하나의 조회 실패가 다른 조회를 숨기지 않습니다.
-- 토큰이 누락되면 해당 토큰이 필요한 항목만 실패합니다.
-
-### 계정 연결 [#account-connection]
-
-이 경로들은 `JWT_SECRET`이 설정된 경우에만 존재합니다. 콜백을 제외한 모든 경로는 인증된 사용자를 필요로 합니다.
-
-- `GET /api/pull-requests/oauth/connect`: 연결을 시작하고 열어야 할 공급자 페이지인 `{ "url" }`을 반환합니다.
-- `GET /api/pull-requests/oauth/callback`: 공급자가 사용자를 다시 리디렉션하는 경로입니다.
-- `GET /api/pull-requests/oauth/status`: 사용자가 연결되어 있는지 여부.
-- `DELETE /api/pull-requests/oauth`: 사용자의 연결을 해제합니다.
-
-### 시작 구성 [#startup-config]
-
-`GET /api/config`는 다음 필드들을 포함합니다. 이 필드들은 서버에 의해 설정되며, 사용자가 변경할 수 있는 설정이 아닙니다.
-
-- `pullRequestsEnabled` (boolean)
-- `pullRequestsBatchVersion` (`1`, 기능이 켜져 있을 때만 존재)
-- `pullRequestsMaxConcurrentLookups` (숫자, 해당 기능이 켜져 있을 때만 존재)
-- `pullRequestsConnect` (`github`, `gitlab` 또는 `bitbucket`, 사용자가 자신의 계정을 연결할 수 있을 때만 표시됨)
-
-위에 나열된 오류 코드만 안정적입니다.
+이 기능은 기본적으로 켜져 있지만, 관리자가 LibreChat에 토큰과 조회를 허용할 저장소 목록을 제공하거나, 사용자가 자신의 계정을 연결할 수 있도록 앱을 설정하기 전까지는 숨겨진 상태로 유지됩니다. 또한 git 브랜치를 보고하는 연결된 코드 워크스페이스가 필요합니다. 자세한 내용은 [Pull Requests 구성](/docs/configuration/pull_requests)을 참고하세요.

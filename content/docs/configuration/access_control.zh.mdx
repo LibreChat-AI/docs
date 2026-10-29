@@ -1,0 +1,156 @@
+---
+title: 访问控制
+icon: ShieldCheck
+description: 角色功能权限及其默认值、人员选择器可见性、Entra ID 组同步、提升管理员、管理员能力，以及旧版实例的 ACL 迁移。
+---
+
+关于角色、群组和共享对用户的作用方式，请参阅[访问控制](/docs/features/access_control)功能页面。本页介绍管理员需要进行的设置。
+
+## 功能权限 [#feature-permissions]
+
+每个角色针对每种权限类型都有一组开关。你可以在三个位置进行更改:
+
+- 在 LibreChat 中,通过智能体、提示词、MCP 服务器、记忆和技能面板中的 **Admin Settings** 按钮进行设置(仅限管理员)。
+- 在 [管理面板](/docs/features/admin_panel) 中,于 **Access**(访问)下,适用于任何角色(包括自定义角色)。
+- 在 `librechat.yaml` 的 [`interface`](/docs/configuration/librechat_yaml/object_structure/interface) 块中。这些键仅在启动时为内置 `USER` 角色设置权限初始值,因此无法为不同的自定义角色分别指定不同的设置。
+
+该表列出了每种权限类型、用于初始化该权限的 `interface` 键、其对应的操作，以及 `USER` 角色默认拥有的操作。
+
+| 权限类型 | `interface` 键 | 操作 | `USER` 默认启用 |
+| --------------- | --------------- | ------- | ------------------------ |
+| `AGENTS` | `agents` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | `USE`, `CREATE` |
+| `PROMPTS` | `prompts` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | `USE`, `CREATE` |
+| `MCP_SERVERS` | `mcpServers` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`, `CONFIGURE_OBO` | `USE`, `CREATE` |
+| `SKILLS` | `skills` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | `USE`, `CREATE` |
+| `REMOTE_AGENTS` | `remoteAgents` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | 无 |
+| `SHARED_LINKS` | `sharedLinks` | `CREATE`, `SHARE`, `SHARE_PUBLIC` | `CREATE`, `SHARE` |
+| `SCHEDULES` | `schedules` | `USE`, `CREATE` | `USE`, `CREATE` |
+| `MEMORIES` | `memories` | `USE`, `CREATE`, `UPDATE`, `READ`, `OPT_OUT` | 全部 |
+| `BOOKMARKS` | `bookmarks` | `USE` | `USE` |
+| `MULTI_CONVO` | `multiConvo` | `USE` | `USE` |
+| `TEMPORARY_CHAT` | `temporaryChat` | `USE` | `USE` |
+| `RUN_CODE` | `runCode` | `USE` | `USE` |
+| `WEB_SEARCH` | `webSearch` | `USE` | `USE` |
+| `FILE_SEARCH` | `fileSearch` | `USE` | `USE` |
+| `FILE_CITATIONS` | `fileCitations` | `USE` | `USE` |
+| `MARKETPLACE` | `marketplace` | `USE` | 无 |
+| `PEOPLE_PICKER` | `peoplePicker` | `VIEW_USERS`, `VIEW_GROUPS`, `VIEW_ROLES` | 全部 |
+
+`SHARE` 允许角色与特定用户、群组或角色共享;`SHARE_PUBLIC` 允许角色与实例中的所有人共享。`CONFIGURE_OBO` 允许在 MCP 服务器上设置 On-Behalf-Of 令牌交换,该功能会将用户的委托令牌转发至该服务器,因此默认关闭。
+
+## 人员选择器 [#people-picker]
+
+`PEOPLE_PICKER` 操作控制角色在共享对话框搜索中可以查找哪些类型的主体。当按角色共享应仅由管理员负责时,通常会隐藏角色选项:
+
+```yaml filename="librechat.yaml"
+interface:
+  peoplePicker:
+    users: true
+    groups: true
+    roles: false
+```
+
+这只会改变搜索的显示结果。已有的、主体类型被隐藏的共享仍然可以正常使用。请参阅 [`interface.peoplePicker`](/docs/configuration/librechat_yaml/object_structure/interface#peoplepicker)。
+
+## Entra ID 组同步 [#entra-id-group-sync]
+
+当用户通过 OpenID Connect 使用 Entra 登录,且 `OPENID_REUSE_TOKENS=true` 时,Microsoft Entra ID 中的组会同步到 LibreChat。LibreChat 会在每次登录时从 Microsoft Graph 读取用户的组成员身份,并以每个组的 Entra 对象 ID 进行存储,因此即使组被重命名,共享的组仍然是同一个组。请参阅 [Azure / Entra ID](/docs/configuration/authentication/OAuth2-OIDC/azure) 设置提供程序,并参阅 [OpenID Connect Token Reuse](/docs/configuration/authentication/OAuth2-OIDC/token-reuse) 设置令牌复用。
+
+## 提升其他管理员 [#promote-another-admin]
+
+在单租户部署中,第一个注册的账户将获得 `ADMIN` 角色。租户范围的部署从不自动提升首位用户的权限;租户管理员应通过受信任的管理流程进行配置。若要将另一个已存在的用户设为管理员,可以使用管理面板的 **Users** 页面,或直接在 MongoDB 中设置角色。
+
+```js filename="mongosh"
+db.users.updateOne({ email: 'USER_EMAIL_ADDRESS' }, { $set: { role: 'ADMIN' } })
+```
+
+让用户退出登录后再重新登录。使用 OpenID Connect 时,还可以通过 `OPENID_ADMIN_ROLE` 从 IdP 的角色或组中分配 `ADMIN` 权限;详见 [.env 参考](/docs/configuration/dotenv#openid-connect)。
+
+## 管理员功能 [#admin-capabilities]
+
+能力会通过管理面板的**授权(Grants)**页面授予用户、用户组或角色。拥有 `ADMIN` 角色的用户隐式拥有全部能力;其他用户除了需要其所管理内容对应的能力外,还需要 `access:admin`。每个 `manage:` 能力都隐含对应的 `read:` 能力,包括按配置分区的情况:`manage:configs:endpoints` 也会授予 `read:configs:endpoints`。仅拥有分区级配置访问权限的用户,其配置响应会被过滤为其可读取的分区;若完全没有配置读取权限,则返回 `403`。
+
+| 功能 | 允许 |
+| ---- | ---- |
+| `access:admin` | 登录管理面板 |
+| `read:users`, `manage:users` | 查看和更改用户账户 |
+| `read:groups`, `manage:groups` | 查看和更改群组及其成员 |
+| `read:roles`, `manage:roles` | 查看和更改角色及其权限 |
+| `read:configs`, `manage:configs` | 查看和更改配置;`read:configs:<section>` 和 `manage:configs:<section>` 将其限制为单个顶级 `librechat.yaml` 配置节 |
+| `assign:configs:user`, `assign:configs:group`, `assign:configs:role` | 将配置覆盖分配给对应类型的主体 |
+| `read:agents`, `manage:agents` | 查看和管理所有智能体 |
+| `read:prompts`, `manage:prompts` | 查看和管理所有提示词 |
+| `read:skills`, `manage:skills` | 查看和管理所有技能 |
+| `read:sharedlinks`, `manage:sharedlinks` | 查看和管理所有共享链接 |
+| `manage:mcpservers` | 在实例范围内管理 MCP 服务器 |
+| `manage:code_environments` | 注册和撤销由部署方持有的代码执行工作节点 |
+| `read:usage` | 查看用量数据 |
+| `read:insights` | 查看所有智能体的[洞察](/docs/features/insights) |
+| `read:audit_log` | 查看、验证和导出授权审计日志。该日志仅可追加,因此没有 `manage:` 对应权限 |
+
+`read:assistants` 和 `manage:assistants` 也已存在,但目前为保留项;尚无任何机制对其进行强制执行。
+
+## 群组成员缓存 [#group-membership-cache]
+
+要检查权限,LibreChat 会查询用户所属的用户组,并将结果缓存五分钟。用户组成员关系变更时,受影响的缓存条目会立即清除。用户的角色不做缓存。缓存或锁出现故障时,会回退到数据库查询,且绝不会阻塞权限检查。
+
+<OptionTable
+  options={[
+    ['USER_PRINCIPALS_CACHE_TTL_MS', 'number', '用户所属群组缓存的时长(以毫秒为单位)。设置为 0 可禁用缓存。默认值:300000(5 分钟)。', 'USER_PRINCIPALS_CACHE_TTL_MS=300000'],
+    ['USER_PRINCIPALS_LOCK_TTL_MS', 'number', '仅适用于 Redis 部署。以毫秒为单位的锁存活时间,用于防止多个副本同时重建同一缓存条目。设置为 0 时仅禁用锁定功能。默认值:5000。', 'USER_PRINCIPALS_LOCK_TTL_MS=5000'],
+    ['USER_PRINCIPALS_LOCK_WAIT_MS', 'number', '仅适用于 Redis 部署。副本等待另一个副本完成条目构建的时长(以毫秒为单位)。默认值为 USER_PRINCIPALS_LOCK_TTL_MS。', 'USER_PRINCIPALS_LOCK_WAIT_MS=5000'],
+  ]}
+/>
+
+## 管理员洞察 [#admin-insights]
+
+[Insights](/docs/features/insights) 仪表板默认处于关闭状态。在 `.env` 中设置 `ENABLE_INSIGHTS=true` 并重启 LibreChat;在其关闭期间,Insights 路由会返回 `404`,侧边栏中的入口也会保持隐藏。
+
+管理员在功能启用后即可直接打开。要让其他人访问，可以在管理面板中授予 `read:insights`（适用于所有智能体），或者在某个智能体的共享对话框中，为特定用户或群组开启**查看洞察**。只有管理员可以授予**查看洞察**权限，被授权人员还需要拥有该智能体本身的访问权限，且该权限不能授予所有人。洞察会显示最近对话的用户名称、电子邮件地址以及首条消息，因此请谨慎授予该权限。
+
+每个 Insights 查询的范围都限定在查看者所属的租户内,自定义日期范围最长为 30 天。
+
+## 从 ACL 之前的版本迁移 [#migrating-from-pre-acl-versions]
+
+在 v0.8.0-rc3 之前的版本中，智能体（agents）和提示词（prompts）使用的是更简单的所有权模型。升级后，请运行迁移脚本，以确保现有的智能体和提示词仍可正常访问；LibreChat 在启动时若发现未迁移的智能体，会发出警告。之后，共享链接也迁移到了同一系统，因此对于在此之前已创建共享链接的实例，还应运行共享链接迁移。
+
+先进行一次试运行，查看将要发生的更改，然后再执行迁移。`:batch` 变体每次处理 50 条记录，在大型数据库上可以起到明显帮助。
+
+<Tabs items={['docker-compose.yml', 'deploy-compose.yml', '本地']}>
+  <Tabs.Tab>
+
+```bash
+docker compose exec api npm run migrate:agent-permissions:dry-run
+docker compose exec api npm run migrate:agent-permissions
+docker compose exec api npm run migrate:prompt-permissions:dry-run
+docker compose exec api npm run migrate:prompt-permissions
+docker compose exec api npm run migrate:shared-link-permissions:dry-run
+docker compose exec api npm run migrate:shared-link-permissions
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```bash
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:agent-permissions:dry-run"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:agent-permissions"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:prompt-permissions:dry-run"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:prompt-permissions"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:shared-link-permissions:dry-run"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:shared-link-permissions"
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```bash
+npm run migrate:agent-permissions:dry-run
+npm run migrate:agent-permissions
+npm run migrate:prompt-permissions:dry-run
+npm run migrate:prompt-permissions
+npm run migrate:shared-link-permissions:dry-run
+npm run migrate:shared-link-permissions
+```
+
+  </Tabs.Tab>
+</Tabs>

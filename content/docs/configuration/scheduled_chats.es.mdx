@@ -1,0 +1,76 @@
+---
+title: Chats programados
+icon: CalendarClock
+description: >-
+  Activa los Chats programados, define límites y reglas de proyecto, permite el
+  acceso MCP desatendido y cumple los requisitos de Redis y del checkpointer.
+---
+
+[Chats programados](/docs/features/scheduled_chats) son experimentales y están desactivados hasta que decidas activarlos. Las ejecuciones programadas consumen recursos de modelos, herramientas e Intérprete de código sin que nadie las supervise, así que revisa los requisitos de implementación que aparecen a continuación antes de habilitarlos.
+
+## Habilitar [#enable]
+
+Añade `interface.schedules` a `librechat.yaml` y reinicia LibreChat:
+
+```yaml filename="librechat.yaml"
+interface:
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    fireConcurrency: 5
+    requireProject: false
+    # projectId: '000000000000000000000000'
+```
+
+`use` y `create` inicializan los permisos de `SCHEDULES` para el rol `USER` integrado al iniciar; después de eso, gestiónalos por rol en el [Panel de administración](/docs/features/admin_panel). `use` permite a un usuario ver sus programaciones. `create` también le permite crearlas, editarlas, habilitarlas, ejecutarlas y eliminarlas. Las demás claves son límites de ejecución.
+
+<OptionTable
+  options={[
+    ['maxPerUser', 'Number', 'Número máximo de programaciones que cada usuario puede tener, contando también las deshabilitadas. Establézcalo en 0 para impedir su creación.', '10'],
+    ['minIntervalMinutes', 'Number', 'Intervalo mínimo permitido entre dos ejecuciones de una misma programación. Se aplica a todas las frecuencias, incluido el cron personalizado.', '60'],
+    ['autoDisableAfterFailures', 'Number', 'Ejecuciones fallidas consecutivas antes de que una programación se desactive automáticamente.', '5'],
+    ['fireConcurrency', 'Number', 'Máximo de ejecuciones programadas admitidas al mismo tiempo en todo el despliegue.', '5'],
+    ['requireProject', 'Boolean', 'Todo horario debe resolverse a un Chat Project, lo cual se verifica al guardarlo y antes de cada ejecución.', 'false'],
+    ['projectId', 'String', 'Fija cada conversación programada a un único Proyecto de Chat e implica requireProject.', ''],
+  ]}
+/>
+
+`schedules: true` activa la función con estos valores predeterminados. `schedules: false`, o `use: false`, es una detención a nivel de despliegue que las anulaciones de rol, grupo y usuario no pueden levantar.
+
+Las reglas del proyecto se vuelven a comprobar en cada ejecución. Si una programación ya no cumple `requireProject`, o si su proyecto fue eliminado, se desactiva automáticamente en lugar de iniciar una conversación sin ámbito. Los Proyectos de chat pertenecen a un solo usuario, por lo que un `projectId` a nivel de despliegue solo funciona para el propietario de ese proyecto; configúrelo en las anulaciones por rol o por usuario cuando los propietarios necesiten destinos distintos.
+
+El listado completo de campos, incluidos `admissionConcurrency`, `mcpPreflightConcurrency` y `mcpPreflightTimeoutMs` para limitar por separado las comprobaciones de admisión y de preparación de MCP respecto a la generación, se encuentra en [`interface.schedules`](/docs/configuration/librechat_yaml/object_structure/interface#schedules).
+
+## Acceso MCP desatendido [#unattended-mcp-access]
+
+Antes de que comience una ejecución, LibreChat comprueba todas las herramientas MCP que necesitan el agente programado y sus subagentes. Una ejecución que requiera un inicio de sesión interactivo no se inicia; la programación indica qué agente necesita atención.
+
+Para permitir que los usuarios autoricen herramientas MCP para ejecuciones desatendidas, active `interface.schedules.mcpConsent`:
+
+- `mcpConsent.enabled` activa la función.
+- `mcpConsent.maxLifetimeHours` limita cuánto tiempo dura una autorización, de 1 a 8760 horas.
+- `mcpConsent.resources` enumera los recursos de MCP que pueden ser autorizados.
+- `mcpConsent.readOnlyPolicy` enumera las declaraciones de herramientas de solo lectura de confianza, indexadas por servidor y nombre de herramienta upstream.
+- `mcpReceiptRetry.baseMs` y `mcpReceiptRetry.maxMs` establecen el tiempo de espera (backoff) para reintentar los recibos de consentimiento.
+
+Los usuarios verán entonces una sección **Autorización MCP programada** en el editor de programaciones. Una autorización cubre únicamente el agente y los recursos indicados hasta su fecha límite, y nunca permite escrituras.
+
+## Requisitos de despliegue [#deployment-requirements]
+
+Los chats programados se coordinan mediante concesiones (leases) en MongoDB, de modo que varias réplicas pueden compartir el trabajo. También necesitan:
+
+- **Streams de Redis en despliegues con múltiples réplicas.** Establece `USE_REDIS_STREAMS=true`. Sin streams compartidos, guardar una programación falla en lugar de iniciar un trabajo que otra réplica no podría reanudar o detener.
+- **Un checkpointer duradero para agentes que pueden pausarse.** Si el agente programado puede usar Ask User o requiere aprobación de herramientas, necesita streams de Redis y un checkpointer compartido, incluso en un único proceso. El [`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) predeterminado basado en MongoDB funciona; `type: memory` no. LibreChat rechaza dicha ejecución antes de cualquier llamada al modelo si falta cualquiera de los dos.
+- **El punto de entrada estándar del servidor.** El punto de entrada agrupado (en clúster) experimental heredado no inicia el motor de programación.
+
+Dos variables de entorno controlan el motor (también listadas en [dotenv](/docs/configuration/dotenv#scheduled-chats)):
+
+<OptionTable
+  options={[
+    ['SCHEDULES_SINGLE_PROCESS', 'Boolean', 'Permite Chats programados sin Redis. Actívelo solo cuando la implementación ejecute realmente un único proceso de LibreChat.', '# SCHEDULES_SINGLE_PROCESS=true'],
+    ['SCHEDULES_DISABLED', 'Boolean', 'Parada de emergencia tanto para las ejecuciones automáticas como para Ejecutar ahora. Las programaciones se conservan, no se eliminan.', '# SCHEDULES_DISABLED=true'],
+  ]}
+/>

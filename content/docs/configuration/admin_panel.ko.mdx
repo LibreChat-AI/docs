@@ -1,0 +1,170 @@
+---
+title: 관리자 패널
+icon: LayoutDashboard
+description: >-
+  LibreChat Admin Panel을 함께 제공되는 Docker Compose 파일로 실행하거나 독립 실행형 서비스로 실행하고, 이를
+  LibreChat API를 가리키도록 설정하세요.
+---
+
+[Admin Panel](/docs/features/admin_panel)은 LibreChat의 `/api/admin` 엔드포인트와 통신하는 별도의 서비스입니다. 이를 사용하려면 LibreChat v0.8.5 이상, 패널에서 LibreChat API로의 네트워크 접근, 그리고 `ADMIN` 역할 또는 `access:admin` 권한을 가진 계정이 필요합니다. 단일 테넌트 배포에서는 처음 등록된 계정이 관리자가 되며, 테넌트 범위 배포에서는 관리자가 별도로 프로비저닝됩니다. 다른 사용자를 관리자로 승격하려면 [Access Control configuration](/docs/configuration/access_control#promote-another-admin)을 참조하세요.
+
+## LibreChat에 포함됨 [#bundled-with-librechat]
+
+공식 `docker-compose.yml`과 `deploy-compose.yml`에는 전체 스택과 함께 시작되는 `admin-panel` 서비스(이미지 `registry.librechat.ai/librechat-ai/librechat-admin-panel:latest`)가 포함되어 있습니다.
+
+| Compose 파일 | 관리자 패널 URL | 제공 방식 |
+| ------------ | --------------- | ---------------- |
+| `docker-compose.yml` | `http://localhost:3000` | 호스트 포트 `ADMIN_PANEL_PORT`(기본값 `3000`)에 게시됨 |
+| `deploy-compose.yml` | `http://admin.localhost` | 번들 nginx를 통해 `admin.localhost` 서브도메인으로 라우팅됨 |
+
+패널은 세션 시크릿 없이는 시작되지 않습니다. LibreChat의 `.env`에 설정하세요. compose 파일이 이를 `SESSION_SECRET`으로 패널에 전달합니다:
+
+```bash filename=".env"
+# At least 32 characters. Generate one with: openssl rand -hex 32
+ADMIN_PANEL_SESSION_SECRET=replace-with-a-32-char-random-string
+
+# Optional: host port for the default docker-compose.yml
+# ADMIN_PANEL_PORT=3000
+
+# Optional: set to true when the panel is served over HTTPS
+# ADMIN_PANEL_SESSION_COOKIE_SECURE=false
+```
+
+compose 파일은 나머지를 설정합니다. `API_SERVER_URL`은 `api` 서비스를 가리키고, `VITE_API_BASE_URL`은 브라우저에 노출되는 리디렉션을 위해 `DOMAIN_CLIENT`를 따릅니다. 또한 `deploy-compose.yml`은 API에 `ADMIN_PANEL_URL`을 `http://admin.localhost`로 설정하여, SSO 이후 관리자가 패널로 돌아가도록 합니다. 패널을 사용하지 않으려면 `admin-panel` 서비스를 제거하거나 Compose [profile](https://docs.docker.com/compose/how-tos/profiles/)로 감싸 주세요.
+
+브라우저는 `*.localhost`를 `127.0.0.1`로 해석하므로, hosts 파일을 수정하지 않아도 `admin.localhost`를 사용할 수 있습니다. 실제 도메인을 사용하려면 DNS 레코드가 호스트를 가리키도록 설정하고, `client/nginx.conf`에서 `admin.localhost`의 `server_name`을 변경한 후 `ADMIN_PANEL_URL`도 이에 맞게 설정하세요.
+
+## 독립 실행형 [#standalone]
+
+다른 곳에 있는 LibreChat 인스턴스를 가리키도록 패널을 단독으로 실행하려면 이미지를 직접 사용하세요:
+
+```bash
+docker run -p 3000:3000 \
+  --add-host=host.docker.internal:host-gateway \
+  -e SESSION_SECRET=replace-with-a-32-char-random-string \
+  -e VITE_API_BASE_URL=http://localhost:3080 \
+  -e API_SERVER_URL=http://host.docker.internal:3080 \
+  -e SESSION_COOKIE_SECURE=false \
+  registry.librechat.ai/librechat-ai/librechat-admin-panel:latest
+```
+
+패널은 LibreChat에 대해 두 개의 주소가 필요합니다. `VITE_API_BASE_URL`은 브라우저가 LibreChat에 접근하는 주소이며 로그인 리디렉션에 사용됩니다. `API_SERVER_URL`은 패널 자체 서버가 LibreChat에 접근하는 주소입니다. 컨테이너 내부에서 `localhost`는 컨테이너 자신을 가리키므로, LibreChat이 같은 호스트에서 실행될 때 `API_SERVER_URL`은 `http://host.docker.internal:3080`을 사용하고(Linux에서는 위의 `--add-host` 플래그가 필요합니다), 브라우저는 `http://localhost:3080`을 그대로 유지합니다. 운영 환경에서는 두 값 모두 각 측이 확인(resolve)할 수 있는 DNS 이름으로 설정합니다.
+
+[admin-panel 저장소](https://github.com/LibreChat-AI/admin-panel)에도 `docker-compose.yml`이 있으며, Bun을 사용해 소스에서 실행하는 방법(`bun install` 후 `bun dev`)도 안내되어 있습니다.
+
+## 패널 환경 변수 [#panel-environment-variables]
+
+이것들은 LibreChat이 아닌 관리자 패널 서비스에서 설정됩니다.
+
+<OptionTable
+  options={[
+    ['SESSION_SECRET', 'string', '세션 암호화 키, 최소 32자. Docker 및 프로덕션 환경에서는 필수이며, bun dev에서만 내장된 개발용 시크릿으로 대체됩니다. 번들된 compose 파일에서는 ADMIN_PANEL_SESSION_SECRET에서 값을 가져옵니다.', 'SESSION_SECRET=replace-with-a-32-char-random-string'],
+    ['VITE_API_BASE_URL', 'string', 'Browser-facing URL of the LibreChat API, used for OAuth redirects. Required in Docker. Defaults to http://localhost:3080 in local development.', 'VITE_API_BASE_URL=https://chat.example.com'],
+    ['API_SERVER_URL', 'string', '패널 서버가 LibreChat을 호출할 때 사용하는 URL로, 브라우저에서 접근하는 URL과 다를 때 사용합니다(예: 내부 Kubernetes 서비스). 설정하지 않으면 VITE_API_BASE_URL을 사용합니다.', 'API_SERVER_URL=http://librechat:3080'],
+    ['PORT', 'number', '패널이 수신 대기하는 포트. 기본값: 3000.', 'PORT=3000'],
+    ['VITE_BASE_PATH', 'string', '패널을 하위 경로에서 제공합니다. 빌드 시점과 런타임에서 동일해야 하므로, 사용자 지정 하위 경로를 사용하려면 별도의 이미지 빌드가 필요합니다. 기본값: /.', 'VITE_BASE_PATH=/adminpanel'],
+    ['ADMIN_SSO_ONLY', 'boolean', '이메일 및 비밀번호 양식을 숨겨 관리자만 SSO로 로그인할 수 있도록 합니다. 기본값: false.', 'ADMIN_SSO_ONLY=false'],
+    ['ADMIN_SSO_ENABLED', 'boolean', 'SSO 버튼을 숨기고 LibreChat에 OpenID가 구성되어 있더라도 SSO 자동 리디렉션을 건너뛰려면 false로 설정합니다. ADMIN_SSO_ONLY보다 우선 적용됩니다. 기본값: true.', 'ADMIN_SSO_ENABLED=true'],
+    ['ADMIN_SESSION_IDLE_TIMEOUT_MS', 'number', '관리자 세션이 종료되기 전까지의 유휴 시간(밀리초 단위)입니다. 기본값: 1800000 (30분).', 'ADMIN_SESSION_IDLE_TIMEOUT_MS=1800000'],
+    ['SESSION_COOKIE_SECURE', 'boolean', '세션 쿠키가 HTTPS 전용인지 여부입니다. 프로덕션 환경에서는 기본값이 true입니다. 일반 HTTP 배포 환경에서만 false로 설정하세요. 그렇지 않으면 브라우저가 쿠키를 삭제하여 OpenID 로그인이 완료되지 않습니다.', 'SESSION_COOKIE_SECURE=false'],
+    ['ADMIN_PANEL_TRUSTED_ORIGINS', 'string', '리버스 프록시 뒤에서 HTTP로 동작할 때 Host 헤더를 다시 쓰거나 기본이 아닌 포트를 제거하는 경우에 필요합니다. 패널 서버를 호출할 수 있는 공개 출처(origin)를 쉼표로 구분하여 입력합니다. 이를 설정하지 않으면 로그인이 403 오류로 실패합니다.', 'ADMIN_PANEL_TRUSTED_ORIGINS=http://admin.example.com:8080'],
+    ['ADMIN_PANEL_METRICS_SECRET', 'string', 'Prometheus /metrics 엔드포인트를 스크랩하는 데 필요한 Bearer 토큰입니다. 설정하지 않으면 해당 엔드포인트는 401을 반환합니다.', 'ADMIN_PANEL_METRICS_SECRET='],
+  ]}
+/>
+
+### 캐시 헤더 [#cache-headers]
+
+이 값들은 LibreChat 자체의 캐시 변수를 그대로 반영합니다. 각 변수의 `ADMIN_PANEL_` 접두사 버전이 우선 적용되며, 해당 변수가 설정되지 않은 경우 패널은 공통 이름의 변수로 대체합니다.
+
+<OptionTable
+  options={[
+    ['STATIC_CACHE_MAX_AGE', 'number', '브라우저에서 /assets/ 아래 해시된 파일을 캐시하는 최대 기간(초 단위)입니다. ADMIN_PANEL_STATIC_CACHE_MAX_AGE 값이 이 설정을 덮어씁니다. 기본값: 172800(2일).', 'STATIC_CACHE_MAX_AGE=172800'],
+    ['STATIC_CACHE_S_MAX_AGE', 'number', '해시된 에셋의 CDN s-maxage(초 단위). ADMIN_PANEL_STATIC_CACHE_S_MAX_AGE가 이 값을 재정의합니다. 기본값: 86400(1일).', 'STATIC_CACHE_S_MAX_AGE=86400'],
+    ['INDEX_CACHE_CONTROL', 'string', 'HTML 페이지의 Cache-Control 헤더입니다. ADMIN_PANEL_INDEX_CACHE_CONTROL이 이 값을 재정의합니다.', 'INDEX_CACHE_CONTROL=no-cache, no-store, must-revalidate'],
+    ['INDEX_PRAGMA', 'string', 'HTML 페이지의 Pragma 헤더. ADMIN_PANEL_INDEX_PRAGMA가 이를 재정의합니다.', 'INDEX_PRAGMA=no-cache'],
+    ['INDEX_EXPIRES', 'string', 'HTML 페이지의 Expires 헤더입니다. ADMIN_PANEL_INDEX_EXPIRES로 이 값을 재정의할 수 있습니다.', 'INDEX_EXPIRES=0'],
+  ]}
+/>
+
+## LibreChat 설정 [#librechat-settings]
+
+### 리다이렉트 URL [#redirect-url]
+
+When the panel is hosted on a different URL from LibreChat, set `ADMIN_PANEL_URL` in LibreChat's `.env` to the panel's external base URL, including any path prefix and without a trailing slash. LibreChat uses it to send admins back to the panel after SSO, and shows admins an **Admin Panel** link under **Settings > General** once it is set.
+
+```bash filename=".env"
+ADMIN_PANEL_URL=https://admin.example.com/admin
+```
+
+Helm 차트를 사용할 때는 values 파일에서 `librechat.adminPanelUrl`을 설정하세요. 차트가 이를 `ADMIN_PANEL_URL`로 렌더링합니다.
+
+```yaml filename="values.yaml"
+librechat:
+  adminPanelUrl: https://admin.example.com/admin
+```
+
+### 싱글 사인온 [#single-sign-on]
+
+관리자는 LibreChat이 사용하는 것과 동일한 OpenID Connect 제공자로 패널에 로그인할 수 있습니다. 아이덴티티 제공자에 `${DOMAIN_SERVER}/api/admin/oauth/openid/callback`을 추가 리디렉션 URI로 등록하세요. 나머지 제공자 설정은 [OpenID Connect](/docs/configuration/authentication/OAuth2-OIDC)를 참조하세요. IdP 역할 또는 그룹에서 `ADMIN` 역할을 부여하려면 `OPENID_ADMIN_ROLE`을 사용하세요([.env 참조](/docs/configuration/dotenv#openid-connect)에 나와 있습니다).
+
+Google 로그인을 통해 패널에 로그인하려면 `GOOGLE_CLIENT_ID`와 `GOOGLE_CLIENT_SECRET`을 사용합니다. Google에 `${DOMAIN_SERVER}/api/admin/oauth/google/callback`을 등록하십시오. 패널은 오프라인 액세스를 요청하므로, 만료된 관리자 토큰을 새로 로그인하지 않고도 갱신할 수 있습니다. 토큰을 갱신할 때마다 계정의 신원, 차단 상태, 허용된 이메일 도메인, 테넌트, 관리자 액세스 권한을 다시 확인합니다.
+
+## 설정 오버라이드 [#configuration-overrides]
+
+재정의(Overrides)는 역할(role), 그룹(group), 또는 사용자(user) 단위의 주체(principal)별로 `librechat.yaml` 위에 적용되는 프로필로 저장되며, 모든 사용자에게 적용되는 기본(Base) 프로필도 함께 제공됩니다.
+
+**병합 순서.** 기본(Base) 프로필은 우선순위와 관계없이 가장 먼저 적용되며, 나머지 프로필은 우선순위 오름차순으로 적용됩니다. 우선순위가 같은 경우에는 역할, 그룹, 사용자, 생성 순서로 정렬됩니다. 우선순위를 지정하지 않고 생성된 프로필은 주체 유형별 기본값을 갖습니다. 역할은 10, 그룹은 20, 사용자는 100이며, 기본(Base) 프로필은 0입니다. 이후 쓰기 작업에서 우선순위를 생략하면 저장된 우선순위가 그대로 유지됩니다.
+
+**검증.** 쓰기 작업(`PUT /api/admin/config/:principalType/:principalId` 및 `PATCH .../fields`)은 기본 설정 위에 적용되는 `librechat.yaml` 스키마에 대해 검증됩니다. 유효하지 않은 결과는 HTTP 400으로 거부되며 아무것도 저장되지 않습니다:
+
+```json
+{
+  "error": "Invalid config override",
+  "code": "CONFIG_OVERRIDE_INVALID",
+  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
+}
+```
+
+각 이슈에는 경로(path)와 코드만 포함되며, 제출된 값은 포함되지 않습니다. 코드는 `invalid_type`과 같은 스키마 코드이거나, `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key`, `invalid_document` 중 하나입니다. 필드 패치는 해당 패치가 건드리거나 새로 도입하는 문제에 대해서만 거부됩니다.
+
+업그레이드로 스키마가 강화되는 등의 이유로 나중에 유효하지 않게 된 저장된 재정의는 치명적이지 않습니다. 설정을 해석할 때 유효하지 않은 필드는 제외되고, 그 아래에 있는 값이 적용되며, 서버는 필드마다 한 줄씩 로그를 남깁니다:
+
+```text
+[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
+```
+
+재정의 테마가 [테마 규칙](/docs/configuration/librechat_yaml/object_structure/theme#validation)을 충족하지 못하면, 마찬가지로 기본 테마로 대체됩니다.
+
+**비밀 정보.** 관리자 API를 통해 등록된 비밀 정보 필드는 저장 시 암호화되며, 마스킹된 미리보기 형태로만 반환됩니다. 대상은 Langfuse, OCR, 음성, 웹 검색, Assistants, Azure Assistants, MCP 서버 자격 증명, Azure 그룹 키, 그리고 각 `endpoints.custom[].apiKey`입니다. 이후 편집에서 비밀 정보를 생략하면 저장된 값이 유지되지만, 저장된 키가 전송되는 대상(예: 서버 URL 또는 기본 URL)을 변경하는 쓰기 작업에는 키를 다시 포함해야 합니다. 커스텀 엔드포인트 키의 `${ENV_VAR}` 및 `user_provided` 값은 그대로 유지됩니다. 사용자 지정 헤더와 같은 일반 맵의 임의 값은 암호화되지 않으므로, 해당 위치에서는 환경 변수 참조를 사용하십시오.
+
+**환경 변수 참조.** 재정의(overrides)에서 사용하는 `${ENV_VAR}` 참조는 `librechat.yaml`에서 이미 참조하는 이름, 기본 제공 엔드포인트 자격 증명, 그리고 `CONFIG_OVERRIDE_ENV_ALLOWLIST`에 나열된 이름으로만 제한됩니다. 그 밖의 참조는 쓰기 시 거부됩니다.
+
+**YAML 전용 설정.** `type: stdio`이거나 프로세스 관련 필드(`command`, `args`, `env`, `cwd`, `stderr`)를 가진 MCP 서버와 `langfuse.headers`는 `librechat.yaml`에서만 설정할 수 있습니다. 관리자 API는 이러한 항목에 대한 쓰기 요청을 거부하며, 재정의(overrides)로도 이를 대체하거나 제거할 수 없습니다. 자세한 내용은 [Langfuse: 인증된 프록시 및 게이트웨이](/docs/configuration/langfuse#authenticated-proxies-and-gateways)를 참조하세요.
+
+**섹션 단위 접근 제어.** 구성 기능은 넓은 범위(`read:configs`, `manage:configs`)로 부여하거나, 최상위 섹션 하나로 제한(`read:configs:<section>`, `manage:configs:<section>`)할 수 있습니다. 기본 프로필(Base profile)을 생성, 변경, 삭제하려면 항상 넓은 범위의 `manage:configs` 권한이 필요하며, 섹션 단위 관리는 역할, 그룹, 사용자 프로필에만 적용됩니다. 자세한 내용은 [관리자 기능](/docs/configuration/access_control#admin-capabilities)을 참고하세요.
+
+## Admin API [#admin-api]
+
+패널은 다음 LibreChat 엔드포인트와 통신합니다. 모든 라우트는 관리자 권한과 해당 기능(capability)을 확인합니다.
+
+| 마운트 경로 | 용도 |
+| ----- | ------- |
+| `POST /api/admin/login`, `/api/admin/oauth/*` | 관리자 로그인(로컬 및 SSO) |
+| `GET /api/admin/verify` | 관리자 세션 유효성 검사 |
+| `/api/admin/users` | 사용자 목록 조회 및 검색 |
+| `/api/admin/groups` | 그룹 및 그룹 구성원 |
+| `/api/admin/roles` | 사용자 지정 역할, 역할별 권한 및 구성원 |
+| `/api/admin/grants` | 시스템 기능 권한 부여 |
+| `/api/admin/config` | 기본 및 주체별 구성 프로필 |
+| `/api/admin/skills` | GitHub 스킬 동기화 상태, 실행 이력 및 자격 증명 |
+| `/api/admin/code-environments` | 코드 환경 워커 페어링 및 해지 |
+| `/api/admin/langfuse` | Langfuse 연결 설정 및 연결 테스트 |
+| `/api/admin/audit-log` | 권한 부여 감사 로그: `GET /`(목록), `GET /export.csv`, `GET /verify`(무결성 검사), `GET /:id`. `read:audit_log` 권한이 필요하며, 쓰기 엔드포인트는 없습니다 |
+
+설정 조회 엔드포인트는 다음과 같습니다: `GET /api/admin/config/meta`(배포 기능), `/catalog`(범위 및 모델 옵션), `/env-status`(환경 변수 참조 상태), `/effective`(호출자의 유효 설정), `/resolved/:principalType/:principalId`(특정 주체의 확정된 설정). 조회 요청에도 인가 검사와 시크릿 마스킹이 그대로 적용됩니다.
+
+`POST /api/admin/config/:principalType/:principalId/changes`는 하나의 프로필에 여러 변경 사항을 원자적으로 적용하고 쓰기 보고서를 반환합니다. 보고서에서는 적용된 위치와 건너뛴 위치가 별도로 나열되며, 배포 전용 경로는 배치 전체를 실패시키지 않고 건너뛸 수 있습니다.
+
+`POST /api/admin/config/reload`은 로컬 설정을 다시 로드하고, 다른 인스턴스에 무효화(invalidation)를 브로드캐스트합니다. 로컬 재로드는 성공했지만 브로드캐스트가 실패한 경우 `503`을 반환할 수 있습니다. 이는 롤백이 아니며, 다른 레플리카는 재로드되지 않았을 수 있습니다. 자세한 내용은 [업그레이드 가이드](/docs/configuration/upgrade#admin-configuration-and-secrets)를 참조하세요.
+
+그룹과 사용자 미리보기 및 유효 사용자 조회는 대상의 테넌트(Base 프로필 포함)에서 확인됩니다. 테넌트 범위가 지정된 호출자는 다른 테넌트에 접근할 수 없으며, 역할 이름은 호출자 자신의 파티션을 가리킵니다.

@@ -1,0 +1,291 @@
+---
+title: 拉取请求
+icon: GitPullRequest
+description: >-
+  为代码工作区中的聊天提供 LibreChat 令牌或 OAuth 应用,使其能够显示来自 GitHub、GitLab 或 Bitbucket Cloud
+  的拉取请求。
+---
+
+本页介绍[对话拉取请求](/docs/features/pull_requests)的管理员端配置。所有配置项均位于 `librechat.yaml` 中的 `endpoints.agents.pullRequests` 下;每个配置项的取值范围和默认值,请参阅 [`pullRequests` 参考](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests),环境变量则见 [dotenv](/docs/configuration/dotenv#conversation-pull-requests)。
+
+## 要求 [#requirements]
+
+一个聊天只有在以下所有条件都满足时才会显示拉取请求:
+
+1. LibreChat 提供服务器令牌和仓库范围设置(`allowedRepositories` 或 `allowAllRepositories`),或者用户可以通过 `oauth` 连接自己的账户。
+2. 聊天会在所附的代码工作区中运行代码,而不是普通的聊天。
+3. 工作区会报告其 git 分支。这需要从 `LibreChat-AI/code-interpreter` #311 或更高版本构建的 worker,并且需要在 Code API 上(而非 LibreChat 上)设置 `CODEAPI_BRIDGE_LANE_GIT=true`。参见 [Code Interpreter](/docs/features/code_interpreter)。
+
+没有需要开启的开关。如果没有令牌和权限范围,或者没有可用的 `oauth` 应用,该功能会保持休眠状态:不会向客户端宣告任何内容,每个聊天都不会显示拉取请求,也不会有任何错误提示。`enabled: false` 则会无论其他配置如何都将其关闭。
+
+## 提供商与主机 [#provider-and-host]
+
+`provider` 用于指定拉取请求（Pull Request）所在的平台。一次部署只使用一个 provider。
+
+| `provider` | 服务 | 默认 `host` |
+| ------------------ | ----------------------------------------------------------------------------------------------- | --------------- |
+| `github`(默认) | GitHub.com、GitHub Enterprise Server 或 GitHub Enterprise Cloud 数据驻留租户(`*.ghe.com`) | `github.com` |
+| `gitlab` | gitlab.com 上的合并请求或自托管 GitLab 上的合并请求 | `gitlab.com` |
+| `bitbucket` | 仅限 Bitbucket Cloud | `bitbucket.org` |
+
+仅针对 GitHub Enterprise Server、`*.ghe.com` 租户或自托管的 GitLab 设置 `host`：
+
+- 它是主机名,而不是 URL:不包含协议(scheme)和路径,例如 `github.example.com`。
+- 允许使用 1 到 65535 之间的端口，例如 `git.example.com:8443`。`:443` 会被省略。
+- 在 GitHub 上，LibreChat 会针对 `github.com` 调用 `api.github.com`，针对 `*.ghe.com` 租户调用 `api.<host>`，并针对 Enterprise Server 调用 `https://<host>/api/v3`。在 GitLab 上，它会调用 `https://<host>/api/v4` 和 `https://<host>/api/graphql`。
+- Bitbucket 不接受其他主机。任何不是 `bitbucket.org` 的 `host` 都会关闭该功能,而不会将令牌发送到其他地方。
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      provider: 'gitlab'
+      host: 'gitlab.example.com'
+      allowedRepositories:
+        - 'platform/backend/api'
+        - 'platform/frontend/*'
+```
+
+`provider`、`host`、`oauth` 和 `sharedCacheSlots` 仅从 `librechat.yaml` 中读取。角色、群组、用户和租户对这些键的覆盖设置会被忽略,因此覆盖设置无法将令牌发送到其他服务,也无法更改应用授予访问权限的对象。其他键(例如 `token` 和 `allowedRepositories`)可以按主体(principal)分别设置。
+
+## 服务器令牌 [#the-server-token]
+
+服务器令牌用于所有尚未连接自己账户的用户。请将其设为只读,并将其权限限制在你愿意展示的代码仓库范围内。
+
+- GitHub:一个细粒度令牌,对 Pull requests、Checks 和 Contents 具有只读权限。若缺少 Checks,每个匹配的拉取请求都将加载失败。若缺少 Contents,当聊天所在分支自上次命令后已有更新时,该聊天将加载失败,因为 LibreChat 会比较提交以确认匹配。
+- GitLab：具有 `read_api` 范围的个人、群组或项目访问令牌。
+- Bitbucket Cloud:一个仓库、项目或工作区访问令牌,以 Bearer Token 形式发送,并具有读取拉取请求(Pull Request)和仓库的权限。
+
+LibreChat 按以下顺序查找令牌:
+
+1. `token: '${MY_VAR}'` 写在 `librechat.yaml` 中,表示对环境变量的引用;schema 会拒绝字面量形式的 token。
+2. 如果未设置 `token`,则使用提供商的回退变量中第一个已设置的变量:
+
+| 提供商 | 回退变量（按顺序） |
+| --- | --- |
+| GitHub | `GITHUB_PULL_REQUEST_TOKEN`、`GITHUB_TOKEN`、`GH_TOKEN` |
+| GitLab | `GITLAB_PULL_REQUEST_TOKEN`、`GITLAB_TOKEN` |
+| Bitbucket | `BITBUCKET_PULL_REQUEST_TOKEN` |
+
+如果设置了 `token`,但它指向一个为空或不存在的变量,则不会回退,查找将因 `NOT_CONFIGURED` 而失败。
+
+<Callout type="warning" title="GITHUB_TOKEN 和 GITLAB_TOKEN 是常见的名称">
+  如果你的部署已经为其他用途设置了其中某个变量，那么只要存在仓库作用域，此功能就会自动读取它。请显式设置 `token`，或使用 `*_PULL_REQUEST_TOKEN` 变量，以将它们区分开来。
+</Callout>
+
+## 仓库范围 [#repository-scope]
+
+工作区会报告其自身的代码仓库,因此服务器必须决定其令牌可用于哪些代码仓库。如果没有设置范围,服务器令牌将永远不会被使用。
+
+- `allowedRepositories`:最多 256 个条目,格式为 `owner/name` 或 `owner/*`,匹配时不区分大小写。在 GitLab 上,支持嵌套的群组路径,例如 `group/sub/name` 或 `group/sub/*`。`*` 仅代表一个路径段,因此 `group/*` 不匹配 `group/sub/name`。`*/*`、`*`、单独的 `owner`,或包含 `.` 或 `..` 路径段的条目会被拒绝。
+- `allowAllRepositories: true`:可以查询该令牌有权读取的任何仓库。此选项默认关闭,因为任何能够运行代码的用户都可以将服务器令牌指向其可见的任何仓库,并读取拉取请求的标题、大小和检查状态。
+
+对于来自分支仓库（fork）的拉取请求，超出范围的仓库看起来与没有拉取请求的仓库完全相同。只有当分支仓库位于范围内时，才会从该分支仓库读取检查结果；否则，将从基础仓库读取检查结果，从而确保令牌永远不会传递到未列出的分支仓库。
+
+## 示例 [#examples]
+
+GitHub，并在服务器环境中设置 `GITHUB_PULL_REQUEST_TOKEN`：
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowedRepositories:
+        - 'LibreChat-AI/LibreChat'
+        - 'my-org/*'
+```
+
+GitHub Enterprise Server，并带有明确的令牌引用：
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      host: 'github.example.com'
+      token: '${GHES_PULL_REQUEST_TOKEN}'
+      allowedRepositories: ['platform/*']
+```
+
+Bitbucket Cloud,在设置了 `BITBUCKET_PULL_REQUEST_TOKEN` 的情况下:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      provider: 'bitbucket'
+      allowedRepositories: ['my-workspace/*']
+```
+
+## 用户个人账户 [#per-user-accounts]
+
+当设置了 `oauth` 后,用户可以在 **Settings > Account > Pull request account** 下连接自己的账户,其查询将使用其自身的令牌、速率限制和仓库访问权限。即使没有服务器令牌或作用域,一个可正常工作的 `oauth` 应用也会启用该功能。
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      oauth:
+        clientId: '${GITHUB_PR_OAUTH_CLIENT_ID}'
+        clientSecret: '${GITHUB_PR_OAUTH_CLIENT_SECRET}'
+      # optional: the server token's scope, for users who have not connected
+      allowedRepositories: ['my-org/*']
+```
+
+`clientId` 和 `clientSecret` 是环境变量引用。如果其中任何一个无法解析,用户将无法连接,只能使用服务器令牌。该流程使用 `JWT_SECRET` 进行签名,回调 URL 则由 `DOMAIN_SERVER` 构建:
+
+```
+<DOMAIN_SERVER>/api/pull-requests/oauth/callback
+```
+
+连接账户的行为方式:
+
+- 已连接用户的令牌只能看到该用户本身有权查看的内容，因此它不受 `allowedRepositories` 的限制。
+- 未连接的用户将继续使用该作用域下的服务器令牌。如果没有服务器令牌,在其连接之前,他们将看不到任何内容。
+- 如果已连接用户的令牌因提供方或密钥存储服务不可用而无法刷新,其查询会将该拉取请求报告为不可用。系统绝不会回退到服务器令牌。
+- 如果提供方因授权已被撤销而拒绝刷新,则该连接会被移除,用户视为未连接。
+- 授权信息以加密方式存储，每个用户与每个提供方主机对应一条记录。更改 `clientId`、`provider` 或 `host` 后，已有连接将不再生效，用户需要重新连接。更改 `scope` 仅对新建连接生效。
+- 移除 `oauth` 后,已保存的授权将不再被使用;用户会看到 **Not in use**,并可以断开连接。
+
+`scope`、`flowTimeoutMinutes`、`requestTimeoutSeconds` 和 `retentionDays` 均为可选项;请参阅 [`pullRequests.oauth` 参考](/docs/configuration/librechat_yaml/object_structure/agents#pullrequestsoauth)。
+
+### 注册应用 [#register-the-app]
+
+<Tabs items={["GitHub", "GitLab", "Bitbucket"]}>
+<Tabs.Tab>
+
+GitHub App 是更好的选择:其用户令牌无需配置权限范围(scope),且仅能访问安装了该应用的代码仓库。
+
+<Steps>
+<Step>
+
+打开 **Settings > Developer settings > GitHub Apps > New GitHub App**，进入您的账户或组织页面。在 GitHub Enterprise Server 或 `*.ghe.com` 上，请使用该主机上的相同页面。
+
+</Step>
+<Step>
+
+将 **Callback URL** 设置为 `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`。在 **Webhook** 下，取消勾选 **Active**。
+
+</Step>
+<Step>
+
+在 **Repository permissions** 下，将 **Pull requests**、**Checks** 和 **Contents** 设置为 **Read-only**。
+
+</Step>
+<Step>
+
+创建应用,复制 **Client ID**,并生成一个客户端密钥(Client Secret)。将二者分别写入环境变量,然后在 `oauth.clientId` 和 `oauth.clientSecret` 中引用它们。
+
+</Step>
+<Step>
+
+在用户需要查看其存储库的账户或组织上安装该应用。
+
+</Step>
+</Steps>
+
+经典 OAuth App 也可以使用,但需要设置 `scope: 'repo'`,该权限授予的范围超出了只读访问。
+
+</Tabs.Tab>
+<Tabs.Tab>
+
+<Steps>
+<Step>
+
+在 `host` 中设置的 GitLab 主机上,打开 **Edit profile > Applications**(或群组、实例的 **Applications** 页面)。
+
+</Step>
+<Step>
+
+将 **Redirect URI** 设置为 `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`，保持勾选 **Confidential**，并选择 `read_api` 范围。
+
+</Step>
+<Step>
+
+保存后,将 **Application ID** 和 **Secret** 放入环境变量中,并由 `oauth.clientId` 和 `oauth.clientSecret` 引用。设置 `provider: 'gitlab'`,若使用自托管 GitLab,还需添加 `host`。
+
+</Step>
+</Steps>
+
+</Tabs.Tab>
+<Tabs.Tab>
+
+<Steps>
+<Step>
+
+在 Bitbucket Cloud 中,打开 **Workspace settings > OAuth consumers > Add consumer**。
+
+</Step>
+<Step>
+
+将 **Callback URL** 设置为 `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`，并授予 **Pull requests: Read** 和 **Repositories: Read** 权限。LibreChat 不会在 Bitbucket 上请求任何 scope，因此消费者的权限即为用户所授予的权限。
+
+</Step>
+<Step>
+
+保存后,将消费者的 **Key** 和 **Secret** 放入环境变量中,并分别由 `oauth.clientId` 和 `oauth.clientSecret` 引用。设置 `provider: 'bitbucket'`。
+
+</Step>
+</Steps>
+
+</Tabs.Tab>
+</Tabs>
+
+## 速率限制与缓存 [#rate-limits-and-caching]
+
+结果按凭据、仓库、分支和提交缓存 `cacheTtlSeconds` 秒(默认为 30 秒)。失败结果最多记录 10 秒。
+
+限速作用于单个主机上的某个凭据，因此它会暂停该令牌下所有分支的查询；若使用按用户的账户，则每个用户各自独立计算。暂停时间至少为 10 秒，若服务商指定了等待时间，则以该时间为准，但最长不超过 1 小时；对于未指定等待时间的 GitHub 二级限速，暂停时间为 60 秒。暂停期间，查询将返回 `RATE_LIMITED`。
+
+当部署了多个副本时,请设置 `sharedCache: true`,使其通过 Redis 共享已找到的拉取请求和速率限制暂停状态,而不是每个副本都为相同的结果消耗令牌。该设置仅在部署时启用了 `USE_REDIS` 的情况下生效。每个副本在其前端保留自己的内存缓存,而慢于 `sharedCacheTimeoutMs`(默认为 250 毫秒)的 Redis 调用将被跳过。`sharedCacheSlots`(取值范围 64 至 1000000,默认 65536)用于限制共享缓存所使用的 Redis 键数量。仅从 YAML 中读取。
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowedRepositories: ['my-org/*']
+      sharedCache: true
+```
+
+其余的限制项(并发数、超时时间、回溯查找复用分支名的范围、读取检查结果的页数)都有合理的默认值。这些项列在 [`pullRequests` 参考文档](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests)中。
+
+## 滚动升级 [#rolling-upgrades]
+
+侧边栏使用批量路由,并且仅当 `/api/config` 声明了 `pullRequestsBatchVersion` 时才会请求该路由。如果某个未提供该路由的副本返回 404,客户端会回退为对每个对话单独查询。如果 `/api/config` 本身由未设置该标志的副本提供服务,侧边栏标记将保持为空,因此在依赖这些标记之前,请先升级所有副本。
+
+## 安全 [#security]
+
+- 令牌始终保存在服务器端,绝不会发送到浏览器。错误响应中也不会包含提供商的响应文本、令牌或堆栈跟踪信息。
+- 服务器令牌仅用于范围内的代码仓库，且仅在已配置的主机上使用。
+- 查询路由需要已登录用户,并且只返回该用户自己的对话结果。对话不存在、已过期或属于其他用户时,返回的结果与该对话没有拉取请求(pull request)时完全相同。
+
+## 故障排除 [#troubleshooting]
+
+在找到拉取请求之前,查找失败时侧边栏不会显示任何内容。调试日志会记录提供方和原因代码,但不包含仓库名称或提供方的响应内容。要确认该功能已开启,请在登录状态下打开 `/api/config`,并查找 `pullRequestsEnabled: true`。
+
+| 症状 | 可能原因 | 修复方法 |
+| --- | --- | --- |
+| 任何地方都没有标签或侧边栏标记 | 没有令牌、没有仓库范围，或 `enabled: false` | 检查令牌和范围，然后访问 `/api/config`。 |
+| 某个工作区聊天没有标签 | 其仓库不在 `allowedRepositories` 中 | 将其添加进去，或将其所有者添加为 `owner/*`。 |
+| 只有部分工作区聊天显示标签 | 该工作区尚未报告分支 | 确认 Code API 上已设置 `CODEAPI_BRIDGE_LANE_GIT=true`，并且 worker 版本为 code-interpreter #311 或更高。 |
+| 顶部标签正常，但侧边栏不显示任何内容 | `/api/config` 缺少 `pullRequestsBatchVersion`（旧版本构建或页面缓存过期） | 升级所有副本，重启，并强制刷新页面。 |
+| `NOT_CONFIGURED` | 已设置 `token`，但其对应的变量为空或缺失 | 设置该变量，或删除 `token` 以使用回退变量。 |
+| 所有 GitHub 拉取请求都加载失败 | 令牌缺少 Checks 权限 | 授予只读 Checks 权限。 |
+| 仅在分支更新后失败 | 令牌缺少 Contents 权限 | 授予只读 Contents 权限。 |
+| 频繁出现 `RATE_LIMITED` | 多个用户共享同一个令牌，或各副本都向提供方发起请求 | 提高 `cacheTtlSeconds`，降低 `maxConcurrentLookups`，启用 `sharedCache`，或配置 `oauth`。 |
+| 某个 fork 的拉取请求没有检查项 | 该 fork 不在范围内 | 添加该 fork 的所有者，或设置 `allowAllRepositories: true`。 |
+| GitLab 或 Bitbucket 没有任何显示 | 未设置 `provider`，或 `host` 不匹配 | 设置 `provider`；对于自托管 GitLab，还需设置 `host`。Bitbucket 仅适用于 `bitbucket.org`。 |
+| `gh pr create` 链接被忽略 | 该链接指向其他主机或仓库 | 只有配置的主机上、且属于工作区仓库的链接才会生效。 |
+| 已连接的用户看到拉取请求不可用 | 其令牌无法刷新 | 稍后重试；已连接的用户永远不会回退到服务器令牌。 |
+| 对于频繁复用的分支名，没有找到拉取请求 | 搜索在到达目标之前就停止了 | 提高 `maxCandidatePullRequests`、`maxCandidatePages` 或 `maxHeadComparisons`。 |
+| 通过代理时查询缓慢或超时 | `requestTimeoutSeconds` 设置过低 | 提高该值，并检查 `HTTPS_PROXY` 和 `NO_PROXY`。 |
+
+## API [#api]
+
+两个对话路由都需要已登录的用户,并且只会响应该用户自己的对话。
+
+- `GET /api/convos/:conversationId/pull-request` 返回 `{ "pullRequest": null }`,或者返回一个包含以下字段的拉取请求对象:`number`、`title`、`url`、`additions`、`deletions`、`state`(`open`、`closed`、`merged`)、`isDraft`、`mergeable`(`clean`、`conflicting`、`unknown`)以及 `checks`(`passing`、`failing`、`running`、`none`)。失败时返回 503 状态码,且 `code` 字段设置为 `NOT_CONFIGURED`、`RATE_LIMITED` 或 `UPSTREAM_ERROR`。
+- `POST /api/convos/pull-requests` 接收 `{ "conversationIds": [...] }`,其中包含 1 到 50 个 ID,并按相同顺序返回 `{ "results": [...] }`。每个结果包含 `pullRequest` 或 `error.code`。单个查询失败不会影响其他查询的结果。
+
+账户路由仅在设置了 `JWT_SECRET` 时才存在:`GET /api/pull-requests/oauth/connect`、`GET /api/pull-requests/oauth/callback`、`GET /api/pull-requests/oauth/status` 和 `DELETE /api/pull-requests/oauth`。
+
+`/api/config` 包含 `pullRequestsEnabled`;当该功能开启时,还会包含 `pullRequestsBatchVersion` 和 `pullRequestsMaxConcurrentLookups`;当用户可以连接账户时,还会包含 `pullRequestsConnect`(即服务提供方)。这些字段由服务器设置,并非配置项。只有上述错误代码是稳定的。

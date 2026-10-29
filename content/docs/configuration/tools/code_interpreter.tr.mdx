@@ -1,0 +1,91 @@
+---
+title: Kod Yorumlayıcı
+icon: SquareTerminal
+description: >-
+  Code Interpreter hizmetini dağıtın, LibreChat'i buna bağlayın ve isteğe bağlı
+  kod özelliklerini etkinleştirin.
+---
+
+Bu sayfa, [Code Interpreter](/docs/features/code_interpreter) özelliğinin yönetici tarafını kapsar. Kod, ayrı bir hizmet olan [ClickHouse/code-interpreter](https://github.com/ClickHouse/code-interpreter) içinde çalışır ve bu hizmeti kendiniz dağıtırsınız. LibreChat, koda ve dosyalara ilişkin istekleri bu hizmete gönderir ve her isteği kimlik doğrulamasından geçirir. Burada bahsedilen LibreChat tarafı değişkenlerin tamamı [`.env` referansında](/docs/configuration/dotenv#code-interpreter) listelenmiştir.
+
+## Servisi dağıtın [#deploy-the-service]
+
+Depoyu çalıştırmak için depodaki README dosyasını izleyerek Docker Compose veya Helm kullanın. Bu servis; bir API ağ geçidi, korumalı alanda (sandbox) çalışan işçiler, bir dosya sunucusu ve bir Tool Call Server bileşeninden oluşur ve bunlar LibreChat'ten bağımsız olarak ölçeklenebilir. İşçiler kodu NsJail veya bir libkrun microVM ile izole eder. Bellek ve CPU sınırları, yükleme boyutu, istek kotaları ve korumalı alandaki kodun ağ erişimi LibreChat içinde değil, bu dağıtım üzerinde ayarlanır.
+
+Herkese açık veya üretim ağında hizmetin kimlik doğrulamasız yerel modunu (`LOCAL_MODE=true`) asla açığa çıkarmayın.
+
+## LibreChat'e Bağlanın [#connect-librechat]
+
+1. `LIBRECHAT_CODE_BASEURL` değişkenini dağıtımınızın URL'sine ayarlayın.
+2. Kimlik doğrulamasını yapılandırın. Mevcut açık kaynak hizmeti, yerel mod dışında [JWT kimlik doğrulaması](#self-hosted-jwt-authentication) bekler. API anahtarlarını kabul eden dağıtımlar bunun yerine `LIBRECHAT_CODE_API_KEY` kullanır; tüm kullanıcılar tarafından paylaşılan tek bir anahtar olup `X-API-Key` başlığı ile gönderilir.
+3. LibreChat'i yeniden başlatın.
+
+Ardından kod çalıştırmanın izin verildiğini kontrol edin:
+
+- `execute_code` değeri [`endpoints.agents.capabilities`](/docs/configuration/librechat_yaml/object_structure/agents#capabilities) içinde bulunmalıdır. Varsayılan listede yer almaktadır.
+- Kullanıcıların run-code iznine ihtiyacı vardır. [`interface.runCode`](/docs/configuration/librechat_yaml/object_structure/interface#runcode) bu izni `USER` rolü için başlangıç değeri olarak tanımlar ve kod bloklarındaki **Run Code** düğmesini denetler. Aynı izin, Agent Builder'daki **Run Code** aracını da kontrol eder.
+
+## Kendi sunucunuzda barındırılan JWT kimlik doğrulaması [#self-hosted-jwt-authentication]
+
+JWT kimlik doğrulaması ile LibreChat, Code Interpreter her isteğinde oturum açmış kullanıcı için kısa ömürlü bir token imzalar. Servis bu token'ı eşleşen genel anahtarla doğrular ve token içindeki kullanıcı ve kiracı bilgilerini kullanarak dosyaları ve oturumları birbirinden ayırır. Özel anahtar LibreChat içinde kalır.
+
+Ancak bu mesajda çevrilecek bir Markdown/MDX bloğu yer almıyor; yalnızca "On the LibreChat side:" ifadesi var. Lütfen çevirmek istediğiniz tam metni gönderin, ardından çevirisini hemen hazırlayayım.
+
+```bash filename=".env"
+CODEAPI_AUTH_PROVIDER=librechat-jwt
+CODEAPI_JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+CODEAPI_JWT_ALGORITHM=EdDSA
+CODEAPI_JWT_KID=lc-codeapi-2026-05
+CODEAPI_JWT_ISSUER=librechat
+CODEAPI_JWT_AUDIENCE=codeapi
+CODEAPI_JWT_TTL_SECONDS=300
+CODEAPI_JWT_MINT_CACHE_SECONDS=30
+CODEAPI_JWT_SINGLE_TENANT_ID=legacy
+```
+
+`CODEAPI_JWT_PRIVATE_KEY_BASE64` (base64 PEM) veya `CODEAPI_JWT_PRIVATE_JWK_JSON` (özel JWK) anahtarı tutabilir. İmzalama, Ed25519 veya Ed448 anahtarı (varsayılan) ile `EdDSA` veya `RS256` kullanılarak yapılır. Her değişken için varsayılanlar ve sınırlar, [`.env` referansının JWT bölümünde](/docs/configuration/dotenv#code-interpreter-jwt-authentication) yer almaktadır.
+
+Code Interpreter tarafında, eşleşen doğrulayıcıyı yapılandırın:
+
+```bash filename="code-interpreter .env"
+LOCAL_MODE=false
+CODEAPI_AUTH_PROVIDER=librechat-jwt
+CODEAPI_JWT_ISSUER=librechat
+CODEAPI_JWT_AUDIENCE=codeapi
+CODEAPI_JWT_ALLOWED_ALGS=EdDSA
+CODEAPI_JWT_JWKS_JSON={"keys":[{"kty":"OKP","crv":"Ed25519","x":"...","kid":"lc-codeapi-2026-05","alg":"EdDSA"}]}
+CODEAPI_JWT_SINGLE_TENANT_ID=legacy
+```
+
+Issuer, audience, anahtar kimliği (key ID), algoritma, açık anahtar (public key) ve tek kiracı (single-tenant) kimliği her iki serviste de eşleşmelidir. Servis ayrıca doğrulayıcı anahtarlarını `CODEAPI_JWT_KID` ile birlikte `CODEAPI_JWT_PUBLIC_KEY` üzerinden veya `CODEAPI_JWT_PUBLIC_KEYS_DIR` üzerinden yükleyebilir; satır içi bir JWKS, anahtar rotasyonunu en kolay hale getirir. LibreChat'in token TTL süresini, servisin `CODEAPI_JWT_MAX_TTL_SECONDS` değerinin altında veya buna eşit tutun (en fazla 300).
+
+Yerel bir kopya (checkout) için Code Interpreter deposunda, eşleşen Ed25519 anahtarlarını üreten ve her iki `.env` dosyasını yazan bir yardımcı araç bulunmaktadır:
+
+```bash
+node scripts/setup-local-auth-env.js --librechat /path/to/LibreChat
+```
+
+Çok kiracılı (multi-tenant) dağıtımlar, kimliği doğrulanmış bir kiracı bağlamı sağlamalı ve LibreChat'te `TENANT_ISOLATION_STRICT=true`, hizmette ise `CODEAPI_TENANT_ISOLATION_STRICT=true` ayarlamalıdır. Katı mod, tek kiracılı kimliğe geri dönmek yerine kiracı içermeyen istekleri reddeder.
+
+Başka bir uygulamayı doğrudan servise entegre etmek, uyumlu token'ları kendiniz üretmek ve bunları `Authorization: Bearer <token>` olarak göndermek anlamına gelir.
+
+## Dosya yüklemeleri ve önizlemeleri [#file-uploads-and-previews]
+
+LibreChat, bir çalıştırmadan önce konuşma dosyalarını servise yükler ve `429` hız sınırı hatasına takılan yüklemeleri yeniden dener; bu sırada sınırlı bir bekleme süresi içinde `Retry-After` değerine uyar. Bunu kullanıcı ve rota bazında [`codeApiUploadConcurrency` ve `codeApiMaxRetryWaitMs`](/docs/configuration/librechat_yaml/object_structure/agents#code-api-upload-recovery) ile ayarlayabilirsiniz.
+
+Oluşturulan dosyalar, varsayılan olarak 2 MiB'a kadar (`FILE_PREVIEW_MAX_EXTRACT_BYTES`; bkz. [Satır İçi Dosya Önizlemeleri](/docs/configuration/dotenv#inline-file-previews)) satır içi önizleme alır. Aracının sandbox'tan okuduğu görseller 1 MiB'a kadar satır içi görüntülenir. LibreChat'in görselleri mümkün olduğunca az istekle okuyabilmesi için `LIBRECHAT_CODE_SANDBOX_OUTPUT_MAX_SIZE` değerini worker'ın `SANDBOX_OUTPUT_MAX_SIZE` değeriyle eşleşecek şekilde ayarlayın; `LIBRECHAT_CODE_IMAGE_CHUNK_BYTES` yalnızca aktarım penceresini sabitler ve 1 MiB sınırını yükseltmez.
+
+Önizlemeler, statik Sandpack paketleyicisi aracılığıyla Artifacts panelinde gösterilir. Paketleyiciyi kendi sunucunuzda barındırıyorsanız, bkz. [Artifacts yapılandırması](/docs/configuration/artifacts#self-hosting-the-sandpack-bundler).
+
+<Callout type="warning" title="Eski kodla çıktı alma sürümünü yükseltme">
+  Unique output-file index oluşturulmadan önce aynı Code Interpreter dosya adını yeniden üreten dağıtımlarda, indeksin oluşturulmasını engelleyen yinelenen MongoDB kayıtları bulunabilir. Onarımı önizlemek için `npm run migrate:code-file-duplicates:dry-run` komutunu çalıştırın, ardından uygulamak için `npm run migrate:code-file-duplicates` komutunu kullanın.
+</Callout>
+
+## İsteğe bağlı özellikler [#optional-features]
+
+Bunların her biri siz açana kadar kapalıdır.
+
+- **Programmatik Araç Çağrısı**: [agents capabilities](/docs/configuration/librechat_yaml/object_structure/agents#capabilities) bölümünde `execute_code` ile birlikte `programmatic_tools` ekleyin. Hizmetin Tool Call Server'ı gereklidir.
+- **Arka plan yürütme**: agents yetenekleri (capabilities) listesine `run_in_background` ekleyin. Tamamlanan sonuçların iletimi ve iptal işlemleri [`backgroundTasks`](/docs/configuration/librechat_yaml/object_structure/agents#backgroundtasks) altında ayarlanır.
+- **Durum bilgisi tutan kod oturumları**: Agents yeteneklerine `stateful_code_sessions` ekleyin ve ya [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint) değişkenini `stateful` profilini bildiren bir dağıtıma ayarlayın ya da adlandırılmış ortamları yapılandırın. Durum bilgisi tutmayan agent'lar `LIBRECHAT_CODE_BASEURL` değişkenini kullanmaya devam eder; durum bilgisi tutan istekler ise asla bu değişkene geri dönmez. Bu özellik deneysel niteliktedir ve değişebilir.
+- **Kod ortamları** (bağlı makineler, kişisel çalışanlar, eşleştirme, sohbet bazında makine seçimi, onay politikası): [`statefulCodeSessions`](/docs/configuration/librechat_yaml/object_structure/agents#statefulcodesessions) altında yapılandırılır. Sohbet eklerinin bağlı bir çalışma alanına kopyalanması `endpoints.agents.workspaceAttachments` ile sınırlandırılır: `timeoutMs` (varsayılan 10000, aralık 1000 ile 120000 arası) ve `concurrency` (varsayılan 3, aralık 1 ile 16 arası).

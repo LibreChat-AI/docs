@@ -1,0 +1,89 @@
+---
+title: 代码解释器
+icon: SquareTerminal
+description: '部署 Code Interpreter 服务,将 LibreChat 与其连接,并启用可选的代码功能。'
+---
+
+本页面介绍[代码解释器](/docs/features/code_interpreter)的管理员相关内容。代码在一个独立的服务中运行,即[ClickHouse/code-interpreter](https://github.com/ClickHouse/code-interpreter),该服务需要您自行部署。LibreChat 会将代码和文件发送给该服务,并对每个请求进行身份验证。此处提及的所有 LibreChat 端变量均列在 [`.env` 参考](/docs/configuration/dotenv#code-interpreter)中。
+
+## 部署服务 [#deploy-the-service]
+
+请按照代码仓库中的 README 使用 Docker Compose 或 Helm 运行它。该服务由 API 网关、沙箱化工作进程、文件服务器和工具调用服务器组成,它们可独立于 LibreChat 进行扩缩容。工作进程使用 NsJail 或 libkrun 微虚拟机隔离代码。内存和 CPU 限制、上传文件大小、请求配额以及沙箱化代码的网络访问权限均在该部署中设置,而不是在 LibreChat 中设置。
+
+永远不要将服务的免认证本地模式(`LOCAL_MODE=true`)暴露在公共网络或生产网络中。
+
+## 连接 LibreChat [#connect-librechat]
+
+1. 将 `LIBRECHAT_CODE_BASEURL` 设置为你部署的 URL。
+2. 设置身份验证。当前开源服务在非本地模式下要求使用 [JWT 身份验证](#self-hosted-jwt-authentication)。接受 API 密钥的部署则改用 `LIBRECHAT_CODE_API_KEY`,这是一个由所有用户共享的密钥,通过 `X-API-Key` 请求头发送。
+3. 重启 LibreChat。
+
+然后检查是否允许代码执行:
+
+- `execute_code` 必须位于 [`endpoints.agents.capabilities`](/docs/configuration/librechat_yaml/object_structure/agents#capabilities) 中。它在默认列表中。
+- 用户需要 run-code 权限。[`interface.runCode`](/docs/configuration/librechat_yaml/object_structure/interface#runcode) 会为 `USER` 角色设置该权限,并控制代码块上的 **Run Code** 按钮。同一权限也控制 Agent Builder 中 **Run Code** 工具的可用性。
+
+## 自托管 JWT 身份验证 [#self-hosted-jwt-authentication]
+
+使用 JWT 身份验证时,LibreChat 会在每次 Code Interpreter 请求中,为已登录用户签发一个短期有效的令牌。服务端会使用对应的公钥校验该令牌,并利用令牌中的用户和租户信息,将文件与会话彼此隔离。私钥始终保留在 LibreChat 中。
+
+在 LibreChat 这一侧:
+
+```bash filename=".env"
+CODEAPI_AUTH_PROVIDER=librechat-jwt
+CODEAPI_JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+CODEAPI_JWT_ALGORITHM=EdDSA
+CODEAPI_JWT_KID=lc-codeapi-2026-05
+CODEAPI_JWT_ISSUER=librechat
+CODEAPI_JWT_AUDIENCE=codeapi
+CODEAPI_JWT_TTL_SECONDS=300
+CODEAPI_JWT_MINT_CACHE_SECONDS=30
+CODEAPI_JWT_SINGLE_TENANT_ID=legacy
+```
+
+`CODEAPI_JWT_PRIVATE_KEY_BASE64`(base64 PEM)或`CODEAPI_JWT_PRIVATE_JWK_JSON`(私有 JWK)可以用来保存密钥。签名使用`EdDSA`算法,配合 Ed25519 或 Ed448 密钥(默认),或使用`RS256`。每个变量的默认值和限制请参阅[`.env` 参考文档中的 JWT 部分](/docs/configuration/dotenv#code-interpreter-jwt-authentication)。
+
+在 Code Interpreter 一侧,配置对应的验证器:
+
+```bash filename="code-interpreter .env"
+LOCAL_MODE=false
+CODEAPI_AUTH_PROVIDER=librechat-jwt
+CODEAPI_JWT_ISSUER=librechat
+CODEAPI_JWT_AUDIENCE=codeapi
+CODEAPI_JWT_ALLOWED_ALGS=EdDSA
+CODEAPI_JWT_JWKS_JSON={"keys":[{"kty":"OKP","crv":"Ed25519","x":"...","kid":"lc-codeapi-2026-05","alg":"EdDSA"}]}
+CODEAPI_JWT_SINGLE_TENANT_ID=legacy
+```
+
+两个服务上的 Issuer(签发方)、audience(受众)、key ID(密钥 ID)、algorithm(算法)、public key(公钥)以及 single-tenant ID(单租户 ID)必须保持一致。该服务还可以通过 `CODEAPI_JWT_PUBLIC_KEY` 配合 `CODEAPI_JWT_KID` 加载验证密钥,或者通过 `CODEAPI_JWT_PUBLIC_KEYS_DIR` 加载。使用内联 JWKS 最便于密钥轮换。LibreChat 的令牌 TTL 必须小于或等于该服务的 `CODEAPI_JWT_MAX_TTL_SECONDS`(最多 300)。
+
+对于本地检出的代码仓库,Code Interpreter 仓库提供了一个辅助工具,可以生成配对的 Ed25519 密钥,并同时写入两个 `.env` 文件:
+
+```bash
+node scripts/setup-local-auth-env.js --librechat /path/to/LibreChat
+```
+
+多租户部署应提供经过身份验证的租户上下文,并在 LibreChat 中设置 `TENANT_ISOLATION_STRICT=true`,在服务中设置 `CODEAPI_TENANT_ISOLATION_STRICT=true`。严格模式会拒绝没有租户信息的请求,而不会回退到单租户 ID。
+
+直接将另一个应用与服务集成时,需要自行生成兼容的令牌,并以 `Authorization: Bearer <token>` 的形式发送。
+
+## 文件上传与预览 [#file-uploads-and-previews]
+
+LibreChat 会在运行前将对话文件上传到服务端,并对遇到 `429` 速率限制的上传进行重试,在有限的等待时间内遵循 `Retry-After` 响应头。您可以通过 [`codeApiUploadConcurrency` 和 `codeApiMaxRetryWaitMs`](/docs/configuration/librechat_yaml/object_structure/agents#code-api-upload-recovery) 按用户和路由进行调整。
+
+生成的文件会在最大 `FILE_PREVIEW_MAX_EXTRACT_BYTES`(默认为 2 MiB;参见 [Inline File Previews](/docs/configuration/dotenv#inline-file-previews))范围内显示内联预览。智能体从沙箱中读取的图片最大 1 MiB 内联显示。请将 `LIBRECHAT_CODE_SANDBOX_OUTPUT_MAX_SIZE` 设置为与工作进程的 `SANDBOX_OUTPUT_MAX_SIZE` 一致,以便 LibreChat 用尽可能少的请求读取图片;`LIBRECHAT_CODE_IMAGE_CHUNK_BYTES` 仅用于固定传输窗口,不会提高 1 MiB 的限制。
+
+预览内容通过静态 Sandpack 打包器在 Artifacts 面板中渲染。如果您自行托管打包器,请参阅 [Artifacts 配置](/docs/configuration/artifacts#self-hosting-the-sandpack-bundler)。
+
+<Callout type="warning" title="使用旧代码输出进行升级">
+  在唯一输出文件索引出现之前，如果部署环境中同一个 Code Interpreter 文件名被反复重新生成，MongoDB 中可能存在重复记录，从而导致该索引无法建立。请先运行 `npm run migrate:code-file-duplicates:dry-run` 预览修复结果，然后再运行 `npm run migrate:code-file-duplicates` 执行修复。
+</Callout>
+
+## 可选功能 [#optional-features]
+
+每一项在您启用之前都是关闭的。
+
+- **Programmatic Tool Calling**：在 [agents capabilities](/docs/configuration/librechat_yaml/object_structure/agents#capabilities) 中将 `programmatic_tools` 与 `execute_code` 一起添加。需要服务的 Tool Call Server。
+- **后台执行**:在智能体能力中添加 `run_in_background`。已完成结果的交付方式和取消设置,请参阅 [`backgroundTasks`](/docs/configuration/librechat_yaml/object_structure/agents#backgroundtasks)。
+- **有状态的代码会话**:在智能体功能(capabilities)中添加 `stateful_code_sessions`,并将 [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint) 设置为一个声明支持 `stateful` 配置文件的部署地址,或者配置已命名的环境。无状态智能体继续使用 `LIBRECHAT_CODE_BASEURL`;有状态的请求永远不会回退到该地址。此功能处于实验阶段,may change。
+- **代码环境**(已附加的机器、个人工作节点、配对、按对话选择机器、审批策略):通过 [`statefulCodeSessions`](/docs/configuration/librechat_yaml/object_structure/agents#statefulcodesessions) 进行配置。将对话附件复制到已附加的工作区时,受 `endpoints.agents.workspaceAttachments` 限制:`timeoutMs`(默认 10000,范围 1000 至 120000)和 `concurrency`(默认 3,范围 1 至 16)。

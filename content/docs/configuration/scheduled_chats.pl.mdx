@@ -1,0 +1,76 @@
+---
+title: Zaplanowane czaty
+icon: CalendarClock
+description: >-
+  Włącz Zaplanowane czaty, ustaw limity i zasady projektu, zezwól na dostęp MCP
+  bez nadzoru oraz spełnij wymagania dotyczące Redis i checkpointera.
+---
+
+[Zaplanowane czaty](/docs/features/scheduled_chats) są funkcją eksperymentalną i pozostają wyłączone, dopóki jej nie włączysz. Zaplanowane uruchomienia korzystają z zasobów modeli, narzędzi i Interpretera Kodu bez nadzoru, dlatego przed ich włączeniem sprawdź poniższe wymagania wdrożenia.
+
+## Włącz [#enable]
+
+Dodaj `interface.schedules` do `librechat.yaml` i uruchom ponownie LibreChat:
+
+```yaml filename="librechat.yaml"
+interface:
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    fireConcurrency: 5
+    requireProject: false
+    # projectId: '000000000000000000000000'
+```
+
+`use` i `create` inicjalizują uprawnienia `SCHEDULES` dla wbudowanej roli `USER` podczas uruchamiania; następnie zarządza się nimi dla każdej roli w [Panelu administracyjnym](/docs/features/admin_panel). `use` pozwala użytkownikowi zobaczyć swoje harmonogramy. `create` dodatkowo pozwala mu tworzyć, edytować, włączać, uruchamiać i usuwać harmonogramy. Pozostałe klucze to limity czasu działania.
+
+<OptionTable
+  options={[
+    ['maxPerUser', 'Number', 'Maksymalna liczba harmonogramów, jaką może posiadać każdy użytkownik, licząc również wyłączone. Ustaw na 0, aby uniemożliwić tworzenie.', '10'],
+    ['minIntervalMinutes', 'Number', 'Najkrótszy dozwolony odstęp między dwoma uruchomieniami jednego harmonogramu. Dotyczy każdego cyklu, w tym niestandardowego cron.', '60'],
+    ['autoDisableAfterFailures', 'Number', 'Kolejne nieudane uruchomienia, po których harmonogram wyłącza się automatycznie.', '5'],
+    ['fireConcurrency', 'Number', 'Maksymalna liczba zaplanowanych uruchomień dopuszczonych jednocześnie w całym wdrożeniu.', '5'],
+    ['requireProject', 'Boolean', 'Każdy harmonogram musi być powiązany z projektem czatu, co jest sprawdzane przy zapisie oraz przed każdym uruchomieniem.', 'false'],
+    ['projectId', 'String', 'Przypina każdą zaplanowaną rozmowę do jednego projektu czatu i implikuje requireProject.', ''],
+  ]}
+/>
+
+`schedules: true` włącza tę funkcję z następującymi wartościami domyślnymi. `schedules: false` lub `use: false` to ogólnowdrożeniowe zatrzymanie, którego nie mogą znieść nadpisania dla ról, grup i użytkowników.
+
+Zasady projektu są ponownie sprawdzane przy każdym uruchomieniu. Harmonogram, który nie spełnia już wymagań `requireProject` lub którego projekt został usunięty, wyłącza się samodzielnie zamiast uruchamiać rozmowę bez przypisania do projektu. Projekty czatu należą do jednego użytkownika, dlatego `projectId` ustawione na poziomie całego wdrożenia działa tylko dla właściciela tego projektu; ustaw je w nadpisaniach ról lub użytkowników, gdy różni właściciele potrzebują różnych miejsc docelowych.
+
+Pełna lista pól, w tym `admissionConcurrency`, `mcpPreflightConcurrency` oraz `mcpPreflightTimeoutMs` służących do ograniczania współbieżności przyjmowania żądań i gotowości MCP oddzielnie od generowania, znajduje się w [`interface.schedules`](/docs/configuration/librechat_yaml/object_structure/interface#schedules).
+
+## Dostęp MCP bez nadzoru [#unattended-mcp-access]
+
+Zanim uruchomienie się rozpocznie, LibreChat sprawdza każde narzędzie MCP, którego potrzebuje zaplanowany agent oraz jego subagenci. Uruchomienie, które wymagałoby interaktywnego logowania, nie zostanie rozpoczęte, a harmonogram wskazuje, który agent wymaga uwagi.
+
+Aby umożliwić użytkownikom autoryzację narzędzi MCP do uruchomień bez nadzoru, włącz `interface.schedules.mcpConsent`:
+
+- `mcpConsent.enabled` włącza tę funkcję.
+- `mcpConsent.maxLifetimeHours` ogranicza, jak długo trwa autoryzacja, w zakresie od 1 do 8760 godzin.
+- `mcpConsent.resources` wymienia zasoby MCP, które mogą zostać autoryzowane.
+- `mcpConsent.readOnlyPolicy` wymienia zaufane deklaracje narzędzi tylko do odczytu, pogrupowane według serwera i nazwy narzędzia w systemie upstream.
+- `mcpReceiptRetry.baseMs` i `mcpReceiptRetry.maxMs` ustawiają czas oczekiwania (backoff) przy ponawianiu prób zapisu potwierdzeń zgody.
+
+Użytkownicy zobaczą wtedy sekcję **Zaplanowana autoryzacja MCP** w edytorze harmonogramu. Autoryzacja obejmuje wyłącznie wskazanego agenta i zasoby, do momentu upływu jej terminu, i nigdy nie zezwala na operacje zapisu.
+
+## Wymagania wdrożeniowe [#deployment-requirements]
+
+Czaty zaplanowane koordynują pracę za pomocą dzierżaw (leases) w MongoDB, dzięki czemu kilka replik może dzielić się zadaniami. Wymagają również:
+
+- **Strumienie Redis we wdrożeniach z wieloma replikami.** Ustaw `USE_REDIS_STREAMS=true`. Bez współdzielonych strumieni zapisanie harmonogramu zakończy się błędem zamiast rozpoczynania pracy, którą inna replika nie mogłaby wznowić ani zatrzymać.
+- **Trwały checkpointer dla agentów, które mogą się wstrzymywać.** Jeśli zaplanowany agent może korzystać z narzędzia Ask User lub wymaga zatwierdzenia wywołania narzędzia, potrzebuje strumieni Redis oraz współdzielonego checkpointera, nawet na pojedynczym procesie. Domyślny [`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) oparty na MongoDB działa; `type: memory` już nie. LibreChat odrzuca takie uruchomienie przed jakimkolwiek wywołaniem modelu, jeśli brakuje któregokolwiek z tych elementów.
+- **Standardowy punkt wejścia serwera.** Starszy, eksperymentalny klastrowy punkt wejścia nie uruchamia silnika harmonogramu.
+
+Dwie zmienne środowiskowe kontrolują silnik (wymienione również w [dotenv](/docs/configuration/dotenv#scheduled-chats)):
+
+<OptionTable
+  options={[
+    ['SCHEDULES_SINGLE_PROCESS', 'Boolean', 'Umożliwia harmonogramowane czaty bez Redis. Ustaw tylko wtedy, gdy wdrożenie faktycznie uruchamia jeden proces LibreChat.', '# SCHEDULES_SINGLE_PROCESS=true'],
+    ['SCHEDULES_DISABLED', 'Boolean', 'Awaryjne zatrzymanie zarówno automatycznych uruchomień, jak i opcji Uruchom teraz. Harmonogramy są zachowywane, nie są usuwane.', '# SCHEDULES_DISABLED=true'],
+  ]}
+/>

@@ -1,170 +1,33 @@
 ---
 title: エージェントプラグイン
 icon: Plug
-description: 実験的に、デプロイメントのSkills、MCPサーバー、およびコマンドフックを起動時に読み込まれるパッケージにバンドルします。
+description: Skills、MCP servers、lifecycle hooks を1つのパッケージとしてまとめ、LibreChat が起動時に読み込めるようにする
 ---
 
-Agent Plugins を使用すると、オペレーターは関連する [Skills](/docs/features/skills)、[MCP servers](/docs/features/mcp)、およびオプションのコマンドフックを LibreChat ファイルシステム上でパッケージ化できます。LibreChat は Agent Plugins の `1.0.0` パッケージ形式を実装しており、起動時に直下の各サブディレクトリを1つのプラグインとして読み込みます。
+Agent Plugin は、LibreChat サーバー上にあるフォルダーで、関連し合う [Skills](/docs/features/skills)、[MCP servers](/docs/features/mcp)、および任意のコマンドフックをまとめたものです。オペレーターはこのフォルダーをプラグインディレクトリに配置して LibreChat を再起動するだけで、UI からインストールする操作は不要です。LibreChat はオープンな Agent Plugins `1.0.0` パッケージ形式に従うため、対応している他のツールとも同じパッケージを共有できます。
 
-<Callout type="warning" title="実験的">
-  Agent Plugins は実験的な機能です。パッケージ形式、サポートされているコンポーネント、設定、および実行時の動作は、実験フェーズ中に変更される可能性があります。本番環境にデプロイする前に、プラグインのテストを行ってください。
-</Callout>
+Agent Pluginsは実験的な機能です。パッケージの形式や動作は変更される可能性があります。
 
-## ディレクトリの設定 [#configure-the-directories]
+## ユーザーの表示画面 [#what-users-see]
 
-```bash filename=".env"
-# Defaults to ./plugin relative to the LibreChat project root
-DEPLOYMENT_PLUGINS_DIR=./plugin
+ユーザーがプラグインそのものを目にすることはありません。見えるのは、プラグインが含む内容です。
 
-# Persistent data allocated separately for each plugin manifest name
-DEPLOYMENT_PLUGIN_DATA_DIR=./data/plugins
+- そのスキルは、他のスキルと並んでスキル一覧に表示されます。読み取り専用で、通常のスキルの権限に従い、他のスキルと同様に **Available to agent** でオン・オフを切り替えられます。
+- そのMCPサーバーはツールライブラリに表示され、`librechat.yaml`で定義されたサーバーと同様にエージェントに追加できます。
+- そのフックは、エージェントの実行中の特定のタイミング(ツール呼び出しの前や、実行が停止したときなど)でサーバー上で実行されます。フックは、ツール呼び出しをブロックしたり、プロンプトにコンテキストを追加したり、実行を停止したりすることができ、ユーザーにはその結果だけが表示されます。
 
-# Optional and disabled by default; see Command Hooks below
-# DEPLOYMENT_PLUGIN_HOOKS=true
-```
+スキルまたはMCPサーバーの名前が他で定義されたものと衝突する場合、もう一方の定義が優先されます。スタンドアロンのデプロイスキルディレクトリにあるスキルは、プラグインのスキルよりも優先されます。また、`librechat.yaml`で定義されたサーバーは、プラグインのサーバーよりも優先されます。
 
-相対パスはLibreChatプロジェクトのルートから解決されます。デフォルトの `./plugin` ディレクトリが存在しない場合、プラグインなしで起動が継続されます。`DEPLOYMENT_PLUGINS_DIR` が明示的に設定されているにもかかわらず読み取れない場合は、デプロイのミスが無視されないよう、起動が失敗します。
+## プラグインに含めることができるもの [#what-a-plugin-can-contain]
 
-プラグインの追加、削除、または変更を行った後は、LibreChatを再起動してください。
+プラグインフォルダには、`plugin.json` マニフェストと、以下のいずれかが含まれます:
 
-## パッケージ構成 [#package-layout]
+- `skills/` 配下に、スキルごとに1つのフォルダがあり、それぞれに `SKILL.md` が含まれています。
+- `mcp.json`、MCPサーバー定義。ローカル(`stdio`)サーバーはプラグインフォルダー内から実行され、独自の永続データディレクトリを持ちます。
+- `ai.librechat/hooks/hooks.json`、コマンドフック。これらはAPIホスト上でプロセスとして実行され、運用者が有効にしない限り無効になっています。
 
-`DEPLOYMENT_PLUGINS_DIR` の各直下の子ディレクトリは、1つのプラグインパッケージです：
+各パーツは個別に読み込まれるため、`mcp.json` が壊れていても、プラグインのスキルの読み込みは停止しません。問題は起動時のログに報告されます。
 
-```text
-plugin/
-  analytics-tools/
-    plugin.json
-    skills/
-      analyze-events/
-        SKILL.md
-        scripts/
-          analyze.py
-    mcp.json
-    ai.librechat/
-      hooks/
-        hooks.json
-    scripts/
-      guard.sh
-```
+## セットアップ [#setup]
 
-`plugin.json` は必須です。`skills/`、`mcp.json`、および `ai.librechat/hooks/hooks.json` はオプションであり、それぞれ独立して失敗するため、あるコンポーネントが無効であっても、同じプラグイン内の他の有効なコンポーネントの読み込みが妨げられることはありません。マニフェストが無効であるか欠落している場合は、プラグイン全体が拒否されます。診断結果は LibreChat の起動ログに書き込まれます。
-
-## Manifest [#manifest]
-
-マニフェストは、正確な Agent Plugins `1.0.0` スキーマ URL を使用する必要があります：
-
-```json filename="plugin.json"
-{
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "analytics-tools",
-  "version": "1.0.0",
-  "description": "Skills and tools for analyzing event data"
-}
-```
-
-`name` はプラグインの永続データディレクトリにも使用されます。1〜64文字である必要があり、小文字または数字で開始および終了し、小文字、数字、ハイフン、ピリオドのみを使用し、`--` や `..` の連続を含めることはできません。プラグイン名はデプロイメント内で一意である必要があります。
-
-## Bundled Skills [#bundled-skills]
-
-各Skillを`skills/`直下のサブディレクトリに配置し、そのディレクトリのルートに`SKILL.md`を置いてください。LibreChatは有効なエントリを読み取り専用のデプロイ済みSkillとして読み込み、通常のSkills機能およびアクセスルールを適用します。
-
-スタンドアロンの [`DEPLOYMENT_SKILLS_DIR`](/docs/features/skills#deployment-skills) は、同じ名前のプラグイン Skill よりも優先されます。プラグインディレクトリ内では、最初に Skill 名を宣言したパッケージが優先され、それ以降の競合は警告とともにスキップされます。
-
-## バンドルされた MCP Servers [#bundled-mcp-servers]
-
-`mcp.json` 内で、正確な `1.0.0` スキーマ URL を使用してオプションの MCP サーバーを定義します：
-
-```json filename="mcp.json"
-{
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
-  "mcpServers": {
-    "analytics": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["${PLUGIN_ROOT}/server.js"],
-      "cwd": "${PLUGIN_ROOT}",
-      "env": {
-        "PLUGIN_CACHE": "${PLUGIN_DATA}/cache"
-      }
-    }
-  }
-}
-```
-
-サポートされているトランスポートは `stdio`、`streamable-http`、および `sse` です。リモートの HTTP トランスポートは、ループバック宛先を除き、HTTPS を使用する必要があります。サーバー名は、LibreChat の MCP ツール名正規化を通過しても変更されない必要があり、予約済みの JavaScript オブジェクト名は使用できません。
-
-`stdio` サーバーの場合、`${PLUGIN_ROOT}` と `${PLUGIN_DATA}` は `args`、`env`、および `cwd` 内で一度だけ展開されます。また、両方の値は起動されたプロセスの環境変数にも追加されます。プラグインの MCP 設定は、LibreChat のホスト環境から任意の変数を展開することはありません。`${OPENAI_API_KEY}` のような値は、レジストリへの保存およびランタイムの初期化を通じてリテラル（そのままの文字列）として保持されます。認証情報はプラグインファイルの外に保持し、専用の認証サービスやその他のデプロイメント制御メカニズムを通じて提供してください。
-
-LibreChat は、サーバーを登録する前に各 `mcp.json` を検証します。
-
-- `command` は単一の実行可能トークンである必要があります。`node` のような単なる名前、またはプラグイン内の `./` パスのいずれかを指定してください。シェル文字列や絶対パスは拒否されます。また、`command` 内では `${PLUGIN_ROOT}` は展開されません。
-- `cwd` は `./`、`${PLUGIN_ROOT}`、または `${PLUGIN_DATA}` で始まる必要があり、それが指定するベースディレクトリの内側に解決される必要があります。
-- `env` では `PLUGIN_ROOT` や `PLUGIN_DATA` を宣言できません。これらは LibreChat が設定します。
-- リモートの `url` 値は、ユーザー情報やフラグメントを含まない絶対 `http` または `https` URL でなければなりません。ホストがループバックアドレス(`localhost` や `127.0.0.1` など)でない限り、`https` を使用する必要があります。
-- 不明なフィールドを含むサーバーエントリは拒否され、スキップされます。トップレベルの不明なフィールド、またはサポートされている `1.0.0` スキーマ URL と一致しない `$schema` が指定されている場合は、プラグイン全体で MCP が無効になります。
-
-`librechat.yaml` で宣言された MCP サーバーは、同じ名前を持つプラグインサーバーよりも優先されます。重複するプラグインサーバー名はスキップされ、ログに記録されます。
-
-## 永続的なプラグインデータ [#persistent-plugin-data]
-
-LibreChatは `<DEPLOYMENT_PLUGIN_DATA_DIR>/<plugin-name>` にディレクトリを1つ作成し、それを `${PLUGIN_DATA}` として `stdio` コンポーネントに公開します。プラグイン固有の永続的な状態を保持するためにこれを使用してください。`${PLUGIN_ROOT}` に永続的な状態を書き込まないでください。これはパッケージコンテンツとして扱われるべきです。
-
-## Command Hooks [#command-hooks]
-
-Agent Pluginsは、Agentのライフサイクル境界で `command` フックハンドラーを実行できます。フックの実行はデフォルトで無効になっています。明示的に有効にしてからLibreChatを再起動してください：
-
-```bash filename=".env"
-DEPLOYMENT_PLUGIN_HOOKS=true
-```
-
-この変数が false または未設定の場合、LibreChat はフックドキュメントを無視し、起動時に警告をログ出力します。ただし、プラグインが個別に保持する有効な Skills および MCP サーバーは引き続き読み込まれます。
-
-<Callout type="warning" title="信頼できるコードのみ">
-  コマンドフックは、LibreChat APIホスト上でオペレーターがインストールした子プロセスを実行します。制限された環境により偶発的な露出は低減されますが、サンドボックスではありません。LibreChatのコードや `toolApproval` フックモジュールと同等に信頼できるプラグインパッケージに対してのみ、フックを有効にしてください。
-</Callout>
-
-`ai.librechat/hooks/hooks.json` でフックを宣言します：
-
-```json filename="ai.librechat/hooks/hooks.json"
-{
-  "description": "Reject writes outside the workspace",
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/guard.sh",
-            "timeout": 30,
-            "allowedEnvVars": ["WORKSPACE_POLICY"]
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-### Execution Contract [#execution-contract]
-
-- LibreChatはプラグインのルートからコマンドを開始し、Claude互換のイベントペイロードをJSONとして標準入力に送信します。
-- `${PLUGIN_ROOT}`、`${PLUGIN_DATA}`、および `${CLAUDE_PLUGIN_ROOT}` は、`command` および `args` 内で一度展開され、子プロセスでも利用可能です。
-- 子環境には、`PATH`、`HOME`、`LANG`、`LC_ALL`、および存在する場合は `TZ`、3つのプラグインパス変数、そして `allowedEnvVars` に明示的にリストされた名前のみが含まれます。
-- 終了コード `0` は成功を意味します。標準出力に書き込まれた JSON は、イベントに応じた決定や境界付けられたコンテキストを返すことができます。プレーンテキストの出力は、`SessionStart` および `UserPromptSubmit` に対する追加のコンテキストとしてのみ扱われます。
-- 終了コード `2` は、該当するアクションや継続をブロックし、標準エラーを理由として使用します。その他のゼロ以外の終了コードはログに記録されますが、それ以外は無視されます。
-- `timeout` は秒単位で、1から3600までの整数です。
-- LibreChat terminates the process when the hook is aborted or times out. On POSIX hosts, commands run through `bash`, which must be available on the API host. On Windows hosts they run through `powershell.exe`, so plugins must provide `commandWindows` or select PowerShell. If the shell cannot start, LibreChat logs a startup warning and blocking hooks fail closed.
-
-LibreChatは、一般的なClaudeのツール名である `Bash`、`Write`、`Edit`、`Read`、および `WebSearch` とそのファイル引数名を、対応するLibreChatのツールに変換します。LibreChatのネイティブツール名で記述されたマッチャーは、ネイティブのペイロード形状を保持します。
-
-サポートされているソースイベントは、`RunStart`、`SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`PostToolBatch`、`SubagentStart`、`Stop`、`StopFailure`、`PreCompact`、および `PostCompact` です。サポートされていないイベントや宣言はスキップされ、起動時の診断で報告されます。このリリースでは `command` ハンドラーのみが実行されます。`prompt`、`http`、`mcp_tool`、および `agent` ハンドラーは引き続きサポートされていません。
-
-`SessionStart` および `once: true` を持つハンドラーは、境界付きのプロセスローカルストアによって会話ごとに重複排除されます。マルチレプリカ環境でのデプロイでは、同一の「一度のみ」のハンドラーが各プロセスで1回ずつ実行される可能性があります。`ask` の決定には LibreChat の再開可能な人間による承認フローが必要ですが、そのフローが利用できない場合、LibreChat は実行を再開経路なしで一時停止状態にするのではなく、決定を `deny` に厳格化します。
-
-## 関連情報 [#related]
-
-- [Skills](/docs/features/skills)
-- [Model Context Protocol](/docs/features/mcp)
-- [エージェント](/docs/features/agents)
+プラグインは、デフォルトではプロジェクトルートの `./plugin` から読み込まれ、コマンドフックはデフォルトで無効になっています。ディレクトリ設定、パッケージのレイアウト、マニフェストとMCPの検証ルール、フックの実行契約については、[Agent Plugins configuration](/docs/configuration/agent_plugins) を参照してください。

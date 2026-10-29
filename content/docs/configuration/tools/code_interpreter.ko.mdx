@@ -1,0 +1,89 @@
+---
+title: 코드 인터프리터
+icon: SquareTerminal
+description: 'Code Interpreter 서비스를 배포하고, LibreChat을 해당 서비스에 연결한 뒤, 선택 사항인 코드 기능을 활성화합니다.'
+---
+
+이 페이지는 [Code Interpreter](/docs/features/code_interpreter)의 관리자 측면을 다룹니다. 코드는 별도의 서비스인 [ClickHouse/code-interpreter](https://github.com/ClickHouse/code-interpreter)에서 실행되며, 이 서비스는 직접 배포해야 합니다. LibreChat은 이 서비스에 코드와 파일을 보내고 각 요청을 인증합니다. 여기서 언급되는 모든 LibreChat 측 변수는 [`.env` 참조](/docs/configuration/dotenv#code-interpreter)에 나열되어 있습니다.
+
+## 서비스 배포하기 [#deploy-the-service]
+
+레포지토리의 README를 따라 Docker Compose 또는 Helm으로 실행하세요. 이 서비스는 API 게이트웨이, 샌드박스 워커, 파일 서버, 그리고 Tool Call Server로 구성되며, 이들은 LibreChat과 독립적으로 확장할 수 있습니다. 워커는 NsJail 또는 libkrun microVM을 사용해 코드를 격리합니다. 메모리 및 CPU 제한, 업로드 크기, 요청 할당량, 샌드박스 코드의 네트워크 접근은 LibreChat이 아니라 이 배포 환경에서 설정합니다.
+
+공개 네트워크나 프로덕션 네트워크에서는 인증이 필요 없는 로컬 모드(`LOCAL_MODE=true`)를 절대 노출하지 마세요.
+
+## LibreChat 연결 [#connect-librechat]
+
+1. `LIBRECHAT_CODE_BASEURL`을 배포 환경의 URL로 설정하세요.
+2. 인증을 설정하십시오. 현재 오픈 소스 서비스는 로컬 모드 이외의 환경에서 [JWT 인증](#self-hosted-jwt-authentication)을 요구합니다. API 키를 허용하는 배포 환경에서는 대신 `LIBRECHAT_CODE_API_KEY`를 사용합니다. 이 키는 모든 사용자가 공유하는 단일 키이며 `X-API-Key` 헤더로 전송됩니다.
+3. LibreChat를 다시 시작하세요.
+
+Then check that code execution is allowed:
+
+- `execute_code`는 [`endpoints.agents.capabilities`](/docs/configuration/librechat_yaml/object_structure/agents#capabilities)에 포함되어 있어야 합니다. 기본 목록에 포함되어 있습니다.
+- 사용자에게는 run-code 권한이 필요합니다. [`interface.runCode`](/docs/configuration/librechat_yaml/object_structure/interface#runcode)는 `USER` 역할에 대해 이 권한을 초기 설정하며, 코드 블록의 **Run Code** 버튼을 제어합니다. 동일한 권한이 Agent Builder의 **Run Code** 도구도 제어합니다.
+
+## 자체 호스팅 JWT 인증 [#self-hosted-jwt-authentication]
+
+JWT 인증을 사용하면 LibreChat은 Code Interpreter 요청마다 로그인한 사용자를 위해 수명이 짧은 토큰을 서명합니다. 서비스는 이 토큰을 해당하는 공개 키로 검증하고, 토큰에 담긴 사용자와 테넌트 정보를 사용해 파일과 세션을 서로 분리합니다. 개인 키는 LibreChat에 그대로 보관됩니다.
+
+LibreChat 쪽에서:
+
+```bash filename=".env"
+CODEAPI_AUTH_PROVIDER=librechat-jwt
+CODEAPI_JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+CODEAPI_JWT_ALGORITHM=EdDSA
+CODEAPI_JWT_KID=lc-codeapi-2026-05
+CODEAPI_JWT_ISSUER=librechat
+CODEAPI_JWT_AUDIENCE=codeapi
+CODEAPI_JWT_TTL_SECONDS=300
+CODEAPI_JWT_MINT_CACHE_SECONDS=30
+CODEAPI_JWT_SINGLE_TENANT_ID=legacy
+```
+
+`CODEAPI_JWT_PRIVATE_KEY_BASE64` (base64 PEM) 또는 `CODEAPI_JWT_PRIVATE_JWK_JSON` (private JWK)을 사용해 키를 지정할 수 있습니다. 서명은 Ed25519 또는 Ed448 키(기본값)를 사용하는 `EdDSA`, 또는 `RS256`을 사용합니다. 각 변수의 기본값과 제한 사항은 [`.env` 참조 문서의 JWT 섹션](/docs/configuration/dotenv#code-interpreter-jwt-authentication)에서 확인할 수 있습니다.
+
+Code Interpreter 쪽에서 일치하는 검증기(verifier)를 설정하세요:
+
+```bash filename="code-interpreter .env"
+LOCAL_MODE=false
+CODEAPI_AUTH_PROVIDER=librechat-jwt
+CODEAPI_JWT_ISSUER=librechat
+CODEAPI_JWT_AUDIENCE=codeapi
+CODEAPI_JWT_ALLOWED_ALGS=EdDSA
+CODEAPI_JWT_JWKS_JSON={"keys":[{"kty":"OKP","crv":"Ed25519","x":"...","kid":"lc-codeapi-2026-05","alg":"EdDSA"}]}
+CODEAPI_JWT_SINGLE_TENANT_ID=legacy
+```
+
+발급자, 대상(audience), 키 ID, 알고리즘, 공개 키, 단일 테넌트 ID는 두 서비스 모두에서 일치해야 합니다. 이 서비스는 `CODEAPI_JWT_PUBLIC_KEY`와 `CODEAPI_JWT_KID`를 사용하거나 `CODEAPI_JWT_PUBLIC_KEYS_DIR`에서 검증 키를 로드할 수도 있습니다. 인라인 JWKS를 사용하면 키 교체가 가장 쉽습니다. LibreChat의 토큰 TTL은 서비스의 `CODEAPI_JWT_MAX_TTL_SECONDS` 값 이하(최대 300)로 유지하십시오.
+
+로컬 체크아웃의 경우, Code Interpreter 저장소에는 일치하는 Ed25519 키를 생성하고 두 개의 `.env` 파일을 모두 작성하는 헬퍼가 있습니다:
+
+```bash
+node scripts/setup-local-auth-env.js --librechat /path/to/LibreChat
+```
+
+멀티 테넌트 배포에서는 인증된 테넌트 컨텍스트를 제공하고, LibreChat에는 `TENANT_ISOLATION_STRICT=true`를, 서비스에는 `CODEAPI_TENANT_ISOLATION_STRICT=true`를 설정해야 합니다. 엄격 모드(strict mode)에서는 테넌트가 없는 요청을 단일 테넌트 ID로 대체하지 않고 거부합니다.
+
+다른 애플리케이션을 서비스와 직접 연동하려면 호환되는 토큰을 직접 발급하고, 이를 `Authorization: Bearer <token>` 형식으로 전송해야 합니다.
+
+## 파일 업로드 및 미리보기 [#file-uploads-and-previews]
+
+LibreChat는 실행 전에 대화 파일을 서비스에 업로드하며, `429` 속도 제한에 걸린 업로드는 재시도합니다. 이때 제한된 대기 시간 내에서 `Retry-After` 값을 준수합니다. 사용자와 라우트별로 [`codeApiUploadConcurrency` 및 `codeApiMaxRetryWaitMs`](/docs/configuration/librechat_yaml/object_structure/agents#code-api-upload-recovery)를 사용하여 이를 세부적으로 조정할 수 있습니다.
+
+생성된 파일은 기본적으로 `FILE_PREVIEW_MAX_EXTRACT_BYTES`(기본값 2 MiB)까지 인라인 미리보기를 제공합니다([인라인 파일 미리보기](/docs/configuration/dotenv#inline-file-previews) 참조). 에이전트가 샌드박스에서 읽어 오는 이미지는 1 MiB까지 인라인으로 표시됩니다. LibreChat이 이미지를 가능한 한 적은 요청으로 읽어 오도록 `LIBRECHAT_CODE_SANDBOX_OUTPUT_MAX_SIZE`를 워커의 `SANDBOX_OUTPUT_MAX_SIZE`와 같은 값으로 설정하세요. `LIBRECHAT_CODE_IMAGE_CHUNK_BYTES`는 전송 단위 크기만 고정할 뿐 1 MiB 제한을 높이지는 않습니다.
+
+미리보기는 정적 Sandpack 번들러를 통해 아티팩트 패널에서 렌더링됩니다. 번들러를 직접 호스팅하는 경우 [아티팩트 구성](/docs/configuration/artifacts#self-hosting-the-sandpack-bundler)을 참조하세요.
+
+<Callout type="warning" title="이전 코드 출력으로 업그레이드하기">
+  고유 출력 파일 인덱스가 생성되기 전에 동일한 Code Interpreter 파일 이름을 재생성한 배포 환경에서는, 인덱스 생성을 막는 중복 MongoDB 레코드가 존재할 수 있습니다. `npm run migrate:code-file-duplicates:dry-run`으로 복구 작업을 미리 확인한 다음, `npm run migrate:code-file-duplicates`로 적용하십시오.
+</Callout>
+
+## 선택적 기능 [#optional-features]
+
+각각 켜기 전까지는 꺼져 있습니다.
+
+- **프로그래밍 방식 도구 호출**: [에이전트 기능](/docs/configuration/librechat_yaml/object_structure/agents#capabilities)에서 `execute_code`와 함께 `programmatic_tools`를 추가하세요. 서비스의 Tool Call Server가 필요합니다.
+- **백그라운드 실행**: 에이전트 기능(capabilities)에 `run_in_background`를 추가하세요. 완료된 결과의 전달과 취소는 [`backgroundTasks`](/docs/configuration/librechat_yaml/object_structure/agents#backgroundtasks)에서 설정합니다.
+- **상태 저장 코드 세션**: 에이전트 기능에 `stateful_code_sessions`를 추가하고, [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint)을 `stateful` 프로필을 알리는 배포 환경으로 설정하거나, 명명된 환경을 구성합니다. 상태 비저장 에이전트는 계속 `LIBRECHAT_CODE_BASEURL`을 사용하며, 상태 저장 요청은 이를 대체로 사용하지 않습니다. 이 기능은 실험적이며 변경될 수 있습니다.
+- **코드 환경**(연결된 머신, 개인 워커, 페어링, 채팅별 머신 선택, 승인 정책): [`statefulCodeSessions`](/docs/configuration/librechat_yaml/object_structure/agents#statefulcodesessions)에서 구성합니다. 채팅 첨부 파일을 연결된 워크스페이스로 복사하는 작업은 `endpoints.agents.workspaceAttachments`의 `timeoutMs`(기본값 10000, 범위 1000~120000)와 `concurrency`(기본값 3, 범위 1~16)로 제한됩니다.

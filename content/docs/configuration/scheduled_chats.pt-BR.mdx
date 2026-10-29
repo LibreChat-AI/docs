@@ -1,0 +1,76 @@
+---
+title: Chats Agendados
+icon: CalendarClock
+description: >-
+  Ative os Chats Agendados, defina limites e regras de projeto, permita o acesso
+  MCP sem supervisão e atenda aos requisitos de Redis e checkpointer.
+---
+
+[Chats agendados](/docs/features/scheduled_chats) são experimentais e ficam desativados até que você opte por habilitá-los. As execuções agendadas usam recursos de modelo, ferramentas e Code Interpreter sem que ninguém as acompanhe, portanto verifique os requisitos de implantação abaixo antes de habilitá-los.
+
+## Ativar [#enable]
+
+Adicione `interface.schedules` ao `librechat.yaml` e reinicie o LibreChat:
+
+```yaml filename="librechat.yaml"
+interface:
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    fireConcurrency: 5
+    requireProject: false
+    # projectId: '000000000000000000000000'
+```
+
+`use` e `create` definem inicialmente as permissões `SCHEDULES` para a função `USER` integrada na inicialização; depois disso, gerencie-as por função no [Painel de Administração](/docs/features/admin_panel). `use` permite que o usuário veja seus agendamentos. `create` também permite que ele crie, edite, ative, execute e exclua esses agendamentos. As demais chaves são limites de tempo de execução.
+
+<OptionTable
+  options={[
+    ['maxPerUser', 'Number', 'Número máximo de agendamentos que cada usuário pode possuir, contando os desativados. Defina como 0 para impedir a criação.', '10'],
+    ['minIntervalMinutes', 'Number', 'Menor intervalo permitido entre duas execuções de um mesmo agendamento. Aplica-se a todas as cadências, incluindo cron personalizado.', '60'],
+    ['autoDisableAfterFailures', 'Number', 'Execuções consecutivas com falha antes de uma agenda desativar a si mesma.', '5'],
+    ['fireConcurrency', 'Number', 'Número máximo de execuções agendadas admitidas ao mesmo tempo em toda a implantação.', '5'],
+    ['requireProject', 'Boolean', 'Todo agendamento deve estar vinculado a um Chat Project, verificado no momento em que for salvo e antes de cada execução.', 'false'],
+    ['projectId', 'String', 'Fixa cada conversa agendada a um Projeto de Chat e implica requireProject.', ''],
+  ]}
+/>
+
+`schedules: true` habilita o recurso com estes padrões. `schedules: false`, ou `use: false`, é uma interrupção em toda a implantação que substituições por função, grupo e usuário não podem desfazer.
+
+As regras do projeto são verificadas novamente a cada execução. Uma agenda que não satisfaz mais `requireProject`, ou cujo projeto foi excluído, desativa-se automaticamente em vez de iniciar uma conversa sem escopo. Os Projetos de Chat pertencem a um único usuário; por isso, um `projectId` válido em toda a implantação só funciona para o proprietário desse projeto. Defina-o em substituições de função ou de usuário quando diferentes proprietários precisarem de destinos distintos.
+
+A lista completa de campos, incluindo `admissionConcurrency`, `mcpPreflightConcurrency` e `mcpPreflightTimeoutMs` para limitar separadamente as verificações de admissão e de prontidão do MCP em relação à geração, está em [`interface.schedules`](/docs/configuration/librechat_yaml/object_structure/interface#schedules).
+
+## Acesso MCP sem supervisão [#unattended-mcp-access]
+
+Antes de uma execução começar, o LibreChat verifica cada ferramenta MCP de que o agente agendado e seus subagentes precisam. Uma execução que exigiria um login interativo não é iniciada; o agendamento mostra qual agente precisa de atenção.
+
+Para permitir que os usuários autorizem ferramentas MCP para execuções sem supervisão, ative `interface.schedules.mcpConsent`:
+
+- `mcpConsent.enabled` ativa o recurso.
+- `mcpConsent.maxLifetimeHours` limita por quanto tempo uma autorização permanece válida, de 1 a 8760 horas.
+- `mcpConsent.resources` lista os recursos MCP que podem ser autorizados.
+- `mcpConsent.readOnlyPolicy` lista as declarações de ferramentas somente leitura confiáveis, indexadas pelo servidor e pelo nome da ferramenta no servidor de origem.
+- `mcpReceiptRetry.baseMs` e `mcpReceiptRetry.maxMs` definem o intervalo de espera (backoff) para as novas tentativas de envio dos recibos de consentimento.
+
+Os usuários verão então uma seção **Autorização MCP agendada** no editor de agendamento. Uma autorização cobre apenas o agente e os recursos listados até o seu prazo e nunca permite gravações.
+
+## Requisitos de implantação [#deployment-requirements]
+
+Os Chats Agendados são coordenados por meio de leases no MongoDB, para que várias réplicas possam compartilhar o trabalho. Eles também precisam de:
+
+- **Streams do Redis em implantações com múltiplas réplicas.** Defina `USE_REDIS_STREAMS=true`. Sem streams compartilhados, salvar um agendamento falha em vez de iniciar um trabalho que outra réplica não conseguiria retomar ou interromper.
+- **Um checkpointer durável para agentes que podem pausar.** Se o agente agendado puder usar Ask User ou precisar de aprovação de ferramentas, ele exige Redis streams e um checkpointer compartilhado, mesmo em um único processo. O [`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) padrão baseado em MongoDB funciona; `type: memory` não funciona. O LibreChat rejeita essa execução antes de qualquer chamada ao modelo quando qualquer um dos dois estiver ausente.
+- **O ponto de entrada padrão do servidor.** O ponto de entrada em cluster experimental legado não inicia o mecanismo de agendamento.
+
+Duas variáveis de ambiente controlam o mecanismo (também listadas em [dotenv](/docs/configuration/dotenv#scheduled-chats)):
+
+<OptionTable
+  options={[
+    ['SCHEDULES_SINGLE_PROCESS', 'Boolean', 'Permite Chats Agendados sem Redis. Defina-o somente quando a implantação realmente executar um único processo do LibreChat.', '# SCHEDULES_SINGLE_PROCESS=true'],
+    ['SCHEDULES_DISABLED', 'Boolean', 'Parada de emergência para execuções automáticas e para o Executar agora. Os agendamentos são mantidos, não excluídos.', '# SCHEDULES_DISABLED=true'],
+  ]}
+/>

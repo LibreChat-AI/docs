@@ -1,0 +1,158 @@
+---
+title: アクセス制御
+icon: ShieldCheck
+description: >-
+  ロール機能の権限とそのデフォルト値、人物ピッカーの表示設定、Entra ID グループ同期、管理者への昇格、管理者の権限、古いインスタンス向けの ACL
+  マイグレーション
+---
+
+ユーザーにとってのロール、グループ、共有の動作は、[Access Control](/docs/features/access_control)の機能ページで説明しています。このページでは、管理者が行う設定について説明します。
+
+## 機能の権限 [#feature-permissions]
+
+各ロールは権限の種類ごとに1組のスイッチを保持します。これらのスイッチは次の3か所で変更できます。
+
+- LibreChatでは、エージェント、プロンプト、MCPサーバー、メモリ、スキルの各パネルにある**Admin Settings**ボタンから(管理者のみ)設定できます。
+- [管理パネル](/docs/features/admin_panel)の**Access**で、カスタムロールを含むすべてのロールについて設定します。
+- In the [`interface`](/docs/configuration/librechat_yaml/object_structure/interface) block of `librechat.yaml`. These keys seed the permissions of the built-in `USER` role at startup only, so they cannot express different settings per custom role.
+
+テーブルには、各権限タイプ、それを初期設定する`interface`キー、そのアクション、そして`USER`ロールがデフォルトで持つアクションが一覧されています。
+
+| 権限タイプ | `interface` キー | アクション | `USER` でデフォルトで有効 |
+| --------------- | --------------- | ------- | ------------------------ |
+| `AGENTS` | `agents` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | `USE`, `CREATE` |
+| `PROMPTS` | `prompts` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | `USE`, `CREATE` |
+| `MCP_SERVERS` | `mcpServers` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`, `CONFIGURE_OBO` | `USE`, `CREATE` |
+| `SKILLS` | `skills` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | `USE`, `CREATE` |
+| `REMOTE_AGENTS` | `remoteAgents` | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC` | なし |
+| `SHARED_LINKS` | `sharedLinks` | `CREATE`, `SHARE`, `SHARE_PUBLIC` | `CREATE`, `SHARE` |
+| `SCHEDULES` | `schedules` | `USE`, `CREATE` | `USE`, `CREATE` |
+| `MEMORIES` | `memories` | `USE`, `CREATE`, `UPDATE`, `READ`, `OPT_OUT` | すべて |
+| `BOOKMARKS` | `bookmarks` | `USE` | `USE` |
+| `MULTI_CONVO` | `multiConvo` | `USE` | `USE` |
+| `TEMPORARY_CHAT` | `temporaryChat` | `USE` | `USE` |
+| `RUN_CODE` | `runCode` | `USE` | `USE` |
+| `WEB_SEARCH` | `webSearch` | `USE` | `USE` |
+| `FILE_SEARCH` | `fileSearch` | `USE` | `USE` |
+| `FILE_CITATIONS` | `fileCitations` | `USE` | `USE` |
+| `MARKETPLACE` | `marketplace` | `USE` | なし |
+| `PEOPLE_PICKER` | `peoplePicker` | `VIEW_USERS`, `VIEW_GROUPS`, `VIEW_ROLES` | すべて |
+
+`SHARE` は、特定のユーザー、グループ、またはロールとの共有を可能にします。`SHARE_PUBLIC` は、インスタンス上のすべてのユーザーとの共有を可能にします。`CONFIGURE_OBO` は、MCP サーバーで On-Behalf-Of トークン交換の設定を許可します。これにより、ユーザーの委任トークンがそのサーバーへ転送されるため、デフォルトではオフになっています。
+
+## People picker [#people-picker]
+
+`PEOPLE_PICKER` のアクションは、共有ダイアログの検索で、ロールがどの種類のプリンシパルを見つけられるかを制御します。ロールによる共有をadminのみの操作にしておきたい場合、ロールを非表示にすることがよくあります。
+
+```yaml filename="librechat.yaml"
+interface:
+  peoplePicker:
+    users: true
+    groups: true
+    roles: false
+```
+
+これは検索結果の表示のみを変更します。非表示の principal type を持つ既存の共有は引き続き機能します。詳細は [`interface.peoplePicker`](/docs/configuration/librechat_yaml/object_structure/interface#peoplepicker) を参照してください。
+
+## Entra ID グループの同期 [#entra-id-group-sync]
+
+Microsoft Entra ID のグループは、`OPENID_REUSE_TOKENS=true` の設定のもとで Entra を使って OpenID Connect によりサインインすると、LibreChat に同期されます。LibreChat はログインのたびに Microsoft Graph からユーザーのグループメンバーシップを読み取り、各グループを Entra のオブジェクト ID とともに保存します。そのため、共有先のグループの名前が変更されても、同じグループとして扱われます。プロバイダーの設定は [Azure / Entra ID](/docs/configuration/authentication/OAuth2-OIDC/azure) を、トークンの再利用の設定は [OpenID Connect Token Reuse](/docs/configuration/authentication/OAuth2-OIDC/token-reuse) を参照してください。
+
+## 別の管理者を昇格させる [#promote-another-admin]
+
+シングルテナント構成では、最初に登録されたアカウントに `ADMIN` ロールが付与されます。テナント単位の構成では、最初のユーザーが自動的に管理者に昇格されることはありません。テナント管理者は、信頼された管理用フローを通じてプロビジョニングしてください。既存のユーザーを管理者にするには、管理パネルの **Users** ページを使用するか、MongoDB でロールを直接設定します。
+
+```js filename="mongosh"
+db.users.updateOne({ email: 'USER_EMAIL_ADDRESS' }, { $set: { role: 'ADMIN' } })
+```
+
+ユーザーにログアウトしてから再度ログインしてもらいます。OpenID Connect を使用している場合は、`OPENID_ADMIN_ROLE` を使って IdP のロールまたはグループから `ADMIN` を割り当てることもできます。詳細は [.env リファレンス](/docs/configuration/dotenv#openid-connect) を参照してください。
+
+## 管理者の機能 [#admin-capabilities]
+
+機能（Capabilities）は、管理パネルの **Grants** ページから、ユーザー、グループ、またはロールに付与されます。`ADMIN` ロールを持つユーザーは、これらすべてを暗黙的に保持します。それ以外のユーザーは、管理対象に応じた機能に加えて `access:admin` が必要です。各 `manage:` 機能は対応する `read:` 機能を含みます。セクション単位でも同様で、`manage:configs:endpoints` は `read:configs:endpoints` も付与します。セクション単位の設定アクセスのみを持つユーザーには、読み取り可能なセクションに絞り込まれた設定レスポンスが返されます。設定の読み取りアクセスが一切ない場合は、`403` が返されます。
+
+| 権限 | 許可される操作 |
+| ---------- | ------ |
+| `access:admin` | 管理パネルへのサインイン |
+| `read:users`, `manage:users` | ユーザーアカウントの閲覧と変更 |
+| `read:groups`, `manage:groups` | グループおよびそのメンバーの閲覧と変更 |
+| `read:roles`, `manage:roles` | ロールおよびその権限の閲覧と変更 |
+| `read:configs`, `manage:configs` | 設定の閲覧と変更。`read:configs:<section>` および `manage:configs:<section>` を使用すると、対象を `librechat.yaml` の1つのトップレベルセクションに限定できます |
+| `assign:configs:user`, `assign:configs:group`, `assign:configs:role` | 該当する種類のプリンシパルへの設定オーバーライドの割り当て |
+| `read:agents`, `manage:agents` | すべてのエージェントの閲覧とモデレーション |
+| `read:prompts`, `manage:prompts` | すべてのプロンプトの閲覧とモデレーション |
+| `read:skills`, `manage:skills` | すべてのスキルの閲覧とモデレーション |
+| `read:sharedlinks`, `manage:sharedlinks` | すべての共有リンクの閲覧とモデレーション |
+| `manage:mcpservers` | インスタンス全体での MCP サーバーの管理 |
+| `manage:code_environments` | デプロイメントが所有するコード実行ワーカーの登録と失効 |
+| `read:usage` | 使用状況データの閲覧 |
+| `read:insights` | すべてのエージェントの [Insights](/docs/features/insights) の閲覧 |
+| `read:audit_log` | 権限付与の監査ログの閲覧、検証、およびエクスポート。追記専用のため、対応する `manage:` 権限はありません |
+
+`read:assistants` と `manage:assistants` も存在しますが、予約済みです。現時点ではこれらを強制する仕組みはありません。
+
+## グループメンバーシップキャッシュ [#group-membership-cache]
+
+権限を確認するために、LibreChat はユーザーが所属するグループを調べ、その結果を 5 分間キャッシュします。グループのメンバーシップが変更されると、影響を受けるエントリは直ちにクリアされます。ユーザーのロールはキャッシュされません。キャッシュまたはロックの障害が発生した場合はデータベースにフォールバックし、権限チェックをブロックすることはありません。
+
+<OptionTable
+  options={[
+    ['USER_PRINCIPALS_CACHE_TTL_MS', 'number', 'ユーザーのグループメンバーシップがキャッシュされる期間（ミリ秒）。0を指定するとキャッシュが無効になります。デフォルト: 300000（5分）。', 'USER_PRINCIPALS_CACHE_TTL_MS=300000'],
+    ['USER_PRINCIPALS_LOCK_TTL_MS', 'number', 'Redis 環境でのみ有効です。キャッシュエントリを複数のレプリカが同時に再構築することを防ぐロックの有効期間（ミリ秒）です。0 にするとロックのみが無効になります。デフォルト: 5000。', 'USER_PRINCIPALS_LOCK_TTL_MS=5000'],
+    ['USER_PRINCIPALS_LOCK_WAIT_MS', 'number', 'Redis デプロイメントのみ。レプリカが別のレプリカによるエントリの構築完了を待機する時間(ミリ秒)。デフォルトは USER_PRINCIPALS_LOCK_TTL_MS。', 'USER_PRINCIPALS_LOCK_WAIT_MS=5000'],
+  ]}
+/>
+
+## 管理者向けインサイト [#admin-insights]
+
+[Insights](/docs/features/insights) ダッシュボードはデフォルトで無効になっています。`.env` に `ENABLE_INSIGHTS=true` を設定し、LibreChat を再起動してください。無効のままの場合、Insights のルートは `404` を返し、サイドバーの項目は非表示のままになります。
+
+管理者は有効化されるとすぐに開くことができます。他のユーザーにアクセスを許可するには、管理パネルから`read:insights`(すべてのエージェント対象)を付与するか、エージェントの共有ダイアログで特定のユーザーまたはグループに対して**Insightsを表示**をオンにしてください。**Insightsを表示**を付与できるのは管理者のみで、そのユーザーはエージェント自体へのアクセス権も必要です。また、全員に付与することはできません。Insightsには名前、メールアドレス、最近の会話の最初のメッセージが表示されるため、付与する際は十分にご注意ください。
+
+すべてのInsightsクエリは閲覧者のテナントに限定され、カスタム日付範囲は30日以内に制限されます。
+
+## pre-ACL バージョンからの移行 [#migrating-from-pre-acl-versions]
+
+v0.8.0-rc3より前のバージョンでは、エージェントとプロンプトに対してより単純な所有者モデルを使用していました。アップグレード後はマイグレーションを実行し、既存のエージェントとプロンプトにアクセスできる状態を維持してください。LibreChatは、未マイグレーションのエージェントを検出すると起動時に警告を表示します。共有リンクも後からこの同じシステムに移行されたため、それ以前に作成された共有リンクを持つインスタンスでは、共有リンクのマイグレーションも実行してください。
+
+まず、ドライランを実行して変更内容を確認し、その後で移行を実行してください。`:batch` バリアントは一度に 50 件のレコードを処理するため、大規模なデータベースで効果的です。
+
+<Tabs items={['docker-compose.yml', 'deploy-compose.yml', 'ローカル']}>
+  <Tabs.Tab>
+
+```bash
+docker compose exec api npm run migrate:agent-permissions:dry-run
+docker compose exec api npm run migrate:agent-permissions
+docker compose exec api npm run migrate:prompt-permissions:dry-run
+docker compose exec api npm run migrate:prompt-permissions
+docker compose exec api npm run migrate:shared-link-permissions:dry-run
+docker compose exec api npm run migrate:shared-link-permissions
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```bash
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:agent-permissions:dry-run"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:agent-permissions"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:prompt-permissions:dry-run"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:prompt-permissions"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:shared-link-permissions:dry-run"
+docker exec -it LibreChat-API /bin/sh -c "cd .. && npm run migrate:shared-link-permissions"
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```bash
+npm run migrate:agent-permissions:dry-run
+npm run migrate:agent-permissions
+npm run migrate:prompt-permissions:dry-run
+npm run migrate:prompt-permissions
+npm run migrate:shared-link-permissions:dry-run
+npm run migrate:shared-link-permissions
+```
+
+  </Tabs.Tab>
+</Tabs>

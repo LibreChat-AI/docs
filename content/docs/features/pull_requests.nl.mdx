@@ -2,352 +2,31 @@
 title: Pull Requests voor gesprekken
 icon: GitPullRequest
 description: >-
-  Toon de pull request of merge request, grootte en CI-status voor chats die
-  code uitvoeren in een gekoppelde workspace, op GitHub, GitLab of Bitbucket
-  Cloud.
+  Bekijk de pull request voor de code-werkruimte van een chat, met de grootte,
+  status en CI-controles, in de chatkop en de zijbalk.
 ---
 
-{/*
-  TODO(maintainer): first release version for each part (do not guess).
-  TODO(maintainer): requirement 4 (where an admin sets the workspace environment's repository).
-  Add it to "Requirements" once confirmed.
-*/}
+Wanneer een agent werkt aan een repository in een gekoppelde codewerkruimte, zoekt LibreChat de pull request op voor de branch waarop de werkruimte staat en toont deze naast de chat. Je kunt zien of deze klaar is om samengevoegd te worden, of de controles slagen, en naar de pull request navigeren zonder het gesprek te verlaten. Het werkt met GitHub, GitLab (waar het een merge request wordt genoemd) en Bitbucket Cloud, met één provider per implementatie.
 
-Wanneer een chat code uitvoert in een gekoppelde workspace, rapporteert de worker de git-branch en commit waarop deze zich bevindt. LibreChat gebruikt die branch om de bijbehorende pull request (een merge request op GitLab) te vinden, met een token dat op de server of het verbonden account van de gebruiker wordt bewaard, en toont dit op twee plaatsen:
+Alleen chats die code uitvoeren in een gekoppelde workspace kunnen een pull request hebben. Een gewone chat, of een workspace die nog geen branch heeft gemeld, toont niets.
 
-- **Chatkop**: een chip met het pull request-pictogram, de CI-stip en de titel van de pull request. Door erop te zweven of het te focussen, opent zich een kaart.
-- **Sidebar conversation list**: hetzelfde icoon en de CI-stip aan het einde van de rij. De rij behoudt de eigen titel van het gesprek; de titel van de pull request verschijnt alleen in de kaart.
+## In de chatkop [#in-the-chat-header]
 
-Pull requests kunnen afkomstig zijn van GitHub (de standaard), GitLab of Bitbucket Cloud. Eén deployment gebruikt één provider.
-
-## Vereisten [#requirements]
-
-Al deze voorwaarden moeten waar zijn om een pull request in een chat weer te geven:
-
-1. LibreChat heeft een token- en repository-scope (`allowedRepositories` of `allowAllRepositories`), of gebruikers koppelen hun eigen accounts. Zie [Setup](#setup) en [Per-user accounts](#per-user-accounts).
-2. De chat gebruikt een **gekoppelde codewerkruimte** (een code worker), geen gewone chat.
-3. De worker rapporteert zijn branch. Hiervoor is een worker nodig die is gebouwd op basis van `LibreChat-AI/code-interpreter` PR #311 of later, en moet `CODEAPI_BRIDGE_LANE_GIT=true` zijn ingesteld op de Code API. Zie [Code Interpreter](/docs/features/code_interpreter#attached-environments-and-pairing).
-
-De functie staat standaard aan. Zonder token of repository-scope blijft deze inactief en toont elke chat simpelweg geen pull request, zonder foutmelding. `enabled: false` schakelt de functie uit, ongeacht andere instellingen.
-
-De uitzondering is een `token` dat is ingesteld, maar waarvan de omgevingsvariabele leeg of afwezig is: opzoekingen mislukken dan met `NOT_CONFIGURED` en rijen in de zijbalk tonen het waarschuwingsicoon met een opnieuw-proberen-knop.
-
-## Setup [#setup]
-
-### 1. Kies de provider en host [#1-choose-the-provider-and-host]
-
-`provider` selecteert waar pull requests zich bevinden:
-
-| `provider`         | Dienst                                                                                                 | Standaard `host` |
-| ------------------ | ------------------------------------------------------------------------------------------------------ | ---------------- |
-| `github` (standaard) | GitHub.com, GitHub Enterprise Server of een GitHub Enterprise Cloud-tenant met dataresidentie (`*.ghe.com`) | `github.com`     |
-| `gitlab`           | Merge requests op gitlab.com of een zelfgehoste GitLab                                                 | `gitlab.com`     |
-| `bitbucket`        | Alleen Bitbucket Cloud                                                                                 | `bitbucket.org`  |
-
-Stel `host` alleen in voor GitHub Enterprise Server, een `*.ghe.com` tenant, of een zelf-beheerde GitLab:
-
-- Het is een hostnaam, nooit een URL: geen schema en geen pad, bijvoorbeeld `github.example.com`.
-- Een expliciete poort is toegestaan, van 1 tot 65535, bijvoorbeeld `git.example.com:8443`. `:443` wordt weggelaten, aangezien dit de standaard is voor https.
-- Op GitHub roept LibreChat `api.github.com` aan voor `github.com`, `api.<host>` voor een `*.ghe.com` tenant, en `https://<host>/api/v3` voor Enterprise Server. Op GitLab roept het `https://<host>/api/v4` en `https://<host>/api/graphql` aan.
-- Bitbucket accepteert geen andere host. Elke `host` anders dan `bitbucket.org` schakelt de functie uit in plaats van het token ergens anders naartoe te sturen.
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      provider: 'gitlab'
-      host: 'gitlab.example.com'
-      allowedRepositories:
-        - 'platform/backend/api'
-        - 'platform/frontend/*'
-```
-
-<Callout type="info" title="Alleen lezen vanuit librechat.yaml">
-  `provider`, `host` en `oauth` worden uitsluitend uit `librechat.yaml` gelezen. Overschrijvingen van deze sleutels op basis van rol, groep, gebruiker en tenant worden genegeerd, omdat deze bepalen waar het token naartoe wordt gestuurd en aan welke app gebruikers toegang verlenen. Een overschrijving kan een token niet omleiden naar een andere service. Andere sleutels, zoals `token` en `allowedRepositories`, kunnen nog steeds per principal verschillen.
-</Callout>
-
-### 2. Maak een token [#2-create-a-token]
-
-De server-token wordt gebruikt voor elke gebruiker die zijn eigen account niet heeft gekoppeld.
-
-**GitHub**: gebruik een fine-grained token dat beperkt is tot de repositories die je wilt tonen, met **read-only** rechten:
-
-- Pull requests
-- Controles
-- Inhoud
-
-<Callout type="warning" title="Foutmodi voor rechten">
-  Zonder **Checks** mislukt het laden van elke overeenkomende pull request. Zonder **Contents** mislukt het laden van een chat waarvan de branch is gewijzigd sinds de laatste opdracht, omdat LibreChat commits vergelijkt om de overeenkomst te bevestigen.
-</Callout>
-
-**GitLab**: een persoonlijk, groeps- of projecttoegangstoken met de `read_api` scope.
-
-**Bitbucket Cloud**: een repository-, project- of workspace-toegangstoken, verzonden als bearer token. LibreChat leest pull requests, hun diffstat, hun commitstatussen en merge bases, dus verleen leestoegang tot pull requests en repositories.
-
-### 3. Geef LibreChat de token [#3-give-librechat-the-token]
-
-LibreChat zoekt in deze volgorde naar een token:
-
-1. `token: "${MY_VAR}"` in `librechat.yaml`. Dit is een **verwijzing** naar een omgevingsvariabele; de YAML bevat nooit het token zelf, en een letterlijk token wordt door het schema geweigerd.
-2. Als `token` niet is ingesteld, wordt de eerste van deze omgevingsvariabelen gebruikt die wel is ingesteld:
-
-| Provider  | Fallback-variabelen, in volgorde                        |
-| --------- | ------------------------------------------------------- |
-| GitHub    | `GITHUB_PULL_REQUEST_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN` |
-| GitLab    | `GITLAB_PULL_REQUEST_TOKEN`, `GITLAB_TOKEN`             |
-| Bitbucket | `BITBUCKET_PULL_REQUEST_TOKEN`                          |
-
-3. Geen token aanwezig: de functie blijft inactief, tenzij gebruikers hun eigen accounts kunnen koppelen.
-
-Een `token` dat is ingesteld maar niet wordt opgelost (de variabele is leeg of ontbreekt) resulteert in `NOT_CONFIGURED`. Er wordt **niet** teruggevallen op de bovenstaande variabelen.
-
-<Callout type="info" title="GITHUB_TOKEN en GITLAB_TOKEN zijn veelvoorkomende namen">
-  Als jouw implementatie er al een gebruikt voor iets anders, wordt deze hier opgepikt zodra een repository-scope is ingesteld. Stel `token` expliciet in, of gebruik de `*_PULL_REQUEST_TOKEN` variabele, om te voorkomen dat deze wordt gedeeld.
-</Callout>
-
-### 4. Kies welke repositories het mag raadplegen [#4-choose-which-repositories-it-may-look-up]
-
-De worker rapporteert zijn eigen repository, dus de server moet beslissen voor welke repositories het token gebruikt mag worden. Zonder een scope blijft de functie inactief. Er zijn twee manieren:
-
-- `allowedRepositories`: een lijst van `owner/name` of `owner/*` vermeldingen (tot 256). Overeenkomsten zijn hoofdletterongevoelig. Op GitLab kunnen vermeldingen geneste groepspaden zijn zoals `group/sub/name` of `group/sub/*`. `*` staat voor precies één segment, dus `group/*` komt niet overeen met `group/sub/name`. Vermeldingen zoals `*/*`, `*`, `owner`, of vermeldingen die `.` of `..` segmenten bevatten, worden door het schema geweigerd.
-- `allowAllRepositories: true`: zoek elke repository op die het token kan lezen. Standaard is `false`.
-
-<Callout type="warning" title="Beveiliging: allowAllRepositories">
-  Het staat standaard uit omdat de repository van de worker komt, niet van de server. Als het aan staat, kan elke gebruiker die code kan uitvoeren het token van de server naar elke repository wijzen die dat token kan lezen, en de titel, grootte en status van de pull request inzien. Gebruik een read-only token dat beperkt is tot de repositories die je wilt tonen.
-</Callout>
-
-### 5. Schakel het in [#5-turn-it-on]
-
-Er is geen schakelaar om in te stellen. De functie is ingeschakeld zodra er een token en een repository-scope zijn, of een werkende `oauth` app. `enabled: false` schakelt het uit, ongeacht wat er verder is ingesteld.
-
-### Minimale voorbeelden [#minimal-examples]
-
-GitHub, met `GITHUB_PULL_REQUEST_TOKEN` ingesteld in de serveromgeving:
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      allowedRepositories:
-        - 'LibreChat-AI/LibreChat'
-        - 'my-org/*'
-```
-
-GitHub Enterprise Server, met een expliciete tokenverwijzing:
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      host: 'github.example.com'
-      token: '${GHES_PULL_REQUEST_TOKEN}'
-      allowedRepositories: ['platform/*']
-```
-
-Bitbucket Cloud, met `BITBUCKET_PULL_REQUEST_TOKEN` ingesteld:
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      provider: 'bitbucket'
-      allowedRepositories: ['my-workspace/*']
-```
-
-Zie de [`pullRequests` referentie](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) voor elke key.
-
-## Gebruikersaccounts per gebruiker [#per-user-accounts]
-
-Met `oauth` ingesteld, kan elke gebruiker zijn eigen GitHub-, GitLab- of Bitbucket-account koppelen in **Settings > Account**, onder **Pull request account**. Hun opzoekingen worden vervolgens uitgevoerd met hun eigen token, snelheidslimiet en repository-toegang in plaats van die van de server.
-
-- Het token van een verbonden gebruiker ziet alleen wat die gebruiker al kan zien, dus het is niet gebonden aan `allowedRepositories`.
-- Gebruikers die nog geen verbinding hebben gemaakt, gebruiken nog steeds het server-token onder het repository-bereik. Zonder server-token zien zij geen pull requests totdat zij verbinding maken.
-- Met een werkende `oauth` app is de functie ingeschakeld, zelfs zonder een server-token of repository-scope.
-- **Disconnect** verwijdert de opgeslagen autorisatie. De gebruiker kan op elk gewenst moment opnieuw verbinding maken.
-- Als het token van een verbonden gebruiker niet kan worden vernieuwd omdat de provider of de key store niet beschikbaar is, rapporteren hun opzoekingen de pull request als niet beschikbaar. Ze vallen **niet** terug op het server-token, dat mogelijk minder ziet dan dat van de gebruiker zelf.
-- Als de provider een verversing definitief weigert (de toekenning is ingetrokken), wordt de verbinding verwijderd. De gebruiker wordt vervolgens als niet verbonden weergegeven en behandeld als elke gebruiker die geen verbinding heeft gemaakt.
-- Grants worden versleuteld opgeslagen, één per gebruiker en provider-host. Het wijzigen van `clientId` naar een andere app zorgt ervoor dat bestaande verbindingen als niet-verbonden worden geteld, waardoor gebruikers opnieuw verbinding moeten maken.
-
-### Configureer de app [#configure-the-app]
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      oauth:
-        clientId: '${GITHUB_PR_OAUTH_CLIENT_ID}'
-        clientSecret: '${GITHUB_PR_OAUTH_CLIENT_SECRET}'
-      # optional: the server token for users who have not connected
-      allowedRepositories: ['my-org/*']
-```
-
-| Sleutel | Standaardwaarde | Bereik | Beschrijving |
-| ----------------------- | --------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------- |
-| `clientId` | verplicht | | Verwijzing naar een omgevingsvariabele, nooit de waarde zelf. |
-| `clientSecret` | verplicht | | Verwijzing naar een omgevingsvariabele, nooit de waarde zelf. |
-| `scope` | geen bij GitHub, `read_api` bij GitLab, die van de consument zelf bij Bitbucket | | Door spaties gescheiden scopes die moeten worden aangevraagd. Alleen letters, cijfers, `_`, `:`, `.`, `-` en spaties, tot 256 tekens. |
-| `flowTimeoutMinutes` | 10 | 1-60 | Minuten die een gebruiker de tijd heeft om de verbinding bij de aanbieder goed te keuren. |
-| `requestTimeoutSeconds` | 10 | 1-60 | Seconden die een codewisseling of het vernieuwen van een token mag duren. |
-| `retentionDays` | 180 | 1-3650 | Dagen dat een verbinding wordt bewaard zonder gebruikt te worden. Elk gebruik verlengt deze termijn. |
-
-Als een van beide referenties niet wordt opgelost, kunnen gebruikers geen verbinding maken en wordt alleen het servertoken gebruikt. De verbindingsstroom vereist ook `JWT_SECRET`, wat elke LibreChat-implementatie instelt.
-
-Registreer deze callback-URL bij de app, waarbij `DOMAIN_SERVER` de publieke URL van je server is:
-
-```
-<DOMAIN_SERVER>/api/pull-requests/oauth/callback
-```
-
-### De app registreren [#register-the-app]
-
-<Tabs items={["GitHub", "GitLab", "Bitbucket"]}>
-<Tabs.Tab>
-
-Een GitHub App wordt aanbevolen: de gebruikerstokens hebben geen scope nodig en hebben alleen toegang tot repositories waar de app is geïnstalleerd.
-
-<Steps>
-<Step>
-
-Open **Settings > Developer settings > GitHub Apps > New GitHub App** voor je account of organisatie. Gebruik op GitHub Enterprise Server of `*.ghe.com` dezelfde pagina op die host.
-
-</Step>
-<Step>
-
-Stel **Callback URL** in op `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`. Schakel onder **Webhook** de optie **Active** uit.
-
-</Step>
-<Step>
-
-Onder **Repository permissions**, stel **Pull requests**, **Checks** en **Contents** in op **Read-only**.
-
-</Step>
-<Step>
-
-Maak de app aan, kopieer vervolgens de **Client ID** en genereer een **client secret**. Sla deze op in omgevingsvariabelen en verwijs ernaar vanuit `oauth.clientId` en `oauth.clientSecret`.
-
-</Step>
-<Step>
-
-Installeer de app op de accounts of organisaties waarvan gebruikers de repositories moeten kunnen zien.
-
-</Step>
-</Steps>
-
-Een klassieke OAuth App werkt ook, maar vereist een scope zoals `scope: 'repo'`, wat meer dan alleen leestoegang verleent.
-
-</Tabs.Tab>
-<Tabs.Tab>
-
-<Steps>
-<Step>
-
-Open **Edit profile > Applications** (of de **Applications**-pagina van een groep of de instance) op de GitLab-host die is ingesteld in `host`.
-
-</Step>
-<Step>
-
-Stel **Redirect URI** in op `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`, laat **Confidential** aangevinkt en selecteer de `read_api` scope.
-
-</Step>
-<Step>
-
-Sla dit op en kopieer vervolgens de **Application ID** en **Secret** naar de omgevingsvariabelen waarnaar wordt verwezen door `oauth.clientId` en `oauth.clientSecret`. Stel `provider: 'gitlab'` in, en `host` voor een zelf-beheerde GitLab.
-
-</Step>
-</Steps>
-
-</Tabs.Tab>
-<Tabs.Tab>
-
-<Steps>
-<Step>
-
-Open **Workspace settings > OAuth consumers > Add consumer** in Bitbucket Cloud.
-
-</Step>
-<Step>
-
-Stel **Callback URL** in op `<DOMAIN_SERVER>/api/pull-requests/oauth/callback` en verleen **Pull requests: Read** en **Repositories: Read**. LibreChat vraagt geen scope aan op Bitbucket, dus de machtigingen van de consument zijn wat de gebruikers verlenen.
-
-</Step>
-<Step>
-
-Sla op en kopieer vervolgens de **Key** en **Secret** van de consumer naar de omgevingsvariabelen waarnaar wordt verwezen door `oauth.clientId` en `oauth.clientSecret`. Stel `provider: 'bitbucket'` in.
-
-</Step>
-</Steps>
-
-</Tabs.Tab>
-</Tabs>
-
-## Schalen met replica's [#scaling-with-replicas]
-
-Elke replica slaat resultaten op in het geheugen. Bij meerdere replica's stelt u `sharedCache: true` in, zodat ze opgezochte pull requests en rate limit cooldowns delen via Redis, en niet elk het token uitgeven aan hetzelfde antwoord.
-
-- Dit wordt alleen van kracht wanneer de deployment wordt uitgevoerd met Redis (`USE_REDIS`). Standaard: `false`.
-- Elke replica behoudt hoe dan ook zijn eigen in-memory cache, vóór de gedeelde cache.
-- `sharedCacheTimeoutMs` (10-5000, standaard 250) begrenst elke lees- of schrijfactie van de gedeelde cache. Een tragere Redis wordt overgeslagen en de opzoekactie gaat door zonder deze.
-- `sharedCacheSlots` (64-1000000, standaard 65536) begrenst het aantal Redis-sleutels dat de gedeelde cache gebruikt. Wordt alleen uit de YAML gelezen.
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    pullRequests:
-      allowedRepositories: ['my-org/*']
-      sharedCache: true
-      sharedCacheTimeoutMs: 250
-```
-
-## Afstemming [#tuning]
-
-De standaardinstellingen zijn prima voor de meeste implementaties.
-
-| Sleutel | Bereik | Standaard | Beschrijving |
-| -------------------------- | --------- | ------- | -------------------------------------------------------------------------------------------------------------- |
-| `cacheTtlSeconds` | 5-3600 | 30 | Aantal seconden dat een resultaat opnieuw wordt gebruikt voordat de provider opnieuw wordt gevraagd. Fouten worden maximaal 10 seconden onthouden. |
-| `cacheMaxEntries` | 10-100000 | 500 | Per credential gecachte resultaten voordat het oudste wordt verwijderd. |
-| `cacheMaxCredentials` | 1-10000 | 256 | Tegelijk gecachte credentials, voor de hele deployment. Bij overschrijding wordt de credential die het langst inactief is verwijderd. |
-| `maxConcurrentLookups` | 1-16 | 4 | Aantal lookups dat één sidebar-verzoek tegelijk uitvoert, geteld per credential over alle verzoeken heen. |
-| `batchTimeoutSeconds` | 1-120 | 20 | Langste tijd dat één sidebar-verzoek open blijft. |
-| `requestTimeoutSeconds` | 1-60 | 10 | Langste tijd die één providerverzoek mag duren. Verhoog deze waarde achter een trage proxy. |
-| `lookupTimeoutSeconds` | 1-120 | 30 | Langste tijd die een volledige lookup mag duren, alle verzoeken samen. |
-| `maxCheckRunPages` | 1-50 | 10 | Pagina's met check runs (GitHub) of commit statuses (Bitbucket) die worden gelezen voordat checks als lopend worden gerapporteerd. |
-| `maxCandidatePullRequests` | 1-100 | 10 | Pull requests die per status worden weergegeven bij het zoeken naar een hergebruikte branchnaam. |
-| `maxCandidatePages` | 1-10 | 1 | Pagina's met die kandidaten die per status worden gelezen. Elke pagina is één verzoek. |
-| `maxHeadComparisons` | 0-20 | 3 | Kandidaten die worden vergeleken met de commit waarop de chat het laatst draaide, voordat de zoekopdracht stopt. Elke vergelijking is één verzoek. |
-
-## Wat gebruikers zien [#what-users-see]
-
-### Chat header chip [#chat-header-chip]
-
-- **Desktop**: de chip staat links in de header, naast de andere linker bedieningselementen. Hij toont het pull request-pictogram met de CI-stip op de hoek, gevolgd door de titel van de pull request. Door de chip aan te wijzen of te focussen wordt de kaart eronder geopend, en de kaart blijft open zolang de aanwijzer of het toetsenbordfocus zich binnen de kaart bevindt.
-- **Mobile**: there is no chip. The header's overflow (three dots) menu has a `PR #number` entry (`MR !number` on GitLab) that opens the same card in a dialog.
-- De header ververst automatisch: ongeveer elke 20 seconden terwijl controles worden uitgevoerd of de samenvoegbaarheid nog wordt berekend, ongeveer elke 60 seconden in andere gevallen, en helemaal niet zodra een pull request is samengevoegd of gesloten zonder actieve controles.
+Op een breed scherm toont een chip links in de kop het pull request-pictogram, een kleine CI-stip op de hoek en de titel van de pull request. Beweeg de muis over de chip of zet de focus erop om een kaart met de details te openen. De kaart blijft open zolang uw aanwijzer of toetsenbordfocus zich binnen de kaart bevindt.
 
 <ThemeImage
   light="/images/pull-requests/hdr-ready-light.png"
   dark="/images/pull-requests/hdr-ready-dark.png"
-  alt="De chatkoptekst-chip voor een open pull request dat kan worden samengevoegd, met geslaagde controles, en de bijbehorende kaart die eronder open staat"
+  alt="De chatkopchip voor een open pull request met geslaagde checks, met de bijbehorende kaart open eronder"
 />
 
-<ThemeImage
-  light="/images/pull-requests/mob-menu-light.png"
-  dark="/images/pull-requests/mob-menu-dark.png"
-  alt="De PR #1234-vermelding in het overloopmenu van de koptekst op een klein scherm"
-/>
+Op een klein scherm is er geen chip. Open het driepuntsmenu in de header en kies de optie `PR #number` (`MR !number` op GitLab) om dezelfde kaart in een dialoogvenster te tonen.
 
-<ThemeImage
-  light="/images/pull-requests/mob-dialog-light.png"
-  dark="/images/pull-requests/mob-dialog-dark.png"
-  alt="De pull request-kaart die in een dialoogvenster op een klein scherm wordt weergegeven"
-/>
+De header blijft zichzelf actueel houden: hij controleert ongeveer elke 20 seconden opnieuw zolang er controles lopen of de provider nog bepaalt of de branch kan worden samengevoegd, en ongeveer elke 60 seconden in alle andere gevallen. Zodra de pull request is samengevoegd of gesloten en er niets meer draait, stopt hij.
 
-### Zijbalkmarkering [#sidebar-mark]
+## In de zijbalk [#in-the-sidebar]
 
-- Een pull request-icoon met zijn CI-stip staat aan het einde van de gespreksrij. Het verschijnt alleen voor gesprekken die een pull request hebben.
-- Als u met de muis over de rij zweeft, of de markering focust of erop klikt, opent dezelfde kaart rechts van de markering. Door op de markering te klikken, wordt het gesprek niet geopend.
-- De zijbalk voert nooit polls uit. Een rij is zo actueel als de laatste keer dat de lijst werd geladen, en deze ververst wanneer het venster opnieuw focus krijgt en de gegevens ouder zijn dan een minuut.
-- Nadat een pull request is ontdekt, behoudt een mislukte vernieuwing de kaart en de herhaalstatus. Vóór de ontdekking blijft de markering in de zijbalk verborgen bij mislukte opzoekingen.
+Gesprekken die een pull request hebben, krijgen hetzelfde pictogram en dezelfde CI-stip aan het einde van hun rij. De rij behoudt de eigen titel van het gesprek. Beweeg de muis over de rij, of zet de focus op of klik op de markering, om de kaart ernaast te openen; als je op de markering klikt, wordt het gesprek niet geopend.
 
 <ThemeImage
   light="/images/pull-requests/side-rows-light.png"
@@ -355,147 +34,47 @@ De standaardinstellingen zijn prima voor de meeste implementaties.
   alt="Zijbalkrijen met pull request-markeringen: klaar om samen te voegen, conflicten met mislukte controles, een concept met lopende controles en een samengevoegde pull request"
 />
 
-<ThemeImage
-  light="/images/pull-requests/side-card-light.png"
-  dark="/images/pull-requests/side-card-dark.png"
-  alt="De pull request-kaart die rechts van een zijbalkrij werd geopend"
-/>
+De zijbalk pollt niet. Een rij is zo actueel als de laatste keer dat de lijst is geladen, en wordt vernieuwd wanneer je terugkeert naar het venster en de gegevens ouder zijn dan een minuut. Als een vernieuwing mislukt voor een pull request dat al gevonden was, blijft de markering staan en toont de kaart de melding "Couldn't refresh the pull request" met een **Retry**-knop. Een gesprek waarvan het pull request nog nooit is gevonden, toont helemaal geen markering, ook niet wanneer de opzoeking is mislukt.
 
-### De kaart [#the-card]
+## De kaart lezen [#reading-the-card]
 
-De kaart toont `PR #number` (`MR !number` op GitLab), `+additions` in het groen, `-deletions` in het rood, een **Open in GitHub**, **Open in GitLab** of **Open in Bitbucket** link, de titel en twee badges:
+De kaart toont `PR #number` (`MR !number` op GitLab), de regels die in groen zijn toegevoegd en in rood zijn verwijderd, een link **Open in GitHub**, **Open in GitLab** of **Open in Bitbucket**, de titel en twee badges:
 
-- **State**: Open, Conflicts, Draft, Merged of Closed. Conflicts vervangt Open wanneer een open pull request mergeconflicten heeft.
-- **Controles**: Passing, Failing, Running of None. Op GitLab is dit de head-pipeline, alleen geteld wanneer deze is uitgevoerd voor de huidige head-commit. Op Bitbucket zijn dit de commitstatussen.
+- Status: Open, Conflicts, Draft, Merged of Closed. Conflicts vervangt Open wanneer de branch niet schoon kan worden samengevoegd.
+- Checks: Passing, Failing, Running of None. Op GitLab is dit de head pipeline, en alleen als deze is uitgevoerd voor de huidige commit. Op Bitbucket zijn dit de commit statussen.
 
-### Betekenis van icoon en punt [#icon-and-dot-meaning]
+De pictogramkleur en de CI-stip geven in één oogopslag dezelfde informatie weer:
 
-| Situatie | Icoonkleur | CI-stip |
-| --- | --- | --- |
-| Open, geen conflicten, checks slagen | Groen (klaar om samen te voegen) | Groen |
-| Open, geen conflicten, helemaal geen checks | Groen | Geen |
-| Open, mergeability wordt nog berekend | Neutraal | Op basis van checks |
-| Open, merge-conflicten | Rood (kan niet samengevoegd worden) | Op basis van checks |
-| Concept | Neutraal | Op basis van checks |
-| Samengevoegd | Paars | Geen |
-| Gesloten | Neutraal | Geen |
+| Pull request                         | Pictogram | CI-stip          |
+| ------------------------------------ | --------- | ---------------- |
+| Open, kan worden samengevoegd        | Groen     | Uit de checks    |
+| Open, samenvoegbaarheid nog niet bekend | Neutraal | Uit de checks  |
+| Open, samenvoegconflicten            | Rood      | Uit de checks    |
+| Concept                              | Neutraal  | Uit de checks    |
+| Samengevoegd                         | Paars     | Geen             |
+| Gesloten                             | Neutraal  | Geen             |
 
-CI-stippen: groen voor geslaagd, rood voor mislukt, oranje voor bezig. Er is geen stip wanneer er geen controles zijn, of zodra de pull request is samengevoegd of gesloten. Een mislukte controle gaat voor op een controle die nog loopt. Een samenvatting met meer controle-runs dan er zijn gelezen, wordt nooit als geslaagd weergegeven.
+De stip is groen voor geslaagde controles, rood voor mislukte controles en oranje voor controles die nog lopen. Er is geen stip wanneer de repository geen controles rapporteert. Een mislukte controle gaat voor op een controle die nog loopt.
 
-<ThemeImage
-  light="/images/pull-requests/hdr-conflict-light.png"
-  dark="/images/pull-requests/hdr-conflict-dark.png"
-  alt="Een open pull request met mergeconflicten: rood pictogram, rode stip voor mislukte controles, en de badges Conflicten en Mislukt"
-/>
+## Welke pull request je ziet [#which-pull-request-you-see]
 
-<ThemeImage
-  light="/images/pull-requests/hdr-draft-light.png"
-  dark="/images/pull-requests/hdr-draft-dark.png"
-  alt="Een conceptpull request: neutraal pictogram, oranje stip terwijl de controles worden uitgevoerd"
-/>
+De werkruimte toont de repository, de branch en de commit waarop de chat het laatst is uitgevoerd, en LibreChat zoekt naar een pull request vanaf die branch.
 
-<ThemeImage
-  light="/images/pull-requests/hdr-merged-light.png"
-  dark="/images/pull-requests/hdr-merged-dark.png"
-  alt="Een samengevoegde pull request: paars pictogram en geen stip"
-/>
+- Als de eigen commando-uitvoer van de chat een link naar een pull request in dezelfde repository heeft afgedrukt (bijvoorbeeld de URL die `gh pr create` afdrukt), wordt dat pull request gebruikt, mits het afkomstig is van de branch van de chat.
+- Anders hebben open pull requests voor de branch de voorkeur boven gesloten pull requests, zodat een oude gesloten pull request op een hergebruikte branchnaam de huidige niet verbergt.
+- Een pull request telt alleen mee als deze de commit bevat waarop de chat voor het laatst is uitgevoerd. Het verwijderen van een branch en het hergebruiken van de naam ervan herstelt de oude pull request niet.
+- Een gloednieuwe branch zonder commits komt nergens mee overeen.
 
-## Hoe een pull request wordt gematcht [#how-a-pull-request-is-matched]
+Repositories waarvoor de server niet mag opzoeken, gedragen zich precies zoals repositories zonder pull request: geen markering en geen foutmelding.
 
-1. De worker rapporteert de repository, branch en commit (head) waarop de chat voor het laatst is uitgevoerd.
-2. Als de eigen commando-output van de chat linkte naar een pull request van die repository op de geconfigureerde host (bijvoorbeeld de link die `gh pr create` print), dan wordt dat pull request direct gelezen, op voorwaarde dat de head ervan de branch van de chat is. Links naar andere repositories of andere hosts worden genegeerd.
-3. Anders vermeldt LibreChat eerst de open pull requests voor die branch, zodat een gesloten geschiedenis van een hergebruikte branch-naam een openstaande niet kan verbergen. Daarna controleert het de open pull requests van forks, en vervolgens de gesloten exemplaren.
-4. Bij een vastgelegde commit telt een pull request alleen als de head die commit is of daarop voortbouwt. Dit voorkomt dat een verwijderde en opnieuw gebruikte branch-naam een oude pull request laat zien. Een pull request vanuit een fork telt alleen wanneer deze de vastgelegde commit bevat, aangezien iedereen een fork-branch met dezelfde naam kan openen.
-5. Een branch zonder commits (een nieuwe, lege branch) komt met niets overeen.
-6. Het resultaat wordt gecachet per credential, repository, branch en commit.
-7. Op GitHub worden check runs gelezen voor de huidige head van de pull request. Voor een pull request vanuit een fork worden checks alleen gelezen vanuit de fork wanneer de repository van die fork binnen het bereik valt (vermeld in de lijst, of `allowAllRepositories`). Anders wordt de base repository gelezen en gaat het token nooit naar een niet-vermelde fork.
+## Koppel je eigen account [#connect-your-own-account]
 
-## Gedrag [#behavior]
+Als uw beheerder dit heeft ingesteld, kunt u pull requests opzoeken met uw eigen GitHub-, GitLab- of Bitbucket-account. Open **Instellingen**, ga naar **Account** en klik onder **Verbonden accounts** op **Verbinden** naast **Pull request-account**. Er wordt een aanmeldvenster geopend bij de provider; keur dit goed en de rij toont **Verbonden**. Als het venster niet opent, sta dan pop-ups toe voor LibreChat en probeer het opnieuw.
 
-### Rate limits [#rate-limits]
+Eenmaal verbonden gebruiken zoekopdrachten je eigen account, zodat je pull requests ziet in elke repository die je kunt lezen, onder je eigen rate limit. **Verbreken** verwijdert de verbinding en je kunt altijd opnieuw verbinding maken. Als de server je verbinding niet kan vernieuwen (bijvoorbeeld omdat de provider niet beschikbaar is), worden je pull requests weergegeven als niet beschikbaar in plaats van stilzwijgend over te schakelen naar het token van de server. Als je de app bij de provider intrekt, verwijdert LibreChat de verbinding en ben je weer niet verbonden.
 
-- Er is een rate limit van toepassing op de credential op één provider host, dus het pauzeert zoekopdrachten voor elke branch onder dat token. Bij accounts per gebruiker is de limiet van elke gebruiker voor henzelf.
-- De minimale pauze is 10 seconden, en een wachttijd die door de provider wordt opgegeven wordt gerespecteerd, met een maximum van 1 uur. Op GitHub zorgt een secundaire limiet zonder opgegeven wachttijd voor een pauze van 60 seconden.
-- Tijdens een pauze geven opzoekingen het antwoord `RATE_LIMITED`. Eerder gevonden pull requests behouden hun retrystatus; een nog niet gevonden rij blijft verborgen.
-- Met `sharedCache` is een pauze die op één replica is gestart, van toepassing op elke replica.
+Als de rij **Not in use** vermeldt, heeft je beheerder accountverbindingen uitgeschakeld en gebruiken opzoekacties je account niet meer. Klik op **Disconnect** om de opgeslagen verbinding te verwijderen.
 
-### Rolling upgrades [#rolling-upgrades]
+## Setup [#setup]
 
-- De zijbalk vraagt alleen om de batch-route wanneer de startup-configuratie aangeeft dat de server deze heeft (`pullRequestsBatchVersion`).
-- Als een replica zonder de route een 404 geeft, valt de client terug op de enkele route, één aanroep per keer, of op `pullRequestsMaxConcurrentLookups` wanneer de server dit heeft geadverteerd. Dit dekt een client die de nieuwe opstartvlag heeft ontvangen van een bijgewerkte replica en vervolgens een replica zonder de route bereikte. Als `/api/config` wordt geserveerd door een replica zonder de vlag, vraagt de zijbalk nooit de batch-route op en blijven de rijen leeg; upgrade daarom elke replica voordat je vertrouwt op zijbalkmarkeringen.
-
-### Standaardwaarden wanneer niet ingesteld [#defaults-when-unset]
-
-- Zonder token of repository scope, en zonder `oauth` app, is de functie inactief: er wordt niets geadverteerd in de opstartconfiguratie, er wordt niets vastgelegd en er wordt niets getoond.
-- Wanneer de functie is uitgeschakeld in de config, blijven bestaande chats ongewijzigd en roept de client de nieuwe routes nooit aan.
-
-## Beveiligingsmodel [#security-model]
-
-- Tokens bevinden zich op de server. Ze worden nooit naar de browser verzonden en foutmeldingen bevatten nooit de reactietekst van de provider, het token of stack traces.
-- Het servertoken wordt alleen gebruikt voor repositories binnen het bereik en alleen op de geconfigureerde host. Het wordt nooit verzonden naar een fork die niet binnen het bereik valt.
-- `provider`, `host` en `oauth` zijn uitsluitend afkomstig uit `librechat.yaml`, dus een overschrijving van een rol, groep, gebruiker of tenant kan geen token naar een andere service sturen of de app-gebruikers wijzigen die toegang verlenen.
-- De `/api/convos` opzoekroutes vereisen een geauthenticeerde gebruiker en zijn eigenaar-gebonden. Een conversatie die ontbreekt, verlopen is of toebehoort aan een andere gebruiker, ziet er hetzelfde uit als een conversatie zonder pull request.
-- Gebruik een read-only token dat beperkt is tot de repositories die je wilt tonen.
-
-## Probleemoplossing [#troubleshooting]
-
-Voordat de eerste ontdekking plaatsvindt, veroorzaken providerfouten geen waarschuwingsmarkering in de zijbalk. Debuglogs registreren de provider en begrensde redencodes, zonder repositoryidentiteit of providerpayloads. Een eerder ontdekte pull request behoudt zijn kaart wanneer een vernieuwing mislukt.
-
-| Symptoom | Waarschijnlijke oorzaak | Oplossing |
-| --- | --- | --- |
-| Geen chip en geen zijbalkmarkering nergens | Geen token, geen repositorybereik, of `enabled: false` | Controleer [Setup](#setup). Open `/api/config` terwijl je bent aangemeld en zoek naar `pullRequestsEnabled: true`. |
-| Geen chip voor een chat in een gekoppelde werkruimte | De repository staat niet in `allowedRepositories` | Voeg haar toe, of de eigenaar als `owner/*`. Een repository buiten het bereik ziet er hetzelfde uit als een repository zonder pull request. |
-| Chip verschijnt alleen voor sommige chats | Alleen chats in een gekoppelde codewerkruimte die een branch heeft gemeld, hebben een lane | Bevestig `CODEAPI_BRIDGE_LANE_GIT=true` op de Code API en een worker gebouwd uit code-interpreter PR #311 of later. |
-| Headerchip werkt, zijbalkrijen tonen niets | `pullRequestsBatchVersion` ontbreekt in `/api/config` (oude build, of een verouderd tabblad) | Bouw de server opnieuw of upgrade hem, herstart, en voer een harde herlaadactie uit. Bevestig `pullRequestsBatchVersion: 1`. |
-| Waarschuwingspictogram met opnieuw proberen | Opzoeken mislukt (ratelimiet, providerfout, of `NOT_CONFIGURED`) | Probeer het opnieuw. Als het constant is, controleer het token en de bijbehorende rechten. |
-| `NOT_CONFIGURED` | `token` is ingesteld, maar de variabele is leeg of ontbreekt | Stel de variabele in, of verwijder `token` om de fallbackvariabelen te gebruiken. |
-| Elke GitHub-pull request laadt niet | Het token mist het Checks-recht | Verleen alleen-lezen Checks. |
-| Mislukt alleen nadat de branch is doorontwikkeld | Het token mist het Contents-recht, dus commits kunnen niet worden vergeleken | Verleen alleen-lezen Contents. |
-| Frequente `RATE_LIMITED` | Veel gebruikers delen het servertoken, of replica's vragen elk de provider op | Verhoog `cacheTtlSeconds`, verlaag `maxConcurrentLookups`, stel `sharedCache: true` met Redis in, of laat gebruikers hun eigen accounts koppelen. |
-| Pull request van een fork toont geen checks | De fork valt niet binnen het bereik, dus checks worden gelezen uit de basisrepository | Voeg de eigenaar van de fork toe aan `allowedRepositories`, of stel `allowAllRepositories: true` in. |
-| GitLab of Bitbucket toont niets | `provider` is niet ingesteld, of `host` komt niet overeen met de locatie van het project | Stel `provider` in. Voor een zelfbeheerde GitLab stel je `host` in op de hostnaam. Bitbucket werkt alleen met de standaardhost `bitbucket.org`. |
-| Link die door `gh pr create` wordt afgedrukt, wordt niet opgepikt | De link verwijst naar een andere host of repository dan die van de lane | Controleer `host`. Alleen links op de geconfigureerde host en de repository van de lane tellen mee. |
-| Verbonden gebruikers zien "niet beschikbaar" | De provider of sleutelopslag kon hun token niet vernieuwen | Probeer het later opnieuw. Opzoekingen vallen voor verbonden gebruikers niet terug op het servertoken. |
-| Geen pull request voor een branchnaam die vaak is hergebruikt | `maxCandidatePullRequests`, `maxCandidatePages` of `maxHeadComparisons` is te laag voor hoe vaak de naam is hergebruikt, dus de zoekactie stopt voordat hij de overeenkomende pull request bereikt | Verhoog ze. |
-| Trage of time-outs bij opzoekingen achter een proxy | `requestTimeoutSeconds` is te laag | Verhoog hem. Controleer `HTTPS_PROXY` en `NO_PROXY`. |
-
-## API-referentie [#api-reference]
-
-Beide `/api/convos` routes hieronder vereisen een geauthenticeerde gebruiker en zijn eigenaar-gebonden. Het startup config endpoint is niet eigenaar-gebonden.
-
-### Haal de pull request van één conversatie op [#get-one-conversations-pull-request]
-
-`GET /api/convos/:conversationId/pull-request`
-
-- **200**: `{ "pullRequest": null }` of `{ "pullRequest": { number, title, url, additions, deletions, state, isDraft, mergeable, checks } }`.
-- `state` is `open`, `closed` of `merged`. `mergeable` is `clean`, `conflicting` of `unknown`. `checks` is `passing`, `failing`, `running` of `none`.
-- **503**: `{ "error": "...", "code": "NOT_CONFIGURED" | "RATE_LIMITED" | "UPSTREAM_ERROR" }`.
-- **404**: ongeldig conversation id. **500**: opslagfout met vaste tekst.
-
-### Haal pull requests van vele gesprekken op [#get-many-conversations-pull-requests]
-
-`POST /api/convos/pull-requests`
-
-- Body: `{ "conversationIds": ["..."] }`, met 1 tot 50 ids. Duplicaten worden samengevoegd. Al het andere resulteert in een 400.
-- **200**: `{ "results": [ { "conversationId", "pullRequest" } | { "conversationId", "error": { "code" } } ] }`, in de gevraagde volgorde. Eén mislukte opzoeking verbergt de andere niet.
-- Een ontbrekend token zorgt er alleen voor dat de items die het nodig hadden, falen.
-
-### Accountverbinding [#account-connection]
-
-Deze routes bestaan alleen wanneer `JWT_SECRET` is ingesteld. Alle routes, behalve de callback, vereisen een geauthenticeerde gebruiker.
-
-- `GET /api/pull-requests/oauth/connect`: start een verbinding en antwoordt met `{ "url" }`, de providerpagina die geopend moet worden.
-- `GET /api/pull-requests/oauth/callback`: waar de provider de gebruiker naar terugstuurt.
-- `GET /api/pull-requests/oauth/status`: of de gebruiker verbonden is.
-- `DELETE /api/pull-requests/oauth`: verbreekt de verbinding met de gebruiker.
-
-### Opstartconfiguratie [#startup-config]
-
-`GET /api/config` bevat deze velden. De server stelt deze in; het zijn geen instellingen.
-
-- `pullRequestsEnabled` (boolean)
-- `pullRequestsBatchVersion` (`1`, alleen aanwezig wanneer de functie is ingeschakeld)
-- `pullRequestsMaxConcurrentLookups` (getal, alleen aanwezig wanneer de functie is ingeschakeld)
-- `pullRequestsConnect` (`github`, `gitlab` of `bitbucket`, alleen aanwezig wanneer gebruikers hun eigen account kunnen koppelen)
-
-Alleen de hierboven vermelde foutcodes zijn stabiel.
+De functie staat standaard aan, maar blijft verborgen totdat een beheerder LibreChat een token en een lijst met repositories geeft waarin het mag zoeken, of een app instelt zodat gebruikers hun eigen accounts kunnen koppelen. Er is ook een gekoppelde codewerkruimte nodig die de git-branch rapporteert. Zie [Pull Requests-configuratie](/docs/configuration/pull_requests).

@@ -1,292 +1,118 @@
 ---
 title: Agents API (Beta)
-icon: Plug
-description: 运行 LibreChat 智能体并通过编程 API 发送经过身份验证的事件
+icon: Webhook
+description: '从脚本和其他应用中调用你的 LibreChat 智能体,从其他系统向它们发送事件,并通过受信任的服务管理智能体和技能。'
 ---
 
-<Callout type="warning" title="测试版功能">
-Agents API 目前处于测试阶段。随着我们向稳定版本迭代，endpoint、请求/响应格式以及行为可能会发生变化。
+Agents API 让 LibreChat 外部的代码能够与你的智能体进行通信。将任意 OpenAI SDK 指向你的实例,把智能体 ID 作为 model 参数传入,即可通过熟悉的 API 获得该智能体的完整配置(指令、工具、文件)。你可以用它将智能体接入脚本、CI 任务或其他产品中。
+
+I'm ready to translate, but the text you've sent is only "There are three parts:" with nothing after it. Please paste the Markdown/MDX content you want translated into 简体中文, and I'll return the translation with code, JSX/MDX tags, URLs, frontmatter, and the protected terms left exactly as written.
+
+- **推理**：Chat Completions 和 Open Responses，使用 API 密钥进行身份验证（如果管理员已配置，也可以使用您自己的 OIDC 令牌）。
+- **Agent Events**：将来自其他系统（例如 webhook）的工作交给智能体处理，并跟踪其是否已完成。仅支持 API 密钥。
+- **Agent Management**:使用机器 OIDC 令牌,从受信任的服务创建和编辑代理(agents)与技能(skills)。
+
+<Callout type="warning" title="测试版">
+  端点、请求格式和响应在各版本之间仍可能发生变化。
 </Callout>
 
-LibreChat 通过推理和事件交付 API 将 agent 暴露给外部应用程序、脚本和服务。
+## 获取 API key [#get-an-api-key]
 
-## 概述 [#overview]
+打开 **设置**,进入 **数据与隐私**,在 **API 密钥** 下找到 **Agent API Keys**。点击 **管理**,然后点击 **创建 API 密钥**,为其命名,并选择过期时间(从 7 天到 1 年,或选择永不过期)。创建后请立即复制该密钥,因为它只会显示一次。
 
-Agents API 提供了两个推理接口、经过身份验证的事件交付以及测试版管理路由：
+<ThemeImage
+  light="/images/features/agents_api/api-keys-light.png"
+  dark="/images/features/agents_api/api-keys-dark.png"
+  alt="在设置、数据与隐私中的 Agent API Keys,列出两个密钥及其过期时间和最后使用日期"
+/>
 
-- **OpenAI-compatible Chat Completions**: `POST /api/agents/v1/chat/completions`
-- **Open Responses API**：`POST /api/agents/v1/responses`
-- **Agent 事件**:`POST /api/agents/v1/events`
-- **Agent 管理**: `/api/agents/v1/agents`
-- **技能管理**: `/api/agents/v1/skills`
+密钥代表你本人行事。任何你能通过 API 访问的内容,持有该密钥的人也都能访问,因此请删除不再使用的密钥。删除密钥会立即切断正在使用该密钥的应用程序的访问。
 
-推理接口支持 API-key 身份验证、可选的 OIDC 身份验证以及流式响应。Agent Events 使用 Remote Agents API-key 身份验证，以便 LibreChat 可以将每次交付绑定到稳定的源身份。管理路由则使用部署白名单，将 OIDC 机器客户端绑定到一个现有的 LibreChat 用户和租户。
+如果您看不到该部分,说明您的角色尚未被授予访问 Agents API 的权限。
 
-LibreChat 正在采用 [Open Responses](https://www.openresponses.org/) 作为其服务智能体的首选 API 框架。虽然 Chat Completions endpoint 为现有的兼容 OpenAI 的工具提供了向后兼容性，但 Open Responses endpoint 代表了未来的发展方向。
+## 你可以调用哪些智能体 [#which-agents-you-can-call]
 
-## 启用 Agents API [#enabling-the-agents-api]
+你可以调用自己拥有的或已共享给你的智能体。对于其他人的智能体,所有者必须通过智能体构建器页脚中的 **Remote Access**(远程访问)按钮(地球图标)授予你访问权限。这与普通共享是分开的:能够在 LibreChat 中与某个智能体聊天,并不代表你可以通过 API 调用它。
 
-Agents API 受 `remoteAgents` 接口配置的限制。所有权限默认均为 `false`。
+您需要智能体 ID,它显示在构建器的 **Advanced Settings** 下方,并带有复制按钮。`GET /api/agents/v1/models` 会列出您的密钥可以调用的智能体,`GET /api/agents/v1/models/{model}` 则返回单个智能体。
 
-```yaml filename="librechat.yaml"
-interface:
-  remoteAgents:
-    use: true
-    create: true
-```
+## Chat Completions [#chat-completions]
 
-请参阅 [Interface Configuration: remoteAgents](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents) 了解所有可用选项。
+`POST /api/agents/v1/chat/completions` 遵循 OpenAI Chat Completions 格式,因此现有的 OpenAI 客户端只需更改基础 URL 即可使用。
 
-**注意：** 管理员用户默认拥有所有远程代理权限。
-
-### OpenAPI 规范与交互式文档 [#openapi-specification-and-interactive-docs]
-
-LibreChat 可以在 `/api/openapi.json` 提供公共 Agents API 规范，并在 `/api/docs` 提供交互式 Swagger UI 文档。这两个路由默认均为禁用状态。请通过顶层的 `openapi` 设置来启用它们：
-
-```yaml filename="librechat.yaml"
-openapi:
-  enabled: true
-```
-
-该规范仅涵盖 Agent 管理和 Skill 管理路由。推理（Chat Completions 和 Open Responses）以及 Agent Events 路由不在其范围之内。除非您的部署打算公开 API 文档，否则请保持这些路由处于禁用状态。
-
-## API Key Management [#api-key-management]
-
-一旦启用了 `remoteAgents.use` 和 `remoteAgents.create`，用户即可从 LibreChat UI 生成 API 密钥。这些密钥用于对发送至 Agents API 的请求进行身份验证。
-
-## 身份验证 [#authentication]
-
-Agents API 支持两种身份验证方法，它们可以独立使用，也可以结合使用。
-
-### API Key [#api-key]
-
-默认情况下已启用 API 密钥身份验证。在启用 `remoteAgents.use` 和 `remoteAgents.create` 后，即可从 LibreChat UI 生成 API 密钥。
-
-```bash
-Authorization: Bearer <YOUR_API_KEY>
-```
-
-### OIDC Bearer Token [#oidc-bearer-token]
-
-对于您的基础设施中已经拥有 OIDC 提供商的机器对机器场景，您可以直接使用 OIDC Bearer 令牌进行身份验证，而无需使用 LibreChat API 密钥。
-
-在 `librechat.yaml` 中配置 OIDC 认证：
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    remoteApi:
-      auth:
-        apiKey:
-          enabled: false
-        oidc:
-          enabled: true
-          issuer: https://auth.example.com/realms/myrealm
-          # jwksUri is optional and auto-discovered from issuer if omitted
-          audience: my-client-id
-```
-
-然后使用您的 OIDC 访问令牌调用 API：
-
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/responses \
-  -H "Authorization: Bearer YOUR_OIDC_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "agent_abc123", "input": "Hello!"}'
-```
-
-<Callout type="info">
-  OIDC token 必须属于 LibreChat 中已存在的用户。匹配过程首先使用 `sub` 声明，如果匹配失败，则回退到 `email`、`preferred_username` 或 `upn`。
-</Callout>
-
-请参阅 [Agents Endpoint - remoteApi](/docs/configuration/librechat_yaml/object_structure/agents#remoteapi) 以获取所有配置选项。
-
-<Callout type="warning" title="Agent Events 需要 API key">
-  Agent Events 端点不支持仅使用 OIDC 进行身份验证。在创建绑定、加入事件队列以及轮询交付状态时，请使用 Remote Agents API 密钥。
-</Callout>
-
-## Agent Management API [#agent-management-api]
-
-beta 版 Agent Management API 允许服务在无需浏览器会话的情况下管理 Agent 及其关联资源。它与推理和 Agent Events 的身份验证相互独立：仅接受在 [`endpoints.agents.managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi) 下配置的 OIDC 机器令牌。
-
-每个配置好的 OAuth 客户端都绑定到一个现有的 LibreChat `userId` 和 `tenantId`。在令牌验证后，每个请求都将以该用户身份运行，并保留该用户当前的角色权限、Agent 和 Skill ACL、提供商限制、工具授权、文件限制以及租户隔离。客户端绑定不会使该用户成为管理员，也不会授予其访问该用户原本无法管理的资源的权限。
-
-### Agent 路由 [#agent-routes]
-
-| 方法 | 路由 | 用途 |
-| -------- | ------------------------------------------ | -------------------------------------------- |
-| `POST`   | `/api/agents/v1/agents`                    | 创建 Agent |
-| `GET`    | `/api/agents/v1/agents`                    | 列出可访问的 Agent |
-| `GET`    | `/api/agents/v1/agents/{id}`               | 读取一个可访问的 Agent |
-| `PATCH`  | `/api/agents/v1/agents/{id}`               | 更新 Agent |
-| `DELETE` | `/api/agents/v1/agents/{id}`               | 删除 Agent |
-| `POST`   | `/api/agents/v1/agents/{id}/files`         | 上传并附加一个 Agent 资源文件 |
-| `GET`    | `/api/agents/v1/agents/{id}/files`         | 列出 Agent 可访问的附加文件 |
-| `DELETE` | `/api/agents/v1/agents/{id}/files/{fileId}` | 从 Agent 中移除一个附加文件 |
-
-Agent 创建和更新的负载使用与 Agent Builder 相同的外部支持字段，并会拒绝未知的顶级字段。创建操作需要 `model`；更新操作仅接受提供的字段。响应会公开受支持的 Agent 配置以及 `id`、`provider`、可为空的 `model`、`version`、`createdAt` 和 `updatedAt`，但不包含持久化所有权字段。
-
-列表接受从 1 到 100 的 `limit`，默认为 20，以及一个不透明的 `cursor`。当 `has_more` 为 true 时，将返回的 `after` 值作为下一个 cursor 传入；请勿在客户端中解码或构造 cursor。
-
-```bash
-curl https://your-librechat-instance/api/agents/v1/agents?limit=20 \
-  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN"
-```
-
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/agents \
-  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Release assistant",
-    "provider": "openAI",
-    "model": "gpt-5.6",
-    "instructions": "Prepare concise release notes from verified changes."
-  }'
-```
-
-文件上传使用 `multipart/form-data`，包含一个 `file` 和一个 `tool_resource` 值，例如 `context`、`file_search` 或 `execute_code`。LibreChat 在附加资源之前会应用部署能力、角色授权、上传速率限制、单文件限制、文件数量限制以及总大小检查。移除文件需要对 Agent 的编辑权限，且不会削弱底层的资源授权规则。
-
-### 技能路由 (Skill Routes) [#skill-routes]
-
-| 方法 | 路由 | 用途 |
-| ------- | ---------------------------------------------------- | ------------------------------------- |
-| `GET` | `/api/agents/v1/skills` | 列出可访问的 Skills |
-| `POST` | `/api/agents/v1/skills` | 创建一个 Skill |
-| `GET` | `/api/agents/v1/skills/{id}` | 读取一个可访问的 Skill |
-| `PATCH` | `/api/agents/v1/skills/{id}` | 更新一个 Skill |
-| `DELETE` | `/api/agents/v1/skills/{id}` | 删除一个 Skill |
-| `GET` | `/api/agents/v1/skills/{id}/files` | 列出 Skill 中的文件 |
-| `GET` | `/api/agents/v1/skills/{id}/files/{relativePath}` | 读取一个 Skill 文件 |
-| `PUT` | `/api/agents/v1/skills/{id}/files/{relativePath}` | 创建或替换一个受支持的文件 |
-| `DELETE` | `/api/agents/v1/skills/{id}/files/{relativePath}` | 删除一个 Skill 文件 |
-
-Create 接受 `name`、`description`、`body`，以及可选的 `displayTitle`、`frontmatter`、`category` 和 `alwaysApply`。Update 需要一个正整数 `expectedVersion`（即该 Skill 的当前版本），以及至少一个待修改的字段，可修改的字段包括 `body` 和 `frontmatter`。两者都会拒绝未知字段。
-
-技能操作仅限于绑定用户可见的技能。读取操作需要技能访问权限，而元数据或文件写入则需要相应的编辑和技能创作权限。路径在技能根目录下进行标准化处理；遍历、不支持的文件和超大内容将被拒绝。
-
-### 错误与身份验证 [#errors-and-authentication]
-
-管理响应使用结构化错误，代码包括 `invalid_request`、`not_found`、`permission_denied`、`conflict` 或 `internal_error`。资源授权失败可能会作为 `not_found` 返回，以防止调用者探测无法访问的 ID。
-
-机器令牌必须未过期、与配置的颁发者匹配、通过 `azp` 或 `client_id` 标识一个已加入白名单的客户端，并满足配置的主体规则。默认情况下，令牌还必须与配置的受众（audience）匹配。对于像 Amazon Cognito 这样颁发带有 `client_id` 而非 `aud` 的机器访问令牌的提供商，请设置 `tokenUse: access`，省略 `audience`，并使用 `requiredScopes` 要求预期的 OAuth 作用域。配置缺失或凭据无效将返回 `401`；正在删除的绑定账户将返回 `409`。有关完整的声明和绑定规则，请参阅 [`managementApi.auth.oidc`](/docs/configuration/librechat_yaml/object_structure/agents#managementapiauthoidc) 和 [`managementApi.auth.clients`](/docs/configuration/librechat_yaml/object_structure/agents#managementapiauthclients)。
-
-## Endpoints [#endpoints]
-
-### 聊天补全 (OpenAI-compatible) [#chat-completions-openai-compatible]
-
-```
-POST /api/agents/v1/chat/completions
-```
-
-通过将任何兼容 OpenAI 的 SDK 指向您的 LibreChat 实例来使用它。`model` 参数对应于一个 agent ID。
-
-**curl 示例：**
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "agent_abc123",
-    "messages": [
-      {"role": "user", "content": "Hello, what can you help me with?"}
-    ],
-    "stream": true
-  }'
-```
-
-**使用 OpenAI SDK (Python) 的示例：**
 ```python
 from openai import OpenAI
 
 client = OpenAI(
     base_url="https://your-librechat-instance/api/agents/v1",
-    api_key="YOUR_API_KEY"
+    api_key="YOUR_API_KEY",
 )
 
-response = client.chat.completions.create(
+stream = client.chat.completions.create(
     model="agent_abc123",
-    messages=[{"role": "user", "content": "Hello!"}],
-    stream=True
+    messages=[{"role": "user", "content": "Summarize yesterday's open tickets."}],
+    stream=True,
 )
 
-for chunk in response:
-    print(chunk.choices[0].delta.content, end="")
+for chunk in stream:
+    print(chunk.choices[0].delta.content or "", end="")
 ```
 
-### 列出模型 [#list-models]
-
-```
-GET /api/agents/v1/models
-```
-
-将可用代理作为模型返回。这对于发现您的 API 密钥可以访问哪些代理非常有用。
-
-```
-GET /api/agents/v1/models/{model}
-```
-
-返回单个 agent 作为模型对象。
-
-### Open Responses API [#open-responses-api]
-
-```
-POST /api/agents/v1/responses
-```
-
-Open Responses endpoint 遵循 [Open Responses specification](https://www.openresponses.org/)，这是一个由 OpenAI 发起并由开源 AI 社区构建的开放推理标准。它专为代理工作流设计，原生支持推理、工具使用、结构化输出以及流式语义事件。
+The same request with curl:
 
 ```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/responses \
+curl https://your-librechat-instance/api/agents/v1/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "agent_abc123",
-    "input": "What is the weather today?"
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true
   }'
 ```
 
-相关路由:
+## Open Responses [#open-responses]
 
-- `GET /api/agents/v1/responses/models` 列出通过 Responses API 可用的智能体。
-- `GET /api/agents/v1/responses/{id}` 通过 ID 检索已存储的响应。
+`POST /api/agents/v1/responses` 实现了 [Open Responses](https://www.openresponses.org/) 规范,该规范专为智能体工作负载设计:推理、工具调用和流式事件是格式本身的一部分,而非后期附加的功能。这也是 LibreChat 今后所基于的接口,因此在新的集成中请优先使用它。
 
-#### 调用者执行的函数工具 [#caller-executed-function-tools]
+```bash
+curl https://your-librechat-instance/api/agents/v1/responses \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "agent_abc123", "input": "What changed in the last release?"}'
+```
 
-Open Responses endpoint 接受调用方提供的标准 `function` 工具。LibreChat 会将这些定义暴露给模型，但不会执行它们。当模型选择其中一个工具时，响应中会包含一个供调用方执行的 `function_call` 输出项。
+`GET /api/agents/v1/responses/{id}` 返回已存储的响应,`GET /api/agents/v1/responses/models` 列出此处可用的智能体(agents)。
 
-要继续操作，请发送一个新的请求，其 `input` 应重放返回的 `function_call` 项，并紧随一个匹配的 `function_call_output` 项。此移交过程是无状态的：它不会创建挂起的运行，且仅凭 `previous_response_id` 无法替代重放的工具交换。
+### 你自己的函数工具 [#your-own-function-tools]
+
+您可以在 Responses 请求中传递标准的 `function` 工具。LibreChat 会将这些工具展示给模型,但不会运行它们:当模型选择某个工具时,响应中会包含一个 `function_call` 项,由您自行运行该函数。若要继续,请发送一个新的请求,其 `input` 中需重复该 `function_call` 项,并随后附上一个具有相同 `call_id` 的 `function_call_output`:
 
 ```json
 {
   "model": "agent_abc123",
   "input": [
-    {
-      "type": "function_call",
-      "call_id": "call_abc123",
-      "name": "lookup_order",
-      "arguments": "{\"order_id\":\"A-42\"}"
-    },
-    {
-      "type": "function_call_output",
-      "call_id": "call_abc123",
-      "output": "{\"status\":\"shipped\"}"
-    }
+    { "type": "function_call", "call_id": "call_abc123", "name": "lookup_order", "arguments": "{\"order_id\":\"A-42\"}" },
+    { "type": "function_call_output", "call_id": "call_abc123", "output": "{\"status\":\"shipped\"}" }
   ]
 }
 ```
 
-调用者工具名称可以包含字母、数字、下划线和连字符。名称必须唯一，且不能替换服务器提供的工具。调用者执行的工具必须是其回合中唯一选定的工具；如果模型将其与服务器执行的工具混合使用，LibreChat 将要求模型单独重试该调用者工具。
+在两次请求之间不会保留任何打开的状态,仅依靠 `previous_response_id` 是不够的;你必须重放该调用及其输出。工具名称可以使用字母、数字、下划线和连字符,必须唯一,且不能与智能体自身的工具同名。一轮对话中若调用了你的工具,则不能同时调用智能体的工具;系统会要求模型重试。
 
-对于 LibreChat 执行的 Agent 工具，两个无头推理端点都会强制执行已启用的 [`endpoints.agents.toolApproval`](/docs/configuration/librechat_yaml/object_structure/agents#toolapproval) 策略，包括 `deny`、`ask` 和程序化钩子。这些调用没有交互式批准/恢复通道：`deny` 和 `ask` 会直接阻止工具运行，而不是打开批准提示。请仅为 API 客户端应能无人值守运行的工具配置显式允许（explicit allows）；当该策略被禁用时，其批准钩子不会运行。调用者执行的函数工具仍由调用者负责。
+### 通过 API 进行工具审批 [#tool-approval-over-the-api]
+
+如果管理员要求某些工具需要审批,API 调用无法暂停以等待任何人确认。需要审批的工具或被拒绝的工具将被直接阻止。管理员应明确允许无人值守客户端运行的工具。
 
 ## Agent 事件 [#agent-events]
 
-Agent Events 允许经过身份验证的控制器或源适配器向 Agent 交付持久化工作。事件交付是一项测试版功能，其请求、响应和运行时行为可能会发生变化。
+Agent Events 允许另一个系统将任务交给智能体,并稍后回来查看执行结果。此功能处于测试版(beta)。事件使用您的 Agents API 密钥,该密钥用于标识您及事件来源;仅配置 OIDC 的环境无法使用此功能。此外,Agent Events 还有独立的速率限制,参见 [`rateLimits.agentEvents`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits)。
 
-这些 endpoint 使用经过身份验证的用户、租户和 API 密钥；目标 Agent 必须在该用户的现有 Remote Agents 权限下可见。Agent Event 请求也使用专用的 [`rateLimits.agentEvents`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) 存储桶。
+一个事件会以以下三种模式之一到达:
 
-### 交付事件 [#deliver-an-event]
+- `fire` 会与智能体开始一段新的对话。
+- `continue` 会为你之前绑定的子 Agent 添加一轮对话(见下文)。
+- `steer` 会为仍在进行中的运行添加指导信息,该运行通过 `fire` 返回的会话和生成标识进行识别。
 
 ```http
 POST /api/agents/v1/events
@@ -308,32 +134,22 @@ Content-Type: application/json
 }
 ```
 
-发送一个 `Idempotency-Key` 请求头，并在重试相同的源事件到目标投递时重复使用它。该键必须包含 1-256 个字母、数字或字符 `._~:/+=-`。使用相同的键但提供不同的投递内容会导致冲突。
+每个请求都需要一个 `Idempotency-Key`(1 到 256 个字符,可使用字母、数字以及 `._~:/+=-`)。重试同一次投递时请复用该值;若用于不同内容则会产生冲突。LibreChat 会根据您的 API 密钥设置事件的来源,并忽略您发送的任何来源值。负载会被存储,因此请勿在其中包含机密信息。当同一对象相关的事件必须按顺序处理时,请使用 `orderingKey`。
 
-调用方提供事件 `id`、`type`、`occurredAt` 和经过清理的 `payload`。LibreChat 会将调用方提供的任何 `event.source` 替换为经过身份验证的 API 密钥标识，并推导出用户、租户、请求 ID 和接收时间。请勿在事件负载中放置凭据或传输密钥，因为已接收的投递会被持久化存储。
-
-`orderingKey` 是可选的。当来自不同来源的交付内容必须针对同一资源保持顺序时，请使用一个稳定的值。
-
-成功的请求会返回 `202 Accepted`、一个不透明的交付 `id`、其当前状态以及一个 `Location` 标头。请轮询该位置：
+响应为 `202 Accepted`,并返回一个投递 ID 以及一个 `Location`,可使用相同的密钥进行轮询:
 
 ```http
 GET /api/agents/v1/events/{delivery_id}
 Authorization: Bearer <SAME_REMOTE_AGENTS_API_KEY>
 ```
 
-交付状态可以是 `pending`、`leased`、`succeeded` 或 `dead`。状态响应包含尝试次数和时间戳，并在处理完成后包含结果或公开错误；它不会暴露存储的有效负载、排序键、重试历史记录或工作进程标识。状态访问权限仅限于同一用户、租户和 API 密钥来源。
+A投递状态为 `pending`、`leased`、`succeeded` 或 `dead`。对于已绑定的 `continue`,`succeeded` 仅表示该轮次已启动。随后其 `handling` 状态会从 `started` 转变为 `applied`、`completed_no_action`、`failed` 或 `cancelled` 之一。如果你发送了 `expectedAction`(包含工具名称,以及可选的部分参数),那么 `applied` 表示 LibreChat 已确认该工具被以匹配的参数调用;模型在文本中的表述不算数。
 
-对于绑定的 `continue` 而言，`succeeded` 表示 Agent 的回合已被准入，而非请求的工作已完成。因此，其状态还公开了一个持久的 `handling` 生命周期：`started`，随后是 `applied`、`completed_no_action`、`failed` 或 `cancelled` 中的确切一个。
+Agent Events 并不是公开的 webhook 接收端。如果事件来自会对 webhook 进行签名的提供方,请在您自己的适配器中先验证签名,然后再转发这些事件。
 
-支持 Action 的源可以包含一个带有工具名称和可选参数子集的 `expectedAction`。只有当该确切的生成过程完成，且主机观察到的工具证据与契约匹配时，LibreChat 才会报告 `applied`；模型生成的文本绝不会被接受为证明。`fire`、`steer` 和未绑定的 `continue` 交付会拒绝 `expectedAction`。
+### 事件驱动的子代理 [#event-driven-child-agents]
 
-成功的 `fire` 结果包含后续 `steer` 事件可以定位的对话和生成标识。
-
-### 事件驱动的子智能体 (Event-Driven Child Agents) [#event-driven-child-agents]
-
-外部系统可以将源参与者（source actor）绑定到直接子 Agent，然后在后续事件中继续该子对话。在 API 密钥身份、绑定所有权、父级关系和 Agent 授权检查成功后，绑定的子对话延续将自动进行；无需单独的功能开关。
-
-使用将用于后续轮次的同一个 API 密钥来注册该 actor：
+要在多个事件中持续与子智能体保持同一对话,请先建立一次绑定,然后将 `continue` 事件发送到该绑定:
 
 ```http
 POST /api/agents/v1/events/bindings
@@ -349,86 +165,72 @@ Content-Type: application/json
 }
 ```
 
-`actorId` 最多可包含 128 个字符。父级必须是普通的 Agent 对话，且目标必须配置为该 Agent 的直接子 Agent（Subagent）或允许的自生成（self-spawn）对象。新建绑定返回 `201`；幂等重放返回 `200`。两种响应均包含 `id`、`actorId`、`agentId` 和 `threadId`。
-
-使用返回的绑定 ID 发送后续轮次：
-
-```http
-POST /api/agents/v1/events
-Authorization: Bearer <SAME_REMOTE_AGENTS_API_KEY>
-Idempotency-Key: game-12-ply-17-hanae
-Content-Type: application/json
-
-{
-  "mode": "continue",
-  "bindingId": "evtbind_...",
-  "event": {
-    "id": "game-12-ply-17",
-    "type": "chess.turn.ready",
-    "occurredAt": 1786968000000,
-    "payload": { "gameId": "game-12", "expectedPly": 17 }
-  },
-  "input": "Your clock is running. Read the position and submit one legal move.",
-  "expectedAction": {
-    "tool": "submit_move",
-    "arguments": { "gameId": "game-12" }
-  }
-}
-```
-
-LibreChat 在分发前立即从绑定中解析子 Agent、线程、最新分支叶节点和排序通道。调用者提供的目标和排序字段无法重定向已绑定的延续。请求的 `Idempotency-Key` 将成为该子轮次在交付重试、生成租约、持久化消息、实时活动以及后续 HITL 恢复过程中的稳定公共标识。
-
-每个绑定都有一个自动的持久化邮箱。其下一个事件会保持排队状态，直到当前轮次达到 `applied`、`completed_no_action`、`failed` 或 `cancelled` 状态；不同的绑定保持独立，可以并行运行。仅当轮次已初始化且兼容时，才会尝试检查点续传。如果检查点缺失或无法恢复，LibreChat 将回退到持久化消息历史记录，且不会削弱接收、授权或预期操作的检查。
-
-一个绑定的 actor 可以为“询问用户 (Ask User)”或工具批准操作进行暂停。LibreChat 会在公开待处理操作之前持久化确切的签名挂起状态，并且该绑定的邮箱将保持阻塞，直到同一个 actor 调用恢复或结算为止。Event Actors 需要持久化的 MongoDB 检查点程序；`type: memory` 不兼容。LibreChat 会协商生成协议 v2 并自动选择检查点或历史记录延续。现有的 protocol-v1 工作将保留在持久化历史记录路径上，直到其耗尽。有关混合版本部署要求，请参阅 [Generation Protocol Compatibility](/docs/configuration/redis#generation-protocol-compatibility)。
-
-### 合并观测事件 [#coalescing-observational-events]
-
-能够证明多个绑定的 `continue` 事件是可互换观测结果的来源，可以为它们赋予相同的由源定义的 `coalesce.key`：
+The parent must be a normal agent conversation, and the target must be one of that agent's direct subagents (or the agent itself, if self-spawn is allowed). `actorId` is up to 128 characters. A new binding returns `201` and a replay returns `200`, both with the binding `id`. Later turns reference it:
 
 ```json
 {
   "mode": "continue",
   "bindingId": "evtbind_...",
-  "event": {
-    "id": "championship-7-game-12-move-18",
-    "type": "chess.move.completed",
-    "occurredAt": 1786968000750,
-    "payload": { "gameId": "game-12", "ply": 18 }
-  },
-  "input": "A tournament game advanced.",
-  "coalesce": { "key": "championship-commentary" }
+  "event": { "id": "game-12-ply-17", "type": "chess.turn.ready", "occurredAt": 1786968000000, "payload": { "gameId": "game-12" } },
+  "input": "Your clock is running. Submit one legal move.",
+  "expectedAction": { "tool": "submit_move", "arguments": { "gameId": "game-12" } }
 }
 ```
 
-LibreChat 最多收集 750 毫秒内的兼容事件，且限制最多 8 个事件，总大小不超过 512 KiB 的信封。子级会接收到一个确定性的批处理文档，但每个源事件都会保留其各自的 `Idempotency-Key`、投递记录和回执。
+每个绑定一次只处理一个事件:只有当前一轮达到最终处理状态后,才会处理下一个事件;不同绑定之间则并行运行。已绑定的子代理可能会因“询问用户”或工具审批而暂停,其后续事件会一直等待,直到有人在 LibreChat 中作出回应。这一机制需要持久化的 MongoDB 检查点存储器(即默认配置)。在父会话中,每个已绑定的子代理都会以一行的形式显示在拥有该绑定的消息下方,并可打开子代理活动面板。
 
-仅对非可操作性观察使用合并（coalescing）。对于 `fire`、`steer`、未绑定的 `continue` 以及带有 `expectedAction` 的交付，该操作将被拒绝；请勿将其用于命令、批准、HITL 请求、围栏（fences）或其个体时序至关重要的事件。
+一个绑定仅与创建它的 API 密钥、用户和租户相关联。子线程不会显示在聊天列表中,并且在应用中为只读状态。
 
-在已认证的父对话中，每个绑定的参与者（actor）都会显示在其所属的父消息下方。Subagent 面板可以在参与者和轮次之间切换、加载更早期的活动，并展开一个轮次以显示其完整的绑定活动。事件详情包括类型、来源、发生时间和预期操作。可见的运行步骤、工具、消息和推理标记均包含在内，但不包含原始推理文本。父索引从绑定的源窗口中最多返回 64 个子线程和每个子线程 20 个最近的任务，报告截断而非暗示完整性，并将响应限制在 96 KB 以内。它经过父级、用户和租户授权；绑定、源密钥 ID、租约令牌和工作进程状态不包含在投影中。
+对于仅作为观察记录的事件（例如“某局游戏已推进”），为其设置相同的 `coalesce.key`，LibreChat 会在 750 毫秒和 512 KiB 的限制内，最多将 8 个此类事件合并为一个回合。每个事件仍会生成各自的回执。命令、审批或任何带有 `expectedAction` 的事件不会被合并。
 
-子线程在正常的对话导航中保持隐藏，对人类聊天路由而言是只读的，继承父线程的临时或过期策略，并限制为仅限一级直接子级。仅凭绑定 ID 无法获得访问权限；延续（continuations）的作用域仅限于创建它的用户、租户和 API key。
+## Agent Management API [#agent-management-api]
 
-### 分离式事件执行者操作 [#detached-event-actor-actions]
+Agent Management API 允许受信任的服务在没有浏览器会话的情况下创建、修改和删除智能体（agents）与技能（skills）。该功能处于测试版，并使用其自有的身份验证方式：来自管理员在 [`managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi) 下列出的客户端的机器 OIDC 令牌。每个客户端都与一个现有的 LibreChat 用户和租户绑定，每个请求都以该用户的身份执行，并遵循该用户的权限和访问范围。它不会使任何人成为管理员。
 
-Event Actor 回合可以分离符合条件的 Actions 并持久地完成它们。在 Action 运行期间，交付过程保持在其处理生命周期内；持久的终端证据会恢复原始的已签名 actor 调用，并且只有最终宿主观察到的工具证据才能满足 `expectedAction`。重放和竞争副本无法两次启动同一个已保留的 Action。如果 LibreChat 无法确定外部副作用是否已经开始，它会隔离该启动操作，而不是盲目地重试。
+| 方法 | 路由 | 用途 |
+| -------- | -------------------------------------------- | ---------------------------------- |
+| `POST` | `/api/agents/v1/agents` | 创建智能体 |
+| `GET` | `/api/agents/v1/agents` | 列出可访问的智能体 |
+| `GET` | `/api/agents/v1/agents/{id}` | 读取智能体 |
+| `PATCH` | `/api/agents/v1/agents/{id}` | 更新智能体 |
+| `DELETE` | `/api/agents/v1/agents/{id}` | 删除智能体 |
+| `POST` | `/api/agents/v1/agents/{id}/files` | 上传并附加文件 |
+| `GET` | `/api/agents/v1/agents/{id}/files` | 列出已附加的文件 |
+| `DELETE` | `/api/agents/v1/agents/{id}/files/{fileId}` | 分离文件 |
+| `GET` | `/api/agents/v1/skills` | 列出可访问的技能 |
+| `POST` | `/api/agents/v1/skills` | 创建技能 |
+| `GET` | `/api/agents/v1/skills/{id}` | 读取技能 |
+| `PATCH` | `/api/agents/v1/skills/{id}` | 更新技能 |
+| `DELETE` | `/api/agents/v1/skills/{id}` | 删除技能 |
+| `GET` | `/api/agents/v1/skills/{id}/files` | 列出技能的文件 |
+| `GET` | `/api/agents/v1/skills/{id}/files/{path}` | 读取技能文件 |
+| `PUT` | `/api/agents/v1/skills/{id}/files/{path}` | 创建或替换技能文件 |
+| `DELETE` | `/api/agents/v1/skills/{id}/files/{path}` | 删除技能文件 |
 
-当选定的内置生成存储声明支持时，LibreChat 会自动启用此内部补全工作。内存存储在单个进程中运行启动、补全和延续，并且在进程退出后无法恢复该工作。Redis 生成流增加了持久化重启恢复和副本切换功能。在混合版本排空期间，能力所有权交付和恢复记录对旧的声明者保持不可见；不存在操作员管理的生产者标志。
+```bash
+curl -X POST https://your-librechat-instance/api/agents/v1/agents \
+  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Release assistant",
+    "provider": "openAI",
+    "model": "gpt-5.6",
+    "instructions": "Prepare concise release notes from verified changes."
+  }'
+```
 
-## Token Usage Tracking [#token-usage-tracking]
+Agent 请求体接受与 Agent Builder 相同的字段,并会拒绝未知字段;创建时 `model` 为必填项。列表接口接受 `limit`(1 到 100,默认 20)和 `cursor`;当 `has_more` 为 true 时,将返回的 `after` 作为下一个 cursor 传入。文件上传使用 `multipart/form-data` 格式,包含一个 `file` 字段和一个 `tool_resource` 字段(如 `context`、`file_search` 或 `execute_code`),并受常规上传限制约束。
 
-当配置了代币支出时，所有 Agent API 推理请求都会根据用户的余额跟踪代币使用情况。流式和非流式响应都会将所有计费的初级 Agent 和子 Agent 模型调用汇总到顶层总计中。响应还包括不含身份信息的 `primary` 和 `subagent` 代币明细。在提供商报告的情况下，还会包含缓存和推理代币的详细信息。
+Skill create 接受 `name`、`description`、`body`，以及可选的 `displayTitle`、`frontmatter`、`category` 和 `alwaysApply`。更新时必须将技能的当前版本作为 `expectedVersion` 发送，这样两个写入方就不会相互静默覆盖。
 
-## 路线图 [#roadmap]
+错误使用以下代码:`invalid_request`、`not_found`、`permission_denied`、`conflict` 和 `internal_error`。您无权访问的资源可能会返回 `not_found`。凭据错误或缺失时返回 `401`。
 
-- **Open Responses 作为主要接口**:我们计划扩展 Open Responses 端点,全面支持智能体循环(agentic loops)、工具编排以及流式语义事件。
-- **Anthropic Messages API**: 未来我们可能会添加对 Anthropic Messages API 格式的支持,作为一种额外的接口。
+如果管理员启用该功能,管理路由的 OpenAPI 描述将在 `/api/openapi.json` 提供,交互式文档位于 `/api/docs`。它不涵盖推理或事件相关内容。请参阅 [`openapi`](/docs/configuration/librechat_yaml/object_structure/config#openapi)。
 
-## 相关文档 [#related-documentation]
+## 用量与计费 [#usage-and-billing]
 
-- [Agents](/docs/features/agents):创建和配置智能体
-- [Subagents](/docs/features/subagents): 配置直接子代理
-- [Agents Endpoint 配置](/docs/configuration/librechat_yaml/object_structure/agents):事件运行时与身份验证设置
-- [接口配置：remoteAgents](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents)：访问控制设置
-- [Token Usage](/docs/configuration/token_usage): 配置 token 消耗与余额
-- [Open Responses Specification](https://www.openresponses.org/)：开放推理标准
+API 请求与应用内的聊天一样，会计入您的令牌余额。响应中的用量总计包括子智能体调用，并分别提供 `primary` 和 `subagent` 的明细，在服务提供商有报告时还包括缓存和推理令牌。参见 [令牌用量](/docs/configuration/token_usage)。
+
+## 设置 [#setup]
+
+在管理员通过[管理面板](/docs/features/admin_panel)或使用 [`interface.remoteAgents`](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents) 为其角色授予 Remote Agents 权限之前,普通用户无法使用 Agents API。管理员默认拥有该权限。API 密钥认证默认开启;如果要接受来自您自有 OIDC 提供商的令牌(替代或与密钥并用),请参阅 [`remoteApi`](/docs/configuration/librechat_yaml/object_structure/agents#remoteapi)。Management API 需要在 [`managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi) 下单独配置,事件投递相关设置位于 [`eventDriven`](/docs/configuration/librechat_yaml/object_structure/agents#eventdriven) 下。

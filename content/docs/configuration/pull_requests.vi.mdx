@@ -1,0 +1,292 @@
+---
+title: Pull Requests
+icon: GitPullRequest
+description: >-
+  Cấp cho LibreChat một token hoặc ứng dụng OAuth để các cuộc trò chuyện trong
+  không gian làm việc mã hiển thị pull request từ GitHub, GitLab hoặc Bitbucket
+  Cloud.
+---
+
+Trang này đề cập đến phía quản trị viên của [Yêu cầu kéo hội thoại](/docs/features/pull_requests). Mọi khóa đều nằm dưới `endpoints.agents.pullRequests` trong `librechat.yaml`; [tham chiếu `pullRequests`](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests) liệt kê từng khóa cùng phạm vi và giá trị mặc định, còn các biến môi trường nằm trong [dotenv](/docs/configuration/dotenv#conversation-pull-requests).
+
+## Yêu cầu [#requirements]
+
+Một cuộc trò chuyện chỉ hiển thị pull request khi tất cả các điều kiện sau đều được thỏa mãn:
+
+1. LibreChat có một server token và phạm vi kho lưu trữ (`allowedRepositories` hoặc `allowAllRepositories`), hoặc người dùng có thể kết nối tài khoản của riêng họ thông qua `oauth`.
+2. Cuộc trò chuyện chạy mã trong một không gian làm việc mã được đính kèm, chứ không phải là một cuộc trò chuyện thông thường.
+3. Workspace hiển thị nhánh git của nó. Tính năng này cần một worker được build từ `LibreChat-AI/code-interpreter` #311 trở lên, và `CODEAPI_BRIDGE_LANE_GIT=true` phải được đặt trên Code API (không phải trên LibreChat). Xem [Code Interpreter](/docs/features/code_interpreter).
+
+Không có công tắc nào để bật. Nếu thiếu token và scope, hoặc ứng dụng `oauth` không hoạt động, tính năng sẽ ở trạng thái không hoạt động: không có gì được quảng bá tới client và mọi cuộc trò chuyện đều không hiển thị pull request, cũng không có thông báo lỗi nào. `enabled: false` sẽ tắt tính năng bất kể các thiết lập khác là gì.
+
+## Nhà cung cấp và máy chủ [#provider-and-host]
+
+`provider` chọn nơi các pull request được lưu trữ. Mỗi lần triển khai chỉ sử dụng một provider.
+
+| `provider` | Dịch vụ | `host` mặc định |
+| ------------------ | ----------------------------------------------------------------------------------------------- | --------------- |
+| `github` (mặc định) | GitHub.com, GitHub Enterprise Server, hoặc một tenant lưu trú dữ liệu của GitHub Enterprise Cloud (`*.ghe.com`) | `github.com` |
+| `gitlab` | Merge request trên gitlab.com hoặc GitLab tự quản lý | `gitlab.com` |
+| `bitbucket` | Chỉ Bitbucket Cloud | `bitbucket.org` |
+
+Chỉ thiết lập `host` cho GitHub Enterprise Server, một tenant `*.ghe.com`, hoặc GitLab tự quản lý:
+
+- Đây là tên máy chủ (host name), không phải URL: không có scheme và không có đường dẫn, ví dụ `github.example.com`.
+- Một cổng từ 1 đến 65535 được cho phép, ví dụ `git.example.com:8443`. `:443` sẽ bị loại bỏ.
+- Trên GitHub, LibreChat gọi `api.github.com` cho `github.com`, `api.<host>` cho một tenant `*.ghe.com`, và `https://<host>/api/v3` cho Enterprise Server. Trên GitLab, nó gọi `https://<host>/api/v4` và `https://<host>/api/graphql`.
+- Bitbucket accepts no other host. Any `host` other than `bitbucket.org` turns the feature off rather than send the token somewhere else.
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      provider: 'gitlab'
+      host: 'gitlab.example.com'
+      allowedRepositories:
+        - 'platform/backend/api'
+        - 'platform/frontend/*'
+```
+
+`provider`, `host`, `oauth` và `sharedCacheSlots` chỉ được đọc từ `librechat.yaml`. Các ghi đè theo vai trò, nhóm, người dùng và tenant đối với những khóa này đều bị bỏ qua, nhờ đó một ghi đè không thể gửi token đến một dịch vụ khác hoặc thay đổi ứng dụng mà người dùng được cấp quyền truy cập. Các khóa khác, chẳng hạn như `token` và `allowedRepositories`, có thể khác nhau tùy theo từng principal.
+
+## Mã thông báo máy chủ [#the-server-token]
+
+Token máy chủ được dùng cho mọi người dùng chưa kết nối tài khoản riêng của họ. Hãy đặt quyền chỉ đọc cho token này và giới hạn nó chỉ trong các kho lưu trữ mà bạn sẵn sàng hiển thị.
+
+- GitHub: một fine-grained token với quyền chỉ đọc (read-only) cho Pull requests, Checks và Contents. Nếu thiếu Checks, mọi pull request khớp sẽ không tải được. Nếu thiếu Contents, một cuộc trò chuyện có nhánh đã được cập nhật kể từ lệnh cuối cùng sẽ không tải được, vì LibreChat so sánh các commit để xác nhận sự khớp.
+- GitLab: một personal, group hoặc project access token với phạm vi (scope) `read_api`.
+- Bitbucket Cloud: một repository, project hoặc workspace access token, được gửi dưới dạng bearer token, với quyền đọc đối với pull request và repository.
+
+LibreChat tìm kiếm token theo thứ tự sau:
+
+1. `token: '${MY_VAR}'` trong `librechat.yaml`. Đây là một tham chiếu đến biến môi trường; schema sẽ từ chối một token được ghi trực tiếp (literal).
+2. Nếu `token` chưa được thiết lập, sẽ sử dụng biến dự phòng đầu tiên của nhà cung cấp đã được thiết lập:
+
+| Nhà cung cấp | Biến dự phòng, theo thứ tự |
+| --- | --- |
+| GitHub | `GITHUB_PULL_REQUEST_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN` |
+| GitLab | `GITLAB_PULL_REQUEST_TOKEN`, `GITLAB_TOKEN` |
+| Bitbucket | `BITBUCKET_PULL_REQUEST_TOKEN` |
+
+Một `token` được đặt nhưng trỏ tới một biến rỗng hoặc không tồn tại sẽ không dùng giá trị dự phòng: các lần tra cứu sẽ thất bại với `NOT_CONFIGURED`.
+
+<Callout type="warning" title="GITHUB_TOKEN và GITLAB_TOKEN là các tên gọi phổ biến">
+  Nếu triển khai của bạn đã thiết lập một trong các biến này cho mục đích khác, tính năng này sẽ tự động nhận nó ngay khi có một phạm vi kho lưu trữ (repository scope). Hãy đặt `token` một cách rõ ràng, hoặc sử dụng biến `*_PULL_REQUEST_TOKEN`, để tách biệt chúng.
+</Callout>
+
+## Phạm vi kho lưu trữ [#repository-scope]
+
+Không gian làm việc báo cáo kho lưu trữ (repository) của chính nó, vì vậy máy chủ phải quyết định những kho lưu trữ nào mà token của nó được phép sử dụng. Nếu không có phạm vi (scope), token của máy chủ sẽ không bao giờ được sử dụng.
+
+- `allowedRepositories`: tối đa 256 mục có dạng `owner/name` hoặc `owner/*`, được so khớp không phân biệt chữ hoa chữ thường. Trên GitLab, các đường dẫn nhóm lồng nhau như `group/sub/name` hoặc `group/sub/*` đều hoạt động. `*` đại diện cho đúng một cấp (segment), vì vậy `group/*` sẽ không khớp với `group/sub/name`. Các mục như `*/*`, `*`, chỉ có `owner`, hoặc đường dẫn chứa các segment `.` hoặc `..` sẽ bị từ chối.
+- `allowAllRepositories: true`: tra cứu bất kỳ kho lưu trữ nào mà token có thể đọc. Tùy chọn này tắt theo mặc định, vì bất kỳ người dùng nào có thể chạy mã đều có thể trỏ token của máy chủ tới bất kỳ kho lưu trữ nào mà token đó nhìn thấy, và đọc tiêu đề, kích thước cũng như trạng thái kiểm tra của pull request.
+
+Một kho lưu trữ nằm ngoài phạm vi trông giống hệt một kho lưu trữ không có pull request. Đối với pull request từ một fork, các kiểm tra chỉ được đọc từ fork khi fork đó nằm trong phạm vi; nếu không, chúng được đọc từ kho lưu trữ gốc, nhờ vậy token không bao giờ đến được một fork không có trong danh sách.
+
+## Các ví dụ [#examples]
+
+GitHub, với `GITHUB_PULL_REQUEST_TOKEN` được thiết lập trong môi trường máy chủ:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowedRepositories:
+        - 'LibreChat-AI/LibreChat'
+        - 'my-org/*'
+```
+
+GitHub Enterprise Server, với một tham chiếu token rõ ràng:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      host: 'github.example.com'
+      token: '${GHES_PULL_REQUEST_TOKEN}'
+      allowedRepositories: ['platform/*']
+```
+
+Bitbucket Cloud, với `BITBUCKET_PULL_REQUEST_TOKEN` được đặt:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      provider: 'bitbucket'
+      allowedRepositories: ['my-workspace/*']
+```
+
+## Tài khoản theo người dùng [#per-user-accounts]
+
+Với `oauth` được đặt, người dùng có thể kết nối tài khoản của riêng họ tại **Settings > Account > Pull request account**, và các truy vấn của họ sẽ chạy bằng token, giới hạn tốc độ và quyền truy cập kho lưu trữ của chính họ. Một ứng dụng `oauth` hoạt động sẽ bật tính năng này ngay cả khi không có token máy chủ hoặc scope.
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      oauth:
+        clientId: '${GITHUB_PR_OAUTH_CLIENT_ID}'
+        clientSecret: '${GITHUB_PR_OAUTH_CLIENT_SECRET}'
+      # optional: the server token's scope, for users who have not connected
+      allowedRepositories: ['my-org/*']
+```
+
+`clientId` và `clientSecret` là các tham chiếu đến biến môi trường. Nếu either không được giải quyết, người dùng không thể kết nối và chỉ có server token được sử dụng. Luồng này được ký bằng `JWT_SECRET`, và callback URL được xây dựng từ `DOMAIN_SERVER`:
+
+```
+<DOMAIN_SERVER>/api/pull-requests/oauth/callback
+```
+
+Cách các tài khoản được kết nối hoạt động:
+
+- Token của người dùng đã kết nối chỉ thấy những gì mà người dùng đó có thể thấy, vì vậy nó không bị ràng buộc bởi `allowedRepositories`.
+- Người dùng chưa kết nối sẽ tiếp tục sử dụng token máy chủ trong phạm vi của token đó. Nếu không có token máy chủ, họ sẽ không thấy gì cho đến khi kết nối.
+- Nếu token của người dùng đã kết nối không thể được làm mới do nhà cung cấp hoặc kho khóa bị lỗi, các truy vấn của họ sẽ báo rằng pull request không khả dụng. Hệ thống không bao giờ chuyển sang dùng token của máy chủ.
+- Nếu nhà cung cấp từ chối làm mới vì quyền truy cập đã bị thu hồi, kết nối sẽ bị xóa và người dùng được coi là chưa kết nối.
+- Grant được lưu ở dạng mã hóa, mỗi người dùng và mỗi máy chủ nhà cung cấp một grant. Việc thay đổi `clientId`, `provider` hoặc `host` khiến các kết nối hiện có không còn được tính, do đó người dùng phải kết nối lại. Một `scope` đã thay đổi chỉ áp dụng cho các kết nối mới.
+- Việc xóa `oauth` khiến các quyền đã lưu không còn được sử dụng; người dùng sẽ thấy **Not in use** và có thể ngắt kết nối.
+
+`scope`, `flowTimeoutMinutes`, `requestTimeoutSeconds` và `retentionDays` là không bắt buộc; xem [tham chiếu `pullRequests.oauth`](/docs/configuration/librechat_yaml/object_structure/agents#pullrequestsoauth).
+
+### Đăng ký ứng dụng [#register-the-app]
+
+<Tabs items={["GitHub", "GitLab", "Bitbucket"]}>
+<Tabs.Tab>
+
+Một GitHub App là lựa chọn tốt hơn: các token người dùng của nó không cần phạm vi (scope) và chỉ truy cập được những kho lưu trữ (repository) mà ứng dụng đã được cài đặt.
+
+<Steps>
+<Step>
+
+Mở **Settings > Developer settings > GitHub Apps > New GitHub App** cho tài khoản hoặc tổ chức của bạn. Trên GitHub Enterprise Server hoặc `*.ghe.com`, hãy sử dụng cùng trang đó trên máy chủ đó.
+
+</Step>
+<Step>
+
+Đặt **Callback URL** thành `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`. Trong phần **Webhook**, bỏ chọn **Active**.
+
+</Step>
+<Step>
+
+Trong phần **Repository permissions**, hãy đặt **Pull requests**, **Checks** và **Contents** thành **Read-only**.
+
+</Step>
+<Step>
+
+Tạo ứng dụng, sao chép **Client ID**, và tạo một client secret. Đặt cả hai vào biến môi trường (environment variables) và tham chiếu chúng từ `oauth.clientId` và `oauth.clientSecret`.
+
+</Step>
+<Step>
+
+Cài đặt ứng dụng trên các tài khoản hoặc tổ chức mà người dùng cần xem kho lưu trữ của họ.
+
+</Step>
+</Steps>
+
+Một OAuth App cổ điển cũng hoạt động, nhưng cần `scope: 'repo'`, scope này cấp quyền rộng hơn so với chỉ đọc.
+
+</Tabs.Tab>
+<Tabs.Tab>
+
+<Steps>
+<Step>
+
+Trên máy chủ GitLab được đặt trong `host`, mở **Edit profile > Applications** (hoặc trang **Applications** của nhóm hoặc của toàn bộ instance).
+
+</Step>
+<Step>
+
+Đặt **Redirect URI** thành `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`, giữ nguyên tùy chọn **Confidential** đã được chọn, và chọn scope `read_api`.
+
+</Step>
+<Step>
+
+Lưu lại, sau đó đặt **Application ID** và **Secret** vào các biến môi trường được tham chiếu bởi `oauth.clientId` và `oauth.clientSecret`. Đặt `provider: 'gitlab'`, cùng với `host` nếu bạn sử dụng GitLab tự quản lý (self-managed).
+
+</Step>
+</Steps>
+
+</Tabs.Tab>
+<Tabs.Tab>
+
+<Steps>
+<Step>
+
+Trong Bitbucket Cloud, mở **Workspace settings > OAuth consumers > Add consumer**.
+
+</Step>
+<Step>
+
+Đặt **Callback URL** thành `<DOMAIN_SERVER>/api/pull-requests/oauth/callback`, và cấp quyền **Pull requests: Read** và **Repositories: Read**. LibreChat không yêu cầu phạm vi (scope) trên Bitbucket, vì vậy quyền của người tiêu dùng là những gì người dùng cấp.
+
+</Step>
+<Step>
+
+Lưu lại, sau đó đặt **Key** và **Secret** của consumer vào các biến môi trường được tham chiếu bởi `oauth.clientId` và `oauth.clientSecret`. Đặt `provider: 'bitbucket'`.
+
+</Step>
+</Steps>
+
+</Tabs.Tab>
+</Tabs>
+
+## Giới hạn tốc độ và bộ nhớ đệm [#rate-limits-and-caching]
+
+Kết quả được lưu vào bộ nhớ đệm theo từng thông tin xác thực, kho lưu trữ, nhánh và commit trong `cacheTtlSeconds` (mặc định là 30). Các lỗi được ghi nhớ tối đa 10 giây.
+
+Giới hạn tốc độ (rate limit) áp dụng cho một thông tin xác thực trên một máy chủ, do đó nó tạm dừng các truy vấn cho mọi nhánh nằm dưới token đó; với tài khoản theo từng người dùng, mỗi người dùng có giới hạn riêng. Thời gian tạm dừng tối thiểu là 10 giây, tuân theo mọi khoảng thời gian chờ mà nhà cung cấp chỉ định, tối đa 1 giờ, và là 60 giây đối với giới hạn thứ cấp của GitHub không chỉ định khoảng thời gian chờ nào. Trong thời gian tạm dừng, các truy vấn sẽ trả về `RATE_LIMITED`.
+
+Khi chạy nhiều bản sao (replica), hãy đặt `sharedCache: true` để các bản sao này chia sẻ các pull request đã tìm thấy và thời gian tạm dừng do giới hạn tốc độ (rate limit) thông qua Redis, thay vì mỗi bản sao đều tốn token cho cùng một kết quả. Tùy chọn này chỉ có hiệu lực khi triển khai chạy với `USE_REDIS`. Mỗi bản sao vẫn giữ bộ nhớ đệm trong bộ nhớ (in-memory cache) riêng ở phía trước, và mọi lệnh gọi Redis chậm hơn `sharedCacheTimeoutMs` (mặc định 250 ms) sẽ bị bỏ qua. `sharedCacheSlots` (từ 64 đến 1000000, mặc định 65536) giới hạn số khóa Redis mà bộ nhớ đệm dùng chung sử dụng. Chỉ đọc từ YAML.
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    pullRequests:
+      allowedRepositories: ['my-org/*']
+      sharedCache: true
+```
+
+Các giới hạn còn lại (số lượng xử lý đồng thời, thời gian chờ, mức độ tìm lại trong quá khứ đối với tên nhánh được tái sử dụng, số trang kiểm tra cần đọc) đều có giá trị mặc định hợp lý. Chúng được liệt kê trong [tài liệu tham khảo `pullRequests`](/docs/configuration/librechat_yaml/object_structure/agents#pullrequests).
+
+## Nâng cấp liên tục (Rolling upgrades) [#rolling-upgrades]
+
+Sidebar sử dụng một route theo lô (batch), và chỉ gọi route này khi `/api/config` quảng cáo `pullRequestsBatchVersion`. Nếu một replica không có route này trả về 404, client sẽ chuyển sang phương án dự phòng là tra cứu riêng lẻ cho từng cuộc hội thoại. Nếu chính `/api/config` được phục vụ bởi một replica không có flag này, các dấu hiệu trên sidebar sẽ để trống, vì vậy hãy nâng cấp tất cả các replica trước khi dựa vào chúng.
+
+## Bảo mật [#security]
+
+- Token được lưu trữ trên máy chủ. Token không bao giờ được gửi đến trình duyệt, và các phản hồi lỗi cũng không bao gồm nội dung phản hồi từ nhà cung cấp, token hay stack trace.
+- Token máy chủ chỉ được sử dụng cho các kho lưu trữ nằm trong phạm vi và chỉ trên máy chủ đã được cấu hình.
+- Các route tra cứu yêu cầu người dùng đã đăng nhập và chỉ trả về kết quả cho các cuộc trò chuyện của chính người dùng đó. Một cuộc trò chuyện không tồn tại, đã hết hạn hoặc thuộc về người khác sẽ có kết quả giống hệt như một cuộc trò chuyện không có pull request.
+
+## Khắc phục sự cố [#troubleshooting]
+
+Trước khi tìm thấy một pull request, các lỗi tra cứu sẽ không hiển thị gì trong thanh bên. Nhật ký gỡ lỗi ghi lại nhà cung cấp và mã lý do, nhưng không có tên kho lưu trữ hoặc phản hồi của nhà cung cấp. Để xác nhận tính năng đã được bật, hãy mở `/api/config` khi đã đăng nhập và tìm `pullRequestsEnabled: true`.
+
+| Triệu chứng | Nguyên nhân có thể | Cách khắc phục |
+| --- | --- | --- |
+| Không hiển thị chip hay dấu hiệu trên thanh bên ở bất kỳ đâu | Không có token, không có phạm vi kho lưu trữ, hoặc `enabled: false` | Kiểm tra token và phạm vi, sau đó kiểm tra `/api/config`. |
+| Không có chip cho một cuộc trò chuyện không gian làm việc | Kho lưu trữ của nó không có trong `allowedRepositories` | Thêm kho lưu trữ đó, hoặc thêm chủ sở hữu của nó dưới dạng `owner/*`. |
+| Chỉ một số cuộc trò chuyện không gian làm việc hiển thị chip | Không gian làm việc chưa báo cáo nhánh | Xác nhận `CODEAPI_BRIDGE_LANE_GIT=true` trên Code API và worker từ code-interpreter #311 trở lên. |
+| Chip trên tiêu đề hoạt động nhưng thanh bên không hiển thị gì | `/api/config` thiếu `pullRequestsBatchVersion` (bản build cũ hoặc tab đã lỗi thời) | Nâng cấp mọi replica, khởi động lại và tải lại trang cứng (hard reload). |
+| `NOT_CONFIGURED` | `token` đã được đặt nhưng biến của nó trống hoặc không tồn tại | Đặt biến, hoặc xóa `token` để dùng các biến dự phòng. |
+| Mọi pull request trên GitHub đều không tải được | Token thiếu quyền Checks | Cấp quyền Checks chỉ đọc. |
+| Chỉ lỗi sau khi nhánh đã có thay đổi mới | Token thiếu quyền Contents | Cấp quyền Contents chỉ đọc. |
+| `RATE_LIMITED` xuất hiện thường xuyên | Nhiều người dùng chia sẻ một token, hoặc các replica đều gửi yêu cầu lên nhà cung cấp | Tăng `cacheTtlSeconds`, giảm `maxConcurrentLookups`, bật `sharedCache`, hoặc thiết lập `oauth`. |
+| Pull request từ một fork không hiển thị checks | Fork không nằm trong phạm vi | Thêm chủ sở hữu của fork, hoặc đặt `allowAllRepositories: true`. |
+| GitLab hoặc Bitbucket không hiển thị gì | Chưa đặt `provider`, hoặc `host` không khớp | Đặt `provider`, và đặt `host` cho GitLab tự quản lý. Bitbucket chỉ hoạt động trên `bitbucket.org`. |
+| Liên kết `gh pr create` bị bỏ qua | Liên kết thuộc về host hoặc kho lưu trữ khác | Chỉ các liên kết trên host đã cấu hình và kho lưu trữ của không gian làm việc mới được tính. |
+| Người dùng đã kết nối thấy pull request ở trạng thái không khả dụng | Token của họ không thể làm mới | Thử lại sau; người dùng đã kết nối không bao giờ quay về dùng token của máy chủ. |
+| Không có pull request nào trên một tên nhánh được tái sử dụng nhiều lần | Quá trình tìm kiếm dừng trước khi đến được nó | Tăng `maxCandidatePullRequests`, `maxCandidatePages` hoặc `maxHeadComparisons`. |
+| Các lượt tra cứu chậm hoặc bị timeout sau proxy | `requestTimeoutSeconds` quá thấp | Tăng giá trị này, và kiểm tra `HTTPS_PROXY` và `NO_PROXY`. |
+
+## API [#api]
+
+Hai tuyến đường hội thoại yêu cầu người dùng đã đăng nhập và chỉ trả về kết quả cho các cuộc hội thoại của người dùng đó.
+
+- `GET /api/convos/:conversationId/pull-request` trả về `{ "pullRequest": null }` hoặc một pull request với `number`, `title`, `url`, `additions`, `deletions`, `state` (`open`, `closed`, `merged`), `isDraft`, `mergeable` (`clean`, `conflicting`, `unknown`) và `checks` (`passing`, `failing`, `running`, `none`). Các lỗi được trả về dưới dạng 503 với `code` có giá trị `NOT_CONFIGURED`, `RATE_LIMITED` hoặc `UPSTREAM_ERROR`.
+- `POST /api/convos/pull-requests` nhận `{ "conversationIds": [...] }` với 1 đến 50 id và trả về `{ "results": [...] }` theo cùng thứ tự, mỗi mục có `pullRequest` hoặc `error.code`. Một lần tra cứu thất bại không làm ẩn các kết quả còn lại.
+
+Các route tài khoản chỉ tồn tại khi `JWT_SECRET` được thiết lập: `GET /api/pull-requests/oauth/connect`, `GET /api/pull-requests/oauth/callback`, `GET /api/pull-requests/oauth/status`, và `DELETE /api/pull-requests/oauth`.
+
+`/api/config` chứa `pullRequestsEnabled`, cùng với `pullRequestsBatchVersion` và `pullRequestsMaxConcurrentLookups` khi tính năng được bật, và `pullRequestsConnect` (nhà cung cấp) khi người dùng có thể kết nối tài khoản. Máy chủ thiết lập các giá trị này; chúng không phải là cài đặt. Chỉ các mã lỗi nêu trên mới là ổn định.

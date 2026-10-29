@@ -1,0 +1,91 @@
+---
+title: Trình thông dịch mã
+icon: SquareTerminal
+description: >-
+  Triển khai dịch vụ Code Interpreter, kết nối LibreChat với dịch vụ này, và bật
+  các tính năng mã nguồn tùy chọn.
+---
+
+Trang này trình bày phần quản trị của [Code Interpreter](/docs/features/code_interpreter). Mã được thực thi trong một dịch vụ riêng, [ClickHouse/code-interpreter](https://github.com/ClickHouse/code-interpreter), do bạn tự triển khai. LibreChat gửi mã và tệp đến dịch vụ này và xác thực từng yêu cầu. Mọi biến phía LibreChat được đề cập ở đây đều được liệt kê trong [tham chiếu `.env`](/docs/configuration/dotenv#code-interpreter).
+
+## Triển khai dịch vụ [#deploy-the-service]
+
+Làm theo README của repository để chạy bằng Docker Compose hoặc Helm. Dịch vụ gồm một API gateway, các worker chạy trong sandbox, một máy chủ tệp và một Tool Call Server, chúng có thể mở rộng độc lập với LibreChat. Các worker cô lập mã bằng NsJail hoặc một microVM libkrun. Giới hạn bộ nhớ và CPU, kích thước tải lên, hạn ngạch yêu cầu, và quyền truy cập mạng cho mã chạy trong sandbox được thiết lập trên triển khai này, không phải trong LibreChat.
+
+Không bao giờ để lộ chế độ cục bộ không cần xác thực của dịch vụ (`LOCAL_MODE=true`) trên mạng công cộng hoặc mạng production.
+
+## Kết nối LibreChat [#connect-librechat]
+
+1. Đặt `LIBRECHAT_CODE_BASEURL` thành URL triển khai của bạn.
+2. Thiết lập xác thực. Dịch vụ mã nguồn mở hiện tại yêu cầu [xác thực JWT](#self-hosted-jwt-authentication) ngoài chế độ cục bộ. Các triển khai chấp nhận khóa API thay vào đó sử dụng `LIBRECHAT_CODE_API_KEY`, một khóa dùng chung cho tất cả người dùng và được gửi qua tiêu đề `X-API-Key`.
+3. Khởi động lại LibreChat.
+
+Sau đó kiểm tra xem việc thực thi mã có được phép hay không:
+
+- `execute_code` phải có trong [`endpoints.agents.capabilities`](/docs/configuration/librechat_yaml/object_structure/agents#capabilities). Nó nằm trong danh sách mặc định.
+- Người dùng cần quyền run-code. [`interface.runCode`](/docs/configuration/librechat_yaml/object_structure/interface#runcode) khởi tạo quyền này cho vai trò `USER` và điều khiển nút **Run Code** trên các khối mã. Cùng quyền này cũng kiểm soát công cụ **Run Code** trong Agent Builder.
+
+## Xác thực JWT tự lưu trữ [#self-hosted-jwt-authentication]
+
+Với xác thực JWT, LibreChat ký một token có thời gian sống ngắn cho người dùng đã đăng nhập trong mỗi yêu cầu Code Interpreter. Dịch vụ kiểm tra token đó bằng khóa công khai tương ứng và sử dụng người dùng cùng tenant trong token để tách biệt tệp và phiên làm việc. Khóa riêng tư được giữ lại trong LibreChat.
+
+Ở phía LibreChat:
+
+```bash filename=".env"
+CODEAPI_AUTH_PROVIDER=librechat-jwt
+CODEAPI_JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+CODEAPI_JWT_ALGORITHM=EdDSA
+CODEAPI_JWT_KID=lc-codeapi-2026-05
+CODEAPI_JWT_ISSUER=librechat
+CODEAPI_JWT_AUDIENCE=codeapi
+CODEAPI_JWT_TTL_SECONDS=300
+CODEAPI_JWT_MINT_CACHE_SECONDS=30
+CODEAPI_JWT_SINGLE_TENANT_ID=legacy
+```
+
+`CODEAPI_JWT_PRIVATE_KEY_BASE64` (PEM dạng base64) hoặc `CODEAPI_JWT_PRIVATE_JWK_JSON` (JWK riêng tư) có thể chứa khóa thay thế. Việc ký sử dụng `EdDSA` với khóa Ed25519 hoặc Ed448 (mặc định) hoặc `RS256`. Giá trị mặc định và giới hạn cho từng biến nằm trong [phần JWT của tài liệu tham khảo `.env`](/docs/configuration/dotenv#code-interpreter-jwt-authentication).
+
+Ở phía Code Interpreter, hãy cấu hình trình xác minh (verifier) tương ứng:
+
+```bash filename="code-interpreter .env"
+LOCAL_MODE=false
+CODEAPI_AUTH_PROVIDER=librechat-jwt
+CODEAPI_JWT_ISSUER=librechat
+CODEAPI_JWT_AUDIENCE=codeapi
+CODEAPI_JWT_ALLOWED_ALGS=EdDSA
+CODEAPI_JWT_JWKS_JSON={"keys":[{"kty":"OKP","crv":"Ed25519","x":"...","kid":"lc-codeapi-2026-05","alg":"EdDSA"}]}
+CODEAPI_JWT_SINGLE_TENANT_ID=legacy
+```
+
+Issuer, audience, key ID, thuật toán, public key và single-tenant ID phải khớp nhau trên cả hai dịch vụ. Dịch vụ cũng có thể tải verifier keys từ `CODEAPI_JWT_PUBLIC_KEY` cùng với `CODEAPI_JWT_KID`, hoặc từ `CODEAPI_JWT_PUBLIC_KEYS_DIR`; sử dụng JWKS nội tuyến sẽ giúp việc xoay vòng khóa (key rotation) dễ dàng nhất. Đảm bảo TTL của token trong LibreChat nhỏ hơn hoặc bằng `CODEAPI_JWT_MAX_TTL_SECONDS` của dịch vụ (tối đa 300 giây).
+
+Đối với bản sao cục bộ (local checkout), kho mã Code Interpreter có một công cụ hỗ trợ tạo các khóa Ed25519 khớp nhau và ghi cả hai tệp `.env`:
+
+```bash
+node scripts/setup-local-auth-env.js --librechat /path/to/LibreChat
+```
+
+Các triển khai đa người thuê (multi-tenant) nên cung cấp ngữ cảnh người thuê đã được xác thực và đặt `TENANT_ISOLATION_STRICT=true` trong LibreChat cũng như `CODEAPI_TENANT_ISOLATION_STRICT=true` trong dịch vụ. Chế độ nghiêm ngặt (strict mode) sẽ từ chối các yêu cầu không có người thuê thay vì quay lại sử dụng ID của người thuê đơn lẻ.
+
+Việc tích hợp một ứng dụng khác trực tiếp với dịch vụ có nghĩa là bạn phải tự tạo các token tương thích và gửi chúng dưới dạng `Authorization: Bearer <token>`.
+
+## Tải lên và xem trước tệp [#file-uploads-and-previews]
+
+LibreChat tải các tệp hội thoại lên dịch vụ trước khi chạy và thử tải lên lại đối với những lần tải lên gặp giới hạn tốc độ `429`, tôn trọng `Retry-After` trong một khoảng thời gian chờ có giới hạn. Bạn có thể điều chỉnh điều này theo từng người dùng và tuyến đường bằng [`codeApiUploadConcurrency` và `codeApiMaxRetryWaitMs`](/docs/configuration/librechat_yaml/object_structure/agents#code-api-upload-recovery).
+
+Các tệp được tạo ra sẽ có bản xem trước nội tuyến tối đa `FILE_PREVIEW_MAX_EXTRACT_BYTES` (mặc định là 2 MiB; xem [Xem trước tệp nội tuyến](/docs/configuration/dotenv#inline-file-previews)). Hình ảnh mà tác nhân đọc từ sandbox sẽ hiển thị nội tuyến tối đa 1 MiB. Đặt `LIBRECHAT_CODE_SANDBOX_OUTPUT_MAX_SIZE` khớp với `SANDBOX_OUTPUT_MAX_SIZE` của worker để LibreChat đọc hình ảnh với số lượng yêu cầu ít nhất có thể; `LIBRECHAT_CODE_IMAGE_CHUNK_BYTES` chỉ cố định cửa sổ truyền tải và không nâng giới hạn 1 MiB.
+
+Bản xem trước được hiển thị trong bảng Artifacts thông qua trình đóng gói tĩnh Sandpack. Nếu bạn tự lưu trữ trình đóng gói, hãy xem [Cấu hình Artifacts](/docs/configuration/artifacts#self-hosting-the-sandpack-bundler).
+
+<Callout type="warning" title="Nâng cấp với đầu ra mã cũ">
+  Các triển khai đã tạo lại cùng một tên tệp của Code Interpreter trước khi chỉ mục đầu ra tệp duy nhất tồn tại có thể có các bản ghi MongoDB trùng lặp, khiến chỉ mục không thể được xây dựng. Xem trước bản sửa lỗi bằng lệnh `npm run migrate:code-file-duplicates:dry-run`, sau đó áp dụng bằng lệnh `npm run migrate:code-file-duplicates`.
+</Callout>
+
+## Tính năng tùy chọn [#optional-features]
+
+Mỗi mục này đều tắt cho đến khi bạn bật nó lên.
+
+- **Gọi Công Cụ Theo Lập Trình**: thêm `programmatic_tools` cùng với `execute_code` trong [khả năng của agents](/docs/configuration/librechat_yaml/object_structure/agents#capabilities). Yêu cầu Tool Call Server của dịch vụ.
+- **Thực thi nền**: thêm `run_in_background` vào các khả năng (capabilities) của agents. Việc gửi kết quả đã hoàn thành và hủy tác vụ được thiết lập trong [`backgroundTasks`](/docs/configuration/librechat_yaml/object_structure/agents#backgroundtasks).
+- **Phiên mã nguồn có trạng thái**: thêm `stateful_code_sessions` vào các khả năng (capabilities) của agent, sau đó hoặc đặt [`LIBRECHAT_CODE_BASEURL_STATEFUL`](/docs/configuration/dotenv#stateful-code-interpreter-endpoint) trỏ tới một triển khai có quảng bá hồ sơ `stateful`, hoặc cấu hình các môi trường được đặt tên. Các agent không có trạng thái tiếp tục sử dụng `LIBRECHAT_CODE_BASEURL`; các yêu cầu có trạng thái không bao giờ quay lại dùng biến này. Tính năng này đang ở giai đoạn thử nghiệm và có thể thay đổi.
+- **Môi trường mã** (máy đính kèm, worker cá nhân, ghép cặp, lựa chọn máy theo từng cuộc trò chuyện, chính sách phê duyệt): được cấu hình trong [`statefulCodeSessions`](/docs/configuration/librechat_yaml/object_structure/agents#statefulcodesessions). Việc sao chép tệp đính kèm trong cuộc trò chuyện vào một không gian làm việc được đính kèm được giới hạn bởi `endpoints.agents.workspaceAttachments`: `timeoutMs` (mặc định 10000, phạm vi từ 1000 đến 120000) và `concurrency` (mặc định 3, phạm vi từ 1 đến 16).

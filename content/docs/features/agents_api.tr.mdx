@@ -1,294 +1,121 @@
 ---
 title: Agents API (Beta)
-icon: Plug
+icon: Webhook
 description: >-
-  LibreChat ajanlarını çalıştırın ve programatik API'ler aracılığıyla kimliği
-  doğrulanmış etkinlikler sunun
+  LibreChat agent'larınızı betiklerden ve diğer uygulamalardan çağırın, diğer
+  sistemlerden onlara olaylar gönderin ve güvenilir bir hizmetten agent'ları ve
+  skill'leri yönetin.
 ---
 
-<Callout type="warning" title="Beta Özelliği">
-Agents API şu anda beta aşamasındadır. Kararlı bir sürüme doğru ilerlerken endpoint'ler, istek/yanıt formatları ve davranışlar değişebilir.
+LibreChat dışındaki kodların agent'larınızla iletişim kurmasını Agents API sağlar. Herhangi bir OpenAI SDK'sını kendi instance'ınıza yönlendirin, model olarak bir agent ID'si iletin; agent'ın tüm yapılandırmasını (talimatlar, araçlar, dosyalar) tanıdık bir API arkasında elde edersiniz. Bunu bir agent'ı bir script'e, bir CI işine veya başka bir ürüne bağlamak için kullanın.
+
+Üç bölüm vardır:
+
+- **Çıkarım (Inference)**: Chat Completions ve Open Responses; bir API anahtarı (veya yönetici tarafından ayarlanmışsa kendi OIDC belirteçleriniz) ile kimlik doğrulaması yapılır.
+- **Agent Olayları**: Bir webhook gibi başka bir sistemden bir agent'a iş verin ve yapılıp yapılmadığını takip edin. Yalnızca API anahtarları.
+- **Agent Yönetimi**: güvenilir bir hizmetten, makine OIDC belirteçlerini kullanarak agent'ları ve skill'leri oluşturun ve düzenleyin.
+
+<Callout type="warning" title="Beta">
+  Uç noktalar, istek formatları ve yanıtlar sürümler arasında hâlâ değişebilir.
 </Callout>
 
-LibreChat, çıkarım (inference) ve olay iletimi (event-delivery) API'leri aracılığıyla ajanları harici uygulamalara, betiklere ve servislere açar.
+## Bir API anahtarı alın [#get-an-api-key]
 
-## Genel Bakış [#overview]
+**Ayarlar**'ı açın, **Veri ve Gizlilik** bölümüne gidin ve **API anahtarları** altında **Agent API Keys** seçeneğini bulun. **Yönet**'e tıklayın, ardından **Create API Key** seçeneğine tıklayın, anahtara bir ad verin, bir son kullanma süresi seçin (7 gün ile 1 yıl arası veya **süresiz**) ve anahtarı hemen kopyalayın: yalnızca bir kez gösterilir.
 
-Agents API, iki çıkarım arayüzü, kimlik doğrulamalı olay iletimi ve beta yönetim rotaları sağlar:
+<ThemeImage
+  light="/images/features/agents_api/api-keys-light.png"
+  dark="/images/features/agents_api/api-keys-dark.png"
+  alt="Ayarlar, Veri ve Gizlilik bölümünde Agent API anahtarları; son kullanma tarihleri ve son kullanım tarihleri belirtilmiş iki anahtarın listelenmesi"
+/>
 
-- **OpenAI uyumlu Chat Completions**: `POST /api/agents/v1/chat/completions`
-- **Open Responses API**: `POST /api/agents/v1/responses`
-- **Agent Olayları**: `POST /api/agents/v1/events`
-- **Agent Yönetimi**: `/api/agents/v1/agents`
-- **Yetenek Yönetimi**: `/api/agents/v1/skills`
+Bir anahtar sizin yerinize hareket eder. API üzerinden erişebildiğiniz her şeye, anahtarı elinde tutan herkes de erişebilir; bu nedenle artık kullanmadığınız anahtarları silin. Bir anahtarı silmek, onu kullanan uygulamaların erişimini anında keser.
 
-Çıkarım arayüzleri, API anahtarı kimlik doğrulamasını, isteğe bağlı OIDC kimlik doğrulamasını ve akış yanıtlarını destekler. Agent Events, LibreChat'in her teslimatı kararlı bir kaynak kimliğine bağlayabilmesi için Remote Agents API anahtarı kimlik doğrulamasını kullanır. Yönetim rotaları ise bunun yerine, bir OIDC makine istemcisini mevcut bir LibreChat kullanıcısına ve kiracısına bağlayan bir dağıtım izin listesi kullanır.
+Bölümü görmüyorsanız, rolünüze Agents API erişimi verilmemiş demektir.
 
-LibreChat, ajanlara hizmet vermek için birincil API çerçevesi olarak [Open Responses](https://www.openresponses.org/) sistemini benimsiyor. Chat Completions endpoint'i, mevcut OpenAI uyumlu araçlarla geriye dönük uyumluluk sağlasa da, Open Responses endpoint'i gelecekteki yönü temsil etmektedir.
+## Hangi ajanları çağırabilirsiniz [#which-agents-you-can-call]
 
-## Agents API'sini Etkinleştirme [#enabling-the-agents-api]
+Sahip olduğunuz veya paylaşılan ajanları çağırabilirsiniz. Başkasına ait bir ajan için, sahibinin Agent Builder alt bilgisindeki **Uzak Erişim** düğmesini (dünya simgesi) kullanarak size erişim izni vermesi gerekir. Bu, normal paylaşımdan ayrıdır: LibreChat'te bir ajanla sohbet edebilmek, o ajanı API üzerinden çağırmanıza izin vermez.
 
-Agents API, `remoteAgents` arayüz yapılandırması ile sınırlandırılmıştır. Tüm izinler varsayılan olarak `false` değerindedir.
+Agent kimliğine ihtiyacınız var; bu kimlik, oluşturucuda **Gelişmiş Ayarlar** altında kopyalama düğmesiyle birlikte gösterilir. `GET /api/agents/v1/models` anahtarınızın çağırabileceği agent'ları listeler, `GET /api/agents/v1/models/{model}` ise tek bir agent'ı döndürür.
 
-```yaml filename="librechat.yaml"
-interface:
-  remoteAgents:
-    use: true
-    create: true
-```
+## Chat Completions [#chat-completions]
 
-Tüm kullanılabilir seçenekler için [Arayüz Yapılandırması: remoteAgents](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents) bölümüne bakın.
+`POST /api/agents/v1/chat/completions` uç noktası OpenAI Chat Completions formatını takip eder; bu nedenle mevcut OpenAI istemcileri yalnızca temel URL değiştirilerek kullanılabilir:
 
-**Not:** Yönetici kullanıcılar, varsayılan olarak tüm uzak aracı (remote agent) izinlerine sahiptir.
-
-### OpenAPI Spesifikasyonu ve Etkileşimli Dokümanlar [#openapi-specification-and-interactive-docs]
-
-LibreChat, herkese açık Agents API spesifikasyonunu `/api/openapi.json` adresinde ve etkileşimli Swagger UI dokümantasyonunu `/api/docs` adresinde sunabilir. Her iki rota da varsayılan olarak devre dışıdır. Bunları üst düzey `openapi` ayarı ile etkinleştirin:
-
-```yaml filename="librechat.yaml"
-openapi:
-  enabled: true
-```
-
-Bu spesifikasyon yalnızca Agent yönetimi ve Skill yönetimi rotalarını kapsar. Çıkarım (Chat Completions ve Open Responses) ve Agent Events rotaları bu kapsamın dışındadır. Dağıtımınız API belgelerini yayınlamayı amaçlamıyorsa bu rotaları devre dışı bırakın.
-
-## API Anahtarı Yönetimi [#api-key-management]
-
-`remoteAgents.use` ve `remoteAgents.create` özellikleri etkinleştirildiğinde, kullanıcılar LibreChat arayüzünden API anahtarları oluşturabilirler. Bu anahtarlar, Agents API'sine yapılan isteklerin kimlik doğrulamasını sağlar.
-
-## Kimlik Doğrulama [#authentication]
-
-Agents API, bağımsız olarak veya birlikte kullanılabilen iki kimlik doğrulama yöntemini destekler.
-
-### API Anahtarı [#api-key]
-
-API anahtarı kimlik doğrulaması varsayılan olarak etkindir. `remoteAgents.use` ve `remoteAgents.create` etkinleştirildikten sonra LibreChat arayüzünden API anahtarları oluşturun.
-
-```bash
-Authorization: Bearer <YOUR_API_KEY>
-```
-
-### OIDC Bearer Token [#oidc-bearer-token]
-
-Altyapınızın halihazırda bir OIDC sağlayıcısına sahip olduğu makineden makineye senaryolar için, bir LibreChat API anahtarı olmadan doğrudan OIDC Bearer token'ları ile kimlik doğrulaması yapabilirsiniz.
-
-`librechat.yaml` içinde OIDC kimlik doğrulamasını yapılandırın:
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    remoteApi:
-      auth:
-        apiKey:
-          enabled: false
-        oidc:
-          enabled: true
-          issuer: https://auth.example.com/realms/myrealm
-          # jwksUri is optional and auto-discovered from issuer if omitted
-          audience: my-client-id
-```
-
-Ardından OIDC erişim belirtecinizle (access token) API'yi çağırın:
-
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/responses \
-  -H "Authorization: Bearer YOUR_OIDC_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "agent_abc123", "input": "Hello!"}'
-```
-
-<Callout type="info">
-  OIDC belirteci, LibreChat içinde halihazırda var olan bir kullanıcıya ait olmalıdır. Eşleştirme işlemi önce `sub` talebini kullanır, ardından sırasıyla `email`, `preferred_username` veya `upn` değerlerine başvurur.
-</Callout>
-
-Tüm yapılandırma seçenekleri için [Agents Endpoint - remoteApi](/docs/configuration/librechat_yaml/object_structure/agents#remoteapi) bölümüne bakın.
-
-<Callout type="warning" title="Agent Events bir API anahtarı gerektirir">
-  Yalnızca OIDC kimlik doğrulaması, Agent Events uç noktaları için desteklenmemektedir. Bağlamalar oluştururken, olayları kuyruğa alırken ve teslimat durumunu sorgularken bir Remote Agents API anahtarı kullanın.
-</Callout>
-
-## Temsilci Yönetimi API'si [#agent-management-api]
-
-Beta Agent Management API, bir servisin tarayıcı oturumu olmadan Agent'ları ve onlara bağlı kaynakları yönetmesine olanak tanır. Bu API, çıkarım (inference) ve Agent Events'ten bağımsız olarak doğrulanır: yalnızca [`endpoints.agents.managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi) altında yapılandırılmış OIDC makine belirteçleri (machine tokens) kabul edilir.
-
-Yapılandırılmış her OAuth istemcisi, mevcut bir LibreChat `userId` ve `tenantId` değerine bağlanır. Belirteç doğrulamasından sonra, her istek o kullanıcı olarak çalıştırılır ve kullanıcının mevcut rol yetkilerini, Ajan ve Beceri ACL'lerini, sağlayıcı kısıtlamalarını, araç izinlerini, dosya sınırlarını ve kiracı izolasyonunu korur. Bir istemci bağlaması, kullanıcıyı yönetici yapmaz veya kullanıcının başka şekilde yönetemeyeceği kaynaklara erişim izni vermez.
-
-### Ajan Rotaları [#agent-routes]
-
-| Yöntem   | Rota                                       | Amaç                                         |
-| -------- | ------------------------------------------ | -------------------------------------------- |
-| `POST`   | `/api/agents/v1/agents`                    | Bir Agent oluşturun                          |
-| `GET`    | `/api/agents/v1/agents`                    | Erişilebilir Agent'ları listeleyin          |
-| `GET`    | `/api/agents/v1/agents/{id}`               | Erişilebilir bir Agent'ı okuyun             |
-| `PATCH`  | `/api/agents/v1/agents/{id}`               | Bir Agent'ı güncelleyin                     |
-| `DELETE` | `/api/agents/v1/agents/{id}`               | Bir Agent'ı silin                           |
-| `POST`   | `/api/agents/v1/agents/{id}/files`         | Bir Agent kaynak dosyası yükleyin ve ekleyin |
-| `GET`    | `/api/agents/v1/agents/{id}/files`         | Agent'ın erişilebilir ekli dosyalarını listeleyin |
-| `DELETE` | `/api/agents/v1/agents/{id}/files/{fileId}` | Bir ekli dosyayı Agent'tan kaldırın         |
-
-Ajan oluşturma ve güncelleme yükleri (payloads), Ajan Oluşturucu (Agent Builder) ile aynı harici olarak desteklenen alanları kullanır ve bilinmeyen üst düzey alanları reddeder. Oluşturma işlemi bir `model` gerektirir; güncelleme işlemi ise yalnızca sağlanan alanları kabul eder. Yanıtlar, desteklenen Ajan yapılandırmasının yanı sıra `id`, `provider`, boş değer alabilen `model`, `version`, `createdAt` ve `updatedAt` alanlarını, kalıcılık sahipliği alanları olmaksızın açığa çıkarır.
-
-Listeler 1 ile 100 arasında `limit` kabul eder, varsayılan değer 20'dir ve opak bir `cursor` kullanır. `has_more` değeri true olduğunda, döndürülen `after` değerini bir sonraki imleç (cursor) olarak iletin; istemcilerde imleçlerin kodunu çözmeyin veya oluşturmayın.
-
-```bash
-curl https://your-librechat-instance/api/agents/v1/agents?limit=20 \
-  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN"
-```
-
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/agents \
-  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Release assistant",
-    "provider": "openAI",
-    "model": "gpt-5.6",
-    "instructions": "Prepare concise release notes from verified changes."
-  }'
-```
-
-Dosya yüklemeleri, bir `file` ve `context`, `file_search` veya `execute_code` gibi bir `tool_resource` değeri ile `multipart/form-data` kullanır. LibreChat, kaynağı eklemeden önce dağıtım yeteneği, rol ataması, yükleme hız sınırı, dosya başına sınır, dosya sayısı ve toplam boyut kontrollerini uygular. Bir dosyayı kaldırmak, Agent üzerinde düzenleme erişimi gerektirir ve temel dosya yetkilendirme kurallarını zayıflatmaz.
-
-### Beceri Rotaları [#skill-routes]
-
-| Method  | Route                                                | Amaç                                  |
-| ------- | ---------------------------------------------------- | ------------------------------------- |
-| `GET`    | `/api/agents/v1/skills`                              | Erişilebilir Skill'leri listele       |
-| `POST`   | `/api/agents/v1/skills`                              | Bir Skill oluştur                     |
-| `GET`    | `/api/agents/v1/skills/{id}`                         | Erişilebilir bir Skill'i oku          |
-| `PATCH`  | `/api/agents/v1/skills/{id}`                         | Bir Skill'i güncelle                  |
-| `DELETE` | `/api/agents/v1/skills/{id}`                         | Bir Skill'i sil                       |
-| `GET`    | `/api/agents/v1/skills/{id}/files`                   | Skill içindeki dosyaları listele      |
-| `GET`    | `/api/agents/v1/skills/{id}/files/{relativePath}`    | Bir Skill dosyasını oku               |
-| `PUT`    | `/api/agents/v1/skills/{id}/files/{relativePath}`    | Desteklenen bir dosyayı oluştur veya değiştir |
-| `DELETE` | `/api/agents/v1/skills/{id}/files/{relativePath}`    | Bir Skill dosyasını sil               |
-
-Create, `name`, `description`, `body` ve isteğe bağlı `displayTitle`, `frontmatter`, `category` ve `alwaysApply` alanlarını kabul eder. Update ise pozitif bir tam sayı olan `expectedVersion` (Skill'in mevcut sürümü) ile birlikte, `body` ve `frontmatter` dahil olmak üzere değiştirilecek en az bir alanı gerektirir. Her iki işlem de bilinmeyen alanları reddeder.
-
-Beceri işlemleri, ilişkili kullanıcı tarafından görülebilen Beceriler ile sınırlıdır. Okuma işlemleri Beceri erişimi gerektirirken, meta veri veya dosya yazma işlemleri ilgili düzenleme ve Beceri yazma izinlerini gerektirir. Yollar, Beceri kök dizini altında normalleştirilir; dizin geçişleri (traversal), desteklenmeyen dosyalar ve aşırı büyük içerikler reddedilir.
-
-### Hatalar ve Kimlik Doğrulama [#errors-and-authentication]
-
-Yönetim yanıtları `invalid_request`, `not_found`, `permission_denied`, `conflict` veya `internal_error` kodlarını içeren yapılandırılmış hatalar kullanır. Kaynak yetkilendirme hataları, çağıranların erişilemeyen kimlikleri (ID) sorgulamasını engellemek amacıyla `not_found` olarak döndürülebilir.
-
-Makine belirteçlerinin (tokens) süresi dolmamış olmalı, yapılandırılmış yayıncıyla eşleşmeli, `azp` veya `client_id` aracılığıyla izin verilenler listesindeki bir istemciyi tanımlamalı ve yapılandırılmış konu kuralını karşılamalıdır. Varsayılan olarak, belirteçlerin yapılandırılmış hedef kitleyle (audience) de eşleşmesi gerekir. `aud` yerine `client_id` ile makine erişim belirteçleri veren Amazon Cognito gibi sağlayıcılar için `tokenUse: access` ayarını yapın, `audience` kısmını atlayın ve `requiredScopes` ile beklenen OAuth kapsamını zorunlu tutun. Eksik yapılandırma veya geçersiz kimlik bilgileri `401` hatası döndürür; silinme sürecindeki bağlı bir hesap ise `409` hatası döndürür. Eksiksiz talep ve bağlama kuralları için [`managementApi.auth.oidc`](/docs/configuration/librechat_yaml/object_structure/agents#managementapiauthoidc) ve [`managementApi.auth.clients`](/docs/configuration/librechat_yaml/object_structure/agents#managementapiauthclients) bölümlerine bakın.
-
-## Endpoints [#endpoints]
-
-### Chat Completions (OpenAI-compatible) [#chat-completions-openai-compatible]
-
-```
-POST /api/agents/v1/chat/completions
-```
-
-LibreChat örneğinizi işaret ederek herhangi bir OpenAI uyumlu SDK kullanın. `model` parametresi bir aracı (agent) kimliğine karşılık gelir.
-
-**curl ile örnek:**
-```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "agent_abc123",
-    "messages": [
-      {"role": "user", "content": "Hello, what can you help me with?"}
-    ],
-    "stream": true
-  }'
-```
-
-**OpenAI SDK (Python) ile örnek:**
 ```python
 from openai import OpenAI
 
 client = OpenAI(
     base_url="https://your-librechat-instance/api/agents/v1",
-    api_key="YOUR_API_KEY"
+    api_key="YOUR_API_KEY",
 )
 
-response = client.chat.completions.create(
+stream = client.chat.completions.create(
     model="agent_abc123",
-    messages=[{"role": "user", "content": "Hello!"}],
-    stream=True
+    messages=[{"role": "user", "content": "Summarize yesterday's open tickets."}],
+    stream=True,
 )
 
-for chunk in response:
-    print(chunk.choices[0].delta.content, end="")
+for chunk in stream:
+    print(chunk.choices[0].delta.content or "", end="")
 ```
 
-### Modelleri Listele [#list-models]
-
-```
-GET /api/agents/v1/models
-```
-
-Mevcut ajanları modeller olarak döndürür. API anahtarınızla hangi ajanlara erişilebileceğini keşfetmek için kullanışlıdır.
-
-```
-GET /api/agents/v1/models/{model}
-```
-
-Tek bir agent'ı bir model nesnesi olarak döndürür.
-
-### Open Responses API [#open-responses-api]
-
-```
-POST /api/agents/v1/responses
-```
-
-Open Responses endpoint'i, OpenAI tarafından başlatılan ve açık kaynaklı yapay zeka topluluğu tarafından oluşturulan bir açık çıkarım standardı olan [Open Responses specification](https://www.openresponses.org/) ile uyumludur. Akıl yürütme, araç kullanımı, yapılandırılmış çıktılar ve akış halindeki anlamsal olaylar için yerel destekle birlikte, etmen tabanlı (agentic) iş akışları için tasarlanmıştır.
+Aynı isteği curl ile gönderin:
 
 ```bash
-curl -X POST https://your-librechat-instance/api/agents/v1/responses \
+curl https://your-librechat-instance/api/agents/v1/chat/completions \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "agent_abc123",
-    "input": "What is the weather today?"
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true
   }'
 ```
 
-İlgili rotalar:
+## Open Responses [#open-responses]
 
-- `GET /api/agents/v1/responses/models`, Responses API aracılığıyla kullanılabilen agent'ları listeler.
-- `GET /api/agents/v1/responses/{id}` kimliğe (ID) göre kayıtlı bir yanıtı alır.
+`POST /api/agents/v1/responses` uygulaması [Open Responses](https://www.openresponses.org/) spesifikasyonunu uygular. Bu spesifikasyon agent iş yükleri için tasarlanmıştır: akıl yürütme, araç çağrıları ve akış (streamed) olayları, sonradan eklenmiş özellikler olarak değil, formatın doğal bir parçası olarak yer alır. LibreChat'in bundan sonra üzerine inşa ettiği arayüz budur; yeni entegrasyonlar için bu arayüzü tercih edin.
 
-#### Arayan Tarafından Yürütülen İşlev Araçları (Caller-Executed Function Tools) [#caller-executed-function-tools]
+```bash
+curl https://your-librechat-instance/api/agents/v1/responses \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "agent_abc123", "input": "What changed in the last release?"}'
+```
 
-Open Responses endpoint'i, çağırıcı tarafından sağlanan standart `function` araçlarını kabul eder. LibreChat bu tanımları modele sunar ancak bunları yürütmez. Model birini seçtiğinde, yanıt, çağırıcının yürütmesi için bir `function_call` çıktı öğesi içerir.
+`GET /api/agents/v1/responses/{id}` kayıtlı bir yanıtı döndürür ve `GET /api/agents/v1/responses/models` burada kullanılabilir olan agent'ları listeler.
 
-Devam etmek için, döndürülen `function_call` öğesini ve ardından eşleşen bir `function_call_output` öğesini içeren `input` ile yeni bir istek gönderin. Bu devir işlemi durumsuzdur (stateless): askıya alınmış bir çalışma (suspended run) oluşturmaz ve yalnızca `previous_response_id`, yeniden oynatılan araç değişiminin yerini alamaz.
+### Kendi fonksiyon araçlarınız [#your-own-function-tools]
+
+Bir Responses isteğinde standart `function` araçlarını geçirebilirsiniz. LibreChat bunları modele gösterir ancak çalıştırmaz: model bir tanesini seçtiğinde yanıt bir `function_call` öğesi içerir ve fonksiyonu kendiniz çalıştırırsınız. Devam etmek için, `input` alanında bu `function_call` öğesini tekrarlayan ve ardından aynı `call_id` ile bir `function_call_output` içeren yeni bir istek gönderin:
 
 ```json
 {
   "model": "agent_abc123",
   "input": [
-    {
-      "type": "function_call",
-      "call_id": "call_abc123",
-      "name": "lookup_order",
-      "arguments": "{\"order_id\":\"A-42\"}"
-    },
-    {
-      "type": "function_call_output",
-      "call_id": "call_abc123",
-      "output": "{\"status\":\"shipped\"}"
-    }
+    { "type": "function_call", "call_id": "call_abc123", "name": "lookup_order", "arguments": "{\"order_id\":\"A-42\"}" },
+    { "type": "function_call_output", "call_id": "call_abc123", "output": "{\"status\":\"shipped\"}" }
   ]
 }
 ```
 
-Çağırıcı araç adları harfler, rakamlar, alt çizgiler ve kısa çizgiler içerebilir. Adlar benzersiz olmalı ve sunucu tarafından sağlanan bir aracın yerini alamaz. Çağırıcı tarafından yürütülen bir araç, kendi sırasında seçilen tek araç olmalıdır; model bunu sunucu tarafından yürütülen araçlarla karıştırırsa, LibreChat modelden çağırıcı aracını tek başına yeniden denemesini ister.
+Hiçbir bağlantı iki istek arasında açık tutulmaz ve yalnızca `previous_response_id` yeterli değildir; çağrıyı ve çıktısını yeniden oynatmanız gerekir. Araç adları harf, rakam, alt çizgi ve tire içerebilir, benzersiz olmalıdır ve agent'ın kendi araçlarından birinin adını gölgeleyemez. Sizin araçlarınızdan birini çağıran bir tur, aynı anda agent'ın araçlarını çağıramaz; modelden yeniden deneme istenir.
 
-LibreChat tarafından yürütülen Agent araçları için, her iki başsız (headless) çıkarım uç noktası da `deny`, `ask` ve programatik kancalar dahil olmak üzere etkinleştirilmiş bir [`endpoints.agents.toolApproval`](/docs/configuration/librechat_yaml/object_structure/agents#toolapproval) politikasını zorunlu kılar. Bu çağrıların etkileşimli bir onay/devam ettirme kanalı yoktur: `deny` ve `ask` seçenekleri, bir onay istemi açmak yerine aracı engeller. Yalnızca API istemcisinin gözetimsiz çalıştırabilmesi gereken araçlar için açık izinler yapılandırın; politika devre dışı bırakıldığında, onay kancaları çalışmaz. Arayan tarafından yürütülen işlev araçları, arayanın sorumluluğunda kalmaya devam eder.
+### API üzerinden araç onayı [#tool-approval-over-the-api]
+
+Yöneticiniz bazı araçlar için onay gerektiriyorsa, API çağrıları kimseye onay sormak için durdurulamaz. Onay gerektirecek veya reddedilecek araçlar bunun yerine engellenir. Yöneticiler, denetimsiz bir istemcinin çalıştırmasının amaçlandığı araçlara açıkça izin vermelidir.
 
 ## Agent Events [#agent-events]
 
-Agent Events, kimliği doğrulanmış bir denetleyicinin veya kaynak bağdaştırıcısının bir Agent'a kalıcı iş iletmesini sağlar. Event teslimi beta aşamasında bir özelliktir ve istek, yanıt ve çalışma zamanı davranışı değişebilir.
+Agent Events, başka bir sistemin bir agent'a iş devretmesine ve daha sonra geri dönüp ne olduğunu görmesine olanak tanır. Bu özellik beta aşamasındadır. Olaylar, sizi ve kaynağı tanımlayan Agents API anahtarınızı kullanır; yalnızca OIDC ile yapılandırılmış kurulumlar bu özelliği kullanamaz. Ayrıca kendi hız sınırlamaları vardır: [`rateLimits.agentEvents`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits).
 
-Uç noktalar (endpoints) kimliği doğrulanmış kullanıcıyı, kiracıyı (tenant) ve API anahtarını kullanır; hedef Agent, mevcut Remote Agents izinleri kapsamında o kullanıcı tarafından görülebilir olmalıdır. Agent Event istekleri ayrıca özel [`rateLimits.agentEvents`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) havuzunu kullanır.
+Bir olay üç moddan birinde gelir:
 
-### Bir Etkinlik Sunun [#deliver-an-event]
+- `fire` ile agent ile yeni bir konuşma başlatılır.
+- `continue` bir önceki adımda bağladığınız bir alt ajana yeni bir tur ekler (aşağıya bakın).
+- `steer`, bir `fire` işleminin döndürdüğü konuşma ve üretim kimliğiyle tanımlanan, hâlâ devam eden bir çalıştırmaya yönlendirme ekler.
 
 ```http
 POST /api/agents/v1/events
@@ -310,32 +137,22 @@ Content-Type: application/json
 }
 ```
 
-Tam olarak bir `Idempotency-Key` başlığı gönderin ve aynı kaynak-olay-hedef teslimatını yeniden denerken bunu tekrar kullanın. Anahtar 1-256 arası harf, rakam veya `._~:/+=-` karakterlerini içermelidir. Farklı teslimat içeriğiyle bir anahtarın yeniden kullanılması çakışma döndürür.
+Her istekte tek bir `Idempotency-Key` bulunmalıdır (1 ila 256 harf, rakam veya `._~:/+=-` karakterleri). Aynı teslimatı yeniden denediğinizde bu anahtarı yeniden kullanın; anahtarı farklı içerik için kullanmak bir çakışmadır. LibreChat, olayın kaynağını API anahtarınızdan belirler ve gönderdiğiniz herhangi bir kaynak değerini yok sayar. Yük (payload) saklandığı için gizli bilgileri içine koymayın. Aynı şeyle ilgili olayların sırayla işlenmesi gerektiğinde `orderingKey` kullanın.
 
-Arayan taraf `id`, `type`, `occurredAt` ve temizlenmiş `payload` değerlerini sağlar. LibreChat, arayan tarafın sağladığı tüm `event.source` değerlerini kimliği doğrulanmış API anahtarı kimliğiyle değiştirir ve kullanıcıyı, kiracıyı, istek kimliğini ve alınma zamanını türetir. Kabul edilen teslimatlar kalıcı hale getirildiğinden, etkinlik yüklerine (payloads) kimlik bilgileri veya taşıma sırları yerleştirmeyin.
-
-`orderingKey` isteğe bağlıdır. Farklı kaynaklardan gelen teslimatların aynı kaynak için sıralı kalması gerektiğinde sabit bir değer kullanın.
-
-Başarılı bir istek `202 Accepted` yanıtını, opak bir teslimat `id` değerini, mevcut durumunu ve bir `Location` başlığını döndürür. Bu konumu sorgulayın:
+Yanıt, bir teslimat kimliği ve aynı anahtarla yoklama yapmak için bir `Location` ile birlikte `202 Accepted` olur:
 
 ```http
 GET /api/agents/v1/events/{delivery_id}
 Authorization: Bearer <SAME_REMOTE_AGENTS_API_KEY>
 ```
 
-Teslimat `pending`, `leased`, `succeeded` veya `dead` durumunda olabilir. Durum yanıtı, denemeleri ve zaman damgalarını, ayrıca sonuçlandığında bir sonucu veya genel bir hatayı içerir; depolanan yükü, sıralama anahtarını, yeniden deneme geçmişini veya çalışan kimliğini açığa çıkarmaz. Durum erişimi aynı kullanıcı, kiracı ve API anahtarı kaynağı ile sınırlandırılmıştır.
+Bir teslimat `pending`, `leased`, `succeeded` veya `dead` durumlarından birinde olabilir. Bağlı bir `continue` için `succeeded` yalnızca turun başladığı anlamına gelir. Bu noktadan sonra `handling` durumu `started` değerinden `applied`, `completed_no_action`, `failed` veya `cancelled` değerlerinden birine geçer. Bir `expectedAction` (bir araç adı ve isteğe bağlı olarak bazı argümanları) gönderirseniz, `applied` değeri LibreChat'in o aracın eşleşen argümanlarla çağrıldığını gördüğü anlamına gelir; modelin metin içinde söylediği şeyler bu durumu etkilemez.
 
-Bağlı bir `continue` için `succeeded`, istenen işin bittiği anlamına değil, Ajan turunun kabul edildiği anlamına gelir. Bu nedenle durumu, kalıcı bir `handling` yaşam döngüsünü de açığa çıkarır: `started` ve ardından `applied`, `completed_no_action`, `failed` veya `cancelled` durumlarından tam olarak biri.
+Agent Events, herkese açık bir webhook alıcısı değildir. Olaylar, webhook'larını imzalayan bir sağlayıcıdan geliyorsa, bunları yönlendirmeden önce imzayı kendi adaptörünüzde doğrulayın.
 
-Eylem farkındalığına sahip kaynaklar, bir araç adı ve isteğe bağlı bağımsız değişken alt kümesi içeren bir `expectedAction` içerebilir. LibreChat, `applied` durumunu yalnızca o tam üretim, ana bilgisayar tarafından gözlemlenen ve sözleşmeyle eşleşen araç kanıtlarıyla tamamlandığında bildirir; model tarafından oluşturulan metinler asla kanıt olarak kabul edilmez. `fire`, `steer` ve sınırsız `continue` teslimleri `expectedAction` öğesini reddeder.
+### Olay odaklı alt ajanlar [#event-driven-child-agents]
 
-Başarılı `fire` sonuçları, daha sonraki bir `steer` etkinliğinin hedefleyebileceği konuşma ve üretim kimliğini içerir.
-
-### Olay Güdümlü Alt Temsilciler (Event-Driven Child Agents) [#event-driven-child-agents]
-
-Harici bir sistem, bir kaynak aktörü doğrudan bir alt Agent'a bağlayabilir ve ardından aynı alt konuşmayı olaylar boyunca sürdürebilir. Bağlı alt devamlılıklar; API anahtarı kimliği, bağlama sahipliği, üst ilişki ve Agent yetkilendirme kontrolleri başarılı olduktan sonra otomatik olarak gerçekleşir; bunun için ayrı bir özellik açma/kapama anahtarı yoktur.
-
-Aktörü, sonraki sıralarını iletecek olan aynı API anahtarıyla kaydedin:
+Birçok olay boyunca devam eden bir konuşmayı alt ajanla sürdürmek için, onu bir kez bağlayın, ardından bu bağlamaya `continue` olayları gönderin:
 
 ```http
 POST /api/agents/v1/events/bindings
@@ -351,86 +168,72 @@ Content-Type: application/json
 }
 ```
 
-`actorId` 128 karaktere kadar içerebilir. Ebeveyn, sıradan bir Agent konuşması olmalı ve hedef, o Agent'ın doğrudan Subagent'larından biri veya izin verilen bir self-spawn olarak yapılandırılmış olmalıdır. Yeni bir bağlama (binding) `201` döndürür; idempotent bir tekrar `200` döndürür. Her iki yanıt da `id`, `actorId`, `agentId` ve `threadId` içerir.
-
-Döndürülen bağlama kimliği (binding ID) ile sonraki turları gönderin:
-
-```http
-POST /api/agents/v1/events
-Authorization: Bearer <SAME_REMOTE_AGENTS_API_KEY>
-Idempotency-Key: game-12-ply-17-hanae
-Content-Type: application/json
-
-{
-  "mode": "continue",
-  "bindingId": "evtbind_...",
-  "event": {
-    "id": "game-12-ply-17",
-    "type": "chess.turn.ready",
-    "occurredAt": 1786968000000,
-    "payload": { "gameId": "game-12", "expectedPly": 17 }
-  },
-  "input": "Your clock is running. Read the position and submit one legal move.",
-  "expectedAction": {
-    "tool": "submit_move",
-    "arguments": { "gameId": "game-12" }
-  }
-}
-```
-
-LibreChat, alt Agent, thread, en son dal yaprağı ve sıralama şeridini gönderimden hemen önce bağlamadan çözer. Çağıran tarafından sağlanan hedef ve sıralama alanları, bağlı bir devamı yeniden yönlendiremez. İsteğin `Idempotency-Key` değeri; teslimat yeniden denemeleri, nesil kiralama, kalıcı mesajlar, canlı etkinlik ve daha sonraki bir HITL devam ettirme süreci boyunca bu alt tur için kararlı genel kimlik haline gelir.
-
-Her binding'in otomatik ve dayanıklı bir posta kutusu vardır. Bir sonraki etkinliği, mevcut tur `applied`, `completed_no_action`, `failed` veya `cancelled` durumuna ulaşana kadar kuyrukta bekletilir; farklı binding'ler birbirinden bağımsız kalır ve paralel olarak çalışabilir. Checkpoint devamlılığı yalnızca uyumlu ve başlatılmış bir tur için denenir. Eğer bir checkpoint eksikse veya geri yüklenemiyorsa, LibreChat; teslim alma, yetkilendirme veya beklenen eylem kontrollerini zayıflatmadan dayanıklı mesaj geçmişine geri döner.
-
-Bağlı bir aktör, Kullanıcıya Sor (Ask User) veya araç onayı için duraklayabilir. LibreChat, bekleyen eylemi ortaya çıkarmadan önce tam imzalı askıya alma işlemini kalıcı hale getirir ve bağlamanın posta kutusu, aynı aktör çağrısı devam edene veya sonuçlanana kadar engellenmiş kalır. Event Actors, kalıcı MongoDB kontrol noktası (checkpointer) gerektirir; `type: memory` uyumlu değildir. LibreChat, nesil protokolü v2'yi müzakere eder ve kontrol noktası veya geçmiş devamlılığını otomatik olarak seçer. Mevcut protocol-v1 çalışmaları, tükenene kadar kalıcı geçmiş yolunda kalmaya devam eder. Karma sürüm dağıtım gereksinimleri için [Generation Protocol Compatibility](/docs/configuration/redis#generation-protocol-compatibility) bölümüne bakın.
-
-### Gözlemsel Olayların Birleştirilmesi [#coalescing-observational-events]
-
-Birkaç bağlı `continue` olayının birbirinin yerine geçebilen gözlemler olduğunu kanıtlayabilen kaynaklar, onlara aynı kaynak tanımlı `coalesce.key` değerini verebilir:
+The parent must be a normal agent conversation, and the target must be one of that agent's direct subagents (or the agent itself, if self-spawn is allowed). `actorId` is up to 128 characters. A new binding returns `201` and a replay returns `200`, both with the binding `id`. Later turns reference it:
 
 ```json
 {
   "mode": "continue",
   "bindingId": "evtbind_...",
-  "event": {
-    "id": "championship-7-game-12-move-18",
-    "type": "chess.move.completed",
-    "occurredAt": 1786968000750,
-    "payload": { "gameId": "game-12", "ply": 18 }
-  },
-  "input": "A tournament game advanced.",
-  "coalesce": { "key": "championship-commentary" }
+  "event": { "id": "game-12-ply-17", "type": "chess.turn.ready", "occurredAt": 1786968000000, "payload": { "gameId": "game-12" } },
+  "input": "Your clock is running. Submit one legal move.",
+  "expectedAction": { "tool": "submit_move", "arguments": { "gameId": "game-12" } }
 }
 ```
 
-LibreChat, uyumlu etkinlikleri 750 ms'ye kadar, en fazla 8 etkinlik ve toplam 512 KiB zarf olacak şekilde toplar. Alt öğe tek bir deterministik toplu belge alır, ancak her kaynak etkinlik kendi `Idempotency-Key` değerini, teslimat kaydını ve makbuzunu korur.
+Her bağlama bir seferde tek bir olayı işler: mevcut tur nihai bir işleme durumuna ulaşana kadar sıradaki olay bekler, ancak farklı bağlamalar paralel olarak çalışır. Bağlanmış bir alt öğe Ask User veya araç onayı için duraklayabilir; sonraki olayları, biri LibreChat'te yanıtlayana kadar bekler. Bunun için dayanıklı MongoDB checkpointer'ı (varsayılan) gerekir. Üst konuşmada, bağlanmış her alt öğe, bağlamanın ait olduğu mesajın altında bir satır olarak görünür ve alt ajan etkinlik panelini açar.
 
-Yalnızca işlem gerektirmeyen gözlemler için birleştirme (coalescing) kullanın. `fire`, `steer`, sınırlandırılmamış `continue` ve `expectedAction` içeren teslimatlar için reddedilir; komutlar, onaylar, HITL istekleri, çitler (fences) veya bireysel zamanlaması önemli olan olaylar için kullanmayın.
+Bir bağlama (binding) yalnızca onu oluşturan API anahtarı, kullanıcı ve kiracı (tenant) ile çalışır. Alt konuşma (child thread), sohbet listesinde görünmez ve uygulamada salt okunurdur.
 
-Kimliği doğrulanmış ana konuşmada, her bağlı aktör kendi sahibi olan ana mesajın altında görünür. Subagent paneli, aktörler ve sıralar arasında geçiş yapabilir, önceki etkinlikleri yükleyebilir ve tam bağlı etkinliği göstermek için bir sırayı genişletebilir. Etkinlik detayları; türü, kaynağı, gerçekleşme zamanını ve beklenen eylemi içerir. Görünür çalışma adımları, araçlar, mesajlar ve mantık yürütme işaretleri, ham mantık yürütme metni olmadan dahil edilir. Ana dizin, sınırlı bir kaynak penceresinden çocuk başına en fazla 64 alt iş parçacığı ve 20 güncel görev döndürür, tamlık ima etmek yerine kesilmeyi bildirir ve yanıtı 96 KB ile sınırlar. Bu süreç ana, kullanıcı ve kiracı yetkilidir; bağlamalar, kaynak anahtar kimlikleri, kiralama belirteçleri ve çalışan durumu projeksiyona dahil edilmez.
+Gözlem niteliğindeki olaylar için, örneğin "bir oyun ilerledi" gibi, aynı `coalesce.key` değerini verin. LibreChat, bu olaylardan en fazla 8 tanesini (750 ms ve 512 KiB sınırları dahilinde) tek bir tura birleştirir. Her olay yine de kendi makbuzunu alır. Komutları, onayları ve `expectedAction` içeren hiçbir şeyi birleştirmeyin.
 
-Alt iş parçacığı, normal konuşma gezintisinde gizli kalır ve insan sohbet rotaları için salt okunurdur; üst öğenin geçici veya sona erme politikasını devralır ve bir doğrudan alt seviye ile sınırlıdır. Yalnızca bir bağlama kimliği (binding ID) erişim sağlamaz; devamlılıklar, onu oluşturan kullanıcı, kiracı ve API anahtarı ile kapsamlandırılmıştır.
+## Temsilci Yönetimi API'si [#agent-management-api]
 
-### Ayrık Olay Aktörü Eylemleri [#detached-event-actor-actions]
+Agent Management API, güvenilir bir servisin tarayıcı oturumu olmadan agent ve skill oluşturmasına, değiştirmesine ve silmesine olanak tanır. Bu API beta aşamasındadır ve kendi kimlik doğrulamasını kullanır: yönetici tarafından [`managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi) altında listelenen istemcilerden alınan makine OIDC token'ları. Her istemci, mevcut tek bir LibreChat kullanıcısına ve tenant'a bağlıdır; her istek, o kullanıcının izinleri ve erişimiyle gerçekleştirilir. Bu API hiçbir kişiyi yönetici yapmaz.
 
-Event Actor dönüşleri, uygun Eylemleri ayırabilir ve bunları kalıcı olarak tamamlayabilir. Eylem çalışırken teslimat, işleme yaşam döngüsü içinde kalır; kalıcı terminal kanıtı, orijinal imzalı actor çağrısını devam ettirir ve yalnızca sonuçta ortaya çıkan, ana bilgisayar tarafından gözlemlenen araç kanıtı `expectedAction` değerini karşılayabilir. Yeniden oynatmalar ve rakip kopyalar, aynı ayrılmış Eylemi iki kez başlatamaz. LibreChat, harici bir yan etkinin başlayıp başlamadığını belirleyemezse, başlatma işlemini körü körüne yeniden denemek yerine karantinaya alır.
+| Yöntem   | Rota                                         | Amaç                               |
+| -------- | -------------------------------------------- | ---------------------------------- |
+| `POST`   | `/api/agents/v1/agents`                      | Bir agent oluşturun                |
+| `GET`    | `/api/agents/v1/agents`                      | Erişilebilir agent'ları listeleyin |
+| `GET`    | `/api/agents/v1/agents/{id}`                 | Bir agent'ı okuyun                 |
+| `PATCH`  | `/api/agents/v1/agents/{id}`                 | Bir agent'ı güncelleyin            |
+| `DELETE` | `/api/agents/v1/agents/{id}`                 | Bir agent'ı silin                  |
+| `POST`   | `/api/agents/v1/agents/{id}/files`           | Bir dosya yükleyin ve ekleyin      |
+| `GET`    | `/api/agents/v1/agents/{id}/files`           | Eklenmiş dosyaları listeleyin      |
+| `DELETE` | `/api/agents/v1/agents/{id}/files/{fileId}`  | Bir dosyayı ayırın                 |
+| `GET`    | `/api/agents/v1/skills`                      | Erişilebilir becerileri listeleyin |
+| `POST`   | `/api/agents/v1/skills`                      | Bir beceri oluşturun               |
+| `GET`    | `/api/agents/v1/skills/{id}`                 | Bir beceriyi okuyun                |
+| `PATCH`  | `/api/agents/v1/skills/{id}`                 | Bir beceriyi güncelleyin           |
+| `DELETE` | `/api/agents/v1/skills/{id}`                 | Bir beceriyi silin                 |
+| `GET`    | `/api/agents/v1/skills/{id}/files`           | Bir becerinin dosyalarını listeleyin |
+| `GET`    | `/api/agents/v1/skills/{id}/files/{path}`    | Bir beceri dosyasını okuyun        |
+| `PUT`    | `/api/agents/v1/skills/{id}/files/{path}`    | Bir beceri dosyası oluşturun veya değiştirin |
+| `DELETE` | `/api/agents/v1/skills/{id}/files/{path}`    | Bir beceri dosyasını silin         |
 
-LibreChat, seçilen yerleşik üretim deposu destek sunduğunda bu dahili tamamlama işlemini otomatik olarak etkinleştirir. Bellek içi depo; başlatma, tamamlama ve devam ettirme işlemlerini tek bir süreçte çalıştırır ve süreç sonlandıktan sonra bu çalışmaları kurtaramaz. Redis üretim akışları, dayanıklı yeniden başlatma kurtarma ve kopya devri ekler. Yetenek sahipliğindeki teslimat ve kurtarma kayıtları, karma sürümlü bir boşaltma sırasında eski talep sahipleri için görünmez kalır; operatör tarafından yönetilen bir üretici bayrağı yoktur.
+```bash
+curl -X POST https://your-librechat-instance/api/agents/v1/agents \
+  -H "Authorization: Bearer YOUR_MACHINE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Release assistant",
+    "provider": "openAI",
+    "model": "gpt-5.6",
+    "instructions": "Prepare concise release notes from verified changes."
+  }'
+```
 
-## Token Kullanım Takibi [#token-usage-tracking]
+Agent payloads take the same fields as the Agent Builder and reject unknown ones; `model` is required on create. Lists take `limit` (1 to 100, default 20) and a `cursor`; when `has_more` is true, pass the returned `after` as the next cursor. File uploads are `multipart/form-data` with one `file` and a `tool_resource` such as `context`, `file_search`, or `execute_code`, subject to the usual upload limits.
 
-Tüm Agent API çıkarım istekleri, token harcaması yapılandırıldığında kullanıcının bakiyesine karşı token kullanımını takip eder. Hem akış (streaming) hem de akış olmayan yanıtlar, faturalandırılan her bir birincil Agent ve Subagent model çağrısını en üst düzey toplamlar altında birleştirir. Yanıt ayrıca kimlik içermeyen `primary` ve `subagent` token dökümlerini de içerir. Sağlayıcı tarafından bildirildiği durumlarda önbellek (cache) ve muhakeme (reasoning) token detayları da dahil edilir.
+Skill create, `name`, `description`, `body` ve isteğe bağlı olarak `displayTitle`, `frontmatter`, `category` ve `alwaysApply` alanlarını kabul eder. Güncellemeler, skill'in mevcut sürümünü `expectedVersion` olarak göndermelidir; böylece iki yazar birbirinin değişikliklerinin üzerine sessizce yazamaz.
 
-## Yol Haritası [#roadmap]
+Hatalar `invalid_request`, `not_found`, `permission_denied`, `conflict` ve `internal_error` kodlarını kullanır. Erişiminiz olmayan bir kaynak `not_found` olarak dönebilir. Hatalı veya eksik kimlik bilgileri `401` döndürür.
 
-- **Open Responses birincil arayüz olarak**: Open Responses uç noktasını, agentic döngüler, araç orkestrasyonu ve akış (streaming) semantik olaylarının tam desteğiyle genişletmeyi planlıyoruz.
-- **Anthropic Messages API**: Gelecekte, ek bir arayüz olarak Anthropic Messages API formatına destek eklenebilir.
+Yönetici etkinleştirirse, yönetim rotalarının bir OpenAPI açıklaması `/api/openapi.json` adresinde sunulur ve etkileşimli dokümantasyon `/api/docs` adresinde bulunur. Çıkarım (inference) veya olayları (events) kapsamaz. Bkz. [`openapi`](/docs/configuration/librechat_yaml/object_structure/config#openapi).
 
-## İlgili Dokümantasyon [#related-documentation]
+## Kullanım ve faturalandırma [#usage-and-billing]
 
-- [Agents](/docs/features/agents): Agent oluşturma ve yapılandırma
-- [Alt Ajanlar](/docs/features/subagents): Doğrudan alt Ajanların yapılandırılması
-- [Agents Endpoint Configuration](/docs/configuration/librechat_yaml/object_structure/agents): Olay çalışma zamanı ve kimlik doğrulama ayarları
-- [Arayüz Yapılandırması: remoteAgents](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents): Erişim kontrolü ayarları
-- [Token Kullanımı](/docs/configuration/token_usage): Token harcamasının ve bakiyenin yapılandırılması
-- [Open Responses Specification](https://www.openresponses.org/): Açık çıkarım standardı
+API istekleri, uygulamadaki sohbetlerle tam olarak aynı şekilde token bakiyenizden düşülür. Yanıttaki kullanım toplamları, alt ajan çağrılarını da içerir; bunlar ayrı `primary` ve `subagent` dökümleriyle gösterilir. Sağlayıcının bildirdiği durumlarda önbellek ve akıl yürütme token'ları da dahil edilir. Ayrıntılar için bkz. [Token Kullanımı](/docs/configuration/token_usage).
+
+## Kurulum [#setup]
+
+Agents API, normal kullanıcılar için, bir yönetici rollerine Remote Agents izinlerini verene kadar kapalıdır. Bu izin, [Yönetici Paneli](/docs/features/admin_panel) üzerinden veya [`interface.remoteAgents`](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents) ile verilebilir. Yöneticilerde bu izin varsayılan olarak bulunur. API anahtarı kimlik doğrulaması varsayılan olarak açıktır; anahtarların yerine ya da onlarla birlikte kendi OIDC sağlayıcınızdan gelen belirteçleri kabul etmek için [`remoteApi`](/docs/configuration/librechat_yaml/object_structure/agents#remoteapi) bölümüne bakın. Management API ayrı olarak [`managementApi`](/docs/configuration/librechat_yaml/object_structure/agents#managementapi) altında yapılandırılır, olay iletimi ayarları ise [`eventDriven`](/docs/configuration/librechat_yaml/object_structure/agents#eventdriven) altındadır.
