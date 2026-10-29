@@ -35,6 +35,7 @@ Estos son los campos bajo `interface`:
 - `retentionMode`
 - `retainAgentFiles`
 - `autoSubmitFromUrl`
+- `colorModeFromUrl`
 - `customWelcome`
 - `codeHighlightThrottleMs`
 - `artifactUndocking`
@@ -55,7 +56,6 @@ Estos son los campos bajo `interface`:
 - `landingHeading`
 - `landingFooter`
 - `runningChatRename`
-- `colorModeFromUrl`
 - `historyCacheTtlMs`
 - `historyCacheRecent`
 - `historyCacheMaxBytes`
@@ -90,6 +90,8 @@ interface:
     share: false
     public: false
     configureObo: false
+    toolsRefreshInterval: 300000
+    statusRefreshInterval: 30000
     trustCheckbox:
       label: 'I trust this server'
       subLabel: 'Only enable servers you trust'
@@ -248,14 +250,14 @@ Consulta [Theme](/docs/configuration/librechat_yaml/object_structure/theme) para
     [
       'toolsRefreshInterval',
       'Number',
-      'Intervalo de sondeo en milisegundos para actualizar los catálogos de herramientas MCP mientras los controles MCP están visibles. Establézcalo en 0 para deshabilitar el sondeo.',
-      '300000',
+      'Con qué frecuencia, en milisegundos, el cliente vuelve a obtener las herramientas de MCP mientras una pantalla que las enumera está visible. Establézcalo en 0 para desactivar el sondeo.',
+      '300000 (5 minutes)',
     ],
     [
       'statusRefreshInterval',
       'Number',
-      'Intervalo de sondeo en milisegundos para actualizar el estado de la conexión MCP mientras los controles MCP están visibles. Establezca en 0 para deshabilitar el sondeo.',
-      '30000',
+      'Con qué frecuencia, en milisegundos, el cliente vuelve a verificar el estado de la conexión con el servidor MCP mientras una pantalla que lo muestra está visible. Establézcalo en 0 para desactivar el sondeo.',
+      '30000 (30 seconds)',
     ],
     [
       'trustCheckbox',
@@ -1111,6 +1113,8 @@ interface:
   temporaryChat: true
 ```
 
+Para saber qué ven los usuarios, consulta [Chat temporal](/docs/features/temporary_chat).
+
 ## temporaryChatRetention
 
 La configuración `temporaryChatRetention` le permite personalizar cuánto tiempo se conservan los chats temporales antes de ser eliminados automáticamente. Bajo `retentionMode: "ephemeral"`, cada chat es temporal, por lo que este valor representa el tiempo de vida de cada chat.
@@ -1159,31 +1163,39 @@ interface:
 
 ## generalChatRetention
 
-Controla cuánto tiempo se conservan los chats regulares cuando `retentionMode` está configurado en `"all"`. Se ignora en los otros modos; bajo `"ephemeral"`, cada chat es temporal y utiliza `temporaryChatRetention`.
+Define cuánto tiempo se conservan los chats regulares (no temporales), en horas, cuando `retentionMode` es `"all"`. Si no se define, los chats regulares con `"all"` usan el valor de `temporaryChatRetention`.
+
+**Clave:**
 
 <OptionTable
   options={[
     [
       'generalChatRetention',
       'Number',
-      'Establece el período de retención para chats regulares en horas bajo la retención de todos los datos.',
-      'Defaults to temporaryChatRetention when omitted',
+      'Período de retención en horas para los chats normales cuando retentionMode es "all". Mínimo 1, máximo 8760. Los chats temporales siguen usando temporaryChatRetention.',
+      'generalChatRetention: 2160',
     ],
   ]}
 />
 
-El valor debe estar entre `1` y `8760` horas. Esta configuración permite que los chats regulares y temporales utilicen tiempos de vida diferentes. Cambiar cualquiera de los valores de retención afecta a los plazos asignados a registros nuevos o actualizados; LibreChat no reescribe automáticamente los plazos almacenados existentes.
+**Por defecto:** sin definir (recurre a `temporaryChatRetention`)
+
+Se ignora en `"temporary"` y `"ephemeral"`. Cambiar un valor de retención solo afecta a los registros guardados posteriormente; los plazos existentes no se reescriben.
+
+**Ejemplo:**
 
 ```yaml filename="interface / generalChatRetention"
 interface:
-  temporaryChatRetention: 168 # 7 days for temporary chats
-  generalChatRetention: 2160 # 90 days for regular chats
   retentionMode: 'all'
+  temporaryChatRetention: 24 # temporary chats: 1 day
+  generalChatRetention: 2160 # regular chats: 90 days
 ```
 
 ## retentionMode
 
 Controla qué datos reciben plazos de retención y si cada chat está forzado a ser temporal.
+
+Para saber cómo funciona la eliminación, qué ocurre con los chats existentes al cambiar de modo y ver ejemplos completos, consulta [Retención de datos](/docs/configuration/data_retention).
 
 **Clave:**
 
@@ -1192,7 +1204,7 @@ Controla qué datos reciben plazos de retención y si cada chat está forzado a 
     [
       'retentionMode',
       'String',
-      'Política de retención. "temporary" aplica la retención solo a los chats que los usuarios marcan como temporales; "all" aplica la retención a cada conversación y mensaje mientras los mantiene visibles; "ephemeral" fuerza a que cada chat sea temporal (oculto del historial y la búsqueda, con el interruptor bloqueado).',
+      'Configúrelo en "temporary" para aplicar la retención solo a los chats temporales, en "all" para aplicar la retención a todos los datos retenidos compatibles (incluidos los archivos de recursos de agentes persistentes, a menos que retainAgentFiles sea true), o en "ephemeral" para hacer lo mismo que "all" y además hacer que todos los chats nuevos sean temporales.',
       'retentionMode: "temporary"',
     ],
   ]}
@@ -1200,16 +1212,14 @@ Controla qué datos reciben plazos de retención y si cada chat está forzado a 
 
 **Predeterminado:** `temporary`
 
-**Modos:**
-
-- **`temporary`** _(predeterminado)_: solo caducan los chats que un usuario marca como temporales. Los chats normales nunca caducan.
-- **`all`**: cada chat y mensaje obtiene un `expiredAt`, pero permanece visible y se puede buscar hasta que caduca.
-- **`ephemeral`**: cada chat se fuerza a ser temporal, oculto del historial y de la búsqueda, y el interruptor está bloqueado en modo activo. La aplicación es autoritativa por parte del servidor.
-
-Consulta la página de la función [Temporary Chat & Data Retention](/docs/features/temporary_chat#data-retention) para ver la matriz de comportamiento completa y la guía de migración.
+| Valor | Chats temporales | Chats regulares y otros datos | Interruptor de chat temporal |
+| --- | --- | --- | --- |
+| `temporary` | Caducan después de `temporaryChatRetention` | Se conservan | Los usuarios eligen por chat |
+| `all` | Caducan después de `temporaryChatRetention` | Caducan después de `generalChatRetention` (o `temporaryChatRetention` si no está definido) | Los usuarios eligen por chat |
+| `ephemeral` | Cada chat es temporal y caduca después de `temporaryChatRetention` | No hay chats regulares; el resto de datos conservados recibe plazos de caducidad como con `all` | Se muestra bloqueado activado, con "Tu administrador ha habilitado el chat temporal para todos los chats" |
 
 <Callout type="warning">
-  `retentionMode: "all"` y `"ephemeral"` aplican plazos de retención más allá de los chats temporales, incluyendo los archivos de recursos de agentes persistentes a menos que `retainAgentFiles: true` esté configurado. Confirme su política de retención antes de habilitar cualquiera de los dos.
+  `retentionMode: "all"` y `"ephemeral"` aplican plazos de retención más allá de los chats temporales, incluidos los archivos de recursos persistentes de agentes, a menos que se configure `retainAgentFiles: true`. Confirma tu política de retención antes de habilitarla.
 </Callout>
 
 **Ejemplo:**
@@ -1268,7 +1278,7 @@ Controla si un prompt proporcionado a través de parámetros de consulta de URL 
 
 Cuando un usuario autenticado abre `/c/new?prompt=…&submit=true`, LibreChat normalmente rellena previamente el campo de redacción con el prompt proporcionado en la URL y lo envía inmediatamente. Esta es una función de conveniencia para enlaces profundos (deeplinks) personalizados y URLs de chat compartidas.
 
-Para despliegues donde los usuarios puedan recibir enlaces manipulados de fuentes externas —y donde los modelos con memoria o herramientas habilitadas podrían filtrar contexto sensible si una carga útil de inyección de prompts llega al modelo—, los operadores pueden desactivar el envío automático. Con el flag establecido en `false`, el prompt se sigue rellenando previamente en el editor, pero el usuario debe presionar **Enviar** explícitamente.
+Para despliegues en los que los usuarios puedan recibir enlaces manipulados desde fuentes externas, y en los que modelos con memoria o con herramientas habilitadas podrían filtrar contexto sensible si una carga de inyección de prompt llega al modelo, los operadores pueden deshabilitar el envío automático. Con la marca establecida en `false`, el prompt sigue precargado en el compositor, pero el usuario debe pulsar **Send** explícitamente.
 
 **Clave:**
 
@@ -1287,7 +1297,7 @@ Para despliegues donde los usuarios puedan recibir enlaces manipulados de fuente
 
 **Notas:**
 
-- Esta configuración no afecta la selección de Model Specs basada en URL ni otras configuraciones basadas en URL, solo el paso de envío automático.
+- Esta configuración solo afecta al paso de envío automático. La selección de Model Specs mediante URL y otras configuraciones basadas en URL siguen aplicándose.
 - El parámetro de consulta acepta tanto `prompt` como `q` como fuente del prompt, teniendo `prompt` prioridad. `submit=true` es el activador.
 - Recomendado para instancias que manejan datos sensibles de memoria o herramientas, donde un vector de inyección de prompts de un solo clic debería requerir la confirmación explícita del usuario.
 
@@ -1296,6 +1306,34 @@ Para despliegues donde los usuarios puedan recibir enlaces manipulados de fuente
 ```yaml filename="interface / autoSubmitFromUrl"
 interface:
   autoSubmitFromUrl: false
+```
+
+Para conocer los parámetros de URL visibles para el usuario, consulta [Parámetros de consulta](/docs/features/url_query).
+
+## colorModeFromUrl
+
+Permite que un enlace establezca el modo de color del usuario mediante el parámetro de consulta `theme` (`?theme=light`, `?theme=dark` o `?theme=system`). Úselo cuando otra aplicación enlace a LibreChat y deba transferir su propio modo claro u oscuro. El valor se guarda como preferencia de tema del usuario, que puede cambiarla más adelante en la configuración, y el parámetro se elimina de la barra de direcciones. Si un usuario eligió la variante de alto contraste del mismo modo, la conserva.
+
+**Clave:**
+
+<OptionTable
+  options={[
+    [
+      'colorModeFromUrl',
+      'Boolean',
+      'Acepta ?theme=light, ?theme=dark o ?theme=system en un enlace de entrada y lo guarda como el modo de color del usuario.',
+      'colorModeFromUrl: true',
+    ],
+  ]}
+/>
+
+**Predeterminado:** `false`
+
+**Ejemplo:**
+
+```yaml filename="interface / colorModeFromUrl"
+interface:
+  colorModeFromUrl: true
 ```
 
 ## customWelcome
@@ -1786,17 +1824,6 @@ Permite renombrar una conversación mientras se está ejecutando. Establézcalo 
 ```yaml filename="interface / runningChatRename"
 interface:
   runningChatRename: false
-```
-
-## colorModeFromUrl
-
-Acepta `?theme=dark`, `?theme=light` o `?theme=system` en un enlace de entrada como el modo de color del usuario, de modo que otra aplicación pueda transferirle su modo.
-
-**Predeterminado:** `false`
-
-```yaml filename="interface / colorModeFromUrl"
-interface:
-  colorModeFromUrl: true
 ```
 
 ## historyCacheTtlMs

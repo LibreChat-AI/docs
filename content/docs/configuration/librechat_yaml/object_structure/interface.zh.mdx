@@ -35,6 +35,7 @@ icon: LayoutDashboard
 - `retentionMode`
 - `retainAgentFiles`
 - `autoSubmitFromUrl`
+- `colorModeFromUrl`
 - `customWelcome`
 - `codeHighlightThrottleMs`
 - `artifactUndocking`
@@ -55,7 +56,6 @@ icon: LayoutDashboard
 - `landingHeading`
 - `landingFooter`
 - `runningChatRename`
-- `colorModeFromUrl`
 - `historyCacheTtlMs`
 - `historyCacheRecent`
 - `historyCacheMaxBytes`
@@ -90,6 +90,8 @@ interface:
     share: false
     public: false
     configureObo: false
+    toolsRefreshInterval: 300000
+    statusRefreshInterval: 30000
     trustCheckbox:
       label: 'I trust this server'
       subLabel: 'Only enable servers you trust'
@@ -248,14 +250,14 @@ interface:
     [
       'toolsRefreshInterval',
       'Number',
-      '当 MCP 控件可见时，刷新 MCP 工具目录的轮询间隔（以毫秒为单位）。设置为 0 可禁用轮询。',
-      '300000',
+      '客户端在显示 MCP 工具列表的界面可见时,重新获取工具的频率(以毫秒为单位)。设置为 0 可禁用轮询。',
+      '300000 (5 minutes)',
     ],
     [
       'statusRefreshInterval',
       'Number',
-      '当 MCP 控件可见时，刷新 MCP 连接状态的轮询间隔（以毫秒为单位）。设置为 0 可禁用轮询。',
-      '30000',
+      '客户端在显示连接状态的界面可见时,重新检查 MCP 服务器连接状态的频率(以毫秒为单位)。设置为 0 可禁用轮询。',
+      '30000 (30 seconds)',
     ],
     [
       'trustCheckbox',
@@ -1111,6 +1113,8 @@ interface:
   temporaryChat: true
 ```
 
+有关用户所见的内容,请参阅[临时对话](/docs/features/temporary_chat)。
+
 ## temporaryChatRetention
 
 `temporaryChatRetention` 配置允许您自定义临时聊天记录在自动删除前保留的时长。在 `retentionMode: "ephemeral"` 模式下，所有聊天记录均为临时记录，因此该值即为每条聊天记录的生命周期。
@@ -1159,31 +1163,39 @@ interface:
 
 ## generalChatRetention
 
-当 `retentionMode` 设置为 `"all"` 时，控制常规聊天的保留时长。它会被其他模式忽略；在 `"ephemeral"` 模式下，所有聊天都是临时的，并使用 `temporaryChatRetention`。
+设置在 `retentionMode` 为 `"all"` 时,常规(非临时)对话的保留时长(单位为小时)。若未设置,则在 `"all"` 模式下,常规对话将使用 `temporaryChatRetention` 的值。
+
+**密钥：**
 
 <OptionTable
   options={[
     [
       'generalChatRetention',
       'Number',
-      '在全量数据保留策略下，设置常规对话的保留时长（以小时为单位）。',
-      'Defaults to temporaryChatRetention when omitted',
+      '当 retentionMode 为 "all" 时,普通聊天的保留时长(单位:小时)。最小值为 1,最大值为 8760。临时聊天仍使用 temporaryChatRetention。',
+      'generalChatRetention: 2160',
     ],
   ]}
 />
 
-该值必须在 `1` 到 `8760` 小时之间。此设置允许常规聊天和临时聊天使用不同的保留期限。更改任一保留值都会影响分配给新记录或已更新记录的截止日期；LibreChat 不会自动重写现有的已存储截止日期。
+**默认值:** 未设置(回退到 `temporaryChatRetention`)
+
+在 `"temporary"` 和 `"ephemeral"` 模式下，该设置会被忽略。修改保留期限值仅影响之后保存的记录；已有记录的截止时间不会被重新计算。
+
+**示例：**
 
 ```yaml filename="interface / generalChatRetention"
 interface:
-  temporaryChatRetention: 168 # 7 days for temporary chats
-  generalChatRetention: 2160 # 90 days for regular chats
   retentionMode: 'all'
+  temporaryChatRetention: 24 # temporary chats: 1 day
+  generalChatRetention: 2160 # regular chats: 90 days
 ```
 
 ## retentionMode
 
 控制哪些数据接收保留期限，以及是否强制将所有聊天设为临时状态。
+
+有关删除的工作方式、切换模式时现有聊天记录的变化,以及完整示例,请参阅[数据保留](/docs/configuration/data_retention)。
 
 **密钥：**
 
@@ -1192,7 +1204,7 @@ interface:
     [
       'retentionMode',
       'String',
-      '保留策略。“temporary”仅对用户标记为临时的聊天应用保留策略；“all”对所有对话和消息应用保留策略，同时保持其可见；“ephemeral”强制所有聊天均为临时状态（从历史记录和搜索中隐藏，且开关被锁定）。',
+      '将其设置为 "temporary" 可仅对临时对话应用保留策略;设置为 "all" 则对所有受支持的保留数据应用保留策略(除非 retainAgentFiles 为 true,否则包括持久化的智能体资源文件);设置为 "ephemeral" 则与 "all" 的作用相同,并且会使每个新对话都成为临时对话。',
       'retentionMode: "temporary"',
     ],
   ]}
@@ -1200,16 +1212,14 @@ interface:
 
 **默认值：** `temporary`
 
-**模式：**
-
-- **`temporary`** _(默认)_：仅用户标记为临时的聊天会过期。普通聊天永不过期。
-- **`all`**：每个聊天和消息都会获得一个 `expiredAt`，但在过期之前它们将保持可见且可搜索。
-- **`ephemeral`**：强制所有聊天为临时状态，从历史记录和搜索中隐藏，且开关被锁定。此强制执行由服务器端授权。
-
-请参阅 [临时聊天与数据保留](/docs/features/temporary_chat#data-retention) 功能页面，了解完整的行为矩阵和迁移指南。
+| 值 | 临时聊天 | 常规聊天及其他数据 | 临时聊天开关 |
+| --- | --- | --- | --- |
+| `temporary` | 在 `temporaryChatRetention` 后过期 | 保留 | 用户可逐个聊天选择 |
+| `all` | 在 `temporaryChatRetention` 后过期 | 在 `generalChatRetention`(若未设置则为 `temporaryChatRetention`)后过期 | 用户可逐个聊天选择 |
+| `ephemeral` | 每个聊天都是临时聊天,并在 `temporaryChatRetention` 后过期 | 不存在常规聊天;其他保留数据的过期时间与 `all` 相同 | 显示为锁定开启,并提示"管理员已为所有聊天启用临时聊天" |
 
 <Callout type="warning">
-  `retentionMode: "all"` 和 `"ephemeral"` 会将保留期限应用于临时聊天之外的内容，包括持久化智能体资源文件，除非配置了 `retainAgentFiles: true`。在启用其中任何一项之前，请确认您的保留策略。
+  `retentionMode: "all"` 和 `"ephemeral"` 会将保留期限应用于临时聊天之外的内容，包括持久化的智能体资源文件，除非配置了 `retainAgentFiles: true`。在启用之前，请先确认您的保留策略。
 </Callout>
 
 **示例：**
@@ -1268,7 +1278,7 @@ interface:
 
 当已通过身份验证的用户打开 `/c/new?prompt=…&submit=true` 时，LibreChat 通常会使用 URL 中提供的提示词预填充输入框并立即提交。这是为精心设计的深度链接和共享聊天 URL 提供的一项便捷功能。
 
-对于用户可能从外部来源接收到精心构造的链接，且启用记忆或工具的模型在提示词注入负载到达模型时可能泄露敏感上下文的部署场景，管理员可以禁用自动提交。将此标志设置为 `false` 后，提示词仍会预填在输入框中，但用户必须显式点击 **发送** 按钮。
+对于用户可能收到来自外部来源的精心构造链接的部署场景，以及在提示注入负载到达模型时，启用记忆或工具功能的模型可能泄露敏感上下文的情况，运维人员可以禁用自动提交。将该标志设置为 `false` 后，提示词仍会预先填充到输入框中，但用户必须明确点击 **发送** 才能提交。
 
 **密钥：**
 
@@ -1287,7 +1297,7 @@ interface:
 
 **注意：**
 
-- 此设置不会影响基于 URL 的 Model Specs 选择或其他基于 URL 的设置，仅影响自动提交步骤。
+- 此设置仅影响自动提交步骤。通过 URL 选择的模型规格以及其他由 URL 驱动的设置仍然生效。
 - 查询参数同时接受 `prompt` 和 `q` 作为提示词来源，其中 `prompt` 具有优先权。`submit=true` 为触发条件。
 - 推荐用于处理敏感记忆或工具数据的实例，在这种情况下，一键式提示词注入向量应需要用户明确确认。
 
@@ -1296,6 +1306,34 @@ interface:
 ```yaml filename="interface / autoSubmitFromUrl"
 interface:
   autoSubmitFromUrl: false
+```
+
+有关面向用户的 URL 参数，请参阅 [查询参数](/docs/features/url_query)。
+
+## colorModeFromUrl
+
+通过 `theme` 查询参数,链接可以设置用户的颜色模式(`?theme=light`、`?theme=dark` 或 `?theme=system`)。当其他应用链接到 LibreChat 并希望传递其自身的浅色或深色模式时,可以使用此功能。该值会保存为用户的主题偏好,用户之后可以在设置中更改;该参数也会从地址栏中移除。如果用户选择了同一模式的高对比度变体,则会保留该设置。
+
+**密钥：**
+
+<OptionTable
+  options={[
+    [
+      'colorModeFromUrl',
+      'Boolean',
+      '在入口链接上接受 ?theme=light、?theme=dark 或 ?theme=system,并将其保存为用户的颜色模式。',
+      'colorModeFromUrl: true',
+    ],
+  ]}
+/>
+
+**默认值：** `false`
+
+**示例：**
+
+```yaml filename="interface / colorModeFromUrl"
+interface:
+  colorModeFromUrl: true
 ```
 
 ## customWelcome
@@ -1786,17 +1824,6 @@ interface:
 ```yaml filename="interface / runningChatRename"
 interface:
   runningChatRename: false
-```
-
-## colorModeFromUrl
-
-接受在入口链接上使用 `?theme=dark`、`?theme=light` 或 `?theme=system` 作为用户的颜色模式,以便其他应用可以将其模式传递过来。
-
-**默认值：** `false`
-
-```yaml filename="interface / colorModeFromUrl"
-interface:
-  colorModeFromUrl: true
 ```
 
 ## historyCacheTtlMs

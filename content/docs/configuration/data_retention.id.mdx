@@ -1,0 +1,123 @@
+---
+title: Retensi Data
+icon: Clock
+description: >-
+  Kedaluwarsakan obrolan sementara, beri tanggal hapus pada setiap obrolan, atau
+  jadikan setiap obrolan bersifat sementara, serta apa yang terjadi pada data
+  yang ada saat Anda beralih.
+---
+
+LibreChat dapat memberikan tanggal kedaluwarsa pada data percakapan dan menghapusnya secara otomatis. Mekanisme yang sama menangani [obrolan sementara](/docs/features/temporary_chat) yang dimulai sendiri oleh pengguna serta kebijakan di seluruh deployment, seperti "hapus setiap obrolan setelah 90 hari". Semua itu dikonfigurasi di bawah `interface` dalam `librechat.yaml`; setiap kunci juga tercantum dalam [referensi interface](/docs/configuration/librechat_yaml/object_structure/interface#retentionmode).
+
+## Opsi [#options]
+
+```yaml filename="librechat.yaml"
+interface:
+  # Seeds the TEMPORARY_CHAT permission for the USER role (manage per role in the Admin Panel)
+  temporaryChat: true
+
+  # Which chats expire: "temporary" (default), "all", or "ephemeral"
+  retentionMode: 'temporary'
+
+  # Lifetime of temporary chats, in hours. Default 720 (30 days), range 1 to 8760.
+  temporaryChatRetention: 720
+
+  # Lifetime of regular chats under retentionMode "all", in hours. Defaults to temporaryChatRetention.
+  # generalChatRetention: 2160
+
+  # Under "all" or "ephemeral", keep files uploaded to agents from expiring.
+  retainAgentFiles: false
+```
+
+<OptionTable
+  options={[
+    ['retentionMode', 'String', 'Chat mana yang menerima tanggal kedaluwarsa: "temporary", "all", atau "ephemeral". Lihat mode di bawah.', 'temporary'],
+    ['temporaryChatRetention', 'Number (hours)', 'Berapa lama obrolan sementara disimpan setelah terakhir kali disimpan. Di bawah "ephemeral" ini adalah masa berlaku setiap obrolan. Rentang 1 hingga 8760.', '720'],
+    ['generalChatRetention', 'Number (hours)', 'Berapa lama obrolan biasa disimpan di bawah "all". Diabaikan oleh mode lainnya. Rentang 1 sampai 8760.', 'temporaryChatRetention'],
+    ['retainAgentFiles', 'Boolean', 'Di bawah "all" dan "ephemeral", file yang diunggah ke resource agen tidak akan kedaluwarsa. File yang dilampirkan ke pesan tetap kedaluwarsa bersama chat-nya.', 'false'],
+    ['temporaryChat', 'Boolean', 'Menanam izin TEMPORARY_CHAT untuk peran USER bawaan saat startup. Kelola izin per peran di Admin Panel.', 'true'],
+  ]}
+/>
+
+Nilai di luar rentang 1 hingga 8760 jam di `librechat.yaml` akan gagal dalam validasi konfigurasi.
+
+Variabel lingkungan `TEMP_CHAT_RETENTION_HOURS` yang sudah usang juga menentukan masa aktif obrolan sementara. `interface.temporaryChatRetention` diutamakan ketika keduanya diatur. Nilai env yang tidak valid akan kembali ke 720, dan nilai di luar rentang akan dibatasi ke 1 atau 8760 dengan peringatan di log server.
+
+## Tiga mode [#the-three-modes]
+
+| Mode | Yang kedaluwarsa | Ditampilkan di riwayat dan pencarian | Pengguna dapat menonaktifkan |
+| --- | --- | --- | --- |
+| `temporary` (default) | Hanya chat yang ditandai sebagai sementara oleh pengguna | Ya untuk chat biasa, tidak untuk chat sementara | Ya, per chat |
+| `all` | Setiap chat | Ya, hingga setiap chat kedaluwarsa | Tidak |
+| `ephemeral` | Setiap chat | Tidak, setiap chat bersifat sementara | Tidak, sakelar terkunci aktif |
+
+**`temporary`** tetap mempertahankan perilaku yang ada. Chat yang ditandai sebagai sementara oleh pengguna (dengan sakelar atau pengaturan **Temporary Chat by default**) disembunyikan dari riwayat dan pencarian, serta dihapus setelah `temporaryChatRetention` jam. Chat reguler tidak pernah kedaluwarsa.
+
+**`all`** memberikan tanggal kedaluwarsa pada setiap percakapan dan pesan tanpa mengubah tampilan chat bagi pengguna: chat tetap ada di riwayat dan pencarian hingga kedaluwarsa. Chat reguler menggunakan `generalChatRetention` (atau `temporaryChatRetention` jika tidak diatur). Chat yang ditandai sebagai sementara oleh pengguna tetap berperilaku sebagai chat sementara. File yang diunggah dan tautan yang dibagikan juga ikut kedaluwarsa; file resource agen hanya dipertahankan dengan `retainAgentFiles: true`. Gunakan ini untuk kebijakan "simpan semuanya selama N hari, lalu hapus".
+
+**`ephemeral`** membuat setiap chat bersifat sementara untuk seluruh deployment. Setiap chat disembunyikan dari riwayat dan pencarian, tidak mendapatkan judul yang dihasilkan, dan dihapus setelah `temporaryChatRetention` jam; `generalChatRetention` diabaikan. Toggle **Temporary Chat** ditampilkan terkunci aktif untuk semua pengguna, termasuk peran tanpa izin `TEMPORARY_CHAT`, dan pintasan keyboard-nya tidak berfungsi. Server menerapkan ketentuan ini, sehingga permintaan dari klien untuk menyimpan chat sebagai permanen akan ditimpa. Tidak ada yang dilacak ke Langfuse kecuali Anda mengatur [`langfuse.trace.temporaryChats`](/docs/configuration/langfuse#temporary-chats).
+
+## Cara kerja penghapusan [#how-deletion-works]
+
+Setiap percakapan dan pesan memiliki tanggal `expiredAt`; percakapan dan pesan sementara juga ditandai dengan `isTemporary: true`. Catatan yang tersembunyi dan yang sudah kedaluwarsa disaring dari daftar riwayat dan indeks pencarian sebelum dihapus.
+
+- Percakapan, pesan, dan tautan yang dibagikan dihapus oleh indeks TTL MongoDB pada `expiredAt`. MongoDB menjalankan proses ini di latar belakang, biasanya dalam waktu sekitar satu menit setelah batas waktu tercapai.
+- File dihapus melalui proses pembersihan berkala di LibreChat, yang menghapus file tersimpan (disk lokal, S3, dan sebagainya) lalu catatannya.
+
+Batas waktu ditetapkan saat sebuah catatan disimpan. Setiap penyimpanan percakapan memajukan batas waktunya, sehingga obrolan yang sedang aktif digunakan tidak akan dihapus. Setiap pesan mempertahankan batas waktu yang didapatnya ketika disimpan.
+
+Di bawah `all` dan `ephemeral`, retensi berlaku di mana pun data chat ditulis: pesan baru, regenerasi dan cabang, suntingan, umpan balik, suntingan artefak, respons yang dilanjutkan, fork, duplikat, dan impor.
+
+- Di bawah `ephemeral`, fork, duplikat, dan impor selalu bersifat sementara. Di bawah `all`, salinan dari obrolan sementara tetap bersifat sementara, sedangkan salinan lain dan impor tetap terlihat dengan tanggal kedaluwarsa.
+- Tautan bersama mengambil masa berlakunya dari percakapannya, sehingga tautan tersebut tidak pernah melebihi umur percakapan.
+- [Memories](/docs/features/memory) tidak memiliki masa berlaku dan tidak terpengaruh oleh mode apa pun.
+
+## Mengganti mode [#switching-modes]
+
+Mengubah `retentionMode` atau periode retensi hanya berlaku untuk rekaman yang disimpan setelahnya. Tenggat yang sudah ada tidak ditulis ulang.
+
+- **Untuk `all` atau `ephemeral`:** chat yang sudah ada akan mendapatkan batas waktu (tenggat) saat chat tersebut berikutnya ditulisi. Di bawah `ephemeral`, chat reguler lama yang menerima pesan baru, edit, umpan balik, atau percabangan akan langsung dikonversi menjadi chat sementara: chat tersebut keluar dari riwayat dan pencarian serta kehilangan penanda (bookmark)-nya. Chat yang tidak tersentuh akan tetap mempertahankan statusnya saat ini.
+- **Kembali ke `temporary`:** chat yang disimpan di bawah `all` tetap memiliki batas waktunya dan tetap akan dihapus. Chat yang disimpan di bawah `ephemeral` tetap bersifat sementara dan terus kedaluwarsa.
+
+Untuk menghentikan obrolan reguler agar tidak kedaluwarsa setelah meninggalkan `all` atau `ephemeral`, hapus tenggat waktunya di `mongosh`:
+
+```js filename="mongosh"
+db.conversations.updateMany(
+  { isTemporary: false, expiredAt: { $ne: null } },
+  { $unset: { expiredAt: 1 } },
+)
+db.messages.updateMany(
+  { isTemporary: false, expiredAt: { $ne: null } },
+  { $unset: { expiredAt: 1 } },
+)
+```
+
+Setelah melakukan upgrade, ketika indeks `_meiliIndex_1_isTemporary_1_expiredAt_1` sudah ada pada koleksi `conversations` dan `messages`, Anda dapat menghapus indeks lama `_meiliIndex_1_expiredAt_1` dari kedua koleksi tersebut. MongoDB tidak menghapus indeks yang sudah digantikan secara otomatis.
+
+## Contoh [#examples]
+
+Hapus setiap chat 90 hari setelah aktivitas terakhirnya, dengan tetap menampilkan chat hingga saat itu:
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'all'
+  generalChatRetention: 2160 # 90 days for regular chats
+  temporaryChatRetention: 24 # 1 day for chats users mark as temporary
+```
+
+Jadikan setiap obrolan bersifat sementara dan hapus setelah 24 jam:
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'ephemeral'
+  temporaryChatRetention: 24
+```
+
+Buat setiap chat bersifat sementara selama seminggu, tetapi tetap simpan file yang dilampirkan ke agen:
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'ephemeral'
+  temporaryChatRetention: 168
+  retainAgentFiles: true
+```

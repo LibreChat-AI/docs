@@ -35,6 +35,7 @@ icon: LayoutDashboard
 - `retentionMode`
 - `retainAgentFiles`
 - `autoSubmitFromUrl`
+- `colorModeFromUrl`
 - `customWelcome`
 - `codeHighlightThrottleMs`
 - `artifactUndocking`
@@ -55,7 +56,6 @@ icon: LayoutDashboard
 - `landingHeading`
 - `landingFooter`
 - `runningChatRename`
-- `colorModeFromUrl`
 - `historyCacheTtlMs`
 - `historyCacheRecent`
 - `historyCacheMaxBytes`
@@ -90,6 +90,8 @@ interface:
     share: false
     public: false
     configureObo: false
+    toolsRefreshInterval: 300000
+    statusRefreshInterval: 30000
     trustCheckbox:
       label: 'I trust this server'
       subLabel: 'Only enable servers you trust'
@@ -248,14 +250,14 @@ interface:
     [
       'toolsRefreshInterval',
       'Number',
-      'MCPコントロールが表示されている間、MCPツールカタログを更新するためのポーリング間隔（ミリ秒単位）。0に設定するとポーリングが無効になります。',
-      '300000',
+      'MCPツールの一覧を表示している画面が表示されている間に、クライアントがMCPツールを再取得する頻度（ミリ秒単位）。0に設定するとポーリングを無効にします。',
+      '300000 (5 minutes)',
     ],
     [
       'statusRefreshInterval',
       'Number',
-      'MCPコントロールが表示されている間、MCP接続ステータスを更新するためのポーリング間隔（ミリ秒単位）。0に設定するとポーリングが無効になります。',
-      '30000',
+      'クライアントが、接続状態を表示する画面が表示されている間に MCP サーバーの接続状態を再確認する頻度（ミリ秒単位）。0 に設定するとポーリングを無効にします。',
+      '30000 (30 seconds)',
     ],
     [
       'trustCheckbox',
@@ -1111,6 +1113,8 @@ interface:
   temporaryChat: true
 ```
 
+ユーザーに表示される内容については、[一時チャット](/docs/features/temporary_chat)を参照してください。
+
 ## temporaryChatRetention
 
 `temporaryChatRetention` 設定を使用すると、一時的なチャットが自動的に削除されるまでの保持期間をカスタマイズできます。`retentionMode: "ephemeral"` の下では、すべてのチャットが一時的なものとなるため、この値がすべてのチャットの存続期間となります。
@@ -1159,31 +1163,39 @@ interface:
 
 ## generalChatRetention
 
-`retentionMode` が `"all"` に設定されている場合に、通常のチャットが保持される期間を制御します。他のモードでは無視されます。`"ephemeral"` の場合、すべてのチャットは一時的なものとなり、`temporaryChatRetention` が使用されます。
+`retentionMode` が `"all"` の場合に、通常の（一時的ではない）チャットを保持する時間を時間単位で設定します。この設定がない場合、`"all"` の下での通常チャットには `temporaryChatRetention` の値が使用されます。
+
+**キー:**
 
 <OptionTable
   options={[
     [
       'generalChatRetention',
       'Number',
-      'all-data retentionの下で、通常のチャットの保持期間を時間単位で設定します。',
-      'Defaults to temporaryChatRetention when omitted',
+      'Retention period in hours for regular chats when retentionMode is "all". Minimum 1, maximum 8760. Temporary chats keep using temporaryChatRetention.',
+      'generalChatRetention: 2160',
     ],
   ]}
 />
 
-値は `1` から `8760` 時間の間である必要があります。この設定により、通常チャットと一時チャットで異なる有効期間を使用できるようになります。いずれかの保持期間の値を変更すると、新規または更新されたレコードに割り当てられる期限に影響しますが、LibreChatは既存の保存済み期限を自動的に書き換えることはありません。
+**デフォルト:** 未設定（`temporaryChatRetention` にフォールバックします）
+
+それは`"temporary"`および`"ephemeral"`の場合には無視されます。保持期間の値を変更すると、その後に保存されたレコードにのみ影響し、既存の期限は書き換えられません。
+
+**例:**
 
 ```yaml filename="interface / generalChatRetention"
 interface:
-  temporaryChatRetention: 168 # 7 days for temporary chats
-  generalChatRetention: 2160 # 90 days for regular chats
   retentionMode: 'all'
+  temporaryChatRetention: 24 # temporary chats: 1 day
+  generalChatRetention: 2160 # regular chats: 90 days
 ```
 
 ## retentionMode
 
 どのデータに保持期限を適用するか、またすべてのチャットを強制的に一時的なものにするかどうかを制御します。
+
+削除の仕組み、モードを切り替えた際に既存のチャットがどうなるか、そして完全な例については、[データ保持](/docs/configuration/data_retention)を参照してください。
 
 **キー:**
 
@@ -1192,7 +1204,7 @@ interface:
     [
       'retentionMode',
       'String',
-      '保持ポリシー。「temporary」はユーザーが一時的とマークしたチャットのみに保持を適用します。「all」はすべての会話とメッセージを保持し、表示状態を維持します。「ephemeral」はすべてのチャットを強制的に一時的なものにします（履歴や検索から非表示になり、切り替えはロックされます）。',
+      '"temporary" に設定すると一時チャットのみに保持期間を適用し、"all" に設定すると保持対象となるすべてのデータ(retainAgentFiles が true でない限り、永続エージェントのリソースファイルを含む)に保持期間を適用します。"ephemeral" に設定すると "all" と同じ動作に加え、新規作成されるすべてのチャットを一時チャットにします。',
       'retentionMode: "temporary"',
     ],
   ]}
@@ -1200,16 +1212,14 @@ interface:
 
 **デフォルト:** `temporary`
 
-**モード:**
-
-- **`temporary`** _(デフォルト)_: ユーザーが一時的とマークしたチャットのみが期限切れになります。通常のチャットは期限切れになりません。
-- **`all`**: すべてのチャットとメッセージに `expiredAt` が設定されますが、期限が切れるまで表示および検索が可能です。
-- **`ephemeral`**: すべてのチャットが強制的に一時的なものとなり、履歴や検索からは非表示になります。また、トグルはオンの状態で固定されます。この強制適用はサーバー側で制御されます。
-
-完全な動作マトリックスと移行ガイダンスについては、[Temporary Chat & Data Retention](/docs/features/temporary_chat#data-retention) 機能ページを参照してください。
+| 値 | 一時チャット | 通常のチャットおよびその他のデータ | 一時チャットの切り替え |
+| --- | --- | --- | --- |
+| `temporary` | `temporaryChatRetention` の後に期限切れになる | 保持される | ユーザーがチャットごとに選択できる |
+| `all` | `temporaryChatRetention` の後に期限切れになる | `generalChatRetention` の後に期限切れになる(未設定の場合は `temporaryChatRetention` の後) | ユーザーがチャットごとに選択できる |
+| `ephemeral` | すべてのチャットが一時チャットになり、`temporaryChatRetention` の後に期限切れになる | 通常のチャットはなし。その他の保持データには `all` と同様に期限が設定される | オンに固定された状態で表示され、「管理者によってすべてのチャットで一時チャットが有効になっています」と表示される |
 
 <Callout type="warning">
-  `retentionMode: "all"` および `"ephemeral"` は、一時的なチャットを超えて保持期限を適用します。これには、`retainAgentFiles: true` が設定されていない限り、永続的なエージェントリソースファイルも含まれます。いずれかを有効にする前に、保持ポリシーを確認してください。
+  `retentionMode: "all"` および `"ephemeral"` は、`retainAgentFiles: true` が設定されていない限り、一時チャットを超えて、永続的なエージェントリソースファイルを含む保持期限を適用します。これを有効にする前に、保持ポリシーを確認してください。
 </Callout>
 
 **例:**
@@ -1268,7 +1278,7 @@ interface:
 
 認証済みのユーザーが `/c/new?prompt=…&submit=true` を開くと、LibreChatは通常、URLで指定されたプロンプトをコンポーザーに自動入力し、即座に送信します。これは、作成されたディープリンクや共有チャットURLのための便利な機能です。
 
-外部ソースから作成されたリンクをユーザーが受け取る可能性があり、かつプロンプトインジェクションのペイロードがモデルに到達した場合にメモリやツールが有効なモデルが機密コンテキストを漏洩する可能性があるデプロイメントでは、オペレーターは自動送信を無効にすることができます。このフラグを `false` に設定すると、プロンプトはコンポーザーに事前入力された状態になりますが、ユーザーは明示的に **Send** を押す必要があります。
+外部から悪意のあるリンクを受け取る可能性があり、プロンプトインジェクションのペイロードがモデルに届いた場合にメモリやツールを有効にしたモデルが機密コンテキストを漏えいさせるおそれがある環境では、運用者は自動送信を無効にできます。このフラグを `false` に設定すると、プロンプトは入力欄に事前入力されたままになりますが、ユーザーが **送信** ボタンを押す必要があります。
 
 **キー:**
 
@@ -1287,7 +1297,7 @@ interface:
 
 **注記:**
 
-- この設定は、URLベースのModel Specsの選択やその他のURLベースの設定には影響しません。自動送信のステップのみに影響します。
+- この設定は自動送信のステップにのみ影響します。URLによるモデル仕様の選択やその他のURLによる設定は引き続き適用されます。
 - クエリパラメータは、プロンプトのソースとして `prompt` と `q` の両方を受け付けますが、`prompt` が優先されます。`submit=true` がトリガーとなります。
 - 機密性の高いメモリやツールデータを扱うインスタンスに推奨されます。このような環境では、ワンクリックのプロンプトインジェクション攻撃を防ぐため、ユーザーによる明示的な確認を必須とすべきです。
 
@@ -1296,6 +1306,34 @@ interface:
 ```yaml filename="interface / autoSubmitFromUrl"
 interface:
   autoSubmitFromUrl: false
+```
+
+ユーザー向けのURLパラメータについては、[クエリパラメータ](/docs/features/url_query)を参照してください。
+
+## colorModeFromUrl
+
+`theme`クエリパラメータを使うと、リンクからユーザーのカラーモードを設定できます(`?theme=light`、`?theme=dark`、または`?theme=system`)。他のアプリからLibreChatへリンクし、そのアプリのライトモードまたはダークモードを引き継ぎたい場合に使用します。この値はユーザーのテーマ設定として保存され、後から設定画面で変更できます。また、パラメータはアドレスバーから削除されます。同じモードのハイコントラスト版を選択していたユーザーは、その設定を維持します。
+
+**キー:**
+
+<OptionTable
+  options={[
+    [
+      'colorModeFromUrl',
+      'Boolean',
+      'エントリーリンクで ?theme=light、?theme=dark、または ?theme=system を受け付け、それをユーザーのカラーモードとして保存する。',
+      'colorModeFromUrl: true',
+    ],
+  ]}
+/>
+
+**デフォルト:** `false`
+
+**例:**
+
+```yaml filename="interface / colorModeFromUrl"
+interface:
+  colorModeFromUrl: true
 ```
 
 ## customWelcome
@@ -1786,17 +1824,6 @@ interface:
 ```yaml filename="interface / runningChatRename"
 interface:
   runningChatRename: false
-```
-
-## colorModeFromUrl
-
-エントリーリンクで `?theme=dark`、`?theme=light`、`?theme=system` を受け付け、ユーザーのカラーモードとして適用します。これにより、他のアプリケーションからカラーモードを引き渡すことができます。
-
-**デフォルト:** `false`
-
-```yaml filename="interface / colorModeFromUrl"
-interface:
-  colorModeFromUrl: true
 ```
 
 ## historyCacheTtlMs

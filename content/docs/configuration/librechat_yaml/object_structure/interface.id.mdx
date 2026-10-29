@@ -35,6 +35,7 @@ Ini adalah kolom-kolom di bawah `interface`:
 - `retentionMode`
 - `retainAgentFiles`
 - `autoSubmitFromUrl`
+- `colorModeFromUrl`
 - `customWelcome`
 - `codeHighlightThrottleMs`
 - `artifactUndocking`
@@ -55,7 +56,6 @@ Ini adalah kolom-kolom di bawah `interface`:
 - `landingHeading`
 - `landingFooter`
 - `runningChatRename`
-- `colorModeFromUrl`
 - `historyCacheTtlMs`
 - `historyCacheRecent`
 - `historyCacheMaxBytes`
@@ -90,6 +90,8 @@ interface:
     share: false
     public: false
     configureObo: false
+    toolsRefreshInterval: 300000
+    statusRefreshInterval: 30000
     trustCheckbox:
       label: 'I trust this server'
       subLabel: 'Only enable servers you trust'
@@ -248,14 +250,14 @@ Lihat [Theme](/docs/configuration/librechat_yaml/object_structure/theme) untuk f
     [
       'toolsRefreshInterval',
       'Number',
-      'Interval polling dalam milidetik untuk menyegarkan katalog alat MCP saat kontrol MCP terlihat. Atur ke 0 untuk menonaktifkan polling.',
-      '300000',
+      'Seberapa sering, dalam milidetik, klien mengambil ulang alat MCP selama layar yang mendaftarkannya terlihat. Atur ke 0 untuk menonaktifkan polling.',
+      '300000 (5 minutes)',
     ],
     [
       'statusRefreshInterval',
       'Number',
-      'Interval polling dalam milidetik untuk menyegarkan status koneksi MCP saat kontrol MCP terlihat. Atur ke 0 untuk menonaktifkan polling.',
-      '30000',
+      'Seberapa sering, dalam milidetik, klien memeriksa ulang status koneksi server MCP saat layar yang menampilkannya terlihat. Atur ke 0 untuk menonaktifkan polling.',
+      '30000 (30 seconds)',
     ],
     [
       'trustCheckbox',
@@ -1111,6 +1113,8 @@ interface:
   temporaryChat: true
 ```
 
+Untuk hal yang dilihat pengguna, lihat [Temporary Chat](/docs/features/temporary_chat).
+
 ## temporaryChatRetention
 
 Konfigurasi `temporaryChatRetention` memungkinkan Anda untuk menyesuaikan berapa lama obrolan sementara disimpan sebelum dihapus secara otomatis. Di bawah `retentionMode: "ephemeral"`, setiap obrolan bersifat sementara, sehingga nilai ini merupakan masa berlaku setiap obrolan.
@@ -1159,31 +1163,39 @@ interface:
 
 ## generalChatRetention
 
-Mengontrol berapa lama obrolan reguler disimpan ketika `retentionMode` diatur ke `"all"`. Pengaturan ini diabaikan oleh mode lainnya; di bawah `"ephemeral"`, setiap obrolan bersifat sementara dan menggunakan `temporaryChatRetention`.
+Menentukan berapa lama obrolan reguler (non-sementara) disimpan, dalam jam, ketika `retentionMode` bernilai `"all"`. Tanpa pengaturan ini, obrolan reguler di bawah `"all"` menggunakan nilai `temporaryChatRetention`.
+
+**Kunci:**
 
 <OptionTable
   options={[
     [
       'generalChatRetention',
       'Number',
-      'Mengatur periode retensi untuk obrolan reguler dalam jam di bawah retensi semua data.',
-      'Defaults to temporaryChatRetention when omitted',
+      'Masa retensi dalam jam untuk chat reguler ketika retentionMode adalah "all". Minimum 1, maksimum 8760. Chat sementara tetap menggunakan temporaryChatRetention.',
+      'generalChatRetention: 2160',
     ],
   ]}
 />
 
-Nilai harus di antara `1` dan `8760` jam. Pengaturan ini memungkinkan obrolan reguler dan sementara menggunakan masa berlaku yang berbeda. Mengubah salah satu nilai retensi akan memengaruhi tenggat waktu yang ditetapkan untuk catatan baru atau yang diperbarui; LibreChat tidak menulis ulang tenggat waktu yang tersimpan sebelumnya secara otomatis.
+**Default:** tidak diatur (akan menggunakan `temporaryChatRetention` sebagai nilai cadangan)
+
+Diabaikan di bawah `"temporary"` dan `"ephemeral"`. Mengubah nilai retensi hanya berdampak pada rekaman yang disimpan setelahnya; tenggat waktu yang sudah ada tidak ditulis ulang.
+
+**Contoh:**
 
 ```yaml filename="interface / generalChatRetention"
 interface:
-  temporaryChatRetention: 168 # 7 days for temporary chats
-  generalChatRetention: 2160 # 90 days for regular chats
   retentionMode: 'all'
+  temporaryChatRetention: 24 # temporary chats: 1 day
+  generalChatRetention: 2160 # regular chats: 90 days
 ```
 
 ## retentionMode
 
 Mengontrol data mana yang menerima tenggat waktu retensi, dan apakah setiap obrolan dipaksa menjadi sementara.
+
+Untuk cara kerja penghapusan, apa yang terjadi pada chat yang sudah ada saat Anda beralih mode, serta contoh lengkap, lihat [Data Retention](/docs/configuration/data_retention).
 
 **Kunci:**
 
@@ -1192,7 +1204,7 @@ Mengontrol data mana yang menerima tenggat waktu retensi, dan apakah setiap obro
     [
       'retentionMode',
       'String',
-      'Kebijakan retensi. "temporary" hanya menerapkan retensi pada obrolan yang ditandai sementara oleh pengguna; "all" menerapkan retensi pada setiap percakapan dan pesan sambil tetap membuatnya terlihat; "ephemeral" memaksa setiap obrolan menjadi sementara (disembunyikan dari riwayat dan pencarian, tombol pengalih terkunci).',
+      'Atur ke "temporary" untuk menerapkan retensi hanya pada chat sementara, "all" untuk menerapkan retensi pada semua data yang didukung untuk disimpan (termasuk file sumber daya agen persisten kecuali retainAgentFiles bernilai true), atau "ephemeral" untuk melakukan hal yang sama seperti "all" dan juga menjadikan setiap chat baru sebagai chat sementara.',
       'retentionMode: "temporary"',
     ],
   ]}
@@ -1200,16 +1212,14 @@ Mengontrol data mana yang menerima tenggat waktu retensi, dan apakah setiap obro
 
 **Default:** `temporary`
 
-**Mode:**
-
-- **`temporary`** _(default)_: hanya obrolan yang ditandai sebagai sementara oleh pengguna yang akan kedaluwarsa. Obrolan normal tidak akan pernah kedaluwarsa.
-- **`all`**: setiap obrolan dan pesan mendapatkan `expiredAt` tetapi tetap terlihat dan dapat dicari hingga kedaluwarsa.
-- **`ephemeral`**: setiap obrolan dipaksa menjadi sementara, disembunyikan dari riwayat dan pencarian, serta tombol pengalih terkunci dalam posisi aktif. Penegakan bersifat otoritatif dari sisi server.
-
-Lihat halaman fitur [Temporary Chat & Data Retention](/docs/features/temporary_chat#data-retention) untuk matriks perilaku lengkap dan panduan migrasi.
+| Nilai | Chat sementara | Chat reguler dan data lainnya | Sakelar Chat Sementara |
+| --- | --- | --- | --- |
+| `temporary` | Kedaluwarsa setelah `temporaryChatRetention` | Disimpan | Pengguna memilih per chat |
+| `all` | Kedaluwarsa setelah `temporaryChatRetention` | Kedaluwarsa setelah `generalChatRetention` (atau `temporaryChatRetention` jika tidak diatur) | Pengguna memilih per chat |
+| `ephemeral` | Setiap chat bersifat sementara dan kedaluwarsa setelah `temporaryChatRetention` | Tidak ada chat reguler; data tersimpan lainnya mendapatkan batas waktu seperti pada `all` | Ditampilkan terkunci aktif, dengan "Chat Sementara diaktifkan untuk semua chat oleh administrator Anda" |
 
 <Callout type="warning">
-  `retentionMode: "all"` dan `"ephemeral"` menerapkan tenggat waktu retensi di luar obrolan sementara, termasuk file sumber daya agen persisten kecuali jika `retainAgentFiles: true` dikonfigurasi. Konfirmasikan kebijakan retensi Anda sebelum mengaktifkan salah satunya.
+  `retentionMode: "all"` dan `"ephemeral"` menerapkan batas waktu retensi di luar chat sementara, termasuk file sumber daya agen persisten kecuali `retainAgentFiles: true` dikonfigurasi. Konfirmasikan kebijakan retensi Anda sebelum mengaktifkannya.
 </Callout>
 
 **Contoh:**
@@ -1268,7 +1278,7 @@ Mengontrol apakah prompt yang diberikan melalui parameter kueri URL pada `/c/new
 
 Ketika `/c/new?prompt=…&submit=true` dibuka oleh pengguna yang terautentikasi, LibreChat biasanya mengisi composer dengan prompt yang diberikan melalui URL dan langsung mengirimkannya. Ini adalah fitur kenyamanan untuk deeplink yang dibuat khusus dan URL obrolan yang dibagikan.
 
-Untuk penyebaran di mana pengguna mungkin menerima tautan yang dibuat khusus dari sumber eksternal — dan di mana model yang mendukung memori atau alat dapat membocorkan konteks sensitif jika *payload* injeksi perintah mencapai model — operator dapat menonaktifkan pengiriman otomatis (*auto-submission*). Dengan *flag* yang diatur ke `false`, perintah tetap akan terisi sebelumnya di komposer, tetapi pengguna harus menekan **Send** secara eksplisit.
+Untuk deployment di mana pengguna mungkin menerima tautan yang disusun dengan sengaja dari sumber eksternal, dan di mana model dengan memori atau tool dapat membocorkan konteks sensitif jika payload prompt-injection sampai ke model, operator dapat menonaktifkan pengiriman otomatis. Dengan flag diatur ke `false`, prompt tetap diisi terlebih dahulu di composer, tetapi pengguna harus menekan **Send** secara eksplisit.
 
 **Kunci:**
 
@@ -1287,7 +1297,7 @@ Untuk penyebaran di mana pengguna mungkin menerima tautan yang dibuat khusus dar
 
 **Catatan:**
 
-- Pengaturan ini tidak memengaruhi pemilihan Model Specs berbasis URL atau pengaturan berbasis URL lainnya — hanya langkah pengiriman otomatis.
+- Pengaturan ini hanya memengaruhi langkah pengiriman otomatis. Pemilihan spesifikasi model melalui URL dan pengaturan lain yang digerakkan oleh URL tetap berlaku.
 - Parameter kueri menerima `prompt` dan `q` sebagai sumber prompt, dengan `prompt` yang lebih diutamakan. `submit=true` adalah pemicunya.
 - Direkomendasikan untuk instance yang menangani memori sensitif atau data alat, di mana vektor injeksi prompt 1-klik harus memerlukan konfirmasi eksplisit dari pengguna.
 
@@ -1296,6 +1306,34 @@ Untuk penyebaran di mana pengguna mungkin menerima tautan yang dibuat khusus dar
 ```yaml filename="interface / autoSubmitFromUrl"
 interface:
   autoSubmitFromUrl: false
+```
+
+Untuk parameter URL yang ditampilkan kepada pengguna, lihat [Query Parameters](/docs/features/url_query).
+
+## colorModeFromUrl
+
+Memungkinkan tautan untuk mengatur mode warna pengguna dengan parameter query `theme` (`?theme=light`, `?theme=dark`, atau `?theme=system`). Gunakan parameter ini ketika aplikasi lain menautkan ke LibreChat dan ingin menyerahkan mode terang atau gelap miliknya sendiri. Nilai tersebut disimpan sebagai preferensi tema pengguna, yang dapat diubah kemudian di pengaturan, dan parameter tersebut dihapus dari bilah alamat. Pengguna yang memilih varian kontras tinggi dari mode yang sama akan tetap mempertahankannya.
+
+**Kunci:**
+
+<OptionTable
+  options={[
+    [
+      'colorModeFromUrl',
+      'Boolean',
+      'Terima ?theme=light, ?theme=dark, atau ?theme=system pada tautan masuk dan simpan sebagai mode warna pengguna.',
+      'colorModeFromUrl: true',
+    ],
+  ]}
+/>
+
+**Default:** `false`
+
+**Contoh:**
+
+```yaml filename="interface / colorModeFromUrl"
+interface:
+  colorModeFromUrl: true
 ```
 
 ## customWelcome
@@ -1786,17 +1824,6 @@ Memungkinkan pengubahan nama percakapan saat sedang berjalan. Atur ke `false` se
 ```yaml filename="interface / runningChatRename"
 interface:
   runningChatRename: false
-```
-
-## colorModeFromUrl
-
-Menerima `?theme=dark`, `?theme=light`, atau `?theme=system` pada tautan entri sebagai mode warna pengguna, sehingga aplikasi lain dapat meneruskan mode warnanya.
-
-**Default:** `false`
-
-```yaml filename="interface / colorModeFromUrl"
-interface:
-  colorModeFromUrl: true
 ```
 
 ## historyCacheTtlMs

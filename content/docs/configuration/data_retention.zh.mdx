@@ -1,0 +1,120 @@
+---
+title: 数据保留
+icon: Clock
+description: '过期临时对话,为每个对话设置删除日期,或让所有对话都成为临时对话,以及切换这些设置时现有数据会如何处理。'
+---
+
+LibreChat 可以为对话数据设置过期日期并自动删除。同一机制也用于用户自行开启的[临时对话](/docs/features/temporary_chat)，以及部署范围内的策略，例如“90 天后删除所有对话”。所有这些都在 `librechat.yaml` 的 `interface` 下配置；每个键也列在[接口参考](/docs/configuration/librechat_yaml/object_structure/interface#retentionmode)中。
+
+## 选项 [#options]
+
+```yaml filename="librechat.yaml"
+interface:
+  # Seeds the TEMPORARY_CHAT permission for the USER role (manage per role in the Admin Panel)
+  temporaryChat: true
+
+  # Which chats expire: "temporary" (default), "all", or "ephemeral"
+  retentionMode: 'temporary'
+
+  # Lifetime of temporary chats, in hours. Default 720 (30 days), range 1 to 8760.
+  temporaryChatRetention: 720
+
+  # Lifetime of regular chats under retentionMode "all", in hours. Defaults to temporaryChatRetention.
+  # generalChatRetention: 2160
+
+  # Under "all" or "ephemeral", keep files uploaded to agents from expiring.
+  retainAgentFiles: false
+```
+
+<OptionTable
+  options={[
+    ['retentionMode', 'String', '决定哪些聊天会设置过期日期:"temporary"、"all" 或 "ephemeral"。请参阅下方各模式说明。', 'temporary'],
+    ['temporaryChatRetention', 'Number (hours)', '临时聊天在上次保存后保留的时长。在 "ephemeral" 模式下,这是每个聊天的存活时间。取值范围为 1 到 8760。', '720'],
+    ['generalChatRetention', 'Number (hours)', '常规聊天在“全部”模式下的保留时长。其他模式会忽略此设置。取值范围为 1 至 8760。', 'temporaryChatRetention'],
+    ['retainAgentFiles', 'Boolean', '在 "all" 和 "ephemeral" 下,上传到智能体资源中的文件不会过期。附加到消息中的文件仍会随其所属对话一同过期。', 'false'],
+    ['temporaryChat', 'Boolean', '在启动时为内置 USER 角色初始化 TEMPORARY_CHAT 权限。可在管理面板中按角色管理该权限。', 'true'],
+  ]}
+/>
+
+在 `librechat.yaml` 中,取值不在 1 到 8760 小时范围内的配置项会导致配置校验失败。
+
+已弃用的 `TEMP_CHAT_RETENTION_HOURS` 环境变量同样用于设置临时聊天的保留时长。两者同时设置时,以 `interface.temporaryChatRetention` 为准。环境变量的值无效时,回退为 720;超出范围的值会被限制为 1 或 8760,并在服务器日志中输出警告。
+
+## 三种模式 [#the-three-modes]
+
+| 模式 | 过期内容 | 是否显示在历史记录和搜索中 | 用户能否选择退出 |
+| --- | --- | --- | --- |
+| `temporary`(默认) | 仅用户标记为临时的聊天 | 普通聊天显示,临时聊天不显示 | 是,按聊天单独设置 |
+| `all` | 所有聊天 | 显示,直到每个聊天过期 | 否 |
+| `ephemeral` | 所有聊天 | 否,每个聊天都是临时的 | 否,开关被锁定为开启 |
+
+**`temporary`** 保持现有行为。用户标记为临时的对话(通过切换开关或 **默认使用临时对话** 设置)会从历史记录和搜索中隐藏,并在 `temporaryChatRetention` 小时后被删除。常规对话永不过期。
+
+**`all`** 会为每个对话和消息设置过期日期，同时不改变用户看到的聊天界面：聊天会保留在历史记录和搜索中，直到过期。普通聊天使用 `generalChatRetention`（若未设置则使用 `temporaryChatRetention`）。用户标记为临时的聊天仍然按临时聊天的方式运行。上传的文件和共享链接也会过期；仅当设置 `retainAgentFiles: true` 时，智能体资源文件才会保留。适用于“保留所有内容 N 天，然后删除”的策略。
+
+**`ephemeral`** 会让整个部署中的每个聊天都成为临时聊天。所有聊天都会从历史记录和搜索中隐藏，不会生成标题，并在 `temporaryChatRetention` 小时后被删除；`generalChatRetention` 将被忽略。**临时聊天**开关对所有人都显示为锁定开启状态，包括没有 `TEMPORARY_CHAT` 权限的角色，其键盘快捷键也不会生效。服务器会强制执行此设置，因此客户端请求将聊天保存为永久聊天的操作会被覆盖。除非您设置了 [`langfuse.trace.temporaryChats`](/docs/configuration/langfuse#temporary-chats)，否则不会将任何内容追踪到 Langfuse。
+
+## 删除的工作原理 [#how-deletion-works]
+
+每个会话和消息都带有 `expiredAt` 日期;临时会话和消息还会被标记为 `isTemporary: true`。隐藏和已过期的记录会先从历史列表和搜索索引中过滤掉,然后再被删除。
+
+- 对话、消息和共享链接会通过 `expiredAt` 上的 MongoDB TTL 索引被删除。MongoDB 在后台运行此操作,通常会在到期时间后约一分钟内完成。
+- LibreChat 会通过定期清理任务移除文件:该任务会先删除已存储的文件(本地磁盘、S3 等),然后再删除其记录。
+
+记录保存时会设定截止时间。每次保存对话都会将其截止时间向后推迟,因此正在使用中的对话不会被删除。每条消息保留其保存时所获得的截止时间。
+
+在 `all` 和 `ephemeral` 模式下,保留策略适用于所有写入聊天数据的场景:新消息、重新生成与分支、编辑、反馈、工件编辑、恢复的响应、分叉、复制以及导入。
+
+- 在 `ephemeral` 模式下,分支(fork)、复制(duplicate)和导入(import)始终为临时对话。在 `all` 模式下,临时对话的副本仍保持为临时对话,其他副本和导入内容则会以带有过期日期的形式保持可见。
+- 共享链接的过期时间取决于其对应的对话,因此它的有效期永远不会超过该对话本身。
+- [Memories](/docs/features/memory) 没有过期时间,也不受任何模式影响。
+
+## 切换模式 [#switching-modes]
+
+修改 `retentionMode` 或保留期限只会影响之后保存的记录,已有记录的截止时间不会被重新计算。
+
+- **对于 `all` 或 `ephemeral`:** 现有的聊天会在下次被写入时获得截止时间。在 `ephemeral` 模式下,较早的普通聊天如果收到新消息、编辑、反馈或分支,会立即转换为临时聊天:它将退出历史记录和搜索,并丢失其书签。未被操作的聊天保持其当前状态。
+- **返回 `temporary`:** 保存在 `all` 下的对话会保留其截止时间，并且仍会被删除。保存在 `ephemeral` 下的对话将保持临时状态，并继续过期。
+
+若要停止常规聊天在离开 `all` 或 `ephemeral` 后过期，请在 `mongosh` 中清除其截止日期：
+
+```js filename="mongosh"
+db.conversations.updateMany(
+  { isTemporary: false, expiredAt: { $ne: null } },
+  { $unset: { expiredAt: 1 } },
+)
+db.messages.updateMany(
+  { isTemporary: false, expiredAt: { $ne: null } },
+  { $unset: { expiredAt: 1 } },
+)
+```
+
+升级之后,一旦 `conversations` 和 `messages` 集合中存在 `_meiliIndex_1_isTemporary_1_expiredAt_1` 索引,即可从这两个集合中删除旧的 `_meiliIndex_1_expiredAt_1` 索引。MongoDB 不会自动删除已被取代的索引。
+
+## 示例 [#examples]
+
+在最后一次活动后 90 天删除每个聊天,在此之前聊天保持可见:
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'all'
+  generalChatRetention: 2160 # 90 days for regular chats
+  temporaryChatRetention: 24 # 1 day for chats users mark as temporary
+```
+
+使每次聊天都变为临时聊天，并在 24 小时后将其删除：
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'ephemeral'
+  temporaryChatRetention: 24
+```
+
+让每个聊天临时保存一周,但保留附加到智能体的文件:
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'ephemeral'
+  temporaryChatRetention: 168
+  retainAgentFiles: true
+```

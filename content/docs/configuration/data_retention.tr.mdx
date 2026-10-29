@@ -1,0 +1,123 @@
+---
+title: Veri Saklama
+icon: Clock
+description: >-
+  Geçici sohbetleri sona erdirin, her sohbete bir silinme tarihi ekleyin veya
+  her sohbeti geçici hale getirin ve bunlara geçiş yaptığınızda mevcut verilere
+  ne olduğunu öğrenin.
+---
+
+LibreChat, konuşma verilerine bir son kullanma tarihi atayabilir ve bunları otomatik olarak silebilir. Aynı mekanizma, kullanıcıların kendileri başlattığı [geçici sohbetleri](/docs/features/temporary_chat) ve "her sohbeti 90 gün sonra sil" gibi dağıtım genelindeki politikaları da yönetir. Tümü `librechat.yaml` dosyasında `interface` altında yapılandırılır; her anahtar ayrıca [arayüz referansında](/docs/configuration/librechat_yaml/object_structure/interface#retentionmode) listelenmiştir.
+
+## Seçenekler [#options]
+
+```yaml filename="librechat.yaml"
+interface:
+  # Seeds the TEMPORARY_CHAT permission for the USER role (manage per role in the Admin Panel)
+  temporaryChat: true
+
+  # Which chats expire: "temporary" (default), "all", or "ephemeral"
+  retentionMode: 'temporary'
+
+  # Lifetime of temporary chats, in hours. Default 720 (30 days), range 1 to 8760.
+  temporaryChatRetention: 720
+
+  # Lifetime of regular chats under retentionMode "all", in hours. Defaults to temporaryChatRetention.
+  # generalChatRetention: 2160
+
+  # Under "all" or "ephemeral", keep files uploaded to agents from expiring.
+  retainAgentFiles: false
+```
+
+<OptionTable
+  options={[
+    ['retentionMode', 'String', 'Hangi sohbetlerin son kullanma tarihi alacağı: "temporary", "all" veya "ephemeral". Aşağıdaki modlara bakın.', 'temporary'],
+    ['temporaryChatRetention', 'Number (hours)', 'Geçici bir sohbetin son kaydedilmesinden sonra ne kadar süreyle saklanacağı. "ephemeral" altında bu, her sohbetin ömrüdür. Aralık 1 ile 8760 arasında.', '720'],
+    ['generalChatRetention', 'Number (hours)', '"all" altındaki normal sohbetlerin ne kadar süreyle saklanacağı. Diğer modlarda dikkate alınmaz. Aralık 1 ile 8760 arasındadır.', 'temporaryChatRetention'],
+    ['retainAgentFiles', 'Boolean', '"all" ve "ephemeral" altında, bir ajanın kaynaklarına yüklenen dosyaların süresi dolmaz. Mesajlara eklenen dosyaların süresi ise yine sohbetleriyle birlikte dolar.', 'false'],
+    ['temporaryChat', 'Boolean', 'Başlangıçta yerleşik USER rolü için TEMPORARY_CHAT iznini tohumlar. Bu izni her rol için Admin Panel üzerinden yönetin.', 'true'],
+  ]}
+/>
+
+`librechat.yaml` dosyasında 1 ile 8760 saat aralığının dışındaki bir değer, yapılandırma doğrulamasında başarısız olur.
+
+Kullanımdan kaldırılmış `TEMP_CHAT_RETENTION_HOURS` ortam değişkeni, geçici sohbetlerin ömrünü de belirler. Her ikisi de ayarlandığında `interface.temporaryChatRetention` öncelikli olur. Geçersiz bir ortam değeri 720'ye geri döner; aralık dışında bir değer ise 1 veya 8760 olarak sınırlandırılır ve sunucu günlüğünde bir uyarı kaydedilir.
+
+## Üç mod [#the-three-modes]
+
+| Mod | Süresi dolan | Geçmiş ve aramada gösterilir | Kullanıcılar devre dışı bırakabilir mi |
+| --- | --- | --- | --- |
+| `temporary` (varsayılan) | Yalnızca kullanıcının geçici olarak işaretlediği sohbetler | Normal sohbetler için evet, geçici olanlar için hayır | Evet, sohbet bazında |
+| `all` | Her sohbet | Evet, her sohbetin süresi dolana kadar | Hayır |
+| `ephemeral` | Her sohbet | Hayır, her sohbet geçicidir | Hayır, geçici mod anahtarı açık kilitlidir |
+
+**`temporary`** mevcut davranışı korur. Kullanıcının geçici olarak işaretlediği sohbetler (geçiş düğmesiyle veya **Temporary Chat by default** ayarıyla), geçmiş ve aramadan gizlenir ve `temporaryChatRetention` saat sonra silinir. Normal sohbetler hiçbir zaman sona ermez.
+
+**`all`**, her konuşma ve mesaja, sohbetin kullanıcılara görünümünü değiştirmeden bir son kullanma tarihi verir: sohbetler, süresi dolana kadar geçmişte ve aramada kalır. Normal sohbetler `generalChatRetention` ayarını kullanır (ayarlanmamışsa `temporaryChatRetention`). Kullanıcının geçici olarak işaretlediği sohbetler ise geçici sohbet gibi davranmaya devam eder. Yüklenen dosyalar ve paylaşılan bağlantılar da süresi dolar; agent kaynak dosyaları yalnızca `retainAgentFiles: true` ayarlandığında saklanır. Bunu "N gün boyunca her şeyi sakla, ardından sil" politikası için kullanın.
+
+**`ephemeral`** herhangi bir sohbeti dağıtım genelinde geçici hale getirir. Her sohbet geçmişten ve aramadan gizlenir, oluşturulmuş bir başlık almaz ve `temporaryChatRetention` saat sonra silinir; `generalChatRetention` yok sayılır. **Geçici Sohbet** düğmesi, `TEMPORARY_CHAT` izni olmayan roller dahil herkes için kilitli olarak açık gösterilir ve klavye kısayolu hiçbir işlem yapmaz. Bu kısıtlama sunucu tarafından uygulanır; bu nedenle bir istemcinin bir sohbeti kalıcı olarak kaydetme isteği geçersiz kılınır. [`langfuse.trace.temporaryChats`](/docs/configuration/langfuse#temporary-chats) ayarını yapmadığınız sürece hiçbir şey Langfuse'a izlenmez.
+
+## Silme nasıl çalışır [#how-deletion-works]
+
+Her konuşma ve mesaj, bir `expiredAt` tarihi taşır; geçici olanlar ayrıca `isTemporary: true` ile işaretlenir. Gizli ve süresi dolmuş kayıtlar, silinmeden önce geçmiş listesinden ve arama dizininden filtrelenir.
+
+- Konuşmalar, mesajlar ve paylaşılan bağlantılar, `expiredAt` alanı üzerindeki bir MongoDB TTL indeksi tarafından kaldırılır. MongoDB bu işlemi arka planda çalıştırır; genellikle son tarihten yaklaşık bir dakika içinde gerçekleşir.
+- LibreChat'te dosyalar periyodik bir temizlik taraması ile kaldırılır; bu tarama depolanan dosyayı (yerel disk, S3 vb.) ve ardından kaydını siler.
+
+Kayıt kaydedildiğinde son tarih belirlenir. Bir konuşmanın her kaydı, son tarihini ileriye taşır; bu nedenle aktif olarak kullanılan bir sohbet silinmez. Her mesaj, kaydedildiği anda aldığı son tarihi korur.
+
+`all` ve `ephemeral` modlarında saklama süresi, sohbet verisinin yazıldığı her yerde uygulanır: yeni mesajlar, yeniden oluşturmalar ve dallar, düzenlemeler, geri bildirimler, yapıt düzenlemeleri, devam ettirilen yanıtlar, çatallamalar, kopyalamalar ve içe aktarmalar.
+
+- `ephemeral` altında, dallar, kopyalar ve içe aktarımlar her zaman geçicidir. `all` altında, geçici bir sohbetin kopyası geçici kalır; diğer kopyalar ve içe aktarımlar ise son kullanma tarihiyle görünür kalır.
+- Paylaşılan bir bağlantı, son kullanma süresini kendi konuşmasından alır; bu nedenle hiçbir zaman konuşmanın ömründen uzun yaşamaz.
+- [Anılar](/docs/features/memory) için bir son kullanma tarihi yoktur ve hiçbir mod bunları etkilemez.
+
+## Mod değiştirme [#switching-modes]
+
+`retentionMode` veya bir saklama süresi değiştirildiğinde bu değişiklik yalnızca sonradan kaydedilen kayıtları etkiler. Mevcut son tarihler yeniden yazılmaz.
+
+- **`all` veya `ephemeral` için:** mevcut sohbetler, bir sonraki yazma işleminde bir son kullanma tarihi alır. `ephemeral` modunda, yeni bir mesaj, düzenleme, geri bildirim veya dal alan eski bir normal sohbet, anında geçici bir sohbete dönüştürülür: geçmişten ve aramadan çıkar ve yer imlerini kaybeder. Kimsenin dokunmadığı sohbetler mevcut durumlarını korur.
+- **`temporary`'a Geri Dönüş:** `all` altında kaydedilen sohbetler süre sınırlarını korur ve yine de silinir. `ephemeral` altında kaydedilen sohbetler geçici kalır ve süresi dolmaya devam eder.
+
+Normal sohbetlerin `all` veya `ephemeral` ayarlarından çıktıktan sonra süresinin dolmasını durdurmak için `mongosh` içinde son tarihlerini temizleyin:
+
+```js filename="mongosh"
+db.conversations.updateMany(
+  { isTemporary: false, expiredAt: { $ne: null } },
+  { $unset: { expiredAt: 1 } },
+)
+db.messages.updateMany(
+  { isTemporary: false, expiredAt: { $ne: null } },
+  { $unset: { expiredAt: 1 } },
+)
+```
+
+Yükseltmeden sonra, `conversations` ve `messages` koleksiyonlarında `_meiliIndex_1_isTemporary_1_expiredAt_1` indeksleri oluştuğunda, her iki koleksiyondan eski `_meiliIndex_1_expiredAt_1` indekslerini silebilirsiniz. MongoDB, geçersiz kalan indeksleri kendiliğinden silmez.
+
+## Örnekler [#examples]
+
+Son etkinlik tarihinden 90 gün sonra her sohbeti sil; sohbetler bu zamana kadar görünür kalsın:
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'all'
+  generalChatRetention: 2160 # 90 days for regular chats
+  temporaryChatRetention: 24 # 1 day for chats users mark as temporary
+```
+
+Her sohbeti geçici yapın ve 24 saat sonra silin:
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'ephemeral'
+  temporaryChatRetention: 24
+```
+
+Her sohbeti bir hafta boyunca geçici yap, ancak dosyaları agent'lara bağlı tut:
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'ephemeral'
+  temporaryChatRetention: 168
+  retainAgentFiles: true
+```

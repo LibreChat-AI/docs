@@ -35,6 +35,7 @@ Dit zijn velden onder `interface`:
 - `retentionMode`
 - `retainAgentFiles`
 - `autoSubmitFromUrl`
+- `colorModeFromUrl`
 - `customWelcome`
 - `codeHighlightThrottleMs`
 - `artifactUndocking`
@@ -55,7 +56,6 @@ Dit zijn velden onder `interface`:
 - `landingHeading`
 - `landingFooter`
 - `runningChatRename`
-- `colorModeFromUrl`
 - `historyCacheTtlMs`
 - `historyCacheRecent`
 - `historyCacheMaxBytes`
@@ -90,6 +90,8 @@ interface:
     share: false
     public: false
     configureObo: false
+    toolsRefreshInterval: 300000
+    statusRefreshInterval: 30000
     trustCheckbox:
       label: 'I trust this server'
       subLabel: 'Only enable servers you trust'
@@ -248,14 +250,14 @@ Zie [Theme](/docs/configuration/librechat_yaml/object_structure/theme) voor het 
     [
       'toolsRefreshInterval',
       'Number',
-      'Polling-interval in milliseconden voor het vernieuwen van MCP-toolcatalogi terwijl MCP-bedieningselementen zichtbaar zijn. Stel in op 0 om polling uit te schakelen.',
-      '300000',
+      'Hoe vaak, in milliseconden, de client MCP-tools opnieuw ophaalt terwijl een scherm dat ze weergeeft zichtbaar is. Stel in op 0 om polling uit te schakelen.',
+      '300000 (5 minutes)',
     ],
     [
       'statusRefreshInterval',
       'Number',
-      'Polling-interval in milliseconden voor het vernieuwen van de MCP-verbindingsstatus terwijl MCP-besturingselementen zichtbaar zijn. Stel in op 0 om polling uit te schakelen.',
-      '30000',
+      'Hoe vaak, in milliseconden, de client de verbindingsstatus van de MCP-server opnieuw controleert terwijl een scherm dat deze toont zichtbaar is. Stel in op 0 om polling uit te schakelen.',
+      '30000 (30 seconds)',
     ],
     [
       'trustCheckbox',
@@ -1111,6 +1113,8 @@ interface:
   temporaryChat: true
 ```
 
+Voor wat gebruikers zien, zie [Tijdelijke chat](/docs/features/temporary_chat).
+
 ## temporaryChatRetention
 
 De `temporaryChatRetention` configuratie stelt je in staat om aan te passen hoe lang tijdelijke chats worden bewaard voordat ze automatisch worden verwijderd. Onder `retentionMode: "ephemeral"` is elke chat tijdelijk, dus deze waarde is de levensduur van elke chat.
@@ -1159,31 +1163,39 @@ interface:
 
 ## generalChatRetention
 
-Bepaalt hoe lang reguliere chats worden bewaard wanneer `retentionMode` is ingesteld op `"all"`. Het wordt genegeerd door de andere modi; onder `"ephemeral"` is elke chat tijdelijk en wordt `temporaryChatRetention` gebruikt.
+Stelt in hoe lang reguliere (niet-tijdelijke) chats worden bewaard, in uren, wanneer `retentionMode` gelijk is aan `"all"`. Zonder deze instelling gebruiken reguliere chats onder `"all"` de waarde van `temporaryChatRetention`.
+
+**Sleutel:**
 
 <OptionTable
   options={[
     [
       'generalChatRetention',
       'Number',
-      'Stelt de bewaarperiode voor reguliere chats in uren in onder all-data retention.',
-      'Defaults to temporaryChatRetention when omitted',
+      'Bewaartermijn in uren voor reguliere chats wanneer retentionMode gelijk is aan "all". Minimum 1, maximum 8760. Tijdelijke chats blijven temporaryChatRetention gebruiken.',
+      'generalChatRetention: 2160',
     ],
   ]}
 />
 
-De waarde moet tussen `1` en `8760` uur liggen. Met deze instelling kunnen reguliere en tijdelijke chats verschillende levensduurperiodes gebruiken. Het wijzigen van een van beide retentiewaarden heeft invloed op de deadlines die worden toegewezen aan nieuwe of bijgewerkte records; LibreChat herschrijft bestaande opgeslagen deadlines niet automatisch.
+**Standaard:** niet ingesteld (valt terug op `temporaryChatRetention`)
+
+Het wordt genegeerd onder `"temporary"` en `"ephemeral"`. Het wijzigen van een retentiewaarde heeft alleen invloed op records die daarna worden opgeslagen; bestaande vervaldatums worden niet herschreven.
+
+**Voorbeeld:**
 
 ```yaml filename="interface / generalChatRetention"
 interface:
-  temporaryChatRetention: 168 # 7 days for temporary chats
-  generalChatRetention: 2160 # 90 days for regular chats
   retentionMode: 'all'
+  temporaryChatRetention: 24 # temporary chats: 1 day
+  generalChatRetention: 2160 # regular chats: 90 days
 ```
 
 ## retentionMode
 
 Bepaalt voor welke gegevens bewaartermijnen gelden en of elke chat verplicht tijdelijk moet zijn.
+
+Voor hoe verwijdering werkt, wat er met bestaande chats gebeurt wanneer je van modus wisselt, en volledige voorbeelden, zie [Gegevensbewaring](/docs/configuration/data_retention).
 
 **Sleutel:**
 
@@ -1192,7 +1204,7 @@ Bepaalt voor welke gegevens bewaartermijnen gelden en of elke chat verplicht tij
     [
       'retentionMode',
       'String',
-      'Retentiebeleid. "temporary" past retentie alleen toe op chats die gebruikers als tijdelijk markeren; "all" past retentie toe op elk gesprek en bericht terwijl ze zichtbaar blijven; "ephemeral" dwingt elke chat om tijdelijk te zijn (verborgen voor geschiedenis en zoekopdrachten, schakelaar vergrendeld).',
+      'Instellen op "temporary" om retentie alleen toe te passen op tijdelijke chats, "all" om retentie toe te passen op alle ondersteunde bewaarde gegevens (inclusief persistente agentbronbestanden tenzij retainAgentFiles true is), of "ephemeral" om hetzelfde te doen als "all" en daarnaast elke nieuwe chat tijdelijk te maken.',
       'retentionMode: "temporary"',
     ],
   ]}
@@ -1200,16 +1212,14 @@ Bepaalt voor welke gegevens bewaartermijnen gelden en of elke chat verplicht tij
 
 **Standaard:** `temporary`
 
-**Modi:**
-
-- **`temporary`** _(standaard)_: alleen chats die een gebruiker als tijdelijk markeert, verlopen. Normale chats verlopen nooit.
-- **`all`**: elke chat en elk bericht krijgt een `expiredAt`, maar blijft zichtbaar en doorzoekbaar totdat het verloopt.
-- **`ephemeral`**: elke chat wordt gedwongen tijdelijk gemaakt, verborgen voor de geschiedenis en zoekopdrachten, en de schakelaar is vergrendeld. Handhaving is server-authoritative.
-
-Zie de [Temporary Chat & Data Retention](/docs/features/temporary_chat#data-retention) functiepagina voor de volledige gedragsmatrix en migratiebegeleiding.
+| Waarde | Tijdelijke chats | Reguliere chats en andere gegevens | Schakelaar voor tijdelijke chat |
+| --- | --- | --- | --- |
+| `temporary` | Verlopen na `temporaryChatRetention` | Blijven bewaard | Gebruikers kiezen per chat |
+| `all` | Verlopen na `temporaryChatRetention` | Verlopen na `generalChatRetention` (of `temporaryChatRetention` als deze niet is ingesteld) | Gebruikers kiezen per chat |
+| `ephemeral` | Elke chat is tijdelijk en verloopt na `temporaryChatRetention` | Geen reguliere chats; andere bewaarde gegevens krijgen vervaldatums, net als bij `all` | Wordt vergrendeld weergegeven als ingeschakeld, met "Tijdelijke chat is voor alle chats ingeschakeld door uw beheerder" |
 
 <Callout type="warning">
-  `retentionMode: "all"` en `"ephemeral"` passen retentietermijnen toe die verder gaan dan tijdelijke chats, inclusief persistente agent-resourcebestanden, tenzij `retainAgentFiles: true` is geconfigureerd. Bevestig uw retentiebeleid voordat u een van beide inschakelt.
+  `retentionMode: "all"` en `"ephemeral"` passen bewaartermijnen toe op meer dan tijdelijke chats, inclusief blijvende agentbestanden tenzij `retainAgentFiles: true` is ingesteld. Bevestig je bewaarbeleid voordat je dit inschakelt.
 </Callout>
 
 **Voorbeeld:**
@@ -1268,7 +1278,7 @@ Bepaalt of een prompt die via URL-queryparameters op `/c/new` wordt meegegeven, 
 
 Wanneer `/c/new?prompt=…&submit=true` wordt geopend door een geauthenticeerde gebruiker, vult LibreChat normaal gesproken de composer vooraf in met de via de URL meegegeven prompt en verstuurt deze onmiddellijk. Dit is een gemakfunctie voor speciaal gemaakte deeplinks en gedeelde chat-URL's.
 
-Voor implementaties waarbij gebruikers mogelijk geprepareerde links van externe bronnen ontvangen — en waarbij modellen met geheugen- of tool-ondersteuning gevoelige context zouden kunnen lekken als een prompt-injection payload het model bereikt — kunnen beheerders automatische verzending uitschakelen. Wanneer de vlag op `false` is ingesteld, wordt de prompt nog steeds vooraf ingevuld in het invoerveld, maar moet de gebruiker expliciet op **Verzenden** drukken.
+Voor implementaties waarbij gebruikers gemanipuleerde links van externe bronnen kunnen ontvangen, en waarbij modellen met geheugen of tools gevoelige context kunnen lekken als een prompt-injectiepayload het model bereikt, kunnen beheerders het automatisch verzenden uitschakelen. Met de vlag ingesteld op `false` wordt de prompt nog steeds vooraf ingevuld in de invoerruimte, maar moet de gebruiker zelf op **Verzenden** drukken.
 
 **Sleutel:**
 
@@ -1287,7 +1297,7 @@ Voor implementaties waarbij gebruikers mogelijk geprepareerde links van externe 
 
 **Opmerkingen:**
 
-- Deze instelling heeft geen invloed op de selectie van Model Specs via URL of andere URL-gestuurde instellingen — alleen op de stap voor automatische verzending.
+- Deze instelling heeft alleen invloed op de stap voor automatisch verzenden. Het selecteren van een model spec via de URL en andere via de URL aangestuurde instellingen blijven van toepassing.
 - De queryparameter accepteert zowel `prompt` als `q` als bron voor de prompt, waarbij `prompt` voorrang heeft. `submit=true` is de trigger.
 - Aanbevolen voor instanties die gevoelige geheugen- of toolgegevens verwerken, waarbij een prompt-injection vector met één klik expliciete bevestiging van de gebruiker moet vereisen.
 
@@ -1296,6 +1306,34 @@ Voor implementaties waarbij gebruikers mogelijk geprepareerde links van externe 
 ```yaml filename="interface / autoSubmitFromUrl"
 interface:
   autoSubmitFromUrl: false
+```
+
+Voor de gebruikersgerichte URL-parameters, zie [Queryparameters](/docs/features/url_query).
+
+## colorModeFromUrl
+
+Hiermee kan een link de kleurmodus van de gebruiker instellen met de queryparameter `theme` (`?theme=light`, `?theme=dark` of `?theme=system`). Gebruik deze wanneer een andere app naar LibreChat linkt en de lichte of donkere modus van die app wil overnemen. De waarde wordt opgeslagen als de themavoorkeur van de gebruiker, die deze later in de instellingen kan wijzigen, en de parameter wordt uit de adresbalk verwijderd. Een gebruiker die de contrastrijke variant van dezelfde modus heeft gekozen, behoudt deze.
+
+**Sleutel:**
+
+<OptionTable
+  options={[
+    [
+      'colorModeFromUrl',
+      'Boolean',
+      'Accepteer ?theme=light, ?theme=dark of ?theme=system in een invoerlink en sla deze op als de kleurmodus van de gebruiker.',
+      'colorModeFromUrl: true',
+    ],
+  ]}
+/>
+
+**Standaard:** `false`
+
+**Voorbeeld:**
+
+```yaml filename="interface / colorModeFromUrl"
+interface:
+  colorModeFromUrl: true
 ```
 
 ## customWelcome
@@ -1786,17 +1824,6 @@ Staat het toe om een gesprek een nieuwe naam te geven terwijl het nog actief is.
 ```yaml filename="interface / runningChatRename"
 interface:
   runningChatRename: false
-```
-
-## colorModeFromUrl
-
-Accepteert `?theme=dark`, `?theme=light` of `?theme=system` in een invoerlink als de kleurmodus van de gebruiker, zodat een andere app die modus kan doorgeven.
-
-**Standaard:** `false`
-
-```yaml filename="interface / colorModeFromUrl"
-interface:
-  colorModeFromUrl: true
 ```
 
 ## historyCacheTtlMs

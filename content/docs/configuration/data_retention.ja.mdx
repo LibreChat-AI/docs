@@ -1,0 +1,121 @@
+---
+title: データ保持
+icon: Clock
+description: >-
+  一時的なチャットの有効期限を設定し、すべてのチャットに削除期限日を設けるか、すべてのチャットを一時的なものにする方法と、その切り替え時に既存データがどうなるか。
+---
+
+LibreChat は、会話データに有効期限を設定し、自動的に削除することができます。同じ仕組みで、ユーザーが自分で開始する[一時チャット](/docs/features/temporary_chat)や、「すべてのチャットを 90 日後に削除する」といったデプロイ全体のポリシーも扱います。これらはすべて `librechat.yaml` の `interface` 配下で設定します。各キーは [interface リファレンス](/docs/configuration/librechat_yaml/object_structure/interface#retentionmode) にも記載されています。
+
+## オプション [#options]
+
+```yaml filename="librechat.yaml"
+interface:
+  # Seeds the TEMPORARY_CHAT permission for the USER role (manage per role in the Admin Panel)
+  temporaryChat: true
+
+  # Which chats expire: "temporary" (default), "all", or "ephemeral"
+  retentionMode: 'temporary'
+
+  # Lifetime of temporary chats, in hours. Default 720 (30 days), range 1 to 8760.
+  temporaryChatRetention: 720
+
+  # Lifetime of regular chats under retentionMode "all", in hours. Defaults to temporaryChatRetention.
+  # generalChatRetention: 2160
+
+  # Under "all" or "ephemeral", keep files uploaded to agents from expiring.
+  retainAgentFiles: false
+```
+
+<OptionTable
+  options={[
+    ['retentionMode', 'String', 'どのチャットに有効期限を設定するか: "temporary"、"all"、"ephemeral"。以下のモードを参照してください。', 'temporary'],
+    ['temporaryChatRetention', 'Number (hours)', '一時チャットが最後に保存されてから保持される期間です。「ephemeral」の場合、これはすべてのチャットの存続期間になります。範囲は 1 から 8760 です。', '720'],
+    ['generalChatRetention', 'Number (hours)', '「all」の場合に通常のチャットを保持する期間です。他のモードでは無視されます。範囲は1から8760です。', 'temporaryChatRetention'],
+    ['retainAgentFiles', 'Boolean', '「all」および「ephemeral」の場合、エージェントのリソースにアップロードされたファイルは期限切れになりません。メッセージに添付されたファイルは、引き続きチャットと同時に期限切れになります。', 'false'],
+    ['temporaryChat', 'Boolean', '起動時に組み込みの USER ロールに対して TEMPORARY_CHAT 権限を設定します。ロールごとの権限は管理パネルで管理してください。', 'true'],
+  ]}
+/>
+
+`librechat.yaml`で1から8760時間の範囲外の値を指定すると、設定の検証に失敗します。
+
+非推奨となった`TEMP_CHAT_RETENTION_HOURS`環境変数も、一時チャットの保持期間を設定します。両方が設定されている場合は、`interface.temporaryChatRetention`が優先されます。環境変数の値が無効な場合は720にフォールバックし、範囲外の値の場合は1または8760に丸められ、サーバーログに警告が出力されます。
+
+## 3つのモード [#the-three-modes]
+
+| モード | 期限切れになるもの | 履歴と検索での表示 | ユーザーによるオプトアウト |
+| --- | --- | --- | --- |
+| `temporary`(デフォルト) | ユーザーが一時的として指定したチャットのみ | 通常のチャットは表示される、一時的なチャットは表示されない | はい、チャットごとに可能 |
+| `all` | すべてのチャット | 各チャットが期限切れになるまで表示される | いいえ |
+| `ephemeral` | すべてのチャット | いいえ、すべてのチャットが一時的になる | いいえ、トグルは常にオンでロックされる |
+
+**`temporary`** は既存の動作を維持します。ユーザーが一時チャットとして設定したチャット（トグルまたは **Temporary Chat by default** 設定による）は、履歴や検索から非表示になり、`temporaryChatRetention` 時間後に削除されます。通常のチャットは期限切れになることはありません。
+
+**`all`** は、すべての会話とメッセージに有効期限を設定しますが、ユーザーに見えるチャットの表示は変わりません。チャットは有効期限が切れるまで履歴と検索に残ります。通常のチャットは `generalChatRetention` を使用し、未設定の場合は `temporaryChatRetention` を使用します。ユーザーが一時的としてマークしたチャットは、引き続き一時的なチャットとして動作します。アップロードされたファイルと共有リンクも有効期限が切れます。エージェントのリソースファイルは `retainAgentFiles: true` を設定した場合にのみ保持されます。「N日間すべて保持し、その後削除する」というポリシーにはこの設定を使用します。
+
+**`ephemeral`** は、デプロイメント全体のすべてのチャットを一時的なものにします。すべてのチャットは履歴と検索から非表示になり、生成されたタイトルはなく、`temporaryChatRetention` 時間の経過後に削除されます。`generalChatRetention` は無視されます。**Temporary Chat** トグルは、`TEMPORARY_CHAT` 権限のないロールを含む全員に対して常時オンでロックされて表示され、そのキーボードショートカットは何もしません。サーバーがこれを強制するため、クライアントがチャットを永続的なものとして保存するよう要求しても上書きされます。[`langfuse.trace.temporaryChats`](/docs/configuration/langfuse#temporary-chats) を設定しない限り、何も Langfuse にトレースされません。
+
+## 削除の仕組み [#how-deletion-works]
+
+各会話とメッセージには `expiredAt` 日付が設定されており、一時的なものには `isTemporary: true` のフラグも付きます。非表示およびの期限切れのレコードは、削除される前に履歴一覧と検索インデックスから除外されます。
+
+- 会話、メッセージ、共有リンクは、`expiredAt` に対する MongoDB の TTL インデックスによって削除されます。MongoDB はこれをバックグラウンドで実行し、通常は期限から約1分以内に処理されます。
+- LibreChatでは、定期的なスイープ処理によってファイルが削除されます。この処理では、保存されているファイル(ローカルディスク、S3など)を削除した後、そのレコードを削除します。
+
+期限はレコードが保存されたときに設定されます。会話を保存するたびに、その期限は後ろへ延長されるため、アクティブに使用されているチャットは削除されません。各メッセージは、保存された時点で設定された期限をそのまま保持します。
+
+`all` および `ephemeral` の場合、保持ポリシーはチャットデータが書き込まれるあらゆる箇所に適用されます。対象は、新規メッセージ、再生成および分岐、編集、フィードバック、アーティファクトの編集、再開された応答、フォーク、複製、インポートです。
+
+- `ephemeral` の場合、フォーク、複製、インポートは常に一時的なものになります。`all` の場合、一時的なチャットのコピーは引き続き一時的なままとなり、その他のコピーやインポートは有効期限付きで表示されたままになります。
+- 共有リンクの有効期限は、その会話から引き継がれるため、リンクが会話より長く有効であることはありません。
+- [Memories](/docs/features/memory) には有効期限がなく、いかなるモードの影響も受けません。
+
+## モードの切り替え [#switching-modes]
+
+`retentionMode` や保持期間を変更しても、変更後に保存されたレコードにのみ影響します。既存の期限は書き換えられません。
+
+- **`all`** または **`ephemeral`** の場合、既存のチャットは次回書き込まれたときに有効期限が設定されます。`ephemeral` の場合、新しいメッセージ、編集、フィードバック、または分岐が行われた古い通常チャットは、その場で一時チャットに変換されます。このチャットは履歴と検索から除外され、ブックマークも失われます。どなたも操作していないチャットは、現在の状態を維持します。
+- **`temporary`に戻す:** `all`で保存されたチャットは有効期限を保持したままで、引き続き削除されます。`ephemeral`で保存されたチャットは一時的なままで、有効期限切れになります。
+
+`all` または `ephemeral` を離れた後に通常のチャットの期限が切れないようにするには、`mongosh` で期限をクリアします：
+
+```js filename="mongosh"
+db.conversations.updateMany(
+  { isTemporary: false, expiredAt: { $ne: null } },
+  { $unset: { expiredAt: 1 } },
+)
+db.messages.updateMany(
+  { isTemporary: false, expiredAt: { $ne: null } },
+  { $unset: { expiredAt: 1 } },
+)
+```
+
+アップグレード後、`conversations` と `messages` の両コレクションに `_meiliIndex_1_isTemporary_1_expiredAt_1` インデックスが作成されたら、両コレクションの古い `_meiliIndex_1_expiredAt_1` インデックスを削除できます。MongoDB は、置き換えられた古いインデックスを自動的には削除しません。
+
+## 例 [#examples]
+
+最後のアクティビティから90日後にすべてのチャットを削除し、それまではチャットを表示したままにします:
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'all'
+  generalChatRetention: 2160 # 90 days for regular chats
+  temporaryChatRetention: 24 # 1 day for chats users mark as temporary
+```
+
+すべてのチャットを一時的なものにし、24時間後に削除する：
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'ephemeral'
+  temporaryChatRetention: 24
+```
+
+1週間、すべてのチャットを一時的なものにしつつ、ファイルはエージェントに添付したままにします:
+
+```yaml filename="librechat.yaml"
+interface:
+  retentionMode: 'ephemeral'
+  temporaryChatRetention: 168
+  retainAgentFiles: true
+```
