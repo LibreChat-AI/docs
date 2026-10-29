@@ -1,297 +1,68 @@
 ---
 title: Pencarian Web
 icon: Search
+description: >-
+  Biarkan model mencari di web, membaca halaman yang ditemukan, dan mengutipnya
+  dalam jawabannya.
 ---
 
-Fitur pencarian web LibreChat memungkinkan Anda untuk mencari di internet dan mengambil informasi yang relevan untuk meningkatkan percakapan Anda. Fitur ini terdiri dari tiga komponen utama yang bekerja bersama untuk memberikan hasil pencarian yang komprehensif.
+Pencarian web memberikan model sebuah alat `web_search`. Ketika sebuah pertanyaan membutuhkan informasi terkini, model menulis kueri, LibreChat mengambil hasil pencarian, membaca halaman-halaman teratas, lalu jawabannya dikembalikan beserta sumber yang digunakan.
 
-## Memulai Cepat [#quick-start]
+## Aktifkan di dalam chat [#turn-it-on-in-a-chat]
 
-Untuk memulai dengan pencarian web, konfigurasikan penyedia pencarian dan scraper. Sebagian besar penyedia memerlukan kunci API; Keenable dapat berfungsi tanpa kunci untuk pencarian dan pengambilan halaman, dengan kunci opsional untuk meningkatkan batas tarif publiknya. Reranking dapat menggunakan Jina atau Cohere, atau dinonaktifkan dengan `rerankerType: "none"`. Anda dapat mengonfigurasi stack dengan dua cara:
+Klik **+** di [message composer](/docs/features/composer) untuk membuka palet, lalu pilih **Web Search** di bagian **Tools**. Fitur ini akan muncul sebagai chip di composer saat aktif; hapus chip tersebut, atau pilih kembali di palet, untuk menonaktifkannya. Anda dapat menyematkan (pin) fitur ini agar chip tetap berada di composer meskipun sedang tidak aktif.
 
-<Callout type="warning" title="Endpoint yang di-host sendiri secara pribadi">
-  Koneksi pencarian web, *scrape*, dan *rerank* secara *default* memblokir tujuan *private*, *loopback*, *link-local*, dan *cloud-metadata*. Jika SearXNG, Firecrawl, Jina, atau endpoint penyedia lain yang dikonfigurasi bersifat *private*, tambahkan host dan port persisnya ke [`webSearch.allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/web_search#ssrf-protection-and-private-providers).
-</Callout>
+Dengan pencarian web aktif, model tetap memutuskan sendiri apakah sebuah pesan memerlukan pencarian. Menanyakan "apa yang berubah di rilis Node.js terbaru?" biasanya akan memicu pencarian, sedangkan meminta model menulis ulang sebuah paragraf tidak akan memicunya.
 
-1. **Variabel Lingkungan** (Direkomendasikan untuk admin):
-   ```bash
-   # Search Provider (choose one)
-   SERPER_API_KEY=your_serper_api_key
-   # or
-   SEARXNG_INSTANCE_URL=your_searxng_instance_url
-   SEARXNG_API_KEY=your_searxng_api_key  # Optional
-   # or
-   TAVILY_API_KEY=your_tavily_api_key
-   # or use Keenable keyless; this optional key raises public rate limits
-   KEENABLE_API_KEY=your_keenable_api_key
+Untuk agent, pencarian web adalah kapabilitas yang Anda aktifkan di agent builder. Siapa pun yang mengobrol dengan agent tersebut otomatis mendapatkan alat ini tanpa perlu mengaktifkan apa pun.
 
-   # Scraper (choose one)
-   FIRECRAWL_API_KEY=your_firecrawl_api_key
-   # Optional: Custom Firecrawl API URL
-   FIRECRAWL_API_URL=your_firecrawl_api_url
-   # Optional: Firecrawl API version (v0 or v1)
-   # FIRECRAWL_VERSION=v1
-   # or
-   TAVILY_API_KEY=your_tavily_api_key
-   # or use Keenable keyless with the same optional key
+## Apa yang Anda lihat dalam jawaban [#what-you-see-in-the-answer]
 
-   # Reranker (Optional - choose one, or set rerankerType: "none")
-   JINA_API_KEY=your_jina_api_key
-   # Optional: Custom Jina API URL
-   JINA_API_URL=your_jina_api_url
-   # or
-   COHERE_API_KEY=your_cohere_api_key
-   ```
+Selama alat berjalan, pesan menampilkan progresnya ("Searching the web", lalu "Reading results"). Setelah selesai, pesan akan menciutkan diri menjadi **Searched the web**; perluas untuk melihat halaman yang ditemukan, atau gunakan tombol **Search details** di sebelahnya untuk melihat kueri yang dikirim oleh model.
 
-   Menggunakan Keenable tanpa kunci lingkungan tetap memerlukan pemilihan penyedia di dalam `librechat.yaml`:
+Kutipan sebaris dalam teks mengarah kembali ke halaman-halaman tersebut, sehingga Anda dapat memeriksa suatu klaim dengan halaman asalnya. Ketika beberapa agen menjawab secara berdampingan, baris **Sources** di atas balasan juga mengumpulkan hasilnya, dengan **All**, serta tab **News** dan **Images** jika pencarian mengembalikan hasil tersebut.
 
-   ```yaml filename="librechat.yaml"
-   webSearch:
-     searchProvider: keenable
-     scraperProvider: keenable
-     rerankerType: none
-   ```
+<ThemeImage
+  light="/images/features/web_search/answer-with-sources-light.png"
+  dark="/images/features/web_search/answer-with-sources-dark.png"
+  alt="Jawaban asisten dengan langkah Searched the web diperluas untuk menampilkan kartu hasil, dan penanda sitasi inline dalam jawaban"
+/>
 
-   Lihat [konfigurasi lengkap Keenable](/docs/configuration/librechat_yaml/object_structure/web_search#keenablescraperoptions) untuk pengaturan pencarian, pengambilan, dan batas laju (rate-limit) opsional.
+## Bagaimana pencarian berjalan [#how-a-search-runs]
 
-2. **Antarmuka Pengguna** (Jika variabel lingkungan tidak diatur):
-   - Pengguna akan diminta untuk memasukkan kunci API yang diperlukan saat mereka pertama kali menggunakan fitur pencarian web.
-   - Mereka dapat memilih penyedia pencarian (Serper, SearXNG, Tavily, atau Keenable), scraper, dan layanan reranker (Jina, Cohere, atau none) mana yang akan digunakan
+Setiap pencarian melewati hingga tiga layanan:
 
-URL Firecrawl dan SearXNG yang disediakan pengguna tidak dapat dipasangkan dengan kunci API deployment. Sediakan pasangan URL/kunci Anda sendiri, atau minta administrator untuk mengonfigurasi keduanya. Jika tidak, Firecrawl akan mengabaikan URL opsional pengguna dan menggunakan endpoint default-nya; SearXNG tidak dapat menginisialisasi konfigurasi kepemilikan campuran tersebut karena URL-nya wajib diisi. SearXNG tanpa kunci tetap didukung. Lihat [Credential Ownership](/docs/configuration/librechat_yaml/object_structure/web_search#credential-ownership).
+- Penyedia pencarian mengembalikan daftar hasil: Serper, SearXNG, Tavily, atau Keenable.
+- Sebuah scraper mengambil halaman-halaman di balik hasil pencarian tersebut dan mengekstrak teksnya: Firecrawl, Serper Scrape, Tavily Extract, atau Keenable Fetch.
+- Reranker (Jina atau Cohere) memilih bagian teks yang paling relevan dengan kueri. Reranking dapat diatur ke **None** untuk melewati langkah ini.
 
-## Mendapatkan API Keys [#obtaining-api-keys]
+Hanya bagian yang diekstrak yang dikirim ke model, bukan seluruh halaman. Halaman yang habis waktu (timeout) atau memblokir pengambilan konten akan dilewati, sehingga jawaban mungkin mengutip lebih sedikit sumber dibandingkan jumlah yang dikembalikan oleh pencarian.
 
-Setiap layanan eksternal yang diaktifkan memerlukan kunci API-nya sendiri. Berikut cara mendapatkannya:
+Safe search diatur ke moderat secara default. Admin Anda dapat menaikkan atau menurunkan tingkat untuk semua pengguna; Tavily adalah pengecualian dan hanya memfilter ketika admin mengaktifkan opsi safe search miliknya sendiri.
 
-### Penyedia Pencarian [#search-providers]
+## Menambahkan API key Anda sendiri [#adding-your-own-api-keys]
 
-#### Serper [#serper]
-1. Kunjungi [Serper.dev](https://serper.dev)
-2. Daftar untuk sebuah akun
-3. Buka bagian API Key
-4. Salin kunci API Anda
-5. Atur di variabel lingkungan Anda atau sediakan melalui UI
+Jika admin Anda belum menyediakan kunci untuk setiap layanan, mengaktifkan **Web Search** akan membuka dialog yang meminta kunci tersebut. Dialog ini memiliki bagian untuk setiap layanan yang tidak diatur oleh admin untuk pengguna, dari **Search Provider**, **Scraper**, dan **Reranker**. Pilih layanan di setiap bagian, isi kuncinya (setiap kolom memiliki tautan ke tempat Anda mendapatkannya), lalu klik **Save**. SearXNG meminta URL instance Anda, dan kuncinya bersifat opsional. Keenable dapat digunakan tanpa kunci; menambahkan kunci hanya akan menaikkan batas rate limit-nya.
 
-#### SearXNG [#searxng]
-1. Ikuti petunjuk pengaturan dalam dokumentasi [Web Search Configuration](/docs/configuration/librechat_yaml/object_structure/web_search#setting-up-searxng)
-2. Atur `SEARXNG_INSTANCE_URL` ke URL instance Anda
-3. Secara opsional, atur `SEARXNG_API_KEY` jika instance Anda memerlukan autentikasi
-4. Tambahkan `host:port` yang tepat dari instance Anda ke [`allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/web_search#ssrf-protection-and-private-providers) jika instance tersebut berada di alamat privat atau loopback, jika tidak, LibreChat akan memblokir koneksi tersebut.
-5. Secara opsional, atur mesin mana yang dikueri oleh instans Anda dengan [`searxngSearchOptions`](/docs/configuration/librechat_yaml/object_structure/web_search#searxngsearchoptions). Kumpulan default hanya terdiri dari tiga mesin dan mencakup DuckDuckGo, yang menyajikan CAPTCHA ke sebagian besar instans yang di-host sendiri (self-hosted), jadi memperluasnya akan membantu jika hasil pencarian kosong.
+<ThemeImage
+  light="/images/features/web_search/api-key-dialog-light.png"
+  dark="/images/features/web_search/api-key-dialog-dark.png"
+  alt="Dialog kunci API Web Search dengan bagian Search Provider dan Scraper serta kolom kuncinya"
+/>
 
-#### Tavily [#tavily]
-1. Kunjungi [Tavily](https://app.tavily.com/home)
-2. Daftar untuk sebuah akun
-3. Salin kunci API Anda
-4. Atur `TAVILY_API_KEY` di variabel lingkungan Anda atau sediakan melalui UI
-5. Tavily dapat digunakan baik sebagai penyedia pencarian maupun penyedia scraper
+Kunci disimpan bersama akun Anda dan hanya digunakan untuk pencarian Anda. Untuk mengubah penyedia atau mengganti kunci nanti, buka palet lalu klik **Configure** (ikon roda gigi) pada baris **Web Search**. Setelah Anda menyimpan kunci, **Revoke** pada dialog yang sama akan menghapusnya. Ketika admin telah mengatur setiap kunci di server, tidak ada dialog dan tidak ada ikon roda gigi.
 
-#### Keenable [#keenable]
+URL yang Anda masukkan tidak pernah dipasangkan dengan kunci yang diatur oleh admin di server. Jika admin telah mengatur kunci Firecrawl atau SearXNG dan Anda memasukkan URL Anda sendiri untuk layanan tersebut, masukkan juga kunci Anda sendiri. Jika tidak, Firecrawl akan mengabaikan URL Anda dan menggunakan endpoint default-nya, dan SearXNG tidak akan berjalan. Instans SearXNG tanpa kunci tetap dapat berfungsi: jika tidak ada kunci yang terlibat, URL Anda saja sudah cukup.
 
-1. Pilih Keenable sebagai penyedia pencarian, scraper, atau keduanya
-2. Tidak diperlukan API key untuk endpoint pencarian dan pengambilan publik
-3. Secara opsional, atur `KEENABLE_API_KEY` untuk meningkatkan batas kecepatan publik.
-4. Gunakan `KEENABLE_API_URL` hanya untuk mengganti endpoint pencarian dan `KEENABLE_FETCH_URL` hanya untuk mengganti endpoint pengambilan halaman
+## Opsi Web Search tidak terlihat [#web-search-option-is-not-visible]
 
-### Scraper: Firecrawl [#scraper-firecrawl]
+Tidak ada tombol pencarian web terpisah; opsi tersebut hanya muncul di bagian **Tools** pada palet. Opsi ini tidak tersedia ketika:
 
-1. Kunjungi [Firecrawl.dev](https://docs.firecrawl.dev/introduction#api-key)
-2. Daftar untuk sebuah akun
-3. Buka bagian API Key
-4. Salin kunci API Anda
-5. Atur di variabel lingkungan Anda atau sediakan melalui UI
-6. (Opsional) Jika Anda menggunakan instance Firecrawl kustom, Anda juga perlu mengatur API URL
+- Anda sedang mengobrol dengan agen, atau di endpoint Assistants. Agen membawa alatnya sendiri, sehingga pencarian web diaktifkan di Agent Builder sebagai gantinya.
+- Spesifikasi model yang dipilih menyembunyikan baris alat.
+- Peran Anda tidak memiliki izin Web Search. Hal itu juga memblokir fitur pencarian bawaan yang ditawarkan oleh beberapa penyedia.
+- Admin Anda telah menghapus `web_search` dari kapabilitas agent.
 
-### Rerankers [#rerankers]
+## Pengaturan [#setup]
 
-#### Jina [#jina]
-1. Kunjungi [Jina.ai](https://jina.ai/api-dashboard/)
-2. Daftar untuk sebuah akun
-3. Buka Dasbor API
-4. Salin kunci API Anda
-5. Atur di variabel lingkungan Anda atau sediakan melalui UI
-
-#### Cohere [#cohere]
-1. Kunjungi [Cohere Dashboard](https://dashboard.cohere.com/welcome/login)
-2. Daftar untuk sebuah akun
-3. Navigasikan ke bagian API Keys
-4. Salin kunci API Anda
-5. Atur di variabel lingkungan Anda atau sediakan melalui UI
-
-## Komponen [#components]
-
-### 1. Penyedia Pencarian [#1-search-providers]
-
-Penyedia pencarian bertanggung jawab untuk melakukan pencarian web awal dan mengembalikan hasil yang relevan.
-
-**Penyedia yang Tersedia:**
-- **Serper**: API Google Search yang menyediakan hasil pencarian berkualitas tinggi
-  - Dapatkan kunci API Anda dari [Serper.dev](https://serper.dev/api-keys)
-- **SearXNG**: Mesin pencari meta sumber terbuka yang di-host sendiri
-  - Self-host instance Anda sendiri
-  - Hasil pencarian yang mengutamakan privasi
-  - Mesin yang dapat dikonfigurasi, bahasa hasil, rentang waktu, dan batas waktu permintaan
-- **Tavily**: API pencarian yang dioptimalkan untuk AI
-  - Dapatkan kunci API Anda dari [Tavily](https://app.tavily.com/home)
-  - Mendukung kedalaman pencarian yang dapat dikonfigurasi, penyaringan topik, penyaringan domain, dan banyak lagi
-  - Juga dapat berfungsi sebagai penyedia scraper
-- **Keenable**: Pencarian web tanpa kunci (keyless) dengan autentikasi tingkat tinggi opsional
-  - Mendukung pencarian dengan batasan domain, batas hasil, judul atribusi, dan batas waktu permintaan (request timeouts)
-  - Juga dapat berfungsi sebagai penyedia scraper
-
-### 2. Scrapers [#2-scrapers]
-
-Scrapers mengekstrak konten aktual dari halaman web yang dikembalikan oleh penyedia pencarian.
-
-**Scraper yang Tersedia:**
-- **Firecrawl**: Layanan web scraping canggih yang mengekstrak konten dari halaman web
-  - Dapatkan kunci API Anda dari [Firecrawl.dev](https://docs.firecrawl.dev/introduction#api-key)
-  - URL API bersifat opsional (defaultnya adalah layanan yang dihosting oleh Firecrawl)
-
-- **Tavily**: Ekstraksi URL batch melalui Tavily Extract API
-  - Menggunakan `TAVILY_API_KEY` yang sama dengan penyedia pencarian
-  - Mendukung kedalaman ekstraksi yang dapat dikonfigurasi, ekstraksi gambar, dan ekstraksi favicon
-
-- **Keenable**: Pengambilan halaman tanpa kunci (keyless)
-  - Menggunakan kunci API opsional yang sama seperti pencarian Keenable
-  - Mendukung judul atribusi dan batas waktu permintaan
-
-**Scraper yang Direncanakan:**
-- **Local Firecrawl**: Versi self-hosted dari Firecrawl
-- Layanan scraping pihak ketiga tambahan
-
-### 3. Rerankers [#3-rerankers]
-
-Rerankers menganalisis konten yang telah dikikis untuk menentukan bagian yang paling relevan dan menyusunnya kembali demi hasil yang lebih baik.
-
-**Reranker yang Tersedia:**
-- **Jina**: Layanan reranking berbasis AI
-  - Dapatkan kunci API Anda dari [Jina.ai](https://jina.ai/api-dashboard/)
-  - API URL bersifat opsional (defaultnya adalah layanan yang dihosting oleh Jina)
-- **Cohere**: Layanan pemeringkatan ulang (reranking) tingkat lanjut
-  - Dapatkan kunci API Anda dari [Cohere Dashboard](https://dashboard.cohere.com/welcome/login)
-- **None**: Melewati proses reranking saat `rerankerType` diatur ke `"none"`
-
-**Reranker yang Direncanakan:**
-- **RAG API**: Reranking sumber terbuka menggunakan RAG (Retrieval-Augmented Generation)
-- Layanan reranking pihak ketiga tambahan
-
-## Konfigurasi [#configuration]
-
-### Konfigurasi Admin [#admin-configuration]
-
-Admin dapat mengonfigurasi fitur pencarian web menggunakan variabel lingkungan. Konfigurasi YAML memungkinkan Anda untuk menentukan nama variabel lingkungan kustom untuk setiap komponen.
-
-**Direkomendasikan: referensikan variabel lingkungan dengan `${ENV_VAR}`.** Kunci dan URL literal juga diterima di `librechat.yaml`, namun keduanya tersimpan di dalam file tersebut, sehingga referensi lingkungan tetap menjadi pilihan yang lebih aman.
-
-Kunci literal hanya dikirim ke URL yang diatur bersamanya dalam konfigurasi yang sama. Kunci dari environment atau kunci milik pengguna tidak pernah dikirim ke URL yang ditulis dalam konfigurasi; rujuk keduanya dari environment, atau atur keduanya secara bersamaan.
-
-```yaml
-webSearch:
-  # Search Provider Configuration
-  serperApiKey: "${CUSTOM_SERPER_API_KEY}"
-  # or
-  searxngInstanceUrl: "${CUSTOM_SEARXNG_INSTANCE_URL}"
-  searxngApiKey: "${CUSTOM_SEARXNG_API_KEY}"
-  searxngSearchOptions:                     # Query options, not secrets, so real values belong here
-    engines: "google,bing,startpage"
-    language: "en"
-
-  # Tavily Configuration (search and/or scraper)
-  tavilyApiKey: "${CUSTOM_TAVILY_API_KEY}"
-  tavilySearchUrl: "${CUSTOM_TAVILY_SEARCH_URL}"
-  tavilyExtractUrl: "${CUSTOM_TAVILY_EXTRACT_URL}"
-
-  # Keenable Configuration (search and/or scraper; keyless by default)
-  keenableApiKey: "${CUSTOM_KEENABLE_API_KEY}" # Optional; raises rate limits
-  keenableApiUrl: "${CUSTOM_KEENABLE_API_URL}" # Optional search URL override
-  keenableSearchOptions:
-    maxResults: 8
-    site: "example.com"
-    attributionTitle: "LibreChat"
-    timeout: 15000
-  keenableScraperOptions:
-    attributionTitle: "LibreChat"
-    timeout: 15000
-
-  # Scraper Configuration
-  firecrawlApiKey: "${CUSTOM_FIRECRAWL_API_KEY}"
-  firecrawlApiUrl: "${CUSTOM_FIRECRAWL_API_URL}"
-
-  # Reranker Configuration
-  jinaApiKey: "${CUSTOM_JINA_API_KEY}"
-  jinaApiUrl: "${CUSTOM_JINA_API_URL}"
-  cohereApiKey: "${CUSTOM_COHERE_API_KEY}"
-
-  # General Settings
-  safeSearch: 1 # Options: 0 (OFF), 1 (MODERATE - default), 2 (STRICT)
-```
-
-**Catatan:** Sebaiknya gunakan nama variabel lingkungan (dalam format `${VARIABLE_NAME}`) di dalam konfigurasi YAML. Fleksibilitas ini memungkinkan:
-- Menggunakan nama variabel yang berbeda di lingkungan yang berbeda
-- Mendukung berbagai konfigurasi untuk kelompok pengguna yang berbeda
-- Integrasi di masa mendatang dengan konfigurasi berbasis peran
-
-Jika Anda ingin membatasi sistem agar hanya menggunakan layanan tertentu, Anda dapat menentukan jenis layanannya:
-
-```yaml
-webSearch:
-  # ... variable configurations ...
-  searchProvider: "serper"    # Only use Serper for search
-  # searchProvider: "searxng" # Only use SearXNG for search
-  # searchProvider: "tavily"  # Only use Tavily for search
-  # searchProvider: "keenable" # Use keyless Keenable search
-  scraperProvider: "firecrawl"    # Only use Firecrawl for scraping
-  # scraperProvider: "serper" # Only use Serper for scraping
-  # scraperProvider: "tavily" # Only use Tavily for scraping
-  # scraperProvider: "keenable" # Use keyless Keenable page fetch
-  rerankerType: "jina"        # Options: "jina", "cohere", "none"
-```
-
-### Konfigurasi Pengguna [#user-configuration]
-
-Jika admin belum mengonfigurasi semua kunci API yang diperlukan, pengguna akan diminta untuk menyediakannya melalui UI. Antarmuka ini memungkinkan pengguna untuk:
-
-1. Pilih reranker pilihan mereka (Jina, Cohere, atau tidak sama sekali)
-2. Masukkan kunci API untuk layanan yang diperlukan
-3. Konfigurasikan URL API Firecrawl jika diperlukan (opsional)
-4. Konfigurasikan URL API Jina jika diperlukan (opsional)
-5. Konfigurasikan penggantian endpoint Tavily atau Keenable jika diperlukan (opsional)
-
-## Penggunaan [#usage]
-
-Setelah dikonfigurasi, Anda dapat menggunakan pencarian web dengan dua cara:
-
-1. **Antarmuka Obrolan**: Buka palet **+** di [message composer](/docs/features/composer) dan pilih **Web Search** untuk mengaktifkannya dalam percakapan. Fitur ini kemudian akan muncul sebagai chip pada composer; hapus chip tersebut untuk menonaktifkannya. Jika ada API key yang diperlukan belum tersedia, Anda akan diminta untuk memasukkannya.
-2. **Agen**: Aktifkan [kemampuan](/docs/features/agents#web-search) **Pencarian Web** untuk sebuah agen di Agent Builder agar agen tersebut dapat mencari di web.
-
-### Opsi Web Search tidak terlihat [#web-search-option-is-not-visible]
-
-Tidak ada tombol pencarian web terpisah. Opsi tersebut berada di bagian **Tools** pada palet **+** dan hanya muncul jika semua kondisi berikut terpenuhi:
-
-- endpoint yang dipilih bukan Agents atau Assistants. Agents memiliki konfigurasi alatnya sendiri, jadi untuk agent, Anda mengaktifkan Web Search di Agent Builder sebagai gantinya.
-- `web_search` disertakan dalam [`endpoints.agents.capabilities`](/docs/configuration/librechat_yaml/object_structure/agents#capabilities). Fitur ini disertakan secara default, jadi hal ini hanya relevan jika Anda menetapkan daftar kustom.
-- Peran pengguna memiliki izin pencarian web. Kelola izin tersebut di [Admin Panel](/docs/features/admin_panel); [`interface.webSearch`](/docs/configuration/librechat_yaml/object_structure/interface#websearch) hanya menetapkannya untuk peran `USER` default saat startup.
-- Model spec yang dipilih tidak menyetel [`hideBadgeRow: true`](/docs/configuration/librechat_yaml/object_structure/model_specs#hidebadgerow), yang menyembunyikan bagian **Tools**.
-
-## Catatan [#notes]
-
-- Konfigurasi penyedia pencarian (search provider) dan scraper diperlukan; reranking dapat dinonaktifkan dengan `rerankerType: "none"`
-- URL API Firecrawl bersifat opsional dan secara default menggunakan layanan yang mereka sediakan.
-- URL Jina API bersifat opsional dan secara default akan menggunakan layanan yang mereka sediakan.
-- URL API Tavily Search and Extract bersifat opsional dan secara default menggunakan layanan yang dihosting oleh Tavily
-- Pencarian dan pengambilan halaman (page fetch) di LibreChat bersifat tanpa kunci (keyless) secara default; kunci opsional akan meningkatkan batas kecepatan (rate limit) publik.
-- `KEENABLE_API_URL` hanya menimpa pencarian, sementara `KEENABLE_FETCH_URL` hanya menimpa pengambilan halaman
-- Pasangkan `searchProvider: "keenable"`, `scraperProvider: "keenable"`, dan `rerankerType: "none"` untuk tumpukan (stack) yang sepenuhnya tanpa kunci (keyless)
-- Safe search menyediakan tiga tingkat penyaringan konten: OFF (0), MODERATE (1 - default), dan STRICT (2)
-- Tavily tidak mewarisi pengaturan `safeSearch` global secara default; gunakan `tavilySearchOptions.safeSearch` hanya jika akun Tavily Anda mendukung `safe_search`
-- Batas waktu scraper diatur ke 7,5 detik (7500ms) secara default
-- API keys dapat dicabut kapan saja melalui UI
-- Pembaruan di masa mendatang akan mencakup lebih banyak opsi sumber terbuka (open-source) yang di-host sendiri (self-hosted) untuk semua komponen
-- Opsi kustomisasi tambahan sedang direncanakan, termasuk:
-  - Kontrol atas jumlah tautan yang akan di-scrape
-  - Daftar izin/daftar blokir domain untuk scraping
-  - Aturan scraping dan filter kustom
-  - Opsi pemfilteran dan pemeringkatan hasil tingkat lanjut
-  - Kontrol pembatasan laju (rate limiting) dan pelambatan permintaan (request throttling)
+Pencarian web tersedia secara default untuk agen dan obrolan, tetapi memerlukan penyedia pencarian dan scraper sebelum dapat mengembalikan hasil apa pun. Admin dapat mengatur kunci di server atau membiarkannya agar pengguna memasukkannya sendiri. Penyedia yang di-self-host pada alamat privat akan diblokir hingga admin mencantumkannya di [`allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/web_search#ssrf-protection-and-private-providers). Lihat [konfigurasi Pencarian Web](/docs/configuration/librechat_yaml/object_structure/web_search) untuk penyedia, kunci, dan opsi, serta [Menyiapkan SearXNG](/docs/configuration/librechat_yaml/object_structure/web_search#setting-up-searxng) untuk meng-host sendiri penyedia pencarian.

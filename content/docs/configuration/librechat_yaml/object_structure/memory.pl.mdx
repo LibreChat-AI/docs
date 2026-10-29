@@ -5,7 +5,9 @@ icon: Brain
 
 ## Przegląd [#overview]
 
-Obiekt `memory` pozwala na skonfigurowanie pamięci konwersacji oraz funkcji personalizacji dla aplikacji. Ta konfiguracja kontroluje sposób, w jaki system zapamiętuje i personalizuje konwersacje, w tym limity tokenów, okna kontekstu wiadomości oraz przetwarzanie pamięci oparte na agentach.
+Obiekt `memory` włącza [Pamięć użytkownika](/docs/features/memory) i ustawia jej limity. Dodanie tej sekcji jest tym, co uruchamia pamięć: zapisane wpisy są wtedy dołączane do rozmów każdego użytkownika, użytkownicy mogą nimi zarządzać w panelu Pamięci, a narzędzie Memory (`set_memory` i `delete_memory`) jest udostępniane w czatach i agentach, o ile możliwość `memory` jest włączona dla endpointu agents (domyślnie jest).
+
+Automatyczne wyodrębnianie pamięci, w którym osobny agent pamięci analizuje każdą wymianę wiadomości i zapisuje fakty bez proszenia o to, jest osobną opcją wymagającą świadomego włączenia: ustaw `agent.enabled: true` i podaj model.
 
 ## Przykład [#example]
 
@@ -35,7 +37,7 @@ memory:
     [
       'disabled',
       'Boolean',
-      'Wyłącza funkcjonalność pamięci, gdy ustawiono na true. Po wyłączeniu system nie będzie przechowywał ani używał pamięci konwersacji.',
+      'Wyłącza pamięć, gdy ustawiona jest wartość true. Zapisane wspomnienia nie są już dodawane do rozmów, narzędzie Memory nie jest udostępniane, a uprawnienia do pamięci są wyłączone dla każdej roli.',
       'disabled: false',
     ],
   ]}
@@ -81,7 +83,7 @@ memory:
     [
       'tokenLimit',
       'Number',
-      'Ustawia maksymalną liczbę tokenów, które mogą zostać użyte do przechowywania i przetwarzania pamięci.',
+      'Określa maksymalny łączny rozmiar, w tokenach, wszystkich wspomnień zapisanych dla użytkownika. Zapisy, które przekroczyłyby ten limit, są odrzucane, a panel Wspomnienia pokazuje wykorzystanie w odniesieniu do tego limitu.',
       'tokenLimit: 2000',
     ],
   ]}
@@ -141,7 +143,7 @@ memory:
     [
       'personalize',
       'Boolean',
-      'Gdy ustawione na true, daje użytkownikom możliwość włączenia lub wyłączenia funkcji pamięci. Użytkownicy mogą przełączać pamięć wł./wył. w swoim interfejsie czatu. Gdy ustawione na false, usuwany jest tylko przełącznik rezygnacji dla użytkownika; pamięć pozostaje włączona. Aby wyłączyć pamięć, użyj disabled: true.',
+      'Gdy ustawione na true, użytkownicy otrzymują przełącznik „Use memory" w panelu Pamięci oraz „Reference saved memories" w Ustawieniach, dzięki czemu mogą zrezygnować z korzystania z pamięci. Gdy ustawione na false, użytkownicy nie mogą zrezygnować; sama pamięć pozostaje włączona.',
       'personalize: true',
     ],
   ]}
@@ -161,7 +163,7 @@ memory:
     [
       'messageWindowSize',
       'Number',
-      'Określa liczbę ostatnich wiadomości do uwzględnienia w oknie kontekstu pamięci.',
+      'Liczba ostatnich wiadomości, które automatyczny agent pamięci przegląda przy każdym żądaniu. Używane tylko wtedy, gdy agent.enabled ma wartość true.',
       'messageWindowSize: 5',
     ],
   ]}
@@ -187,22 +189,9 @@ memory:
   ]}
 />
 
-Automatyczna ekstrakcja jest opcjonalna (opt-in). Ustaw `agent.enabled: true` w jednym z poniższych formatów konfiguracji. Pominięcie `enabled` lub ustawienie go na `false` sprawia, że pamięć ręczna oraz narzędzia pamięci Agent pozostają dostępne bez uruchamiania automatycznego agenta pamięci podczas żądań czatu.
+Konfiguruje automatycznego agenta pamięci. Jest uruchamiany tylko wtedy, gdy `enabled` ma wartość `true`; blok `agent` bez `enabled` jest ignorowany, a LibreChat zapisuje ostrzeżenie w logach podczas uruchamiania.
 
-### enabled
-
-<OptionTable
-  options={[
-    [
-      'enabled',
-      'Boolean',
-      'Włącza automatyczną ekstrakcję pamięci za pomocą skonfigurowanego agenta pamięci.',
-      'enabled: true',
-    ],
-  ]}
-/>
-
-**Domyślnie:** `false`
+Po włączeniu agent pamięci uruchamia się na początku każdego żądania czatu, równolegle z główną odpowiedzią. Analizuje ostatnie `messageWindowSize` wiadomości (ograniczone do `maxInputTokens`) i samodzielnie zapisuje lub usuwa wpisy. Ma czas do zakończenia głównej odpowiedzi plus maksymalnie 3 sekundy; jeśli nadal działa po tym czasie, jego wynik zostaje odrzucony dla danego żądania.
 
 Pole `agent` obsługuje dwa różne formaty konfiguracji:
 
@@ -238,6 +227,19 @@ memory:
 
 Podczas korzystania z niestandardowej konfiguracji agenta dostępne są następujące pola:
 
+**enabled** (wymagane do uruchomienia agenta pamięci)
+
+<OptionTable
+  options={[
+    [
+      'enabled',
+      'Boolean',
+      'Włącza automatyczne wyodrębnianie pamięci. Akceptowane również obok id. Bez tego ustawienia blok agenta nie ma żadnego efektu.',
+      'enabled: true',
+    ],
+  ]}
+/>
+
 **provider** (wymagane)
 
 <OptionTable
@@ -245,7 +247,7 @@ Podczas korzystania z niestandardowej konfiguracji agenta dostępne są następu
     [
       'provider',
       'String',
-      'Określa dostawcę AI dla agenta pamięci. Może to być wbudowany dostawca (np. "openAI", "anthropic", "google") lub niestandardowa nazwa endpoint.',
+      'Określa dostawcę AI dla agenta pamięci. Może to być wbudowany dostawca (np. "openAI", "anthropic", "google") lub nazwa niestandardowego endpointu, która musi dokładnie odpowiadać nazwie endpointu.',
       'provider: "openAI"',
     ],
   ]}
@@ -285,9 +287,11 @@ Podczas korzystania z niestandardowej konfiguracji agenta dostępne są następu
   ]}
 />
 
+Dozwolone wartości dostawców są wymienione w [polu endpoint w Model Specs](/docs/configuration/librechat_yaml/object_structure/model_specs#endpoint), a prawidłowe parametry modelu dla każdego dostawcy znajdują się w [polach preset w Model Specs](/docs/configuration/librechat_yaml/object_structure/model_specs#preset-fields).
+
 ## Kompletny przykład konfiguracji [#complete-configuration-example]
 
-Oto kompleksowy przykład pokazujący wszystkie opcje konfiguracji pamięci:
+Przykład wykorzystujący wszystkie opcje pamięci:
 
 ```yaml filename="librechat.yaml"
 version: 1.3.18
@@ -330,21 +334,21 @@ Funkcja pamięci obsługuje niestandardowe endpointy. W przypadku korzystania z 
 ```yaml filename="librechat.yaml with custom endpoint for memory"
 
 endpoints:
-    custom:
-        - name: 'Custom Memory Endpoint'
-           apiKey: 'dummy'
-           baseURL: 'https://api.gateway.ai/v1'
-           headers:
-             x-gateway-api-key: '${GATEWAY_API_KEY}'
-             x-gateway-virtual-key: '${GATEWAY_OPENAI_VIRTUAL_KEY}'
-             X-User-Identifier: '{{LIBRECHAT_USER_EMAIL}}'
-             X-Application-Identifier: 'LibreChat - Test'
-             api-key: '${TEST_CUSTOM_API_KEY}'
-           models:
-             default:
-               - 'gpt-4o-mini'
-               - 'gpt-4o'
-             fetch: false
+  custom:
+    - name: 'Custom Memory Endpoint'
+      apiKey: 'dummy'
+      baseURL: 'https://api.gateway.ai/v1'
+      headers:
+        x-gateway-api-key: '${GATEWAY_API_KEY}'
+        x-gateway-virtual-key: '${GATEWAY_OPENAI_VIRTUAL_KEY}'
+        X-User-Identifier: '{{LIBRECHAT_USER_EMAIL}}'
+        X-Application-Identifier: 'LibreChat - Test'
+        api-key: '${TEST_CUSTOM_API_KEY}'
+      models:
+        default:
+          - 'gpt-4o-mini'
+          - 'gpt-4o'
+        fetch: false
 
 memory:
   disabled: false
@@ -362,13 +366,17 @@ memory:
 
 ## Uwagi [#notes]
 
-- Funkcjonalność pamięci poprawia ciągłość konwersacji i personalizację
-- When `personalize` is true, users get a toggle in their chat interface to control memory usage. Setting it to `false` only removes that toggle; memory stays on. Use `disabled: true` to turn memory off
-- Limity tokenów pomagają kontrolować zużycie pamięci oraz koszty przetwarzania.
-- `maxInputTokens` ogranicza kontekst czatu wysyłany do automatycznego agenta pamięci, podczas gdy `tokenLimit` kontroluje wykorzystanie zapisanej pamięci
-- Prawidłowe klucze zapewniają szczegółową kontrolę nad tym, jakie informacje mogą być przechowywane
-- Niestandardowe `instructions` zastępują domyślne instrukcje obsługi pamięci i powinny być używane z `validKeys`
-- `agent.enabled: true` jest wymagane do automatycznej ekstrakcji pamięci
-- Konfiguracja agenta umożliwia dostosowanie zachowania automatycznego przetwarzania pamięci
-- Gdy jest wyłączone, wszystkie funkcje pamięci są wyłączone, niezależnie od innych ustawień
-- Rozmiar okna wiadomości wpływa na to, ile ostatniego kontekstu jest brane pod uwagę przy aktualizacjach pamięci
+- `personalize` kontroluje, czy użytkownicy mogą zrezygnować, a nie czy pamięć jest włączona. Użyj `disabled`, aby wyłączyć pamięć.
+- `maxInputTokens` ogranicza kontekst czatu wysyłany do automatycznego agenta pamięci, natomiast `tokenLimit` ogranicza łączny rozmiar zapisanych wspomnień.
+- Niestandardowe `instructions` zastępują domyślne instrukcje pamięci i są przydatne głównie w połączeniu z `validKeys`.
+- Dostęp jest również kontrolowany dla każdej roli za pomocą uprawnień do pamięci (użycie, tworzenie, odczyt, aktualizacja, rezygnacja). Zobacz [`interface.memories`](/docs/configuration/librechat_yaml/object_structure/interface#memories), [Panel administracyjny](/docs/features/admin_panel) lub ustawienia administratora na dole panelu Pamięci.
+
+## Rozwiązywanie problemów [#troubleshooting]
+
+**Pamięć nie działa.** Sprawdź, czy sekcja `memory` istnieje i czy `disabled` nie ma wartości `true`, czy rola użytkownika ma uprawnienia do korzystania z pamięci oraz czy użytkownik nie wyłączył opcji **Reference saved memories**. W przypadku narzędzia Memory, jeśli ustawiasz listę `capabilities` dla endpointu agentów, musi się w niej znajdować możliwość `memory`.
+
+**Nic nie jest zapisywane automatycznie.** Automatyczna ekstrakcja wymaga ustawienia `agent.enabled: true` oraz poprawnego `id`, lub `provider` i `model`. Bez tego wpisy są zapisywane tylko wtedy, gdy użytkownik poprosi model o zapamiętanie czegoś przy włączonym narzędziu Memory, albo gdy dodaje je ręcznie.
+
+**Agent pamięci kończy się niepowodzeniem na niestandardowym endpoincie.** Wartość `provider` musi dokładnie odpowiadać `name` niestandardowego endpointu. Najpierw upewnij się, że endpoint działa w zwykłych czatach, a następnie sprawdź, czy zmienne środowiskowe, do których odwołują się jego nagłówki, są ustawione; symbole zastępcze w nagłówkach są rozwiązywane w taki sam sposób dla pamięci, jak dla czatu.
+
+**Zużycie tokenów jest wysokie.** Zmniejsz wartość `maxInputTokens` lub `messageWindowSize`, aby wysyłać mniej czatu do agenta pamięci, zmniejsz `tokenLimit`, aby zachowane wspomnienia (które są dodawane do każdego żądania) pozostawały małe, oraz ogranicz `validKeys`.

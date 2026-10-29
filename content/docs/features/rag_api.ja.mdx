@@ -1,41 +1,49 @@
 ---
 title: RAG API（ファイルとのチャット）
 icon: Brain
-description: >-
-  LangchainとFastAPIを使用したドキュメントのインデックス作成および検索のためのRetrieval-Augmented Generation
-  (RAG) API。このAPIはLibreChatと統合され、ユーザーがアップロードしたファイルに基づいたコンテキストアウェアな応答を提供します。
+description: ドキュメントをアップロードすると、モデルがそれを検索し、質問に答える該当箇所を探し出します。
 ---
 
-**RAG（Retrieval-Augmented Generation）API** は、LibreChat にアップロードされたファイルをインデックス化し、質問に関連性の高い箇所を返す独立したサービスです。これにより、モデルは学習データだけでなく、お手持ちのドキュメントに基づいて回答できるようになります。
+ファイル検索を使うと、ドキュメントをアップロードして、その内容をチャットに貼り付けることなく質問できます。LibreChat は各ファイルを RAG API に送信し、RAG API はファイルをチャンクに分割してインデックスを作成します。質問を入力すると、モデルはそのインデックスを検索し、見つかったパッセージをもとに回答します。
 
-これは LangChain 上に構築された Python FastAPI アプリで、埋め込みベクトルは pgvector 拡張機能を備えた PostgreSQL に保存されます。
+ドキュメントが長すぎて毎回すべてを読み込めない場合や、複数のファイルにまたがって回答を得たい場合に、これを利用してください。
 
-**設定方法については、[RAG API の構成](/docs/configuration/rag_api)を参照してください。**
+## ファイル検索用にファイルをアップロードする [#upload-a-file-for-search]
 
-![image](https://github.com/danny-avila/LibreChat/assets/110412045/f1298f66-bf1d-4499-a582-23430b481f17)
+[メッセージ作成欄](/docs/features/composer)の**+**をクリックしてパレットを開き、**その他のアップロードオプション**を展開してから、**ファイル検索用にアップロード**を選択し、ファイルを選んでください。パレットで検索して見つけることもできます。この方法でアップロードすると、そのチャットの**ファイル検索**も有効になります。大きなファイルはインデックス作成に少し時間がかかる場合があります。インデックス作成が完了すると、アップロードも完了します。
 
----
+<ThemeImage
+  light="/images/features/rag_api/upload-for-file-search-light.png"
+  dark="/images/features/rag_api/upload-for-file-search-dark.png"
+  alt="メッセージ入力欄から開く添付・ツールパレットで、「Upload for File Search」オプションがハイライトされている"
+/>
 
-LibreChatでは、RAGは[エージェント](/docs/features/agents#file-search)の**ファイル検索**機能(`file_search`)を支えています。エージェントのファイル検索に添付されたファイル、またはファイル検索を選択した実行に添付されたファイルは、RAG APIによってインデックス化され、必要に応じて検索されます。他のチャットエンドポイントではRAGのインデックス作成や検索は使用されませんが、後述するとおり、テキスト抽出のためにRAG APIを使用する場合があります。
+会話内のファイルにインデックスが作成されると、モデルは `file_search` ツールを利用できるようになります。いつ呼び出すかはモデルが判断します。ドキュメントに関する質問では検索が実行され、雑談では実行されません。返信の生成中は「Searching your files」というステップが表示されます。引用が有効になっている場合、使用された箇所はファイル名とともに **Sources** の下に表示されるので、ドキュメントを開いて内容を確認できます。
 
-RAG API は、LibreChat がアップロードファイルからテキストを抽出するために使用できる `/text` ルートも公開しています。適用されるタイミングについては、[Upload as Text](/docs/features/upload_as_text#what-happens-under-the-hood) を参照してください。
+## 検索の仕組み [#how-search-works]
 
-## 仕組み [#how-it-works]
+モデルが `file_search` を呼び出すと、検索クエリを作成します。LibreChat は添付された各ファイルについて、最も近い 5 件のチャンクを RAG API に問い合わせ、全体で最も近い 10 件を保持します。それらのチャンクは、ファイル名と関連性スコアとともにモデルに返され、モデルはそれらを基に回答します。
 
-1. **インデックス作成。** ファイルを検索可能にする必要がある場合（エージェントの File Search へのアップロード時、または最初にチャットの実行で File Search が添付ファイルに使用される時）、LibreChat はファイルを RAG API に送信します。RAG API はテキストを重複を含むチャンクに分割し（`CHUNK_SIZE` と `CHUNK_OVERLAP`）、設定されたプロバイダーを使用して各チャンクをエンベディングに変換し、そのベクトルを pgvector に保存します。
-2. **検索（Retrieval）。** モデルがファイル検索を呼び出すと、検索クエリを作成します。LibreChat は RAG API に対し、添付された各ファイルから最も近い 5 件のチャンクを要求し、その後、全体で最も近い 10 件を保持します。
-3. **回答。** それらのチャンクは、ファイル名と関連性スコアとともにモデルに返され、モデルはそれに基づいて回答します。[ファイル引用](/docs/configuration/librechat_yaml/object_structure/interface#filecitations)が有効になっている場合、レスポンスで使用したファイルを引用することができます。
+検索は、クエリと意味的に近い文章を見つけ出すため、大規模なドキュメントの中から特定の事実を探し出すのに適しています。要約のように、ドキュメント全体を一度に必要とする質問の場合は、通常「Upload as Text」の方が良い結果が得られます。
 
 LibreChatでファイルを削除すると、そのベクトルもRAG APIから削除されます。
 
-検索は、クエリと意味的に近い箇所だけを見つけ出すため、大規模な文書の中から特定の事実を調べる場合に最も効果を発揮します。文書全体を一度に必要とする質問、たとえば要約のような場合は、[Upload as Text](/docs/features/upload_as_text) の方がより良い結果が得られることが多いです。
+## 以前にアップロードしたファイルを再利用する [#reuse-files-you-already-uploaded]
 
-## RAGとは？ [#what-is-rag]
+インデックス化されたファイルはお使いのアカウントに保持されます。パレットを開き、**Your files**の下からファイルを選択すると、再アップロードすることなく新しいメッセージや会話に添付できます。
 
-Retrieval-Augmented Generation（RAG）は、言語モデルを外部の知識ソースに基づかせる手法です。モデルが学習時に得た知識だけに頼るのではなく、アプリケーションがまず当該ソースから関連する断片を検索し、それをプロンプトに追加します。そのうえでモデルは、それらの情報をもとに回答を生成します。知識はモデルの外部に置かれるため、再学習を行うことなく、文書の追加や更新が可能です。
+Assistantsエンドポイントの使用中にアップロードされたファイルは、OpenAIに保存され、RAG APIによるインデックス化は行われず、他のエンドポイントに添付することはできません。
 
-概念の簡単な紹介として、IBMの次の動画をご覧ください:
+## エージェントでのファイル検索 [#file-search-in-agents]
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/T-D1OfcDW1M?si=SDVz1Fxsoi_z4S89" title="YouTube動画プレイヤー" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen></iframe>
+エージェントの場合、エージェントビルダーで[**File Search**](/docs/features/agents#file-search)を有効にし、そこにファイルをアップロードします。これらのファイルがエージェントのナレッジベースになります。エージェントとチャットするすべてのユーザーは、自分でファイルをアップロードしなくても、エージェントにそれらのファイルを検索させることができます。ファイルを追加するには、先にエージェントを保存しておく必要があります。
 
-RAG API のエンドポイントおよび受け付けるすべての環境変数については、[RAG API リポジトリ](https://github.com/LibreChat-AI/rag-api)を参照してください。
+## ファイル検索またはテキストとしてのアップロード [#file-search-or-upload-as-text]
+
+[**テキストとしてアップロード**](/docs/features/upload_as_text)も同じメニューにあります。ファイルからテキストを抽出し、その全文を会話に追加します。モデルがすべての単語を読む必要がある短い文書に適しています。ファイル検索は、各クエリに一致する部分だけを送信するため、長い文書や多数のファイルにも対応できますが、取得されなかった部分はモデルには見えません。
+
+RAG API も、組み込みのパーサーで読み取れないファイル形式のテキスト抽出器として、Upload as Text を提供します。詳しくは[テキストの抽出方法](/docs/features/upload_as_text#how-the-text-is-extracted)をご覧ください。
+
+## セットアップ [#setup]
+
+ファイル検索には RAG API サービスとベクトルデータベースが必要です。デフォルトの Docker 構成にはその両方が含まれています。管理者は埋め込みプロバイダーを設定し、その他のインストールの場合は `RAG_API_URL` を設定します。詳細は [RAG API configuration](/docs/configuration/rag_api) を、サービス自体のエンドポイントと変数については [RAG API repository](https://github.com/LibreChat-AI/rag-api) を参照してください。

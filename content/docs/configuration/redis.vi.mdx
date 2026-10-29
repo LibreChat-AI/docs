@@ -6,7 +6,7 @@ description: >-
   chiều ngang trong LibreChat
 ---
 
-Hướng dẫn này trình bày cách cấu hình Redis để lưu trữ bộ nhớ đệm (caching) và phiên làm việc (session storage) trong LibreChat. Redis mang lại cải thiện hiệu năng đáng kể và **bắt buộc đối với việc mở rộng theo chiều ngang (horizontal scaling)**. Nếu bạn đang chạy nhiều phiên bản LibreChat phía sau bộ cân bằng tải (load balancer), Redis đảm bảo trạng thái nhất quán giữa tất cả các phiên bản.
+Hướng dẫn này trình bày cách cấu hình Redis để lưu trữ bộ nhớ đệm (caching) và phiên làm việc (session) trong LibreChat. Redis mang lại cải thiện hiệu năng đáng kể và **bắt buộc để mở rộng theo chiều ngang**: nếu bạn đang chạy nhiều instance LibreChat phía sau bộ cân bằng tải (load balancer), Redis đảm bảo trạng thái nhất quán giữa tất cả các instance.
 
 ## Mục lục [#table-of-contents]
 
@@ -392,22 +392,21 @@ REDIS_KEY_PREFIX=librechat-cluster
 
 ## Luồng có thể tiếp tục (Resumable Streams) [#resumable-streams]
 
-Redis cho phép [Resumable Streams](/docs/features/resumable_streams) đối với các triển khai mở rộng theo chiều ngang. Khi được bật, các phản hồi AI có thể kết nối lại và tiếp tục một cách liền mạch trên các instance máy chủ.
+[Luồng có thể tiếp tục](/docs/features/resumable_streams) lưu từng phản hồi đang xử lý vào một kho công việc (job store) để client có thể kết nối lại và bắt kịp nội dung. Một instance LibreChat đơn lẻ lưu kho này trong bộ nhớ và không cần cấu hình gì thêm. Khi có nhiều instance đặt sau một load balancer, lần kết nối lại có thể rơi vào một instance khác với instance đang tạo phản hồi, vì vậy kho này cần được chia sẻ thông qua Redis.
 
-**Quan trọng:** Khi `USE_REDIS=true`, các luồng có thể tiếp tục (resumable streams) sẽ tự động sử dụng Redis để điều phối giữa các instance. Đây là thiết lập được khuyến nghị cho các triển khai mở rộng theo chiều ngang (horizontally scaled), nơi người dùng có thể kết nối với các instance máy chủ khác nhau.
+Stream tự động sử dụng Redis khi `USE_REDIS=true`. `USE_REDIS_STREAMS` ghi đè hành vi đó: đặt thành `false` để giữ stream trong bộ nhớ trong khi Redis phục vụ các bộ nhớ đệm, hoặc đặt thành `true` để khai báo rõ ràng.
 
-**Lưu ý:** Nếu bạn chỉ chạy một phiên bản LibreChat duy nhất, Redis cho các luồng có thể tiếp tục (resumable streams) thường là không cần thiết; chế độ bộ nhớ trong (in-memory) tích hợp sẵn hoạt động tốt. Redis trở nên thiết yếu khi bạn có nhiều phiên bản LibreChat đứng sau một bộ cân bằng tải (load balancer), vì khi người dùng kết nối lại, yêu cầu có thể được chuyển đến một máy chủ khác với máy chủ nơi luồng đã bắt đầu.
-
-### Cấu hình [#configuration]
-
-```bash
-# Redis enabled = resumable streams automatically use Redis
+```bash filename=".env"
 USE_REDIS=true
 REDIS_URI=redis://127.0.0.1:6379
 
-# Optional: explicitly control resumable streams behavior
-# USE_REDIS_STREAMS=true  # Enabled by default when USE_REDIS=true
+# Optional: defaults to the value of USE_REDIS
+# USE_REDIS_STREAMS=true
 ```
+
+Với Redis, các đoạn stream được ghi vào Redis Streams, metadata của job được ghi vào hashes, và các sự kiện trực tiếp được truyền qua Pub/Sub, nên bất kỳ instance nào cũng có thể phục vụ việc kết nối lại.
+
+Các lần chạy agent theo lịch có thể tạm dừng để chờ phê duyệt công cụ hoặc câu hỏi từ người dùng yêu cầu Redis streams; nếu không có Redis streams, các lần chạy đó sẽ thất bại với thông báo lỗi yêu cầu bạn đặt `USE_REDIS_STREAMS=true`.
 
 ### Khả năng tương thích với Giao thức Tạo (Generation Protocol) [#generation-protocol-compatibility]
 
@@ -428,24 +427,15 @@ Các luồng tạo nội dung trong bộ nhớ (in-memory generation streams) c�
 
 ### Hợp nhất Stream Delta [#stream-delta-coalescing]
 
-Các luồng được hỗ trợ bởi Redis có thể xử lý hàng loạt các bản tin delta để giảm bớt các tập lệnh Redis, số lượt truy vấn khứ hồi và mức sử dụng CPU ở tốc độ token cao:
+`STREAM_DELTA_COALESCE_MS` nhóm các delta được stream thành các lần ghi Redis theo cửa sổ thời gian để giảm số vòng lặp mạng khi tốc độ token cao. Mặc định là `25` (mili giây), giá trị `0` sẽ publish từng delta riêng lẻ, và giá trị tối đa là `1000`. Cửa sổ càng lớn thì độ trễ truyền tải càng tăng thêm tối đa một cửa sổ, và các delta còn đang được đệm khi một instance gặp sự cố sẽ bị mất. Nên giữ giá trị này ở mức bằng hoặc thấp hơn nhịp làm mượt stream (`streamRate`, mặc định 25 ms). Các khung chunk riêng lẻ vẫn được publish song song với các batch, nên các subscriber không hiểu batch vẫn hoạt động bình thường. Các stream trong bộ nhớ (in-memory) không bị ảnh hưởng.
 
 ```bash filename=".env"
 STREAM_DELTA_COALESCE_MS=25
 ```
 
-Cài đặt này mặc định là `25` mili giây khi không được thiết lập. Hãy đặt giá trị này thành `0` để tắt tính năng gộp (coalescing); các giá trị trên `1000` sẽ bị giới hạn. Việc xử lý theo lô (batching) có thể làm tăng thêm một khoảng thời gian trễ phân phối đã cấu hình và có thể làm mất phần đuôi được đệm nếu quá trình xuất bản thoát trước khi nó kịp đẩy dữ liệu đi. Các khung đoạn (chunk frames) riêng lẻ vẫn được giữ lại để đảm bảo tính tương thích của giao thức, vì vậy cài đặt này giúp giảm bớt công việc cho tập lệnh Redis và các lượt truy vấn khứ hồi mà không làm thay đổi định dạng khung của người đăng ký. Các luồng tạo trong bộ nhớ (in-memory generation streams) vẫn không thay đổi.
-
-### Các lợi ích chính (cho việc mở rộng theo chiều ngang) [#key-benefits-for-horizontal-scaling]
-
-- **Tính liên tục giữa các instance**: Người dùng có thể bắt đầu tạo phản hồi trên một máy chủ và tiếp tục trên một máy chủ khác
-- **Rolling deployments**: Các luồng đang hoạt động vẫn tồn tại sau khi khởi động lại máy chủ
-- **Đồng bộ hóa đa tab**: Cùng một cuộc trò chuyện được đồng bộ hóa trên nhiều tab trình duyệt trong môi trường cân bằng tải
-- **Khả năng phục hồi kết nối**: Tự động kết nối lại bất kể máy chủ nào xử lý yêu cầu
-
 ### Cấu hình Cluster [#cluster-configuration]
 
-Đối với các triển khai Redis Cluster, LibreChat tự động sử dụng các khóa có gắn thẻ băm (hash-tagged keys) để đảm bảo các thao tác luồng (stream operations) luôn nằm trong cùng một slot của cluster:
+Đối với các triển khai Redis Cluster, LibreChat sử dụng các khóa có hash-tag để các khóa của một stream luôn nằm trong cùng một slot của cluster:
 
 ```bash
 USE_REDIS=true
@@ -454,10 +444,12 @@ USE_REDIS_CLUSTER=true
 REDIS_URI=redis://node1:7001,redis://node2:7002,redis://node3:7003
 ```
 
-Xem [Resumable Streams](/docs/features/resumable_streams) để biết thêm chi tiết về tính năng này.
+### Khắc phục sự cố [#troubleshooting]
+
+Nếu phản hồi không tiếp tục sau khi kết nối lại trong môi trường triển khai nhiều instance, hãy kiểm tra xem mọi instance có cùng giá trị `USE_REDIS` và `USE_REDIS_STREAMS` hay không, và có thể kết nối tới Redis hay không, ví dụ bằng `redis-cli ping` từ máy chủ LibreChat.
 
 ## Điều phối MCP Catalog [#mcp-catalog-coordination]
 
 Khi Redis được bật, LibreChat điều phối các danh mục công cụ MCP ở cấp ứng dụng trên các bản sao (replicas). Việc công bố khi khởi động, đồng bộ hóa khi kết nối lại và các bản cập nhật `notifications/tools/list_changed` sử dụng các đánh dấu thế hệ và phiên bản để đảm bảo một bản sao cũ không thể ghi đè lên một danh mục mới hơn.
 
-Triển khai Redis Cluster sử dụng các khóa catalog an toàn theo slot và các thao tác cập nhật; không cần thiết lập Redis riêng cho MCP. Xem [MCP Server Management](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information) để biết hành vi catalog động và trạng thái sẵn sàng OAuth.
+Các triển khai Redis Cluster sử dụng khóa catalog an toàn theo slot và các thao tác cập nhật; không cần thiết lập Redis riêng cho MCP. Xem [Cấu hình máy chủ MCP](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information) để biết hành vi catalog động và trạng thái sẵn sàng OAuth.

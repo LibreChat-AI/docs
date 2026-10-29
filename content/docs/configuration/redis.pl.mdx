@@ -6,7 +6,7 @@ description: >-
   w LibreChat
 ---
 
-Ten przewodnik opisuje, jak skonfigurować Redis do buforowania i przechowywania sesji w LibreChat. Redis zapewnia znaczną poprawę wydajności i jest **wymagany do skalowania poziomego**. Jeśli uruchamiasz wiele instancji LibreChat za load balancerem, Redis zapewnia spójny stan we wszystkich instancjach.
+Ten przewodnik opisuje, jak skonfigurować Redis do buforowania i przechowywania sesji w LibreChat. Redis zapewnia znaczną poprawę wydajności i jest **wymagany do skalowania poziomego**: jeśli uruchamiasz wiele instancji LibreChat za load balancerem, Redis gwarantuje spójny stan we wszystkich instancjach.
 
 ## Spis treści [#table-of-contents]
 
@@ -392,22 +392,21 @@ REDIS_KEY_PREFIX=librechat-cluster
 
 ## Wznawialne strumienie [#resumable-streams]
 
-Redis umożliwia [Resumable Streams](/docs/features/resumable_streams) w przypadku wdrożeń skalowanych horyzontalnie. Po włączeniu tej funkcji odpowiedzi AI mogą płynnie wznawiać działanie i łączyć się ponownie pomiędzy instancjami serwera.
+[Strumienie wznawialne](/docs/features/resumable_streams) przechowują każdą trwającą odpowiedź w magazynie zadań, dzięki czemu klient może się ponownie połączyć i nadrobić zaległości. Pojedyncza instancja LibreChat przechowuje ten magazyn w pamięci i nie wymaga żadnej konfiguracji. Przy kilku instancjach za load balancerem ponowne połączenie może trafić do innej instancji niż ta, która generuje odpowiedź, dlatego magazyn musi być udostępniany przez Redis.
 
-**Ważne:** Gdy `USE_REDIS=true`, wznawialne strumienie automatycznie używają Redis do koordynacji między instancjami. Jest to zalecana konfiguracja dla wdrożeń skalowanych horyzontalnie, w których użytkownicy mogą łączyć się z różnymi instancjami serwera.
+Strumienie automatycznie korzystają z Redis, gdy `USE_REDIS=true`. Zmienna `USE_REDIS_STREAMS` nadpisuje to zachowanie: ustaw ją na `false`, aby strumienie były przechowywane w pamięci, podczas gdy Redis obsługuje pamięci podręczne, lub na `true`, aby jawnie to określić.
 
-**Uwaga:** Jeśli uruchamiasz pojedynczą instancję LibreChat, Redis do wznawialnych strumieni zazwyczaj jest zbędny; wbudowany tryb w pamięci działa poprawnie. Redis staje się niezbędny, gdy masz wiele instancji LibreChat za modułem równoważenia obciążenia, ponieważ ponowne połączenie użytkownika może trafić na inny serwer niż ten, na którym rozpoczął się strumień.
-
-### Konfiguracja [#configuration]
-
-```bash
-# Redis enabled = resumable streams automatically use Redis
+```bash filename=".env"
 USE_REDIS=true
 REDIS_URI=redis://127.0.0.1:6379
 
-# Optional: explicitly control resumable streams behavior
-# USE_REDIS_STREAMS=true  # Enabled by default when USE_REDIS=true
+# Optional: defaults to the value of USE_REDIS
+# USE_REDIS_STREAMS=true
 ```
+
+Dzięki Redis fragmenty strumienia są zapisywane w Redis Streams, metadane zadań w hashach, a zdarzenia na żywo przechodzą przez Pub/Sub, dzięki czemu dowolna instancja może obsłużyć ponowne połączenie.
+
+Zaplanowane uruchomienia agentów, które mogą zostać wstrzymane w oczekiwaniu na zatwierdzenie narzędzia lub pytanie do użytkownika, wymagają strumieni Redis; bez nich uruchomienia te kończą się błędem z prośbą o ustawienie `USE_REDIS_STREAMS=true`.
 
 ### Zgodność z protokołem generowania [#generation-protocol-compatibility]
 
@@ -428,24 +427,15 @@ Strumienie generowania w pamięci (in-memory) również automatycznie negocjują
 
 ### Łączenie delt strumienia (Stream Delta Coalescing) [#stream-delta-coalescing]
 
-Strumienie oparte na Redis mogą grupować publikacje delta, aby ograniczyć liczbę skryptów Redis, komunikację sieciową (round trips) oraz zużycie procesora przy wysokich częstotliwościach generowania tokenów:
+`STREAM_DELTA_COALESCE_MS` grupuje strumieniowane delty w okienkowe zapisy do Redis, aby ograniczyć liczbę round trip przy wysokich szybkościach generowania tokenów. Domyślnie wynosi `25` (milisekundy), wartość `0` publikuje każdą deltę osobno, a wartości są ograniczone do `1000`. Większe okno zwiększa opóźnienie dostarczania o maksymalnie jedno okno, a delty nadal buforowane w momencie awarii instancji zostaną utracone. Utrzymuj tę wartość na poziomie lub poniżej częstotliwości wygładzania strumienia (`streamRate`, domyślnie 25 ms). Pojedyncze ramki fragmentów są nadal publikowane razem z paczkami, dzięki czemu subskrybenci, którzy nie obsługują paczek, nadal działają. Strumienie w pamięci nie są w ogóle dotknięte tym ustawieniem.
 
 ```bash filename=".env"
 STREAM_DELTA_COALESCE_MS=25
 ```
 
-Ustawienie domyślnie wynosi `25` milisekund, jeśli nie zostanie określone. Ustaw wartość `0`, aby wyłączyć łączenie (coalescing); wartości powyżej `1000` są ograniczane. Przetwarzanie wsadowe może dodać do jednego skonfigurowanego okna opóźnienia dostarczania i może spowodować utratę buforowanej końcówki, jeśli proces publikowania zakończy się przed jej opróżnieniem. Poszczególne ramki fragmentów są zachowywane ze względu na kompatybilność protokołu, więc to ustawienie zmniejsza obciążenie skryptów Redis i liczbę operacji typu round-trip bez zmiany formatu ramki subskrybenta. Strumienie generowania w pamięci pozostają bez zmian.
-
-### Kluczowe korzyści (dla skalowania poziomego) [#key-benefits-for-horizontal-scaling]
-
-- **Ciągłość między instancjami**: Użytkownicy mogą rozpocząć generowanie na jednym serwerze i wznowić je na innym
-- **Wdrażanie kroczące (Rolling deployments)**: Aktywne strumienie przetrwają restarty serwera
-- **Synchronizacja wielu kart**: Ta sama konwersja synchronizuje się między wieloma kartami przeglądarki w środowisku z równoważeniem obciążenia
-- **Odporność połączenia**: Automatyczne ponowne łączenie niezależnie od tego, który serwer obsługuje żądanie
-
 ### Konfiguracja klastra [#cluster-configuration]
 
-W przypadku wdrożeń Redis Cluster, LibreChat automatycznie używa kluczy z hasztagami, aby zapewnić, że operacje na strumieniach pozostają w tym samym slocie klastra:
+W przypadku wdrożeń Redis Cluster LibreChat używa kluczy z hash tagami, dzięki czemu klucze strumienia pozostają w tym samym slocie klastra:
 
 ```bash
 USE_REDIS=true
@@ -454,10 +444,12 @@ USE_REDIS_CLUSTER=true
 REDIS_URI=redis://node1:7001,redis://node2:7002,redis://node3:7003
 ```
 
-Zobacz [Resumable Streams](/docs/features/resumable_streams), aby uzyskać więcej szczegółów na temat tej funkcji.
+### Rozwiązywanie problemów [#troubleshooting]
+
+Jeśli odpowiedzi nie wznawiają się po ponownym połączeniu we wdrożeniu z wieloma instancjami, sprawdź, czy każda instancja ma takie same wartości `USE_REDIS` i `USE_REDIS_STREAMS` oraz czy może połączyć się z Redis, na przykład za pomocą `redis-cli ping` uruchomionego z hosta LibreChat.
 
 ## Koordynacja katalogu MCP [#mcp-catalog-coordination]
 
 Gdy Redis jest włączony, LibreChat koordynuje katalogi narzędzi MCP na poziomie aplikacji pomiędzy replikami. Publikacja przy starcie, synchronizacja po ponownym połączeniu oraz aktualizacje `notifications/tools/list_changed` wykorzystują znaczniki generacji i wersji, dzięki czemu nieaktualna replika nie może nadpisać nowszego katalogu.
 
-Wdrożenia Redis Cluster używają kluczy katalogu bezpiecznych dla slotów oraz operacji aktualizacji; osobne ustawienie Redis dla MCP nie jest wymagane. Zachowanie dynamicznego katalogu i gotowości OAuth opisano w sekcji [Zarządzanie serwerami MCP](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information).
+Wdrożenia Redis Cluster wykorzystują klucze katalogu zgodne z slotami oraz operacje aktualizacji; osobne ustawienie MCP Redis nie jest wymagane. Zobacz [konfiguracja serwerów MCP](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information), aby poznać zachowanie dynamicznego katalogu i gotowości OAuth.

@@ -1,297 +1,66 @@
 ---
 title: ウェブ検索
 icon: Search
+description: モデルにウェブを検索させ、見つかったページを読み込ませ、その回答内で引用させます。
 ---
 
-LibreChatのウェブ検索機能を使用すると、インターネットを検索して関連情報を取得し、会話を充実させることができます。この機能は、包括的な検索結果を提供するために連携する3つの主要なコンポーネントで構成されています。
+Web検索は、モデルに`web_search`ツールを提供します。現在の情報が必要な質問の場合、モデルが検索クエリを作成し、LibreChatが結果を取得して上位のページを読み込み、使用した情報源とともに回答を返します。
 
-## クイックスタート [#quick-start]
+## チャットで有効にする [#turn-it-on-in-a-chat]
 
-Web検索を開始するには、検索プロバイダーとスクレイパーを設定します。ほとんどのプロバイダーはAPIキーを必要としますが、Keenableは検索とページ取得の両方でキーなしで動作し、オプションでキーを指定することで公開レート制限を引き上げることができます。リランキングにはJinaまたはCohereを使用するか、`rerankerType: "none"`を指定して無効にすることができます。スタックの設定方法は以下の2通りです。
+[message composer](/docs/features/composer) の **+** をクリックしてパレットを開き、**Tools** セクションの **Web Search** を選択してください。オンになっている間、コンポーザーにチップとして表示されます。チップを削除するか、パレットで再度選択するとオフになります。オフの状態でもチップがコンポーザーに残るように固定することもできます。
 
-<Callout type="warning" title="プライベートなセルフホスト型endpoint">
-  Web search、scrape、およびrerankの接続は、デフォルトでプライベート、ループバック、リンクローカル、およびクラウドメタデータの宛先をブロックします。SearXNG、Firecrawl、Jina、またはその他の設定済みプロバイダーのendpointがプライベートな場合は、その正確なホストとポートを [`webSearch.allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/web_search#ssrf-protection-and-private-providers) に追加してください。
-</Callout>
+Web検索を有効にしていても、メッセージに検索が必要かどうかはモデルが自ら判断します。「最新の Node.js リリースで何が変わりましたか?」と尋ねると通常は検索が実行されますが、段落の書き直しを依頼した場合は実行されないことが一般的です。
 
-1. **環境変数** (管理者向け推奨):
-   ```bash
-   # Search Provider (choose one)
-   SERPER_API_KEY=your_serper_api_key
-   # or
-   SEARXNG_INSTANCE_URL=your_searxng_instance_url
-   SEARXNG_API_KEY=your_searxng_api_key  # Optional
-   # or
-   TAVILY_API_KEY=your_tavily_api_key
-   # or use Keenable keyless; this optional key raises public rate limits
-   KEENABLE_API_KEY=your_keenable_api_key
+エージェントの場合、ウェブ検索はエージェントビルダーで有効にできる機能です。そのエージェントとチャットする人は、何も切り替えることなくこのツールを利用できます。
 
-   # Scraper (choose one)
-   FIRECRAWL_API_KEY=your_firecrawl_api_key
-   # Optional: Custom Firecrawl API URL
-   FIRECRAWL_API_URL=your_firecrawl_api_url
-   # Optional: Firecrawl API version (v0 or v1)
-   # FIRECRAWL_VERSION=v1
-   # or
-   TAVILY_API_KEY=your_tavily_api_key
-   # or use Keenable keyless with the same optional key
+## 回答に表示される内容 [#what-you-see-in-the-answer]
 
-   # Reranker (Optional - choose one, or set rerankerType: "none")
-   JINA_API_KEY=your_jina_api_key
-   # Optional: Custom Jina API URL
-   JINA_API_URL=your_jina_api_url
-   # or
-   COHERE_API_KEY=your_cohere_api_key
-   ```
+ツールの実行中、メッセージには進行状況が表示されます(「Searching the web」、続いて「Reading results」)。完了すると **Searched the web** に折りたたまれます。展開すると見つかったページを確認でき、その横にある **Search details** ボタンを使うと、モデルが送信したクエリを確認できます。
 
-   環境キーなしでKeenableを使用する場合でも、`librechat.yaml`でのプロバイダー選択が必要です：
+インライン引用は本文中で該当するページを指しているため、主張を元のページと照らし合わせて確認できます。複数のエージェントが並べて回答する場合、回答の上にある **Sources** の行にも結果がまとめて表示されます。検索結果にニュースや画像が含まれている場合は、**All** に加えて **News** タブと **Images** タブも表示されます。
 
-   ```yaml filename="librechat.yaml"
-   webSearch:
-     searchProvider: keenable
-     scraperProvider: keenable
-     rerankerType: none
-   ```
+<ThemeImage
+  light="/images/features/web_search/answer-with-sources-light.png"
+  dark="/images/features/web_search/answer-with-sources-dark.png"
+  alt="「Searched the web」ステップを展開して結果カードを表示し、回答内にインライン引用マーカーが表示されたアシスタントの回答"
+/>
 
-   オプションの検索、フェッチ、およびレート制限設定については、[完全なKeenable設定](/docs/configuration/librechat_yaml/object_structure/web_search#keenablescraperoptions)を参照してください。
+## 検索の実行方法 [#how-a-search-runs]
 
-2. **ユーザーインターフェース** (環境変数が設定されていない場合):
-   - ユーザーが初めてウェブ検索機能を使用する際、必要なAPIキーの入力を求められます。
-   - ユーザーは、使用する検索プロバイダー（Serper、SearXNG、Tavily、または Keenable）、スクレイパー、およびリランカーサービス（Jina、Cohere、またはなし）を選択できます。
+各検索は最大3つのサービスを経由します:
 
-ユーザーが提供するFirecrawlおよびSearXNGのURLは、デプロイメントのAPIキーと組み合わせることはできません。独自のURL/キーのペアを提供するか、管理者に両方を設定してもらう必要があります。Firecrawlは、それ以外の場合、ユーザー指定のオプションURLを無視してデフォルトのendpointを使用します。SearXNGはURLが必須であるため、そのような所有権が混在する構成を初期化できません。キーなしのSearXNGは引き続きサポートされます。[Credential Ownership](/docs/configuration/librechat_yaml/object_structure/web_search#credential-ownership)を参照してください。
+- 検索プロバイダーは、結果のリストを返します。対象は Serper、SearXNG、Tavily、または Keenable です。
+- スクレイパーは、それらの検索結果の背後にあるページを取得し、そのテキストを抽出します。対象となるのは Firecrawl、Serper Scrape、Tavily Extract、Keenable Fetch のいずれかです。
+- リランカー(Jina または Cohere)は、クエリに最も関連性の高いパッセージを選び出します。リランキングは **None** に設定すると、この工程をスキップできます。
 
-## APIキーの取得 [#obtaining-api-keys]
+モデルに渡されるのは、抽出された本文の一部だけであり、ページ全体が渡されるわけではありません。タイムアウトしたり、スクレイピングをブロックしたりするページはスキップされるため、回答が引用する情報源は、検索で返された件数よりも少なくなる場合があります。
 
-有効化された各外部サービスには、それぞれ独自のAPIキーが必要です。取得方法は以下の通りです：
+セーフサーチは、デフォルトで「moderate」に設定されています。管理者はすべてのユーザーに対してこのレベルを引き上げたり引き下げたりできます。ただし Tavily は例外で、管理者が Tavily 独自のセーフサーチオプションを有効にした場合にのみフィルタリングが行われます。
 
-### 検索プロバイダー [#search-providers]
+## 独自のAPIキーの追加 [#adding-your-own-api-keys]
 
-#### Serper [#serper]
-1. [Serper.dev](https://serper.dev) にアクセスしてください
-2. アカウントを作成する
-3. API Keyセクションに移動します
-4. APIキーをコピー
-5. 環境変数に設定するか、UIを通じて提供してください。
+管理者がすべてのサービスのキーを用意していない場合、**Web Search** をオンにすると、キーの入力を求めるダイアログが開きます。このダイアログには、管理者がユーザーに任せたサービスごとのセクションがあり、対象は **Search Provider**、**Scraper**、**Reranker** のうち該当するものです。各セクションでサービスを選択し、キーを入力して (各入力欄には、キーを取得できる場所へのリンクがあります)、**Save** をクリックしてください。SearXNG の場合はインスタンスの URL の入力が求められ、キーは任意です。Keenable はキーなしでも動作し、キーを追加するとレート制限が引き上げられるだけです。
 
-#### SearXNG [#searxng]
-1. [Web Search Configuration](/docs/configuration/librechat_yaml/object_structure/web_search#setting-up-searxng) ドキュメントのセットアップ手順に従ってください。
-2. `SEARXNG_INSTANCE_URL` を自身のインスタンスURLに設定してください。
-3. インスタンスで認証が必要な場合は、オプションで `SEARXNG_API_KEY` を設定してください。
-4. プライベートアドレスまたはループバックアドレス上にある場合は、インスタンスの正確な `host:port` を [`allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/web_search#ssrf-protection-and-private-providers) に追加してください。そうしないと、LibreChatによって接続がブロックされます。
-5. [`searxngSearchOptions`](/docs/configuration/librechat_yaml/object_structure/web_search#searxngsearchoptions) を使用して、インスタンスがクエリを実行するエンジンを任意で調整できます。デフォルトのセットは3つのエンジンのみで、その中にはほとんどのセルフホストインスタンスに対してCAPTCHAを要求するDuckDuckGoが含まれています。そのため、検索結果が空で返ってくる場合は、エンジンを増やすことで改善する可能性があります。
+<ThemeImage
+  light="/images/features/web_search/api-key-dialog-light.png"
+  dark="/images/features/web_search/api-key-dialog-dark.png"
+  alt="Web Search APIキーダイアログ（検索プロバイダーおよびスクレイパーのセクションと、それぞれのキー入力欄）"
+/>
 
-#### Tavily [#tavily]
-1. [Tavily](https://app.tavily.com/home) にアクセスしてください
-2. アカウントを作成する
-3. APIキーをコピー
-4. 環境変数に `TAVILY_API_KEY` を設定するか、UIを通じて提供してください。
-5. Tavilyは、検索プロバイダーおよびスクレイパープロバイダーの両方として使用できます。
+キーはお客様のアカウントに保存され、お客様の検索にのみ使用されます。後でプロバイダーを変更したりキーを置き換えたりする場合は、パレットを開き、**Web Search** の行にある **Configure**(歯車アイコン)をクリックしてください。保存済みのキーは、同じダイアログの **Revoke** で削除できます。管理者がサーバー上のすべてのキーを設定している場合、ダイアログも歯車アイコンも表示されません。
 
-#### Keenable [#keenable]
+管理者がサーバーに設定したキーが、入力したURLと組み合わされることはありません。管理者がFirecrawlまたはSearXNGのキーを設定している場合にこれらのサービス用に独自のURLを入力したときは、独自のキーも入力してください。そうしないと、Firecrawlは入力したURLを無視してデフォルトのエンドポイントを使用し、SearXNGは動作しません。キーを使用しないSearXNGインスタンスでも動作します。キーが関係しない場合は、URLだけで十分です。
 
-1. Keenableを検索プロバイダー、スクレイパー、またはその両方として選択します。
-2. パブリック検索およびフェッチのendpointには、APIキーは不要です。
-3. 必要に応じて `KEENABLE_API_KEY` を設定し、パブリックレート制限を引き上げます。
-4. `KEENABLE_API_URL` は検索エンドポイントを上書きする場合にのみ、`KEENABLE_FETCH_URL` はページ取得エンドポイントを上書きする場合にのみ使用してください。
+## Web Search オプションが表示されない [#web-search-option-is-not-visible]
 
-### スクレイパー: Firecrawl [#scraper-firecrawl]
+ウェブ検索の専用ボタンはありません。このオプションは、パレットの **Tools** セクションにのみ表示されます。次の場合には表示されません：
 
-1. [Firecrawl.dev](https://docs.firecrawl.dev/introduction#api-key) にアクセスしてください
-2. アカウントを作成する
-3. API Keyセクションに移動します
-4. APIキーをコピー
-5. 環境変数に設定するか、UIを通じて提供してください。
-6. （オプション）カスタムのFirecrawlインスタンスを使用している場合は、API URLも設定する必要があります。
+- エージェントとチャットしているか、Assistants エンドポイントを利用しています。エージェントは独自のツールを持つため、Web 検索はエージェントビルダーで有効にします。
+- 選択されたモデルスペックは、ツール行を非表示にします。
+- お使いのロールには Web Search の権限がありません。そのため、一部のプロバイダーが提供する組み込み検索も利用できなくなります。
+- 管理者がエージェントの機能から`web_search`を削除しました。
 
-### Rerankers [#rerankers]
+## セットアップ [#setup]
 
-#### Jina [#jina]
-1. [Jina.ai](https://jina.ai/api-dashboard/) にアクセスしてください
-2. アカウントを作成する
-3. APIダッシュボードに移動します
-4. APIキーをコピー
-5. 環境変数に設定するか、UIを通じて提供してください。
-
-#### Cohere [#cohere]
-1. [Cohere Dashboard](https://dashboard.cohere.com/welcome/login) にアクセスしてください。
-2. アカウントを作成する
-3. API Keys セクションに移動します
-4. APIキーをコピー
-5. 環境変数に設定するか、UIを通じて提供してください。
-
-## コンポーネント [#components]
-
-### 1. Search Providers [#1-search-providers]
-
-検索プロバイダーは、初期のウェブ検索を実行し、関連する結果を返す役割を担います。
-
-**利用可能なプロバイダー:**
-- **Serper**: 高品質な検索結果を提供するGoogle検索API
-  - [Serper.dev](https://serper.dev/api-keys) からAPIキーを取得してください。
-- **SearXNG**: オープンソースのセルフホスト型メタ検索エンジン
-  - 独自のLibreChatインスタンスをセルフホストする
-  - プライバシーを重視した検索結果
-  - 設定可能なエンジン、結果の言語、期間、およびリクエストのタイムアウト
-- **Tavily**: AI最適化検索API
-  - [Tavily](https://app.tavily.com/home) から API キーを取得してください。
-  - 設定可能な検索深度、トピックフィルタリング、ドメインフィルタリングなどをサポートしています。
-  - スクレイパープロバイダーとしても機能します
-- **Keenable**: キーレスのウェブ検索（オプションで高レート認証が可能）
-  - ドメイン制限付き検索、結果の制限、帰属タイトル、およびリクエストタイムアウトをサポートしています。
-  - スクレイパープロバイダーとしても機能します
-
-### 2. Scrapers [#2-scrapers]
-
-Scraperは、検索プロバイダーから返されたWebページから実際のコンテンツを抽出します。
-
-**利用可能なスクレイパー:**
-- **Firecrawl**: Webページからコンテンツを抽出する強力なWebスクレイピングサービス
-  - [Firecrawl.dev](https://docs.firecrawl.dev/introduction#api-key) からAPIキーを取得してください。
-  - API URLはオプションです（デフォルトではFirecrawlのホスト型サービスが使用されます）
-
-- **Tavily**: Tavily Extract API を介したバッチ URL 抽出
-  - 検索プロバイダーと同じ `TAVILY_API_KEY` を使用します
-  - 設定可能な抽出深度、画像抽出、およびファビコン抽出をサポートしています
-
-- **Keenable**: キーレスページフェッチ
-  - Keenable検索と同じオプションのAPIキーを使用します
-  - 属性タイトルとリクエストタイムアウトをサポート
-
-**計画中のスクレイパー:**
-- **Local Firecrawl**: Firecrawlのセルフホスト版
-- その他のサードパーティ製スクレイピングサービス
-
-### 3. Rerankers [#3-rerankers]
-
-Rerankersは、スクレイピングされたコンテンツを分析して最も関連性の高い部分を特定し、より良い結果を得るためにそれらを並べ替えます。
-
-**利用可能なReranker:**
-- **Jina**: AIを活用したリランキングサービス
-  - [Jina.ai](https://jina.ai/api-dashboard/) からAPIキーを取得してください。
-  - API URLはオプションです（デフォルトではJinaのホストサービスが使用されます）
-- **Cohere**: 高度なリランキングサービス
-  - [Cohere Dashboard](https://dashboard.cohere.com/welcome/login) から API キーを取得してください。
-- **None**: `rerankerType` が `"none"` に設定されている場合、リランキングをスキップします。
-
-**計画中のReranker:**
-- **RAG API**: RAG (Retrieval-Augmented Generation) を使用したオープンソースの再ランキング (reranking)
-- その他のサードパーティ製リランキングサービス
-
-## 設定 [#configuration]
-
-### 管理者設定 [#admin-configuration]
-
-管理者は環境変数を使用してウェブ検索機能を設定できます。YAML設定では、各コンポーネントに対してカスタム環境変数名を指定することが可能です。
-
-**推奨:環境変数を `${ENV_VAR}` で参照してください。** `librechat.yaml` にキーや URL を直接記述することも可能ですが、それらはファイルに保存されてしまうため、環境変数による参照のほうが安全です。
-
-キーは、同じ設定内で一緒に指定された URL にのみ送信されます。環境変数のキーやユーザー自身のキーが、設定ファイルに記述された URL に送信されることはありません。両方を環境変数から参照するか、両方を一緒に設定してください。
-
-```yaml
-webSearch:
-  # Search Provider Configuration
-  serperApiKey: "${CUSTOM_SERPER_API_KEY}"
-  # or
-  searxngInstanceUrl: "${CUSTOM_SEARXNG_INSTANCE_URL}"
-  searxngApiKey: "${CUSTOM_SEARXNG_API_KEY}"
-  searxngSearchOptions:                     # Query options, not secrets, so real values belong here
-    engines: "google,bing,startpage"
-    language: "en"
-
-  # Tavily Configuration (search and/or scraper)
-  tavilyApiKey: "${CUSTOM_TAVILY_API_KEY}"
-  tavilySearchUrl: "${CUSTOM_TAVILY_SEARCH_URL}"
-  tavilyExtractUrl: "${CUSTOM_TAVILY_EXTRACT_URL}"
-
-  # Keenable Configuration (search and/or scraper; keyless by default)
-  keenableApiKey: "${CUSTOM_KEENABLE_API_KEY}" # Optional; raises rate limits
-  keenableApiUrl: "${CUSTOM_KEENABLE_API_URL}" # Optional search URL override
-  keenableSearchOptions:
-    maxResults: 8
-    site: "example.com"
-    attributionTitle: "LibreChat"
-    timeout: 15000
-  keenableScraperOptions:
-    attributionTitle: "LibreChat"
-    timeout: 15000
-
-  # Scraper Configuration
-  firecrawlApiKey: "${CUSTOM_FIRECRAWL_API_KEY}"
-  firecrawlApiUrl: "${CUSTOM_FIRECRAWL_API_URL}"
-
-  # Reranker Configuration
-  jinaApiKey: "${CUSTOM_JINA_API_KEY}"
-  jinaApiUrl: "${CUSTOM_JINA_API_URL}"
-  cohereApiKey: "${CUSTOM_COHERE_API_KEY}"
-
-  # General Settings
-  safeSearch: 1 # Options: 0 (OFF), 1 (MODERATE - default), 2 (STRICT)
-```
-
-**注:** YAML設定では、環境変数名(`${VARIABLE_NAME}`の形式)を使用することを推奨します。これにより、次のような柔軟性が得られます。
-- 異なる環境で異なる変数名を使用する
-- 異なるユーザーグループ向けに複数の設定をサポートする
-- ロールベース設定との将来的な統合
-
-システムが特定のサービスのみを使用するように制限したい場合は、サービスタイプを指定できます：
-
-```yaml
-webSearch:
-  # ... variable configurations ...
-  searchProvider: "serper"    # Only use Serper for search
-  # searchProvider: "searxng" # Only use SearXNG for search
-  # searchProvider: "tavily"  # Only use Tavily for search
-  # searchProvider: "keenable" # Use keyless Keenable search
-  scraperProvider: "firecrawl"    # Only use Firecrawl for scraping
-  # scraperProvider: "serper" # Only use Serper for scraping
-  # scraperProvider: "tavily" # Only use Tavily for scraping
-  # scraperProvider: "keenable" # Use keyless Keenable page fetch
-  rerankerType: "jina"        # Options: "jina", "cohere", "none"
-```
-
-### ユーザー設定 [#user-configuration]
-
-管理者が必要なすべてのAPIキーを設定していない場合、ユーザーはUIを通じてそれらを入力するよう求められます。インターフェースでは、ユーザーは以下のことが可能です：
-
-1. 好みのリランカー（Jina、Cohere、またはなし）を選択します
-2. 必要なサービス用のAPIキーを入力してください
-3. 必要に応じて Firecrawl API URL を設定します（オプション）
-4. 必要に応じて Jina API URL を設定します（オプション）
-5. 必要に応じて Tavily または Keenable エンドポイントのオーバーライドを設定します（オプション）
-
-## 使用方法 [#usage]
-
-設定が完了すると、2つの方法でウェブ検索を使用できます。
-
-1. **チャットインターフェース**: [メッセージコンポーザー](/docs/features/composer)の **+** パレットを開き、**Web Search** を選択して会話で有効にします。有効にするとコンポーザー上にチップとして表示されます。チップを削除するとオフになります。必要なAPIキーが不足している場合は、入力するように求められます。
-2. **Agents**: エージェントビルダーでエージェントの **Web Search** [機能](/docs/features/agents#web-search)を有効にすると、そのエージェントがウェブを検索できるようになります。
-
-### Web Search オプションが表示されない [#web-search-option-is-not-visible]
-
-個別のウェブ検索ボタンはありません。このオプションは **+** パレットの **Tools** セクションにあり、以下のすべての条件が満たされている場合にのみ表示されます。
-
-- 選択されたendpointはAgentsまたはAssistantsではありません。Agentは独自のツール設定を持つため、Agentの場合は代わりにAgent BuilderでWeb Searchを有効にしてください。
-- `web_search` は [`endpoints.agents.capabilities`](/docs/configuration/librechat_yaml/object_structure/agents#capabilities) に含まれています。デフォルトで含まれているため、カスタムリストを設定する場合にのみこの設定が関係します。
-- ユーザーのロールにはウェブ検索の権限があります。[Admin Panel](/docs/features/admin_panel) で管理してください。[`interface.webSearch`](/docs/configuration/librechat_yaml/object_structure/interface#websearch) は、起動時にデフォルトの `USER` ロールに対してその権限を付与するだけです。
-- 選択された Model Specs は、**Tools** セクションを非表示にする [`hideBadgeRow: true`](/docs/configuration/librechat_yaml/object_structure/model_specs#hidebadgerow) を設定していません。
-
-## 注記 [#notes]
-
-- 検索プロバイダーとスクレイパーの設定が必須です。リランキングは `rerankerType: "none"` で無効化できます。
-- Firecrawl API URLはオプションであり、デフォルトではホストされているサービスが使用されます。
-- Jina API URLはオプションであり、デフォルトでは彼らのホスト型サービスが使用されます。
-- Tavily SearchおよびExtract APIのURLはオプションであり、デフォルトではTavilyのホスト型サービスが使用されます。
-- 検索およびページ取得機能はデフォルトでキーレスですが、オプションでキーを設定することでパブリックなレート制限を引き上げることができます。
-- `KEENABLE_API_URL` は検索のみを上書きし、`KEENABLE_FETCH_URL` はページ取得のみを上書きします。
-- `searchProvider: "keenable"`, `scraperProvider: "keenable"`, `rerankerType: "none"` を組み合わせることで、完全にキーレスなスタックを実現できます。
-- Safe searchは、OFF (0)、MODERATE (1 - デフォルト)、STRICT (2) という3段階のコンテンツフィルタリングを提供します。
-- Tavilyはデフォルトではグローバルな `safeSearch` 設定を継承しません。Tavilyアカウントが `safe_search` をサポートしている場合にのみ `tavilySearchOptions.safeSearch` を使用してください。
-- スクレイパーのタイムアウトはデフォルトで7.5秒（7500ms）に設定されています。
-- APIキーは、UIを通じていつでも取り消すことができます。
-- 今後のアップデートでは、すべてのコンポーネントに対して、より多くのオープンソースかつセルフホスト可能なオプションが含まれる予定です。
-- 追加のカスタマイズオプションが計画されており、以下が含まれます：
-  - スクレイピングするリンク数に対する制御
-  - スクレイピング用のドメイン許可リスト/拒否リスト
-  - カスタムスクレイピングルールとフィルター
-  - 高度な結果フィルタリングおよびランキングオプション
-  - レート制限およびリクエストスロットリングの制御
+Web検索はエージェントとチャットでデフォルトで利用可能ですが、結果を返すには検索プロバイダーとスクレイパーが必要です。管理者はサーバー上でキーを設定するか、ユーザーが入力できるように残しておくことができます。プライベートアドレス上のセルフホスト型プロバイダーは、管理者が[`allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/web_search#ssrf-protection-and-private-providers)に列挙するまでブロックされます。プロバイダー、キー、オプションについては[Web Search configuration](/docs/configuration/librechat_yaml/object_structure/web_search)を参照してください。検索プロバイダーをセルフホストする場合は[Setting up SearXNG](/docs/configuration/librechat_yaml/object_structure/web_search#setting-up-searxng)を参照してください。

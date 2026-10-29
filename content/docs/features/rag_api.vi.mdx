@@ -1,42 +1,49 @@
 ---
 title: API RAG (Trò chuyện với tệp)
 icon: Brain
-description: >-
-  API Retrieval-Augmented Generation (RAG) để lập chỉ mục và truy xuất tài liệu
-  sử dụng Langchain và FastAPI. API này tích hợp với LibreChat để cung cấp các
-  phản hồi có nhận biết ngữ cảnh dựa trên các tệp do người dùng tải lên.
+description: Tải tài liệu lên và để mô hình tìm các đoạn văn trả lời câu hỏi của bạn.
 ---
 
-**RAG (Retrieval-Augmented Generation) API** là một dịch vụ riêng biệt, có chức năng lập chỉ mục các tệp bạn tải lên LibreChat và trả về những đoạn văn bản liên quan nhất đến câu hỏi, nhờ đó mô hình có thể trả lời dựa trên tài liệu của bạn thay vì chỉ dựa vào dữ liệu huấn luyện của nó.
+Tìm kiếm tệp cho phép bạn tải lên tài liệu và đặt câu hỏi về chúng mà không cần dán nội dung của chúng vào cuộc trò chuyện. LibreChat gửi từng tệp đến RAG API, API này chia tệp thành các đoạn nhỏ và lập chỉ mục chúng; khi bạn đặt câu hỏi, mô hình sẽ tìm kiếm trong chỉ mục đó và trả lời dựa trên các đoạn văn bản tìm thấy.
 
-Đây là một ứng dụng Python FastAPI được xây dựng trên LangChain, và lưu trữ các embedding trong PostgreSQL với extension pgvector.
+Hãy sử dụng khi tài liệu quá dài để đọc toàn bộ mỗi lượt, hoặc khi bạn muốn có câu trả lời từ nhiều tệp cùng lúc.
 
-**Để thiết lập, xem [Cấu hình RAG API](/docs/configuration/rag_api).**
+## Tải lên tệp để tìm kiếm [#upload-a-file-for-search]
 
-![image](https://github.com/danny-avila/LibreChat/assets/110412045/f1298f66-bf1d-4499-a582-23430b481f17)
+Nhấn **+** trong [trình soạn tin nhắn](/docs/features/composer) để mở bảng lệnh, mở rộng **More upload options**, sau đó chọn **Upload for File Search** và chọn tệp của bạn. Bạn cũng có thể tìm kiếm mục này trong bảng lệnh. Tải tệp lên theo cách này cũng sẽ bật **File Search** cho cuộc trò chuyện. Các tệp lớn có thể mất một chút thời gian để lập chỉ mục; quá trình tải lên sẽ hoàn tất sau khi lập chỉ mục xong.
 
----
+<ThemeImage
+  light="/images/features/rag_api/upload-for-file-search-light.png"
+  dark="/images/features/rag_api/upload-for-file-search-dark.png"
+  alt="Bảng Attach và tools mở từ hộp tin nhắn, với tùy chọn Upload for File Search được làm nổi bật"
+/>
 
-Trong LibreChat, RAG hỗ trợ khả năng **File Search** của [Agents](/docs/features/agents#file-search) (`file_search`). Các tệp được đính kèm vào File Search của một agent, hoặc vào một lần chạy (run) có chọn File Search, sẽ được RAG API lập chỉ mục và truy xuất khi cần. Các endpoint chat khác không sử dụng lập chỉ mục hay truy xuất RAG, mặc dù chúng vẫn có thể sử dụng RAG API để trích xuất văn bản, như được mô tả bên dưới.
+Sau khi cuộc trò chuyện đã lập chỉ mục các tệp, mô hình sẽ có công cụ `file_search`. Mô hình tự quyết định khi nào gọi công cụ này: một câu hỏi về tài liệu sẽ kích hoạt tìm kiếm, còn trò chuyện thông thường thì không. Trong khi chạy, câu trả lời hiển thị bước "Searching your files" (Đang tìm kiếm trong tệp của bạn). Khi bật trích dẫn, các đoạn văn mà mô hình đã sử dụng sẽ xuất hiện bên dưới **Sources** (Nguồn) kèm theo tên tệp, để bạn có thể mở tài liệu và kiểm tra.
 
-API RAG cũng cung cấp một route `/text` mà LibreChat có thể sử dụng để trích xuất văn bản từ các tệp tải lên; xem [Upload as Text](/docs/features/upload_as_text#what-happens-under-the-hood) để biết khi nào tính năng này được áp dụng.
+## Cách tìm kiếm hoạt động [#how-search-works]
 
-## Cách hoạt động [#how-it-works]
+Khi mô hình gọi `file_search`, nó sẽ viết một truy vấn tìm kiếm. LibreChat yêu cầu RAG API trả về 5 đoạn (chunk) gần nhất trong mỗi tệp đính kèm, rồi giữ lại 10 đoạn gần nhất trong tổng số. Các đoạn này được gửi lại cho mô hình cùng với tên tệp và điểm mức độ liên quan, và mô hình trả lời dựa trên chúng.
 
-1. **Lập chỉ mục.** Khi một tệp cần có thể tìm kiếm (khi tải lên File Search của một agent, hoặc khi một lượt chat lần đầu sử dụng File Search trên một tệp đính kèm), LibreChat gửi tệp đó đến RAG API. API này chia văn bản thành các đoạn (chunk) chồng lấp nhau (`CHUNK_SIZE` và `CHUNK_OVERLAP`), chuyển mỗi đoạn thành một embedding bằng nhà cung cấp đã được cấu hình, và lưu các vector vào pgvector.
-2. **Truy xuất.** Khi mô hình gọi File Search, nó sẽ viết một truy vấn tìm kiếm. LibreChat yêu cầu RAG API lấy 5 đoạn (chunk) gần nhất trong mỗi tệp đính kèm, sau đó giữ lại 10 đoạn gần nhất trên toàn bộ.
-3. **Trả lời.** Các đoạn trích này được trả về cho mô hình cùng với tên tệp và điểm số liên quan, và mô hình sẽ trả lời dựa trên chúng. Khi [trích dẫn tệp](/docs/configuration/librechat_yaml/object_structure/interface#filecitations) được bật, phản hồi có thể trích dẫn các tệp mà nó đã sử dụng.
+Truy xuất (retrieval) tìm các đoạn văn có ý nghĩa gần với truy vấn, vì vậy nó phù hợp để tra cứu các thông tin cụ thể trong những tài liệu lớn. Đối với các câu hỏi cần toàn bộ tài liệu cùng lúc, chẳng hạn như yêu cầu tóm tắt, tùy chọn Upload as Text thường cho kết quả tốt hơn.
 
 Xóa một tệp trong LibreChat cũng sẽ xóa các vector của tệp đó khỏi RAG API.
 
-Truy xuất chỉ tìm được các đoạn văn có ngữ nghĩa gần với truy vấn, nên phương pháp này hoạt động tốt nhất khi tra cứu các thông tin cụ thể trong tài liệu lớn. Đối với những câu hỏi cần xử lý toàn bộ tài liệu cùng lúc, chẳng hạn như tóm tắt, [Tải lên dưới dạng văn bản](/docs/features/upload_as_text) thường cho kết quả tốt hơn.
+## Tái sử dụng các tệp bạn đã tải lên [#reuse-files-you-already-uploaded]
 
-## RAG là gì? [#what-is-rag]
+Các tệp đã được lập chỉ mục vẫn nằm trong tài khoản của bạn. Mở bảng lệnh và tìm trong **Tệp của bạn** để đính kèm một tệp vào tin nhắn hoặc cuộc trò chuyện mới mà không cần tải lên lại.
 
-Retrieval-Augmented Generation (RAG) đặt một mô hình ngôn ngữ dựa trên một nguồn tri thức bên ngoài. Thay vì chỉ dựa vào những gì mô hình đã học trong quá trình huấn luyện, ứng dụng trước tiên truy xuất các đoạn thông tin liên quan từ nguồn đó và thêm chúng vào prompt, sau đó mô hình tạo câu trả lời dựa trên các đoạn thông tin này. Vì tri thức nằm bên ngoài mô hình, bạn có thể thêm hoặc cập nhật tài liệu mà không cần huấn luyện lại bất kỳ thứ gì.
+Các tệp được tải lên khi một endpoint Assistants đang hoạt động sẽ được lưu trữ tại OpenAI, không được lập chỉ mục bởi RAG API và không thể đính kèm vào các endpoint khác.
 
-Để có phần giới thiệu ngắn về khái niệm này, hãy xem video này của IBM:
+## Tìm kiếm tệp trong agent [#file-search-in-agents]
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/T-D1OfcDW1M?si=SDVz1Fxsoi_z4S89" title="Trình phát video YouTube" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen></iframe>
+Đối với một agent, hãy bật [**File Search**](/docs/features/agents#file-search) trong Agent Builder và tải tệp lên tại đó. Các tệp này sẽ trở thành cơ sở tri thức của agent: mọi người trò chuyện với agent đều có thể yêu cầu agent tìm kiếm trong các tệp đó mà không cần tự tải tệp lên. Agent phải được lưu trước khi bạn có thể thêm tệp vào agent.
 
-Để biết các endpoint riêng của RAG API và mọi biến môi trường mà nó chấp nhận, hãy xem [kho lưu trữ RAG API](https://github.com/LibreChat-AI/rag-api).
+## Tìm kiếm tệp hoặc tải lên dưới dạng văn bản [#file-search-or-upload-as-text]
+
+[**Tải lên dưới dạng văn bản**](/docs/features/upload_as_text) nằm trong cùng menu. Tính năng này trích xuất văn bản của tệp và đưa toàn bộ nội dung vào cuộc trò chuyện, phù hợp với các tài liệu ngắn mà mô hình cần đọc toàn bộ từng chữ. Tìm kiếm tệp chỉ gửi các đoạn văn khớp với từng truy vấn, nên phù hợp với tài liệu dài và nhiều tệp, nhưng mô hình sẽ không thấy những phần mà nó không truy xuất được.
+
+RAG API cũng cung cấp tính năng Upload as Text, đóng vai trò là bộ trích xuất văn bản cho các loại tệp mà trình phân tích tích hợp sẵn không thể đọc được. Xem [cách văn bản được trích xuất](/docs/features/upload_as_text#how-the-text-is-extracted).
+
+## Thiết lập [#setup]
+
+Tìm kiếm tệp cần dịch vụ RAG API và cơ sở dữ liệu vector. Thiết lập Docker mặc định bao gồm cả hai. Quản trị viên thiết lập nhà cung cấp embeddings và, đối với các bản cài đặt khác, `RAG_API_URL`. Xem [Cấu hình RAG API](/docs/configuration/rag_api), và [kho mã RAG API](https://github.com/LibreChat-AI/rag-api) để biết các endpoint và biến riêng của dịch vụ.

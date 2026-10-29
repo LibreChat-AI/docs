@@ -2,42 +2,50 @@
 title: API RAG (Chat con i file)
 icon: Brain
 description: >-
-  API di Retrieval-Augmented Generation (RAG) per l'indicizzazione e il recupero
-  di documenti tramite Langchain e FastAPI. Questa API si integra con LibreChat
-  per fornire risposte basate sul contesto utilizzando i file caricati
-  dall'utente.
+  Carica documenti e lascia che il modello cerchi i passaggi che rispondono alla
+  tua domanda.
 ---
 
-L'**API RAG (Retrieval-Augmented Generation)** è un servizio separato che indicizza i file caricati in LibreChat e restituisce i passaggi più pertinenti a una domanda, così che il modello possa rispondere basandosi sui tuoi documenti e non solo sui dati del suo addestramento.
+La ricerca nei file ti permette di caricare documenti e porre domande su di essi senza incollarne il contenuto nella chat. LibreChat invia ogni file alla RAG API, che lo suddivide in blocchi (chunk) e li indicizza; quando fai una domanda, il modello cerca nell'indice e risponde basandosi sui passaggi che trova.
 
-È un'app Python FastAPI basata su LangChain, che memorizza gli embedding in PostgreSQL con l'estensione pgvector.
+Usalo quando un documento è troppo lungo per essere letto per intero a ogni turno, oppure quando vuoi ottenere risposte da più file contemporaneamente.
 
-**Per configurarlo, consulta [Configurazione di RAG API](/docs/configuration/rag_api).**
+## Carica un file per la ricerca [#upload-a-file-for-search]
 
-![image](https://github.com/danny-avila/LibreChat/assets/110412045/f1298f66-bf1d-4499-a582-23430b481f17)
+Clicca su **+** nel [compositore di messaggi](/docs/features/composer) per aprire la tavolozza, espandi **Altre opzioni di caricamento**, quindi scegli **Carica per File Search** e seleziona i tuoi file. Puoi anche cercarla direttamente nella tavolozza. Caricando in questo modo viene attivato anche **File Search** per la chat. I file di grandi dimensioni possono richiedere un po' di tempo per essere indicizzati; il caricamento termina al completamento dell'indicizzazione.
 
----
+<ThemeImage
+  light="/images/features/rag_api/upload-for-file-search-light.png"
+  dark="/images/features/rag_api/upload-for-file-search-dark.png"
+  alt="La palette Allega e strumenti si apre dalla casella dei messaggi, con l'opzione Carica per la Ricerca nei file evidenziata"
+/>
 
-In LibreChat, RAG alimenta la funzionalità **File Search** degli [Agenti](/docs/features/agents#file-search) (`file_search`). I file allegati alla File Search di un agente, oppure a un'esecuzione che seleziona File Search, vengono indicizzati dalla RAG API e recuperati su richiesta. Gli altri endpoint di chat non utilizzano l'indicizzazione né il recupero RAG, anche se possono comunque usare la RAG API per estrarre il testo, come descritto di seguito.
+Una volta che i file della conversazione sono stati indicizzati, il modello riceve uno strumento `file_search`. È il modello a decidere quando richiamarlo: una domanda sul documento attiva una ricerca, mentre le conversazioni di cortesia no. Durante l'esecuzione, la risposta mostra un passaggio "Searching your files"; quando le citazioni sono abilitate, i passaggi utilizzati compaiono sotto **Sources** con il nome del file, così puoi aprire il documento e verificarli.
 
-L'API RAG espone anche una route `/text` che LibreChat può utilizzare per estrarre il testo dai file caricati; vedi [Carica come testo](/docs/features/upload_as_text#what-happens-under-the-hood) per sapere quando si applica.
+## Come funziona la ricerca [#how-search-works]
 
-## Come funziona [#how-it-works]
+Quando il modello chiama `file_search`, scrive una query di ricerca. LibreChat chiede all'API RAG i 5 frammenti più vicini in ciascun file allegato e conserva i 10 più vicini in totale. Questi frammenti vengono restituiti al modello insieme al nome del file e a un punteggio di pertinenza, e il modello risponde basandosi su di essi.
 
-1. **Indicizzazione.** Quando un file deve essere ricercabile (al caricamento nel File Search di un agente, oppure quando un'esecuzione di chat utilizza per la prima volta il File Search su un allegato), LibreChat lo invia alla RAG API, che suddivide il testo in blocchi sovrapposti (`CHUNK_SIZE` e `CHUNK_OVERLAP`), trasforma ciascun blocco in un embedding tramite il provider configurato e archivia i vettori in pgvector.
-2. **Recupero.** Quando il modello invoca File Search, scrive una query di ricerca. LibreChat chiede all'API RAG i 5 frammenti più vicini in ciascun file allegato, quindi mantiene i 10 più vicini nel complesso.
-3. **Rispondere.** Questi frammenti vengono restituiti al modello con il nome del file e un punteggio di pertinenza, e il modello risponde basandosi su di essi. Quando le [citazioni dei file](/docs/configuration/librechat_yaml/object_structure/interface#filecitations) sono abilitate, la risposta può citare i file utilizzati.
+Il recupero individua i passaggi il cui significato è vicino a quello della query, quindi è efficace nel cercare fatti specifici all'interno di documenti di grandi dimensioni. Per le domande che richiedono l'intero documento in una sola volta, come un riassunto, Upload as Text di solito dà risultati migliori.
 
 Eliminare un file in LibreChat rimuove anche i suoi vettori dalla RAG API.
 
-Il recupero individua solo i passaggi semanticamente vicini alla query, quindi funziona al meglio per cercare fatti specifici in documenti di grandi dimensioni. Per le domande che richiedono l'intero documento, come riassumerlo, [Carica come testo](/docs/features/upload_as_text) di solito offre risultati migliori.
+## Riutilizzare i file già caricati [#reuse-files-you-already-uploaded]
 
-## Cos'è la RAG? [#what-is-rag]
+I file indicizzati restano nel tuo account. Apri la palette e cerca in **I tuoi file** per allegarne uno a un nuovo messaggio o a una nuova conversazione senza caricarlo di nuovo.
 
-La Retrieval-Augmented Generation (RAG) ancorano un modello linguistico a una fonte di conoscenza esterna. Invece di affidarsi solo a ciò che il modello ha appreso durante l'addestramento, l'applicazione recupera innanzitutto i frammenti pertinenti da quella fonte e li aggiunge al prompt; il modello genera quindi la risposta a partire da essi. Poiché la conoscenza risiede al di fuori del modello, è possibile aggiungere o aggiornare documenti senza riaddestrare nulla.
+I file caricati mentre un endpoint Assistants era attivo vengono archiviati presso OpenAI, non vengono indicizzati dalla RAG API e non possono essere allegati ad altri endpoint.
 
-Per una breve introduzione al concetto, guarda questo video di IBM:
+## Ricerca di file negli agenti [#file-search-in-agents]
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/T-D1OfcDW1M?si=SDVz1Fxsoi_z4S89" title="Lettore video YouTube" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen></iframe>
+Per un agente, attiva [**File Search**](/docs/features/agents#file-search) nell'Agent Builder e carica lì i file. Diventano la base di conoscenza dell'agente: chiunque chatti con l'agente può fare in modo che cerchi in quei file, senza dover caricare nulla personalmente. L'agente deve essere salvato prima di poter aggiungere file.
 
-Per gli endpoint propri dell'API RAG e tutte le variabili d'ambiente che accetta, consulta il [repository dell'API RAG](https://github.com/LibreChat-AI/rag-api).
+## Ricerca nei file o caricamento come testo [#file-search-or-upload-as-text]
+
+[**Carica come testo**](/docs/features/upload_as_text) si trova nello stesso menu. Estrae il testo del file e lo inserisce interamente nella conversazione, il che funziona per documenti brevi in cui il modello deve leggere ogni parola. La ricerca nei file invia solo i passaggi che corrispondono a ciascuna query, quindi si adatta a documenti lunghi e a molti file, ma il modello non vede mai le parti che non sono state recuperate.
+
+L'API RAG gestisce anche Upload as Text, come estrattore di testo per i tipi di file che il parser integrato non è in grado di leggere. Vedi [come viene estratto il testo](/docs/features/upload_as_text#how-the-text-is-extracted).
+
+## Setup [#setup]
+
+La ricerca nei file richiede il servizio RAG API e un database vettoriale. La configurazione Docker predefinita include entrambi; un amministratore imposta il provider degli embeddings e, per le altre installazioni, `RAG_API_URL`. Vedi [configurazione di RAG API](/docs/configuration/rag_api) e il [repository di RAG API](https://github.com/LibreChat-AI/rag-api) per gli endpoint e le variabili del servizio stesso.

@@ -6,7 +6,7 @@ description: >-
   mise à l'échelle horizontale dans LibreChat
 ---
 
-Ce guide explique comment configurer Redis pour le cache et le stockage des sessions dans LibreChat. Redis apporte des gains de performance significatifs et est **requis pour la mise à l'échelle horizontale**. Si vous exécutez plusieurs instances de LibreChat derrière un répartiteur de charge, Redis garantit un état cohérent entre toutes les instances.
+Ce guide explique comment configurer Redis pour la mise en cache et le stockage des sessions dans LibreChat. Redis apporte des gains de performance significatifs et est **requis pour la mise à l'échelle horizontale** : si vous exécutez plusieurs instances de LibreChat derrière un répartiteur de charge, Redis garantit un état cohérent entre toutes les instances.
 
 ## Table des matières [#table-of-contents]
 
@@ -392,22 +392,21 @@ REDIS_KEY_PREFIX=librechat-cluster
 
 ## Flux reprenables [#resumable-streams]
 
-Redis active les [Resumable Streams](/docs/features/resumable_streams) pour les déploiements mis à l'échelle horizontalement. Lorsqu'ils sont activés, les réponses de l'IA peuvent se reconnecter et reprendre de manière transparente entre les instances de serveur.
+[Flux reprenables](/docs/features/resumable_streams) conservent chaque réponse en cours de génération dans un magasin de tâches afin qu'un client puisse se reconnecter et rattraper le contenu manqué. Une instance unique de LibreChat conserve ce magasin en mémoire et ne nécessite aucune configuration. Avec plusieurs instances derrière un équilibreur de charge, une reconnexion peut atteindre une instance différente de celle qui génère la réponse ; le magasin doit donc être partagé via Redis.
 
-**Important :** Lorsque `USE_REDIS=true`, les flux reprenables utilisent automatiquement Redis pour la coordination entre instances. Il s'agit de la configuration recommandée pour les déploiements mis à l'échelle horizontalement où les utilisateurs peuvent se connecter à différentes instances de serveur.
+Les flux utilisent Redis automatiquement lorsque `USE_REDIS=true`. `USE_REDIS_STREAMS` remplace ce comportement : définissez-la sur `false` pour conserver les flux en mémoire pendant que Redis gère les caches, ou sur `true` pour l'indiquer explicitement.
 
-**Remarque :** Si vous exécutez une seule instance de LibreChat, Redis pour les flux reprenables est généralement superflu ; le mode en mémoire intégré fonctionne parfaitement. Redis devient indispensable lorsque vous avez plusieurs instances de LibreChat derrière un équilibreur de charge, car la reconnexion d'un utilisateur peut atteindre un serveur différent de celui où son flux a démarré.
-
-### Configuration [#configuration]
-
-```bash
-# Redis enabled = resumable streams automatically use Redis
+```bash filename=".env"
 USE_REDIS=true
 REDIS_URI=redis://127.0.0.1:6379
 
-# Optional: explicitly control resumable streams behavior
-# USE_REDIS_STREAMS=true  # Enabled by default when USE_REDIS=true
+# Optional: defaults to the value of USE_REDIS
+# USE_REDIS_STREAMS=true
 ```
+
+Avec Redis, les fragments de flux sont écrits dans Redis Streams, les métadonnées des tâches dans des hachages, et les événements en direct transitent par Pub/Sub, de sorte que n'importe quelle instance peut assurer une reconnexion.
+
+Les exécutions planifiées d'agents qui peuvent se mettre en pause pour une approbation d'outil ou une question adressée à l'utilisateur nécessitent des flux Redis ; sans eux, ces exécutions échouent avec une erreur vous demandant de définir `USE_REDIS_STREAMS=true`.
 
 ### Compatibilité du protocole de génération [#generation-protocol-compatibility]
 
@@ -428,24 +427,15 @@ Les flux de génération en mémoire négocient également automatiquement le pr
 
 ### Fusion des deltas de flux (Stream Delta Coalescing) [#stream-delta-coalescing]
 
-Les flux basés sur Redis peuvent regrouper les publications delta pour réduire les scripts Redis, les allers-retours et l'utilisation du CPU lors de taux de jetons élevés :
+`STREAM_DELTA_COALESCE_MS` regroupe les deltas de flux en écritures Redis par fenêtres temporelles afin de réduire les allers-retours à des débits de tokens élevés. Sa valeur par défaut est `25` (millisecondes), `0` publie chaque delta individuellement, et les valeurs sont plafonnées à `1000`. Une fenêtre plus grande ajoute jusqu'à une fenêtre de latence de livraison, et les deltas encore en mémoire tampon lorsqu'une instance plante sont perdus. Conservez-la à une valeur inférieure ou égale à la cadence de lissage du flux (`streamRate`, 25 ms par défaut). Les trames de chunks individuelles continuent d'être publiées en parallèle des lots, afin que les abonnés qui ne comprennent pas les lots continuent de fonctionner. Les flux en mémoire ne sont pas affectés.
 
 ```bash filename=".env"
 STREAM_DELTA_COALESCE_MS=25
 ```
 
-Le paramètre est défini par défaut sur `25` millisecondes lorsqu'il n'est pas configuré. Définissez-le explicitement sur `0` pour désactiver la coalescence ; les valeurs supérieures à `1000` sont plafonnées. Le traitement par lots peut ajouter jusqu'à une fenêtre configurée de latence de livraison et peut entraîner la perte de la fin de la mémoire tampon si le processus de publication se termine avant son vidage. Les trames de segments individuelles sont conservées pour la compatibilité du protocole, donc ce paramètre réduit le travail lié aux scripts Redis et aux allers-retours sans modifier le format de trame de l'abonné. Les flux de génération en mémoire restent inchangés.
-
-### Avantages clés (pour la mise à l'échelle horizontale) [#key-benefits-for-horizontal-scaling]
-
-- **Continuité inter-instance** : Les utilisateurs peuvent démarrer une génération sur un serveur et la reprendre sur un autre
-- **Déploiements progressifs** : Les flux actifs survivent aux redémarrages du serveur
-- **Synchronisation multi-onglets** : La même conversation est synchronisée sur plusieurs onglets de navigateur dans un environnement à charge équilibrée
-- **Résilience de la connexion** : Reconnexion automatique, quel que soit le serveur qui traite la requête
-
 ### Configuration du cluster [#cluster-configuration]
 
-Pour les déploiements Redis Cluster, LibreChat utilise automatiquement des clés avec hash-tag pour garantir que les opérations de flux restent dans le même slot de cluster :
+Pour les déploiements Redis Cluster, LibreChat utilise des clés à étiquette de hachage afin que les clés d'un flux restent dans le même slot du cluster :
 
 ```bash
 USE_REDIS=true
@@ -454,10 +444,12 @@ USE_REDIS_CLUSTER=true
 REDIS_URI=redis://node1:7001,redis://node2:7002,redis://node3:7003
 ```
 
-Voir [Resumable Streams](/docs/features/resumable_streams) pour plus de détails sur cette fonctionnalité.
+### Dépannage [#troubleshooting]
+
+Si les réponses ne reprennent pas après une reconnexion dans un déploiement multi-instances, vérifiez que chaque instance utilise les mêmes valeurs de `USE_REDIS` et `USE_REDIS_STREAMS` et qu'elle peut joindre Redis, par exemple avec `redis-cli ping` depuis l'hôte LibreChat.
 
 ## Coordination du catalogue MCP [#mcp-catalog-coordination]
 
 Lorsque Redis est activé, LibreChat coordonne les catalogues d'outils MCP au niveau de l'application entre les répliques. La publication au démarrage, la synchronisation lors de la reconnexion et les mises à jour `notifications/tools/list_changed` utilisent des marqueurs de génération et de révision afin qu'une réplique obsolète ne puisse pas écraser un catalogue plus récent.
 
-Les déploiements Redis Cluster utilisent des clés de catalogue compatibles avec les slots et des opérations de mise à jour adaptées ; aucun paramètre Redis MCP distinct n'est requis. Consultez [MCP Server Management](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information) pour le comportement du catalogue dynamique et la préparation OAuth.
+Les déploiements Redis Cluster utilisent des clés de catalogue sécurisées pour les slots et des opérations de mise à jour ; aucun paramètre Redis MCP distinct n'est requis. Consultez la [configuration des serveurs MCP](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information) pour le comportement du catalogue dynamique et la disponibilité de l'OAuth.

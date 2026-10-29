@@ -4,7 +4,7 @@ icon: Redis
 description: 'LibreChat에서 캐싱, 세션 저장소 및 수평적 확장을 위한 Redis 설정하기'
 ---
 
-이 가이드는 LibreChat에서 캐싱 및 세션 저장을 위해 Redis를 구성하는 방법을 다룹니다. Redis는 상당한 성능 향상을 제공하며 **수평 확장(horizontal scaling)에 필수**입니다. 로드 밸런서 뒤에서 여러 LibreChat 인스턴스를 실행하는 경우, Redis는 모든 인스턴스 간에 일관된 상태를 보장합니다.
+이 가이드에서는 LibreChat에서 캐싱과 세션 저장을 위해 Redis를 구성하는 방법을 설명합니다. Redis는 상당한 성능 향상을 제공하며, **수평 확장(horizontal scaling)에 필수**입니다. 로드 밸런서 뒤에서 여러 LibreChat 인스턴스를 실행하는 경우, Redis는 모든 인스턴스에서 일관된 상태를 보장합니다.
 
 ## 목차 [#table-of-contents]
 
@@ -390,22 +390,21 @@ REDIS_KEY_PREFIX=librechat-cluster
 
 ## 재개 가능한 스트림 (Resumable Streams) [#resumable-streams]
 
-Redis는 수평적으로 확장된 배포를 위해 [Resumable Streams](/docs/features/resumable_streams) 기능을 활성화합니다. 이 기능이 활성화되면, AI 응답이 서버 인스턴스 간에 원활하게 재연결되고 재개될 수 있습니다.
+[Resumable Streams](/docs/features/resumable_streams)는 진행 중인 각 응답을 작업 저장소(job store)에 보관하여 클라이언트가 다시 연결하고 놓친 내용을 따라잡을 수 있도록 합니다. 단일 LibreChat 인스턴스는 이 저장소를 메모리에 유지하며 별도의 설정이 필요하지 않습니다. 로드 밸런서 뒤에 여러 인스턴스가 있는 경우, 재연결 요청이 응답을 생성 중인 인스턴스가 아닌 다른 인스턴스로 전달될 수 있으므로, 저장소를 Redis를 통해 공유해야 합니다.
 
-**중요:** `USE_REDIS=true`일 때, 재개 가능한 스트림은 인스턴스 간 조정을 위해 자동으로 Redis를 사용합니다. 이는 사용자가 서로 다른 서버 인스턴스에 연결될 수 있는 수평적 확장 배포 환경에서 권장되는 설정입니다.
+스트림은 `USE_REDIS=true`로 설정하면 자동으로 Redis를 사용합니다. `USE_REDIS_STREAMS`를 사용하면 이 동작을 재정의할 수 있습니다. 캐시는 Redis가 처리하면서 스트림은 메모리에 유지하려면 `false`로 설정하고, 명시적으로 지정하려면 `true`로 설정하십시오.
 
-**참고:** LibreChat 인스턴스를 하나만 실행하는 경우, 재개 가능한 스트림을 위한 Redis는 일반적으로 과도합니다. 내장된 인메모리 모드로도 충분히 잘 작동합니다. Redis는 여러 개의 LibreChat 인스턴스가 로드 밸런서 뒤에서 실행될 때 필수적이 되는데, 이 경우 사용자가 다시 연결할 때 스트림이 시작된 서버가 아닌 다른 서버에 연결될 수 있기 때문입니다.
-
-### 구성 [#configuration]
-
-```bash
-# Redis enabled = resumable streams automatically use Redis
+```bash filename=".env"
 USE_REDIS=true
 REDIS_URI=redis://127.0.0.1:6379
 
-# Optional: explicitly control resumable streams behavior
-# USE_REDIS_STREAMS=true  # Enabled by default when USE_REDIS=true
+# Optional: defaults to the value of USE_REDIS
+# USE_REDIS_STREAMS=true
 ```
+
+Redis를 사용하면 스트림 청크는 Redis Streams에, 작업 메타데이터는 해시에 기록되며, 실시간 이벤트는 Pub/Sub을 통해 전달되므로 어떤 인스턴스든 재연결 요청을 처리할 수 있습니다.
+
+예약된 에이전트 실행 중 도구 승인이나 사용자에게 하는 질문으로 일시 정지가 필요한 실행에는 Redis 스트림이 필요합니다. Redis 스트림이 없으면 해당 실행은 `USE_REDIS_STREAMS=true`를 설정하라는 오류와 함께 실패합니다.
 
 ### Generation Protocol Compatibility [#generation-protocol-compatibility]
 
@@ -426,24 +425,15 @@ In-memory generation streams는 프로토콜 v2를 자동으로 협상하며 프
 
 ### Stream Delta Coalescing [#stream-delta-coalescing]
 
-Redis 기반 스트림은 델타 게시를 일괄 처리하여 높은 토큰 속도에서 Redis 스크립트, 왕복(round trip) 및 CPU 사용량을 줄일 수 있습니다:
+`STREAM_DELTA_COALESCE_MS`는 높은 토큰 전송 속도에서 왕복 횟수를 줄이기 위해 스트리밍된 델타를 시간 창 단위의 Redis 쓰기로 묶습니다. 기본값은 `25`(밀리초)이며, `0`으로 설정하면 모든 델타를 각각 개별적으로 게시합니다. 값은 최대 `1000`으로 제한됩니다. 시간 창이 커지면 최대 한 개의 시간 창만큼 전달 지연이 늘어나며, 인스턴스가 중단될 때 아직 버퍼에 남아 있던 델타는 손실됩니다. 이 값은 스트림 스무딩 주기(`streamRate`, 기본 25ms) 이하로 유지하십시오. 개별 청크 프레임은 배치와 함께 계속 게시되므로, 배치를 인식하지 못하는 구독자도 정상적으로 동작합니다. 인메모리 스트림에는 영향을 주지 않습니다.
 
 ```bash filename=".env"
 STREAM_DELTA_COALESCE_MS=25
 ```
 
-이 설정은 지정되지 않은 경우 기본값이 `25` 밀리초입니다. 병합(coalescing)을 비활성화하려면 명시적으로 `0`으로 설정하십시오. `1000`을 초과하는 값은 제한됩니다. 일괄 처리는 구성된 전달 지연 시간만큼의 윈도우를 추가할 수 있으며, 게시 프로세스가 플러시(flush)되기 전에 종료될 경우 버퍼링된 마지막 데이터가 손실될 수 있습니다. 개별 청크 프레임은 프로토콜 호환성을 위해 유지되므로, 이 설정은 구독자 프레임 형식을 변경하지 않고 Redis 스크립트 및 왕복(round-trip) 작업을 줄여줍니다. 메모리 내 생성 스트림은 변경되지 않습니다.
-
-### 주요 이점 (수평적 확장을 위한) [#key-benefits-for-horizontal-scaling]
-
-- **인스턴스 간 연속성**: 사용자가 한 서버에서 생성을 시작하고 다른 서버에서 이어서 진행할 수 있습니다.
-- **롤링 배포**: 서버 재시작 시에도 활성 스트림이 유지됨
-- **Multi-tab sync**: 로드 밸런싱 환경에서 동일한 대화가 여러 브라우저 탭 간에 동기화됩니다.
-- **연결 복원력**: 요청을 처리하는 서버와 관계없이 자동 재연결
-
 ### 클러스터 구성 [#cluster-configuration]
 
-Redis Cluster 배포의 경우, LibreChat은 스트림 작업이 동일한 클러스터 슬롯 내에서 유지되도록 자동으로 해시 태그가 지정된 키를 사용합니다:
+Redis 클러스터 배포에서 LibreChat은 스트림의 키가 동일한 클러스터 슬롯에 유지되도록 해시 태그가 적용된 키를 사용합니다:
 
 ```bash
 USE_REDIS=true
@@ -452,10 +442,12 @@ USE_REDIS_CLUSTER=true
 REDIS_URI=redis://node1:7001,redis://node2:7002,redis://node3:7003
 ```
 
-이 기능에 대한 자세한 내용은 [Resumable Streams](/docs/features/resumable_streams)를 참조하세요.
+### 문제 해결 [#troubleshooting]
+
+다중 인스턴스 배포에서 재연결 후 응답이 재개되지 않는 경우, 모든 인스턴스가 동일한 `USE_REDIS` 및 `USE_REDIS_STREAMS` 값을 가지고 있으며 Redis에 접근할 수 있는지 확인하십시오. 예를 들어 LibreChat 호스트에서 `redis-cli ping` 명령을 실행하여 확인할 수 있습니다.
 
 ## MCP Catalog Coordination [#mcp-catalog-coordination]
 
 Redis가 활성화되면 LibreChat은 복제본 간에 애플리케이션 수준의 MCP 도구 카탈로그를 조정합니다. 시작 시 게시, 재연결 동기화 및 `notifications/tools/list_changed` 업데이트는 생성 및 수정 마커를 사용하여 오래된 복제본이 더 최신 카탈로그를 덮어쓰지 않도록 합니다.
 
-Redis 클러스터 배포에서는 슬롯 안전 카탈로그 키와 업데이트 작업을 사용하며, 별도의 MCP Redis 설정은 필요하지 않습니다. 동적 카탈로그 및 OAuth 준비 상태 동작에 대해서는 [MCP 서버 관리](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information)를 참조하세요.
+Redis Cluster 배포에서는 슬롯 안전 카탈로그 키와 업데이트 작업을 사용하며, 별도의 MCP Redis 설정은 필요하지 않습니다. 동적 카탈로그 및 OAuth 준비 상태 동작에 대해서는 [MCP 서버 구성](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information)을 참조하십시오.

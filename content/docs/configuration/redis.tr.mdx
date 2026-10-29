@@ -6,7 +6,7 @@ description: >-
   kurulumu
 ---
 
-Bu kılavuz, LibreChat'te önbellekleme ve oturum depolama için Redis'in nasıl yapılandırılacağını kapsar. Redis önemli performans iyileştirmeleri sağlar ve **yatay ölçeklendirme için gereklidir**. Bir yük dengeleyici arkasında birden fazla LibreChat örneği çalıştırıyorsanız, Redis tüm örnekler genelinde tutarlı durumu sağlar.
+Bu kılavuz, LibreChat'te önbellekleme ve oturum depolama için Redis'in nasıl yapılandırılacağını kapsar. Redis önemli performans iyileştirmeleri sağlar ve **yatay ölçekleme için gereklidir**: birden fazla LibreChat örneğini bir yük dengeleyicinin arkasında çalıştırıyorsanız, Redis tüm örnekler genelinde tutarlı durumu güvence altına alır.
 
 ## İçindekiler [#table-of-contents]
 
@@ -392,22 +392,21 @@ REDIS_KEY_PREFIX=librechat-cluster
 
 ## Devam Ettirilebilir Akışlar [#resumable-streams]
 
-Redis, yatay ölçekli dağıtımlar için [Resumable Streams](/docs/features/resumable_streams) özelliğini etkinleştirir. Etkinleştirildiğinde, yapay zeka yanıtları sunucu örnekleri arasında sorunsuz bir şekilde yeniden bağlanabilir ve kaldığı yerden devam edebilir.
+[Yeniden Başlatılabilir Akışlar](/docs/features/resumable_streams), devam eden her yanıtı bir iş deposunda tutar, böylece bir istemci yeniden bağlanabilir ve kaldığı yeri yakalayabilir. Tek bir LibreChat örneği bu depoyu bellekte tutar ve herhangi bir yapılandırma gerektirmez. Bir yük dengeleyicinin arkasında birden fazla örnek olduğunda, yeniden bağlanma, yanıtı üreten örnekten farklı bir örneğe ulaşabilir; bu nedenle depo Redis üzerinden paylaşılmalıdır.
 
-**Önemli:** `USE_REDIS=true` olduğunda, devam ettirilebilir akışlar (resumable streams) örnekler arası koordinasyon için otomatik olarak Redis kullanır. Bu, kullanıcıların farklı sunucu örneklerine bağlanabileceği yatay ölçeklendirilmiş dağıtımlar için önerilen kurulumdur.
+Akışlar, `USE_REDIS=true` olduğunda otomatik olarak Redis'i kullanır. `USE_REDIS_STREAMS` bu davranışı geçersiz kılar: Redis önbellekleri sunarken akışları bellekte tutmak için `false` olarak ayarlayın veya açıkça belirtmek için `true` olarak ayarlayın.
 
-**Not:** Tek bir LibreChat örneği çalıştırıyorsanız, devam ettirilebilir akışlar için Redis genellikle gereksizdir; yerleşik bellek içi mod sorunsuz çalışır. Redis, birden fazla LibreChat örneğinin bir yük dengeleyicinin arkasında çalıştığı durumlarda zorunlu hale gelir; çünkü bir kullanıcının yeniden bağlanması, akışının başladığı sunucudan farklı bir sunucuya ulaşabilir.
-
-### Yapılandırma [#configuration]
-
-```bash
-# Redis enabled = resumable streams automatically use Redis
+```bash filename=".env"
 USE_REDIS=true
 REDIS_URI=redis://127.0.0.1:6379
 
-# Optional: explicitly control resumable streams behavior
-# USE_REDIS_STREAMS=true  # Enabled by default when USE_REDIS=true
+# Optional: defaults to the value of USE_REDIS
+# USE_REDIS_STREAMS=true
 ```
+
+Redis ile akış parçaları Redis Streams'e, iş meta verileri hash'lere yazılır ve canlı olaylar Pub/Sub üzerinden iletilir; bu sayede herhangi bir örnek yeniden bağlanma isteğini yanıtlayabilir.
+
+Onay gerektiren bir araç çağrısı veya kullanıcıya bir soru için duraklayabilen zamanlanmış ajan çalıştırmaları Redis akışları gerektirir; bunlar olmadan bu çalıştırmalar `USE_REDIS_STREAMS=true` ayarını yapmanızı isteyen bir hatayla başarısız olur.
 
 ### Generation Protocol Uyumluluğu [#generation-protocol-compatibility]
 
@@ -428,24 +427,15 @@ Bellek içi (in-memory) üretim akışları da protokol v2'yi otomatik olarak m�
 
 ### Akış Delta Birleştirme (Stream Delta Coalescing) [#stream-delta-coalescing]
 
-Redis destekli akışlar, yüksek token hızlarında Redis betiklerini, gidiş-dönüş sürelerini ve CPU kullanımını azaltmak için delta yayınlarını gruplayabilir:
+`STREAM_DELTA_COALESCE_MS`, yüksek token hızlarında gidiş dönüş sayısını azaltmak için akış deltalarını zaman pencerelerine göre gruplayıp Redis yazmalarını birleştirir. Varsayılan değeri `25` (milisaniye)dir, `0` her deltayı ayrı ayrı yayımlar ve değerler en fazla `1000` ile sınırlandırılır. Daha büyük bir pencere, en fazla bir pencere kadar ek teslimat gecikmesi ekler ve bir örnek çöktüğünde henüz tamponda bekleyen deltalar kaybolur. Değeri, akış yumuşatma periyodunun (`streamRate`, varsayılan olarak 25 ms) altında veya ona eşit tutun. Tekil chunk çerçeveleri, gruplarla birlikte yayımlanmaya devam eder; böylece grupları anlamayan aboneler çalışmaya devam eder. Bellek içi akışlar bundan etkilenmez.
 
 ```bash filename=".env"
 STREAM_DELTA_COALESCE_MS=25
 ```
 
-Ayar belirtilmediğinde varsayılan olarak `25` milisaniyedir. Birleştirmeyi (coalescing) devre dışı bırakmak için açıkça `0` olarak ayarlayın; `1000` üzerindeki değerler sınırlandırılır. Gruplama (batching), yapılandırılmış bir teslim gecikmesi penceresi kadar ek süre getirebilir ve yayınlama süreci temizlemeden önce sonlanırsa arabellekteki son kısmı kaybedebilir. Bireysel yığın çerçeveleri protokol uyumluluğu için korunur, bu nedenle bu ayar abone çerçeve biçimini değiştirmeden Redis betiği ve gidiş-dönüş iş yükünü azaltır. Bellek içi üretim akışları değişmeden kalır.
-
-### Temel Avantajlar (Yatay Ölçeklendirme için) [#key-benefits-for-horizontal-scaling]
-
-- **Örnekler arası süreklilik**: Kullanıcılar bir sunucuda oluşturma işlemini başlatıp diğerinde devam ettirebilirler
-- **Kademeli dağıtımlar**: Aktif akışlar sunucu yeniden başlatmalarından etkilenmez
-- **Çoklu sekme senkronizasyonu**: Aynı konuşma, yük dengelemeli bir ortamda birden fazla tarayıcı sekmesi arasında senkronize edilir
-- **Bağlantı dayanıklılığı**: İsteği hangi sunucunun işlediğine bakılmaksızın otomatik yeniden bağlanma
-
 ### Küme Yapılandırması [#cluster-configuration]
 
-Redis Cluster dağıtımları için LibreChat, akış işlemlerinin aynı küme yuvası (cluster slot) içinde kalmasını sağlamak amacıyla otomatik olarak hash-tag'li anahtarlar kullanır:
+Redis Cluster dağıtımlarında LibreChat, bir akışa ait anahtarların aynı küme slotunda kalmasını sağlamak için hash etiketli anahtarlar kullanır:
 
 ```bash
 USE_REDIS=true
@@ -454,10 +444,12 @@ USE_REDIS_CLUSTER=true
 REDIS_URI=redis://node1:7001,redis://node2:7002,redis://node3:7003
 ```
 
-Bu özellik hakkında daha fazla bilgi için [Resumable Streams](/docs/features/resumable_streams) bölümüne bakın.
+### Sorun Giderme [#troubleshooting]
+
+Çok örnekli bir dağıtımda yeniden bağlanmanın ardından yanıtlar devam etmiyorsa, her örneğin aynı `USE_REDIS` ve `USE_REDIS_STREAMS` değerlerine sahip olduğunu ve Redis'e erişebildiğini kontrol edin; örneğin LibreChat sunucusundan `redis-cli ping` komutunu çalıştırarak.
 
 ## MCP Katalog Koordinasyonu [#mcp-catalog-coordination]
 
 Redis etkinleştirildiğinde, LibreChat uygulama düzeyindeki MCP araç kataloglarını replikalar arasında koordine eder. Başlangıç yayını, yeniden bağlanma senkronizasyonu ve `notifications/tools/list_changed` güncellemeleri, eski bir replikanın daha yeni bir kataloğun üzerine yazmasını önlemek için nesil ve revizyon işaretleyicilerini kullanır.
 
-Redis Cluster dağıtımları, slot'a güvenli katalog anahtarları ve güncelleme işlemleri kullanır; ayrı bir MCP Redis ayarı gerekmez. Dinamik katalog ve OAuth hazırlık davranışı için [MCP Sunucu Yönetimi](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information) bölümüne bakın.
+Redis Cluster dağıtımları, slot açısından güvenli katalog anahtarları ve güncelleme işlemleri kullanır; ayrıca ayrı bir MCP Redis ayarı gerekmez. Dinamik katalog ve OAuth hazırlık davranışı için bkz. [MCP sunucu yapılandırması](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information).

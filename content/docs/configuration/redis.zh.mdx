@@ -4,7 +4,7 @@ icon: Redis
 description: 在 LibreChat 中设置 Redis 以实现缓存、会话存储和水平扩展
 ---
 
-本指南介绍如何在 LibreChat 中配置 Redis 以用于缓存和会话存储。Redis 可显著提升性能,并且是**水平扩展所必需的**。如果您在负载均衡器后面运行多个 LibreChat 实例,Redis 可确保所有实例之间的状态保持一致。
+本指南介绍如何在 LibreChat 中配置 Redis 以用于缓存和会话存储。Redis 可显著提升性能,并且是**水平扩展所必需的**:如果您在负载均衡器后运行多个 LibreChat 实例,Redis 可确保所有实例之间的状态保持一致。
 
 ## 目录 [#table-of-contents]
 
@@ -390,22 +390,21 @@ REDIS_KEY_PREFIX=librechat-cluster
 
 ## 可恢复流 (Resumable Streams) [#resumable-streams]
 
-Redis 为水平扩展部署启用了 [Resumable Streams](/docs/features/resumable_streams)。启用后，AI 响应可以在不同服务器实例之间无缝重新连接并恢复。
+[Resumable Streams](/docs/features/resumable_streams) 会将每个进行中的响应保存在任务存储中，使客户端能够重新连接并获取已错过的内容。单个 LibreChat 实例将该存储保存在内存中，无需任何配置。当多个实例部署在负载均衡器之后时，重新连接的请求可能会到达与生成响应的实例不同的实例，因此必须通过 Redis 共享该存储。
 
-**重要提示：** 当 `USE_REDIS=true` 时，可恢复流会自动使用 Redis 进行跨实例协调。对于用户可能连接到不同服务器实例的水平扩展部署，这是推荐的配置方式。
+当 `USE_REDIS=true` 时,流会自动使用 Redis。`USE_REDIS_STREAMS` 可以覆盖此行为:将其设置为 `false` 可在 Redis 负责缓存的同时将流保留在内存中;设置为 `true` 则可显式声明使用 Redis。
 
-**注意:** 如果您只运行单个 LibreChat 实例,用于可恢复流的 Redis 通常是过度配置;内置的内存模式即可正常工作。当您在负载均衡器后面运行多个 LibreChat 实例时,Redis 就变得必不可少,因为用户重新连接时可能会访问与流最初启动时不同的服务器。
-
-### 配置 [#configuration]
-
-```bash
-# Redis enabled = resumable streams automatically use Redis
+```bash filename=".env"
 USE_REDIS=true
 REDIS_URI=redis://127.0.0.1:6379
 
-# Optional: explicitly control resumable streams behavior
-# USE_REDIS_STREAMS=true  # Enabled by default when USE_REDIS=true
+# Optional: defaults to the value of USE_REDIS
+# USE_REDIS_STREAMS=true
 ```
+
+使用 Redis 时,流式输出的分块会写入 Redis Streams,任务元数据写入哈希(hashes),实时事件通过 Pub/Sub 传递,因此任意实例都可以处理重连请求。
+
+需要 Redis 流(Redis streams)的定时智能体运行,如果需要暂停等待工具审批或向用户提问,若未启用 Redis 流,这些运行将失败,并提示你设置 `USE_REDIS_STREAMS=true`。
 
 ### 生成协议兼容性 [#generation-protocol-compatibility]
 
@@ -426,24 +425,15 @@ REDIS_URI=redis://127.0.0.1:6379
 
 ### 流式增量合并 (Stream Delta Coalescing) [#stream-delta-coalescing]
 
-基于 Redis 的流可以批量处理增量发布，从而在高令牌速率下减少 Redis 脚本执行、往返次数和 CPU 占用：
+`STREAM_DELTA_COALESCE_MS` 将流式增量按时间窗口合并为 Redis 写入，以便在高 token 速率下减少网络往返。默认值为 `25`（毫秒），设为 `0` 时每个增量都会单独发布，且取值上限为 `1000`。窗口越大，投递延迟最多会增加一个窗口的时长；如果实例在增量仍处于缓冲状态时崩溃，这些增量将会丢失。建议将其保持在流平滑节奏（`streamRate`，默认 25 毫秒）或以下。单个数据块帧仍会与批次一同发布，因此不支持批次的订阅者可以继续正常工作。内存流不受影响。
 
 ```bash filename=".env"
 STREAM_DELTA_COALESCE_MS=25
 ```
 
-如果未设置，该设置默认为 `25` 毫秒。将其显式设置为 `0` 可禁用合并（coalescing）；超过 `1000` 的值将被限制。批处理可能会增加最多一个配置窗口的交付延迟，并且如果发布进程在刷新缓冲区之前退出，可能会丢失缓冲区末尾的数据。为了保持协议兼容性，单个数据块帧会被保留，因此此设置可在不改变订阅者帧格式的情况下减少 Redis 脚本和往返工作量。内存中生成流保持不变。
-
-### 主要优势（针对水平扩展） [#key-benefits-for-horizontal-scaling]
-
-- **跨实例连续性**：用户可以在一台服务器上开始生成，并在另一台服务器上继续。
-- **滚动部署 (Rolling deployments)**：活动流在服务器重启后依然保持存续
-- **多标签页同步**：在负载均衡环境中，同一对话可在多个浏览器标签页之间同步
-- **连接弹性**：无论哪个服务器处理请求，均可自动重新连接
-
 ### 集群配置 [#cluster-configuration]
 
-对于 Redis Cluster 部署，LibreChat 会自动使用哈希标签（hash-tagged）键，以确保流操作保持在同一个集群槽（cluster slot）内：
+对于 Redis 集群部署,LibreChat 使用哈希标签(hash-tagged)键,以确保同一个流的所有键位于同一个集群槽位(cluster slot)中:
 
 ```bash
 USE_REDIS=true
@@ -452,10 +442,12 @@ USE_REDIS_CLUSTER=true
 REDIS_URI=redis://node1:7001,redis://node2:7002,redis://node3:7003
 ```
 
-有关此功能的更多详细信息，请参阅 [Resumable Streams](/docs/features/resumable_streams)。
+### 故障排除 [#troubleshooting]
+
+如果在多实例部署中,重新连接后响应没有恢复,请检查每个实例的 `USE_REDIS` 和 `USE_REDIS_STREAMS` 值是否一致,并确认它们都能访问 Redis,例如在 LibreChat 主机上执行 `redis-cli ping`。
 
 ## MCP Catalog Coordination [#mcp-catalog-coordination]
 
 当启用 Redis 时，LibreChat 会在各个副本之间协调应用层级的 MCP 工具目录。启动发布、重连同步以及 `notifications/tools/list_changed` 更新均使用生成和修订标记，以确保过时的副本不会覆盖较新的目录。
 
-Redis Cluster 部署使用了槽位安全的目录键和更新操作;无需单独设置 MCP Redis。有关动态目录和 OAuth 就绪行为,请参阅 [MCP 服务器管理](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information)。
+Redis Cluster 部署使用槽位安全的目录键和更新操作，无需单独的 MCP Redis 设置。有关动态目录和 OAuth 就绪行为，请参阅 [MCP 服务器配置](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information)。

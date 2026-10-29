@@ -6,7 +6,7 @@ description: >-
   LibreChat
 ---
 
-Panduan ini membahas cara mengonfigurasi Redis untuk caching dan penyimpanan sesi di LibreChat. Redis memberikan peningkatan performa yang signifikan dan **wajib digunakan untuk horizontal scaling**. Jika Anda menjalankan beberapa instance LibreChat di belakang load balancer, Redis memastikan status yang konsisten di seluruh instance.
+Panduan ini membahas cara mengonfigurasi Redis untuk caching dan penyimpanan sesi di LibreChat. Redis memberikan peningkatan performa yang signifikan dan **wajib digunakan untuk horizontal scaling**: jika Anda menjalankan beberapa instance LibreChat di belakang load balancer, Redis memastikan state yang konsisten di seluruh instance.
 
 ## Daftar Isi [#table-of-contents]
 
@@ -392,22 +392,21 @@ REDIS_KEY_PREFIX=librechat-cluster
 
 ## Resumable Streams [#resumable-streams]
 
-Redis mengaktifkan [Resumable Streams](/docs/features/resumable_streams) untuk deployment yang diskalakan secara horizontal. Saat diaktifkan, respons AI dapat terhubung kembali dan dilanjutkan dengan mulus di seluruh instance server.
+[Resumable Streams](/docs/features/resumable_streams) menyimpan setiap respons yang sedang berlangsung di dalam job store sehingga klien dapat terhubung kembali dan mengejar ketertinggalan. Satu instance LibreChat menyimpan store tersebut di memori dan tidak memerlukan konfigurasi apa pun. Dengan beberapa instance di belakang load balancer, koneksi ulang dapat mengarah ke instance yang berbeda dari instance yang sedang menghasilkan respons, sehingga store harus dibagikan melalui Redis.
 
-**Penting:** Saat `USE_REDIS=true`, aliran yang dapat dilanjutkan (resumable streams) secara otomatis menggunakan Redis untuk koordinasi lintas instans. Ini adalah pengaturan yang direkomendasikan untuk penyebaran berskala horizontal di mana pengguna mungkin terhubung ke instans server yang berbeda.
+Stream menggunakan Redis secara otomatis saat `USE_REDIS=true`. `USE_REDIS_STREAMS` menimpa perilaku tersebut: setel ke `false` untuk menyimpan stream di memori sementara Redis melayani cache, atau ke `true` untuk menyatakannya secara eksplisit.
 
-**Catatan:** Jika Anda menjalankan satu instans LibreChat, Redis untuk resumable streams biasanya berlebihan; mode in-memory bawaan sudah berfungsi dengan baik. Redis menjadi penting ketika Anda memiliki beberapa instans LibreChat di belakang load balancer, di mana koneksi ulang pengguna dapat mengarah ke server yang berbeda dari tempat stream dimulai.
-
-### Konfigurasi [#configuration]
-
-```bash
-# Redis enabled = resumable streams automatically use Redis
+```bash filename=".env"
 USE_REDIS=true
 REDIS_URI=redis://127.0.0.1:6379
 
-# Optional: explicitly control resumable streams behavior
-# USE_REDIS_STREAMS=true  # Enabled by default when USE_REDIS=true
+# Optional: defaults to the value of USE_REDIS
+# USE_REDIS_STREAMS=true
 ```
+
+Dengan Redis, potongan (chunk) stream ditulis ke Redis Streams, metadata job ke hashes, dan event langsung diteruskan melalui Pub/Sub, sehingga instance mana pun dapat melayani koneksi ulang.
+
+Proses agen terjadwal yang dapat dijeda untuk persetujuan alat atau pertanyaan kepada pengguna memerlukan Redis streams; tanpanya, proses tersebut akan gagal dengan error yang meminta Anda mengatur `USE_REDIS_STREAMS=true`.
 
 ### Kompatibilitas Protokol Generasi [#generation-protocol-compatibility]
 
@@ -428,24 +427,15 @@ Aliran pembuatan dalam memori (in-memory generation streams) juga menegosiasikan
 
 ### Penggabungan Delta Stream [#stream-delta-coalescing]
 
-Stream yang didukung Redis dapat melakukan batch pada publikasi delta untuk mengurangi skrip Redis, round trip, dan CPU pada tingkat token yang tinggi:
+`STREAM_DELTA_COALESCE_MS` mengelompokkan delta streaming ke dalam penulisan Redis berbasis jendela waktu untuk mengurangi round trip pada laju token yang tinggi. Nilai defaultnya adalah `25` (milidetik), `0` mempublikasikan setiap delta secara terpisah, dan nilainya dibatasi maksimal `1000`. Jendela yang lebih besar menambah latensi pengiriman hingga satu jendela penuh, dan delta yang masih tertahan di buffer saat sebuah instance mengalami crash akan hilang. Pertahankan nilainya pada atau di bawah kecepatan penghalusan stream (`streamRate`, 25 ms secara default). Frame chunk individual tetap dipublikasikan bersama batch, sehingga subscriber yang tidak memahami batch tetap berfungsi. Stream in-memory tidak terpengaruh.
 
 ```bash filename=".env"
 STREAM_DELTA_COALESCE_MS=25
 ```
 
-Pengaturan ini secara default bernilai `25` milidetik jika tidak diatur. Atur secara eksplisit ke `0` untuk menonaktifkan penggabungan (*coalescing*); nilai di atas `1000` akan dibatasi. Pemrosesan batch dapat menambah latensi pengiriman hingga satu jendela yang dikonfigurasi dan dapat menyebabkan hilangnya data di akhir buffer jika proses penerbitan keluar sebelum melakukan *flush*. Bingkai *chunk* individu tetap dipertahankan untuk kompatibilitas protokol, sehingga pengaturan ini mengurangi beban skrip Redis dan *round-trip* tanpa mengubah format bingkai pelanggan. Aliran pembuatan dalam memori (*in-memory*) tidak berubah.
-
-### Manfaat Utama (untuk Penskalaan Horizontal) [#key-benefits-for-horizontal-scaling]
-
-- **Cross-instance continuity**: Pengguna dapat memulai pembuatan di satu server dan melanjutkannya di server lain
-- **Rolling deployments**: Stream aktif tetap bertahan saat server dimulai ulang
-- **Sinkronisasi multi-tab**: Percakapan yang sama tersinkronisasi di berbagai tab browser dalam lingkungan *load-balanced*
-- **Ketahanan koneksi**: Penyambungan kembali otomatis terlepas dari server mana yang menangani permintaan tersebut
-
 ### Konfigurasi Klaster [#cluster-configuration]
 
-Untuk penyebaran Redis Cluster, LibreChat secara otomatis menggunakan kunci dengan hash-tag untuk memastikan operasi stream tetap berada dalam slot cluster yang sama:
+Untuk deployment Redis Cluster, LibreChat menggunakan kunci ber-hash-tag sehingga kunci-kunci sebuah stream tetap berada di slot cluster yang sama:
 
 ```bash
 USE_REDIS=true
@@ -454,10 +444,12 @@ USE_REDIS_CLUSTER=true
 REDIS_URI=redis://node1:7001,redis://node2:7002,redis://node3:7003
 ```
 
-Lihat [Resumable Streams](/docs/features/resumable_streams) untuk detail lebih lanjut mengenai fitur ini.
+### Pemecahan Masalah [#troubleshooting]
+
+Jika respons tidak dilanjutkan setelah koneksi ulang dalam deployment multi-instance, periksa bahwa setiap instance memiliki nilai `USE_REDIS` dan `USE_REDIS_STREAMS` yang sama serta dapat terhubung ke Redis, misalnya dengan `redis-cli ping` dari host LibreChat.
 
 ## Koordinasi Katalog MCP [#mcp-catalog-coordination]
 
 Saat Redis diaktifkan, LibreChat mengoordinasikan katalog alat MCP tingkat aplikasi di seluruh replika. Publikasi saat startup, sinkronisasi penyambungan kembali, dan pembaruan `notifications/tools/list_changed` menggunakan penanda generasi dan revisi sehingga replika yang kedaluwarsa tidak dapat menimpa katalog yang lebih baru.
 
-Deployment Redis Cluster menggunakan kunci katalog yang aman untuk slot dan operasi pembaruan; tidak diperlukan pengaturan MCP Redis terpisah. Lihat [MCP Server Management](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information) untuk perilaku katalog dinamis dan kesiapan OAuth.
+Deployment Redis Cluster menggunakan kunci katalog yang aman untuk slot serta operasi pembaruan; tidak ada pengaturan Redis MCP terpisah yang diperlukan. Lihat [Konfigurasi server MCP](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information) untuk perilaku katalog dinamis dan kesiapan OAuth.

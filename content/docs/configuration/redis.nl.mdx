@@ -6,7 +6,7 @@ description: >-
   LibreChat
 ---
 
-Deze gids behandelt hoe je Redis configureert voor caching en sessieopslag in LibreChat. Redis zorgt voor aanzienlijke prestatieverbeteringen en is **vereist voor horizontale schaalvergroting**. Als je meerdere LibreChat-instanties draait achter een load balancer, zorgt Redis voor een consistente status over alle instanties heen.
+Deze gids beschrijft hoe je Redis configureert voor caching en sessieopslag in LibreChat. Redis zorgt voor aanzienlijke prestatieverbeteringen en is **vereist voor horizontale schaling**: als je meerdere LibreChat-instanties draait achter een load balancer, zorgt Redis voor een consistente status over alle instanties.
 
 ## Inhoudsopgave [#table-of-contents]
 
@@ -392,22 +392,21 @@ REDIS_KEY_PREFIX=librechat-cluster
 
 ## Hervatbare Streams [#resumable-streams]
 
-Redis maakt [Resumable Streams](/docs/features/resumable_streams) mogelijk voor horizontaal geschaalde implementaties. Wanneer dit is ingeschakeld, kunnen AI-antwoorden naadloos opnieuw verbinding maken en worden hervat over serverinstanties heen.
+[Hervatbare streams](/docs/features/resumable_streams) bewaren elk lopend antwoord in een taakopslag, zodat een client opnieuw verbinding kan maken en de gemiste inhoud kan inhalen. Een enkele LibreChat-instantie bewaart die opslag in het geheugen en vereist geen configuratie. Met meerdere instanties achter een load balancer kan een nieuwe verbinding bij een andere instantie terechtkomen dan de instantie die het antwoord genereert, daarom moet de opslag via Redis worden gedeeld.
 
-**Belangrijk:** Wanneer `USE_REDIS=true` is ingesteld, gebruiken hervatbare streams automatisch Redis voor coördinatie tussen instanties. Dit is de aanbevolen configuratie voor horizontaal geschaalde implementaties waarbij gebruikers verbinding kunnen maken met verschillende serverinstanties.
+Streams gebruiken Redis automatisch wanneer `USE_REDIS=true`. `USE_REDIS_STREAMS` overschrijft dat: stel het in op `false` om streams in het geheugen te houden terwijl Redis de caches bedient, of op `true` om dit expliciet aan te geven.
 
-**Opmerking:** Als je een enkele LibreChat-instantie draait, is Redis voor hervatbare streams doorgaans overbodig; de ingebouwde in-memory modus werkt prima. Redis wordt essentieel wanneer je meerdere LibreChat-instanties achter een load balancer hebt, waarbij de herverbinding van een gebruiker mogelijk op een andere server terechtkomt dan waar de stream is gestart.
-
-### Configuratie [#configuration]
-
-```bash
-# Redis enabled = resumable streams automatically use Redis
+```bash filename=".env"
 USE_REDIS=true
 REDIS_URI=redis://127.0.0.1:6379
 
-# Optional: explicitly control resumable streams behavior
-# USE_REDIS_STREAMS=true  # Enabled by default when USE_REDIS=true
+# Optional: defaults to the value of USE_REDIS
+# USE_REDIS_STREAMS=true
 ```
+
+Met Redis worden streamchunks geschreven naar Redis Streams, jobmetadata naar hashes en live-gebeurtenissen lopen via Pub/Sub, zodat elke instantie een herverbinding kan afhandelen.
+
+Geplande agent-runs die kunnen pauzeren voor goedkeuring van een tool of een vraag aan de gebruiker, vereisen Redis streams; zonder deze lopen die runs vast met een foutmelding waarin je wordt gevraagd `USE_REDIS_STREAMS=true` in te stellen.
 
 ### Compatibiliteit met het generatieprotocol [#generation-protocol-compatibility]
 
@@ -428,24 +427,15 @@ In-memory generatiestreams onderhandelen ook automatisch over protocol v2 en del
 
 ### Stream Delta Coalescing [#stream-delta-coalescing]
 
-Redis-ondersteunde streams kunnen delta-publicaties batchen om Redis-scripts, round-trips en CPU-gebruik bij hoge token-snelheden te verminderen:
+`STREAM_DELTA_COALESCE_MS` groepeert gestreamde deltas in vensters van vaste duur tot gebundelde Redis-schrijfacties, om het aantal round trips bij hoge tokensnelheden te verminderen. De standaardwaarde is `25` (milliseconden), `0` publiceert elke delta afzonderlijk, en waarden worden begrensd op `1000`. Een groter venster voegt maximaal één venster aan vertraging bij de levering toe, en deltas die nog gebufferd zijn wanneer een instantie crasht, gaan verloren. Houd de waarde op of onder de cadans van de streamverzachting (`streamRate`, standaard 25 ms). Afzonderlijke chunkframes worden nog steeds naast de batches gepubliceerd, zodat abonnees die batches niet begrijpen blijven werken. In-memory streams worden niet beïnvloed.
 
 ```bash filename=".env"
 STREAM_DELTA_COALESCE_MS=25
 ```
 
-De instelling staat standaard op `25` milliseconden wanneer deze niet is ingesteld. Stel deze expliciet in op `0` om coalescing uit te schakelen; waarden boven `1000` worden begrensd. Batching kan tot één geconfigureerd venster aan afleveringslatentie toevoegen en kan het gebufferde staartstuk verliezen als het publicatieproces wordt afgesloten voordat het is geflushed. Individuele chunk-frames worden behouden voor protocolcompatibiliteit, dus deze instelling vermindert Redis-script- en round-trip-werk zonder het subscriber-frameformaat te wijzigen. In-memory generatiestreams blijven ongewijzigd.
-
-### Belangrijkste voordelen (voor horizontale schaling) [#key-benefits-for-horizontal-scaling]
-
-- **Continuïteit tussen instanties**: Gebruikers kunnen een generatie op de ene server starten en op een andere hervatten
-- **Rolling deployments**: Actieve streams overleven serverherstarts
-- **Multi-tab sync**: Dezelfde conversatie synchroniseert over meerdere browsertabbladen in een load-balanced omgeving
-- **Verbindingsveerkracht**: Automatische herverbinding, ongeacht welke server het verzoek afhandelt
-
 ### Clusterconfiguratie [#cluster-configuration]
 
-Voor Redis Cluster-implementaties gebruikt LibreChat automatisch hash-tagged keys om ervoor te zorgen dat stream-bewerkingen binnen dezelfde cluster-slot blijven:
+Voor Redis Cluster-implementaties gebruikt LibreChat sleutels met hash-tags, zodat de sleutels van een stream in dezelfde clusterslot blijven:
 
 ```bash
 USE_REDIS=true
@@ -454,10 +444,12 @@ USE_REDIS_CLUSTER=true
 REDIS_URI=redis://node1:7001,redis://node2:7002,redis://node3:7003
 ```
 
-Zie [Resumable Streams](/docs/features/resumable_streams) voor meer details over deze functie.
+### Probleemoplossing [#troubleshooting]
+
+Als antwoorden niet hervatten na een herverbinding in een deployment met meerdere instanties, controleer dan of elke instantie dezelfde waarden voor `USE_REDIS` en `USE_REDIS_STREAMS` heeft en of Redis bereikbaar is, bijvoorbeeld met `redis-cli ping` vanaf de LibreChat-host.
 
 ## MCP Catalog Coördinatie [#mcp-catalog-coordination]
 
 Wanneer Redis is ingeschakeld, coördineert LibreChat MCP-toolcatalogi op applicatieniveau over replica's heen. Publicatie bij het opstarten, synchronisatie bij opnieuw verbinden en `notifications/tools/list_changed` updates gebruiken generatie- en revisiemarkeringen, zodat een verouderde replica geen nieuwere catalogus kan overschrijven.
 
-Redis Cluster-implementaties gebruiken slot-veilige catalogussleutels en updatebewerkingen; er is geen afzonderlijke MCP Redis-instelling vereist. Zie [MCP Server Management](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information) voor het gedrag van dynamische catalogus en OAuth-gereedheid.
+Redis Cluster-deployments gebruiken slot-veilige catalogussleutels en updatebewerkingen; er is geen afzonderlijke MCP Redis-instelling vereist. Zie [MCP-serverconfiguratie](/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information) voor het gedrag van dynamische catalogus en OAuth-gereedheid.

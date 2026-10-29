@@ -2,272 +2,52 @@
 title: OCR voor documenten
 icon: ScanText
 description: >-
-  Leer hoe je Optical Character Recognition (OCR) configureert om tekstextractie
-  in de bestandsuploadfuncties van LibreChat te verbeteren.
+  Lees de tekst in afbeeldingen, scans en complexe documenten wanneer bestanden
+  als tekst aan een gesprek of agent worden toegevoegd.
 ---
 
-OCR (Optical Character Recognition) in LibreChat is een optionele uitbreiding voor tekstextractie uit bestanden.
+OCR laat LibreChat tekst lezen die alleen als pixels aanwezig is: een foto van een bonnetje, een gescand contract, een pdf gemaakt van schermafbeeldingen. Wanneer je beheerder een OCR-service heeft ingesteld, gaan bestanden die als tekst worden toegevoegd eerst door deze service, zodat het model de woorden krijgt in plaats van een leeg resultaat.
 
-### Uploaden als tekst [#upload-as-text]
+## Waar OCR van toepassing is [#where-ocr-applies]
 
-De "Upload as Text" functie (vanuit de chat) werkt op dezelfde manier:
+OCR wordt uitgevoerd op bestanden waarvan de tekst in de context van het model wordt geplaatst:
 
-- Bestanden die overeenkomen met `fileConfig.ocr.supportedMimeTypes` gebruiken OCR indien beschikbaar
-- Zonder OCR vallen pdf-, DOCX-, spreadsheet- en ODT-bestanden terug op de [ingebouwde documentparser](#built-in-document-parser); afbeeldingen en andere bestandstypen die de parser niet kan lezen, hebben OCR nodig.
-- Vooral nuttig voor afbeeldingen met tekst, gescande documenten en complexe PDF's
-- Verwerkingsvolgorde: **OCR > RAG-tekstextractie > ingebouwde documentparser > STT > platte tekst**
-- Zie de [Upload as Text](/docs/features/upload_as_text) documentatie voor details.
+- **Uploaden als tekst** in de chat, op implementaties die het expliciete uploadmenu tonen. Zie [Uploaden als tekst](/docs/features/upload_as_text).
+- **Bestandscontext** in de Agent Builder, waarbij de geëxtraheerde tekst elke keer wordt opgenomen in de context van de agent bij elk bericht.
 
-### Bestandscontext (voor agents) [#file-context-for-agents]
+De bestandstypen die standaard worden verwerkt, zijn afbeeldingen (JPEG, PNG, GIF, WebP, HEIC, HEIF), PDF, Word, PowerPoint, Excel, EPUB en OpenDocument-bestanden. Andere bestanden slaan OCR over en gebruiken de normale tekstextractie.
 
-Wanneer je bestanden uploadt via de sectie File Context van de Agent Builder:
+Met de standaardoptie **From Local Computer** hangt het resultaat af van waar het bestand naartoe wordt gerouteerd. Afbeeldingen en PDF's die de provider accepteert, worden rechtstreeks naar het model gestuurd en slaan OCR over. Een bestand dat in plaats daarvan naar tekst wordt gerouteerd (bijvoorbeeld een Word-document, of een PDF die je beheerder naar tekst routeert), wordt op dezelfde manier geëxtraheerd als bij Upload as Text, dus het gaat via OCR wanneer OCR dat bestandstype verwerkt.
 
-1. Tekst wordt standaard geëxtraheerd met de ingebouwde documentparser of door platte tekst te lezen (OCR/STT indien geconfigureerd en het bestand daarbij past).
-2. Geëxtraheerde tekst wordt opgeslagen als onderdeel van de systeeminstructies van de agent
-3. De agent kan naar deze context verwijzen in alle gesprekken
-4. **OCR-service is optioneel** - de functie werkt zonder deze service voor platte tekstbestanden en voor documenten die de ingebouwde parser verwerkt
+## Zonder OCR [#without-ocr]
 
-Bestanden die zijn geüpload als "File Context" worden verwerkt om tekst te extraheren, die vervolgens wordt toegevoegd aan de systeeminstructies van de Agent. Dit is ideaal voor documenten, codebestanden, PDF's of afbeeldingen met tekst waarbij de volledige tekstinhoud moet worden opgenomen in de instructies van de agent.
+Tekstextractie werkt nog steeds zonder OCR-service. De ingebouwde parser van LibreChat leest PDF-, DOCX-, XLS- en XLSX-, ODT- en ODS-bestanden tot 15 MB die een echte tekstlaag bevatten, wat voor de meeste documenten geldt die vanuit een editor zijn geëxporteerd. Oude `.doc`-, PowerPoint- en EPUB-bestanden vereisen OCR. De parser kan ook geen afbeelding lezen: een gescande PDF of een foto van een pagina mislukt met een melding dat het document mogelijk op afbeeldingen is gebaseerd en een OCR-service nodig heeft.
 
-**Let op:** De geëxtraheerde tekst is opgenomen in de systeeminstructies van de agent.
+Als OCR is geconfigureerd maar de service een fout geeft bij een document, valt LibreChat terug op de ingebouwde parser voor dat bestand.
 
-## Optionele OCR-configuratie [#optional-ocr-configuration]
+## OCR-diensten [#ocr-services]
 
-Zowel Agent File Context als Upload as Text werken direct na installatie voor platte tekstbestanden en voor de documenttypen die de ingebouwde parser verwerkt. Om tekst te extraheren uit afbeeldingen, gescande documenten en andere formaten, kun je optioneel een OCR-service configureren:
+Beheerders kiezen één strategie:
 
-```yaml
-# librechat.yaml
-endpoints:
-  agents:
-    capabilities:
-      - "context"  # Enables both agent file context and upload as text
-      - "ocr"      # Optionally enhances both with OCR
+- Mistral OCR via de API van Mistral. Dit is de standaardstrategie.
+- Mistral OCR geïmplementeerd op Azure AI Foundry.
+- Mistral OCR geïmplementeerd op Google Cloud Vertex AI.
+- De lokale documentparser, zonder externe service. Deze leest tekstlagen, maar geen afbeeldingen.
 
-ocr:
-  strategy: "mistral_ocr"
-  apiKey: "${OCR_API_KEY}"
-  baseURL: "https://api.mistral.ai/v1"
-  mistralModel: "mistral-ocr-latest"
-```
+Met ieder van de Mistral-opties worden bestandsinhoud naar die dienst verzonden voor verwerking, en de voorwaarden voor gegevensverwerking van die dienst zijn daarop van toepassing.
 
-**Opmerking:** De capaciteit `context` is standaard ingeschakeld, net als `ocr` in de standaardlijst met capaciteiten. Als je een aangepaste lijst `endpoints.agents.capabilities` instelt die `ocr` weglaat terwijl OCR is geconfigureerd, mislukken uploads die overeenkomen met de OCR-MIME-types met de melding "OCR capability is not enabled for Agents".
+## Upload naar provider in plaats daarvan [#upload-to-provider-instead]
 
-OCR-verbindingen blokkeren standaard private, loopback, link-local en cloud-metadata bestemmingen. Voor een vertrouwde private OCR-service voegt u de exacte private host en poort toe aan [`ocr.allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/ocr#allowedaddresses). Dit is een uitzondering op de SSRF-beveiliging, dus vermeld alleen infrastructuur die u zelf beheert.
+Veel modellen kunnen afbeeldingen en PDF's zelf lezen. Wanneer het bestand als bijlage naar de provider wordt verzonden, wordt het door de provider verwerkt, waardoor lay-out en afbeeldingen behouden blijven die bij tekstextractie verloren gaan. De standaard uploader doet dit automatisch voor afbeeldingen en PDF's wanneer de provider deze ondersteunt. Met het oudere uploadmenu kies je **Upload naar provider** in de [composer](/docs/features/composer#add-files).
 
-## Ingebouwde documentparser [#built-in-document-parser]
+Providers die bestanden op deze manier accepteren: OpenAI, Anthropic, Google en Vertex AI, AWS Bedrock, Mistral, DeepSeek, Moonshot, OpenRouter, xAI en aangepaste endpoints. Azure OpenAI accepteert PDF's op deze manier alleen wanneer de Responses API is ingeschakeld in de gespreksparameters; met Chat Completions worden alleen afbeeldingen geaccepteerd.
 
-Wanneer geen OCR-service een bestand verwerkt, gebruiken agent File Context en Upload as Text een ingebouwde `document_parser`-strategie. Deze dient ook als terugvaloptie als een geconfigureerde OCR-service faalt. Ze verwerkt alleen:
+Wat elke provider accepteert, verschilt:
 
-- PDF (alleen tekstlaag, geen beeldherkenning)
-- DOCX (geen verouderd `.doc`)
-- Spreadsheets: xlsx, xls, en ods
-- ODT
+- Ze accepteren allemaal afbeeldingen en pdf's.
+- Google, Vertex AI en OpenRouter accepteren ook audio en video.
+- AWS Bedrock accepteert ook CSV-, DOC-, DOCX-, XLS-, XLSX-, HTML-, TXT- en Markdown-bestanden, tot 4,5 MB per document. PDF's voor Claude 4 en later, en PDF's en DOCX voor Nova, kunnen tot 32 MB groot zijn, tenzij uw beheerder een lagere limiet voor de bestandsgrootte heeft ingesteld. Zie [AWS Bedrock](/docs/configuration/pre_configured_ai/bedrock).
 
-Bestanden groter dan 15 MB worden door de parser geweigerd, en een document zonder extraheerbare tekst geeft een foutmelding. PowerPoint-bestanden, `.doc`, EPUB en afbeeldingen vereisen een OCR-service (of de tekstroute van de RAG API, zie [Upload as Text](/docs/features/upload_as_text)).
+## Setup [#setup]
 
-## Overzicht van OCR-mogelijkheden [#overview-of-ocr-capabilities]
-
-OCR-functionaliteit in LibreChat maakt het volgende mogelijk:
-
-- Extraheer tekst uit afbeeldingen en documenten
-- Behoud de documentstructuur en opmaak
-- Verwerk complexe lay-outs, inclusief tekst in meerdere kolommen
-- Verwerk tabellen, vergelijkingen en andere gespecialiseerde inhoud
-- Werken met meertalige inhoud
-
-## OCR-strategieën [#ocr-strategies]
-
-LibreChat ondersteunt meerdere OCR-strategieën om aan verschillende implementatiebehoeften en vereisten te voldoen. Kies de strategie die het beste past bij uw infrastructuur en compliance-eisen.
-
-### 1. Mistral OCR (Standaard) [#1-mistral-ocr-default]
-
-De standaardstrategie maakt direct gebruik van de cloud API-service van Mistral. Dit is de eenvoudigste configuratie en vereist alleen een API-sleutel van Mistral.
-
-**Omgevingsvariabelen:**
-```.env
-# `.env`
-OCR_API_KEY=your-mistral-api-key
-# OCR_BASEURL=https://api.mistral.ai/v1 # this is the default value
-```
-
-**Configuratie:**
-```yaml
-# `librechat.yaml`
-ocr:
-  mistralModel: "mistral-ocr-latest"       # Optional: Specify Mistral model, defaults to "mistral-ocr-latest"
-  apiKey: "your-mistral-api-key"           # Optional: Defaults to OCR_API_KEY env variable
-  baseURL: "https://api.mistral.ai/v1"     # Optional: Defaults to OCR_BASEURL env variable, or Mistral's API if no variable set
-  strategy: "mistral_ocr"                  # Optional: Defaults to "mistral_ocr"
-```
-
-**Belangrijkste functies:**
-- **Behoud van documentstructuur**: Behoudt opmaak zoals koppen, alinea's, lijsten en tabellen
-- **Meertalige ondersteuning**: Verwerkt tekst in meerdere talen en schriften
-- **Complex Layout Handling**: Verwerkt tekst met meerdere kolommen en gemengde inhoud
-- **Wiskundige expressieherkenning**: Verwerkt vergelijkingen en formules nauwkeurig
-- **High-Speed Processing**: Verwerkt tot 2000 pagina's per minuut
-
-**Overwegingen:**
-- **Kosten**: Het gebruik van Mistral OCR kan kosten met zich meebrengen aangezien het een betaalde API-service is (hoewel er mogelijk gratis proefversies beschikbaar zijn)
-- **Gegevensprivacy**: Gegevens die via Mistral OCR worden verwerkt, vallen onder de cloudomgeving van Mistral en hun servicevoorwaarden.
-- **Documentbeperkingen**:
-  - Maximale bestandsgrootte: 50 MB
-  - Maximale documentlengte: 1.000 pagina's
-
-### 2. Azure Mistral OCR [#2-azure-mistral-ocr]
-
-Voor organisaties die Azure AI Foundry gebruiken, is het mogelijk om Mistral OCR-modellen te implementeren in uw Azure-infrastructuur. Momenteel is het **Mistral OCR 2503**-model beschikbaar voor Azure-implementatie.
-
-**Configuratie:**
-```yaml
-# `librechat.yaml`
-ocr:
-  mistralModel: "deployed-mistral-ocr-2503"              # Should match your Azure deployment name
-  apiKey: "${AZURE_MISTRAL_OCR_API_KEY}"                 # Reference to your Azure API key in .env
-  baseURL: "https://your-deployed-endpoint.models.ai.azure.com/v1"  # Your Azure endpoint
-  strategy: "azure_mistral_ocr"                          # Use Azure strategy
-```
-
-**Azure Model Information:**
-Je kunt het nieuwste Mistral OCR-model dat beschikbaar is op Azure AI Foundry hier verkennen (vereist een Azure-abonnement):
-
-https://ai.azure.com/explore/models/mistral-ocr-2503
-
-### 3. Google Vertex AI Mistral OCR [#3-google-vertex-ai-mistral-ocr]
-
-Voor organisaties die gebruikmaken van Google Cloud Platform, is het mogelijk om Mistral OCR-modellen te implementeren op uw Google Cloud Vertex AI-infrastructuur.
-
-**Omgevingsvariabelen:**
-```bash
-# `.env`
-# Option 1: File path
-GOOGLE_SERVICE_KEY_FILE=/path/to/your/service-account-key.json
-
-# Option 2: URL to fetch the key
-GOOGLE_SERVICE_KEY_FILE=https://your-secure-server.com/service-account-key.json
-
-# Option 3: Base64 encoded JSON
-GOOGLE_SERVICE_KEY_FILE=eyJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsICJwcm9qZWN0X2lkIjogInlvdXItcHJvamVjdC1pZCIsIC4uLn0=
-
-# Option 4: Raw JSON string
-GOOGLE_SERVICE_KEY_FILE='{
-  "type": "service_account",
-  "project_id": "your-project-id",
-  "private_key_id": "...",
-  "private_key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
-  "client_email": "...",
-  "client_id": "...",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "..."
-}'
-```
-
-**Configuratie:**
-```yaml
-# `librechat.yaml`
-ocr:
-  mistralModel: "mistral-ocr-2505"                        # Model name as deployed in Vertex AI
-  strategy: "vertexai_mistral_ocr"                       # Use Google Vertex AI strategy
-```
-
-**Setup-vereisten:**
-1. Implementeer een Mistral OCR-model op Google Vertex AI (bijv. mistral-ocr-2505)
-2. Maak een service account aan met de juiste rechten om toegang te krijgen tot het Vertex AI endpoint
-3. Download het JSON-sleutelbestand van het serviceaccount
-4. Stel de `GOOGLE_SERVICE_KEY_FILE` omgevingsvariabele in met behulp van een van de ondersteunde methoden
-
-### 4. Aangepaste OCR (Niet geïmplementeerd) [#4-custom-ocr-not-implemented]
-
-`custom_ocr` komt voor als waarde in de strategielijst, maar LibreChat heeft er geen implementatie voor. Ondersteuning voor aangepaste OCR-providers en door gebruikers gedefinieerde strategieën is gepland voor toekomstige releases.
-
-### 5. Bestanden uploaden naar provider (Direct) [#5-upload-files-to-provider-direct]
-
-Voor ondersteunde LLM-providers (**OpenAI, AzureOpenAI, Anthropic, Google en AWS Bedrock**) en hun respectievelijke modellen kunnen bestanden nu rechtstreeks naar de provider-API's worden verzonden als berichtbijlagen. Hierdoor kan de provider zijn eigen native OCR-implementaties gebruiken om bestanden te verwerken met de standaard uploader, of met de optie **Upload to Provider** in het [**+** palet van de composer](/docs/features/composer#add-files) wanneer `legacyFileUploadUX` is ingeschakeld.
-
-Momenteel bieden alle vijf de bovengenoemde providers ondersteuning voor afbeeldingen en PDF's, waarbij Google ook ondersteuning biedt voor audio- en videobestanden wanneer deze worden gebruikt in combinatie met compatibele multimodale modellen. AWS Bedrock ondersteunt daarnaast CSV-, DOC-, DOCX-, XLS-, XLSX-, HTML-, TXT- en Markdown-documenten.
-
-<Callout type="note" title="Azure OpenAI PDF-upload waarschuwing" emoji='✏️'>
-Voor **Azure OpenAI** endpoints is de optie Upload to Provider voor PDF-bestanden alleen beschikbaar bij gebruik van de Responses API. De Chat Completions API van Azure OpenAI ondersteunt afbeeldingen, maar ondersteunt geen PDF-bestandsbijlagen.
-
-Als PDF's niet naar de provider worden verzonden met Azure OpenAI (of als u **Upload to Provider** niet ziet voor deze bestanden terwijl `legacyFileUploadUX` is ingeschakeld), zorg er dan voor dat de Responses API-parameter is ingeschakeld in het Parameters-paneel.
-
-Let op: Standaard OpenAI endpoints ondersteunen PDF-uploads in zowel Chat Completions als Responses API's.
-</Callout>
-
-<Callout type="note" title="Limieten voor het uploaden van documenten naar AWS Bedrock" emoji='🪨'>
-**AWS Bedrock** ondersteunt documentuploads via de Converse API voor de volgende formaten:
-**PDF, CSV, DOC, DOCX, XLS, XLSX, HTML, TXT en Markdown (.md)**
-
-Beperkingen:
-- De standaard maximale bestandsgrootte is **4.5 MB**
-- Wanneer `fileConfig` geen kleinere limiet instelt, kunnen Claude 4+ PDF's en Amazon Nova PDF's of DOCX-bestanden tot **32 MB** groot zijn.
-- Bestandsnamen worden opgeschoond om te voldoen aan de naamgevingsvereisten van Bedrock (alfanumeriek, spaties, koppeltekens, haakjes, vierkante haken; maximaal 200 tekens)
-
-Voor meer details over de Bedrock-configuratie, zie de [AWS Bedrock setup guide](/docs/configuration/pre_configured_ai/bedrock).
-</Callout>
-
-## Gedetailleerde configuratie [#detailed-configuration]
-
-Voor aanvullende, gedetailleerde configuratie-opties, zie de [OCR Config Object Structure](/docs/configuration/librechat_yaml/object_structure/ocr).
-
-## OCR-verwerkingsconfiguratie [#ocr-processing-configuration]
-
-Bepaal welke bestandstypen met OCR worden verwerkt met behulp van `fileConfig`:
-
-```yaml
-fileConfig:
-  ocr:
-    supportedMimeTypes:
-      - "^image/(jpeg|gif|png|webp|heic|heif)$"
-      - "^application/pdf$"
-      - "^application/vnd\\.openxmlformats-officedocument\\.(wordprocessingml\\.document|presentationml\\.(presentation|template)|spreadsheetml\\.sheet)$"
-      - "^application/vnd\\.ms-(word|powerpoint|excel)$"
-      - "^application/epub\\+zip$"
-```
-
-Bestanden die overeenkomen met deze patronen zullen OCR gebruiken wanneer:
-- Geüpload naar de bestandscontext van de agent (altijd, indien OCR is geconfigureerd)
-- Geüpload als tekst in de chat (als OCR is geconfigureerd; anders wordt de ingebouwde documentparser of het lezen van platte tekst toegepast waar het bestandstype wordt ondersteund)
-
-Voor meer details over de configuratie van bestandsverwerking, zie [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config).
-
-## Gebruiksscenario's voor Agent File Context [#use-cases-for-agent-file-context]
-
-Agent File Context is ideaal voor:
-
-- **Persistente Agent-kennis**: Voeg documentatie, beleid of referentiemateriaal toe aan de systeeminstructies van een agent
-- **Gespecialiseerde Agents**: Creëer agents met domeinspecifieke kennis uit documenten
-- **Document-Based Assistants**: Bouw agents die altijd verwijzen naar specifieke handleidingen of gidsen
-- **Code Files**: Voeg codevoorbeelden of bibliotheken toe in de instructies voor de agent
-- **Gestructureerde data**: Voeg CSV, JSON of andere gestructureerde data toe waar de agent naar kan verwijzen
-
-Wanneer OCR is geconfigureerd, verwerkt File Context ook:
-- **Verwerking van gescande documenten**: Extraheer en sla tekst op uit afbeeldingen of gescande PDF's
-- **Afbeeldingstekstextractie**: Extraheer tekst uit screenshots of foto's van documenten
-
-Voor tijdelijke documentvragen in de chat, zie [Upload as Text](/docs/features/upload_as_text).
-
-## Beperkingen [#limitations]
-
-- De nauwkeurigheid van tekstextractie kan variëren afhankelijk van het bestandstype, de beeldkwaliteit, de complexiteit van het document en de tekstduidelijkheid.
-- Sommige gespecialiseerde opmaak of ongebruikelijke lay-outs worden mogelijk niet perfect behouden
-- Zeer grote documenten kunnen worden afgekapt vanwege tokenbeperkingen van de onderliggende AI-modellen.
-- Voor het beste resultaat met afbeeldingen en gescande documenten, configureer een OCR-service
-
-## Toekomstige verbeteringen [#future-enhancements]
-
-LibreChat is van plan om OCR-mogelijkheden uit te breiden in toekomstige releases:
-
-- Ondersteuning voor aangepaste OCR-providers
-- Een `user_provided` strategie-optie waarmee gebruikers hun voorkeurs-OCR-service kunnen kiezen
-- Integratie met open-source OCR-oplossingen
-- Verbeterde opties voor documentverwerking
-- Fijnmazigere controle over OCR-instellingen
-- Mistral is van plan om hun OCR API beschikbaar te maken via hun cloudpartners, zoals GCP en AWS, en via enterprise self-hosting voor organisaties met strikte vereisten op het gebied van gegevensprivacy ([bron](https://mistral.ai/fr/news/mistral-ocr))
-- LibreChat bevat momenteel niet de geparseerde afbeeldingsinhoud van het OCR-proces in zijn antwoorden, ook al kunnen services zoals [Mistral's OCR API deze bieden](https://docs.mistral.ai/api/endpoint/ocr) in het resultaat. Deze functie wordt mogelijk ondersteund in toekomstige updates.
-
----
-
-Voor meer informatie over het configureren van OCR, zie de [OCR Config Object Structure](/docs/configuration/librechat_yaml/object_structure/ocr).
+OCR is uitgeschakeld totdat een beheerder een `ocr`-sectie toevoegt aan `librechat.yaml`; de strategieën, sleutels en endpoints worden beschreven in de [OCR-configuratiereferentie](/docs/configuration/librechat_yaml/object_structure/ocr). Welke bestandstypen naar OCR worden verzonden, wordt ingesteld met `fileConfig.ocr.supportedMimeTypes` in [`fileConfig`](/docs/configuration/librechat_yaml/object_structure/file_config#ocr). Agents hebben ook de `ocr`-mogelijkheid nodig, die standaard is ingeschakeld.

@@ -1,41 +1,49 @@
 ---
 title: RAG API（与文件对话）
 icon: Brain
-description: >-
-  基于 Langchain 和 FastAPI 的检索增强生成 (RAG) API，用于文档索引和检索。此 API 与 LibreChat
-  集成，可根据用户上传的文件提供上下文感知的响应。
+description: '上传文档,让模型搜索其中能回答你问题的段落。'
 ---
 
-**RAG(检索增强生成)API** 是一项独立的服务,它会对你上传到 LibreChat 的文件建立索引,并返回与问题最相关的段落,使模型能够基于你的文档作答,而不只是依赖其训练数据。
+文件搜索让您无需将文件内容粘贴到聊天中，即可上传文档并就其内容提问。LibreChat 会将每个文件发送至 RAG API，由其切分为多个片段并建立索引；当您提问时，模型会在该索引中搜索，并基于找到的段落作答。
 
-这是一个基于 LangChain 构建的 Python FastAPI 应用,使用安装了 pgvector 扩展的 PostgreSQL 存储嵌入向量。
+当文档太长而无法每次都完整阅读，或者你希望同时跨多个文件获取答案时，就可以使用它。
 
-**要进行设置，请参阅 [RAG API 配置](/docs/configuration/rag_api)。**
+## 上传文件用于搜索 [#upload-a-file-for-search]
 
-![image](https://github.com/danny-avila/LibreChat/assets/110412045/f1298f66-bf1d-4499-a582-23430b481f17)
+点击[消息输入框](/docs/features/composer)中的 **+** 打开面板,展开 **More upload options**,然后选择 **Upload for File Search** 并挑选你的文件。在面板中搜索该选项同样可行。以这种方式上传还会为当前对话开启 **File Search**。大文件建立索引可能需要一些时间,索引完成后上传才会结束。
 
----
+<ThemeImage
+  light="/images/features/rag_api/upload-for-file-search-light.png"
+  dark="/images/features/rag_api/upload-for-file-search-dark.png"
+  alt="The Attach 和 tools 面板从消息输入框中打开,其中 Upload for File Search 选项处于高亮状态"
+/>
 
-在 LibreChat 中,RAG 为[智能体](/docs/features/agents#file-search)的**文件搜索**功能(`file_search`)提供支持。附加到智能体文件搜索中的文件,或附加到选择了文件搜索的运行中的文件,会由 RAG API 进行索引,并按需检索。其他聊天端点不使用 RAG 索引或检索,但它们仍可按下文所述使用 RAG API 提取文本。
+一旦对话中的文件完成索引，模型就会获得一个 `file_search` 工具。是否调用由模型自行决定：涉及文档内容的问题会触发搜索，闲聊则不会。回复在搜索进行时会显示"正在搜索您的文件"步骤；启用引用后，它所使用的段落会显示在 **Sources** 下方，并附带文件名，方便您打开文档进行核对。
 
-RAG API 还提供了一个 `/text` 路由,LibreChat 可借此从上传文件中提取文本;有关其适用场景,请参阅[以文本形式上传](/docs/features/upload_as_text#what-happens-under-the-hood)。
+## 搜索的工作原理 [#how-search-works]
 
-## 工作原理 [#how-it-works]
+当模型调用 `file_search` 时,会编写一条搜索查询。LibreChat 会向 RAG API 请求每个已附加文件中最接近的 5 个文本块,并在所有结果中保留最接近的 10 个。这些文本块连同其文件名和相关性分数一起返回给模型,模型再基于这些内容作答。
 
-1. **索引。** 当文件需要可搜索时(在上传到智能体的文件搜索时,或聊天运行首次对附件使用文件搜索时),LibreChat 会将其发送至 RAG API。RAG API 将文本切分为相互重叠的分块(`CHUNK_SIZE` 和 `CHUNK_OVERLAP`),使用已配置的提供商为每个分块生成嵌入向量,并将这些向量存储在 pgvector 中。
-2. **检索。** 当模型调用文件搜索时,它会编写一个搜索查询。LibreChat 会向 RAG API 请求每个附加文件中最接近的 5 个文本块,然后保留总体上最接近的 10 个。
-3. **回答。** 这些文本块会连同其文件名和相关性分数一起返回给模型,模型基于这些内容进行回答。启用[文件引用](/docs/configuration/librechat_yaml/object_structure/interface#filecitations)后,响应可以引用其所使用的文件。
+检索会找出与查询在语义上相近的段落,因此擅长在大型文档中查找特定事实。对于需要整份文档作为整体来回答的问题(例如摘要),“Upload as Text”通常效果更好。
 
 在 LibreChat 中删除文件时,也会同时从 RAG API 中移除其向量数据。
 
-检索只会找到与查询语义相近的段落,因此它最适合在大型文档中查找特定事实。对于需要整篇文档才能回答的问题,例如对文档进行总结,[以文本形式上传](/docs/features/upload_as_text)通常能获得更好的结果。
+## 复用您已上传的文件 [#reuse-files-you-already-uploaded]
 
-## 什么是 RAG？ [#what-is-rag]
+已索引的文件会保留在您的账户中。打开面板,在 **Your files**(您的文件)下即可将其附加到新消息或对话中,无需重新上传。
 
-检索增强生成（Retrieval-Augmented Generation）让语言模型基于外部知识源进行回答。应用不再仅依赖模型在训练期间学到的内容，而是先从该知识源中检索相关片段并将其加入提示词，然后模型基于这些片段生成答案。由于知识存放在模型之外，你无需重新训练任何模型，即可添加或更新文档。
+当使用 Assistants 端点时上传的文件会存储在 OpenAI 中,不会由 RAG API 建立索引,并且无法附加到其他端点。
 
-如需快速了解该概念的简要介绍,请观看 IBM 的这段视频:
+## 代理中的文件搜索 [#file-search-in-agents]
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/T-D1OfcDW1M?si=SDVz1Fxsoi_z4S89" title="YouTube 视频播放器" frameBorder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen></iframe>
+对于智能体,请在智能体构建器中开启 [**文件搜索**](/docs/features/agents#file-search) 并在其中上传文件。这些文件将成为智能体的知识库:所有与该智能体对话的用户都可以让它搜索这些文件,而无需自行上传任何内容。必须先保存智能体,然后才能为其添加文件。
 
-有关 RAG API 自身的端点以及其接受的每一个环境变量,请参阅 [RAG API 仓库](https://github.com/LibreChat-AI/rag-api)。
+## 文件搜索或以文本形式上传 [#file-search-or-upload-as-text]
+
+[**以文本形式上传**](/docs/features/upload_as_text) 同样位于该菜单中。它会提取文件中的文本，并将全部内容放入对话中，适用于模型需要通读每个字的简短文档。文件搜索仅发送与每次查询匹配的段落，因此能够扩展到长文档和大量文件，但模型永远看不到未被检索到的部分。
+
+RAG API 还为“上传为文本”功能提供服务,作为内置解析器无法读取的文件类型的文本提取器。参见[文本的提取方式](/docs/features/upload_as_text#how-the-text-is-extracted)。
+
+## 设置 [#setup]
+
+文件搜索需要 RAG API 服务和向量数据库。默认的 Docker 部署已包含这两者;管理员需要设置嵌入(embeddings)提供商,对于其他安装方式,则需设置 `RAG_API_URL`。请参阅 [RAG API 配置](/docs/configuration/rag_api),以及 [RAG API 代码仓库](https://github.com/LibreChat-AI/rag-api),了解该服务自身的端点和变量。

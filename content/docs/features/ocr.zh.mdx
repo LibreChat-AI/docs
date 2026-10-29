@@ -1,271 +1,51 @@
 ---
 title: 文档 OCR
 icon: ScanText
-description: 了解如何配置光学字符识别 (OCR) 以增强 LibreChat 文件上传功能中的文本提取能力。
+description: '在对话或智能体中添加图片、扫描件和复杂文档文件时,读取其中的文字内容。'
 ---
 
-LibreChat 中的 OCR（光学字符识别）是一项用于从文件中提取文本的可选增强功能。
+OCR 让 LibreChat 能够读取仅以像素形式存在的文本:例如收据照片、扫描合同,或由截图制作的 PDF。当管理员设置了 OCR 服务后,以文本形式添加的文件会先经过该服务处理,因此模型获取到的是文字内容,而不是空结果。
 
-### 以文本形式上传 [#upload-as-text]
+## 适用 OCR 的场景 [#where-ocr-applies]
 
-“Upload as Text”功能（在聊天界面中）的工作方式相同：
+OCR 会对文件执行，其提取的文本会被放入模型的上下文中：
 
-- 匹配 `fileConfig.ocr.supportedMimeTypes` 的文件将在可用时使用 OCR。
-- 在未启用 OCR 的情况下,PDF、DOCX、电子表格和 ODT 文件会回退到[内置文档解析器](#built-in-document-parser)处理;图像以及解析器无法读取的其他类型文件则需要 OCR。
-- 对于包含文本的图像、扫描文档和复杂的 PDF 文件特别有用
-- 处理顺序:**OCR > RAG 文本提取 > 内置文档解析器 > STT > 纯文本**
-- 请参阅 [Upload as Text](/docs/features/upload_as_text) 文档以了解详细信息。
+- **Upload as Text**(上传为文本)在聊天中,适用于显示明确上传菜单的部署环境。参见 [Upload as Text](/docs/features/upload_as_text)。
+- 在智能体构建器中,**文件上下文**会将提取的文本包含在智能体每条消息的上下文中。
 
-### 文件上下文（针对智能体） [#file-context-for-agents]
+默认情况下，它支持处理的文件类型包括：图像（JPEG、PNG、GIF、WebP、HEIC、HEIF）、PDF、Word、PowerPoint、Excel、EPUB 和 OpenDocument 文件。其他文件将跳过 OCR，改用常规文本提取。
 
-当您通过 Agent Builder 的 File Context 部分上传文件时：
+使用默认的**From Local Computer**选项时,具体行为取决于文件被路由到哪里。提供方支持的图片和 PDF 会直接发送给模型,跳过 OCR。被改为按文本处理的文件(例如 Word 文档,或管理员设置为按文本处理的 PDF)会与 Upload as Text 采用相同的方式提取内容,因此当 OCR 负责处理该类型文件时,会经过 OCR 处理。
 
-1. 默认情况下,文本通过内置文档解析器或纯文本读取提取(如已配置且文件类型匹配,则使用 OCR/STT)。
-2. 提取的文本将作为 Agent 系统指令的一部分进行存储
-3. Agent 可以在所有对话中引用此上下文
-4. **OCR 服务是可选的** - 对于纯文本文件以及内置解析器可以处理的文档,该功能无需 OCR 服务也可正常工作
+## 不使用 OCR [#without-ocr]
 
-作为“文件上下文 (File Context)”上传的文件会被处理以提取文本，随后这些文本会被添加到 Agent 的系统指令中。这非常适合文档、代码文件、PDF 或包含文本的图像，在这些场景下，您需要将全文内容包含在 Agent 的指令中。
+没有 OCR 服务时，文本提取功能依然可用。LibreChat 内置的解析器可以读取 PDF、DOCX、XLS 和 XLSX、ODT 以及 ODS 文件，文件大小上限为 15 MB，且文件须包含真实的文本层，这涵盖了大多数从编辑器导出的文档。旧版 `.doc`、PowerPoint 和 EPUB 文件则需要 OCR。此外，解析器无法读取图片：扫描版 PDF 或页面照片会失败，并提示该文档可能为基于图像的文件，需要 OCR 服务。
 
-**注意：** 提取的文本已包含在 agent 的系统指令中。
+如果已配置 OCR,但服务在处理某个文档时出错,LibreChat 会对该文件回退使用内置解析器。
 
-## 可选的 OCR 配置 [#optional-ocr-configuration]
+## OCR 服务 [#ocr-services]
 
-两者(Agent File Context 和 Upload as Text)对于纯文本文件以及内置解析器可处理的文档类型均可开箱即用。若要从图片、扫描文档及其他格式中提取文本,可以选择配置 OCR 服务:
+管理员选择一种策略:
 
-```yaml
-# librechat.yaml
-endpoints:
-  agents:
-    capabilities:
-      - "context"  # Enables both agent file context and upload as text
-      - "ocr"      # Optionally enhances both with OCR
+- 通过 Mistral API 使用 Mistral OCR。这是默认策略。
+- Mistral OCR 部署于 Azure AI Foundry。
+- 在 Google Cloud Vertex AI 上部署的 Mistral OCR。
+- 本地文档解析器，无需任何外部服务。它只能读取文本层，无法识别图片。
 
-ocr:
-  strategy: "mistral_ocr"
-  apiKey: "${OCR_API_KEY}"
-  baseURL: "https://api.mistral.ai/v1"
-  mistralModel: "mistral-ocr-latest"
-```
+使用任何 Mistral 选项时,文件内容都会发送至该服务进行处理,因此其数据处理条款同样适用。
 
-**注意:** `context` 功能默认启用,`ocr` 也在默认功能列表中。如果你设置了自定义的 `endpoints.agents.capabilities` 列表且该列表中省略了 `ocr`,而 OCR 已配置,那么与 OCR MIME 类型匹配的上传将失败,并提示"OCR capability is not enabled for Agents"。
+## 改为上传至提供商 [#upload-to-provider-instead]
 
-OCR 连接默认会阻止私有地址、回环地址、链路本地地址以及云元数据目的地。对于受信任的私有 OCR 服务，请将其确切的私有主机和端口添加到 [`ocr.allowedAddresses`](/docs/configuration/librechat_yaml/object_structure/ocr#allowedaddresses) 中。这是对 SSRF 保护的豁免，因此请仅列出您所控制的基础设施。
+许多模型自身就能读取图片和 PDF。以附件形式发送给服务商时,文件由服务商进行解析,这样可以保留文本提取会丢失的版式和图片。默认上传器会在服务商支持的情况下,自动对图片和 PDF 执行此操作;若使用旧版上传菜单,请在[输入框](/docs/features/composer#add-files)中选择**上传至服务商**。
 
-## 内置文档解析器 [#built-in-document-parser]
+以下这些提供商支持以这种方式接收文件:OpenAI、Anthropic、Google 和 Vertex AI、AWS Bedrock、Mistral、DeepSeek、Moonshot、OpenRouter、xAI 以及自定义端点。Azure OpenAI 仅在会话参数中启用 Responses API 时才以这种方式接收 PDF;若使用 Chat Completions,则只接收图片。
 
-当没有 OCR 服务处理文件时,智能体的文件上下文和“作为文本上传”会使用内置的 `document_parser` 策略。如果已配置的 OCR 服务失败,它也会作为回退方案使用。它仅处理以下类型:
+各个提供商接受的内容各不相同:
 
-- PDF(仅文本层,不包含图像识别)
-- DOCX(非旧版 `.doc`)
-- 电子表格：xlsx、xls 和 ods
-- ODT
+- 所有这些都支持图片和 PDF。
+- Google、Vertex AI 和 OpenRouter 也支持音频和视频。
+- AWS Bedrock 还支持 CSV、DOC、DOCX、XLS、XLSX、HTML、TXT 和 Markdown 格式的文件,每个文档最大 4.5 MB。对于 Claude 4 及更高版本的 PDF,以及 Nova 的 PDF 和 DOCX 文件,最大可达 32 MB,除非您的管理员设置了更低的文件大小限制。请参阅 [AWS Bedrock](/docs/configuration/pre_configured_ai/bedrock)。
 
-超过 15 MB 的文件会被解析器拒绝,且无法提取出文本的文档会返回错误。PowerPoint 文件、`.doc`、EPUB 以及图片需要使用 OCR 服务(或 RAG API 文本路由,参见 [Upload as Text](/docs/features/upload_as_text))。
+## 设置 [#setup]
 
-## OCR 功能概述 [#overview-of-ocr-capabilities]
-
-LibreChat 中的 OCR 功能允许：
-
-- 从图像和文档中提取文本
-- 保持文档结构和格式
-- 处理复杂的布局，包括多栏文本
-- 处理表格、公式以及其他专业内容
-- 处理多语言内容
-
-## OCR 策略 [#ocr-strategies]
-
-LibreChat 支持多种 OCR 策略，以满足不同的部署需求和要求。请选择最适合您的基础设施和合规性要求的策略。
-
-### 1. Mistral OCR (默认) [#1-mistral-ocr-default]
-
-默认策略直接使用 Mistral 的云 API 服务。这是最简单的设置，仅需要一个来自 Mistral 的 API key。
-
-**环境变量：**
-```.env
-# `.env`
-OCR_API_KEY=your-mistral-api-key
-# OCR_BASEURL=https://api.mistral.ai/v1 # this is the default value
-```
-
-**配置：**
-```yaml
-# `librechat.yaml`
-ocr:
-  mistralModel: "mistral-ocr-latest"       # Optional: Specify Mistral model, defaults to "mistral-ocr-latest"
-  apiKey: "your-mistral-api-key"           # Optional: Defaults to OCR_API_KEY env variable
-  baseURL: "https://api.mistral.ai/v1"     # Optional: Defaults to OCR_BASEURL env variable, or Mistral's API if no variable set
-  strategy: "mistral_ocr"                  # Optional: Defaults to "mistral_ocr"
-```
-
-**主要功能：**
-- **文档结构保留**：保持格式，如标题、段落、列表和表格
-- **多语言支持**：处理多种语言和脚本的文本
-- **复杂布局处理**：处理多栏文本和混合内容
-- **数学表达式识别**：准确处理方程式和公式
-- **高速处理**：每分钟处理高达 2000 页
-
-**注意事项：**
-- **费用**: 使用 Mistral OCR 可能会产生费用，因为它是一项付费 API 服务（尽管可能提供免费试用）。
-- **数据隐私**：通过 Mistral OCR 处理的数据受 Mistral 云环境及其服务条款的约束
-- **文档限制：**
-  - 最大文件大小：50 MB
-  - 最大文档长度：1,000 页
-
-### 2. Azure Mistral OCR [#2-azure-mistral-ocr]
-
-对于使用 Azure AI Foundry 的组织，您可以将 Mistral OCR 模型部署到您的 Azure 基础设施中。目前，**Mistral OCR 2503** 模型已可用于 Azure 部署。
-
-**配置：**
-```yaml
-# `librechat.yaml`
-ocr:
-  mistralModel: "deployed-mistral-ocr-2503"              # Should match your Azure deployment name
-  apiKey: "${AZURE_MISTRAL_OCR_API_KEY}"                 # Reference to your Azure API key in .env
-  baseURL: "https://your-deployed-endpoint.models.ai.azure.com/v1"  # Your Azure endpoint
-  strategy: "azure_mistral_ocr"                          # Use Azure strategy
-```
-
-**Azure 模型信息：**
-您可以在此处探索 Azure AI Foundry 上提供的最新 Mistral OCR 模型（需要 Azure 订阅）：
-
-https://ai.azure.com/explore/models/mistral-ocr-2503
-
-### 3. Google Vertex AI Mistral OCR [#3-google-vertex-ai-mistral-ocr]
-
-对于使用 Google Cloud Platform 的组织，您可以将 Mistral OCR 模型部署到您的 Google Cloud Vertex AI 基础设施中。
-
-**环境变量：**
-```bash
-# `.env`
-# Option 1: File path
-GOOGLE_SERVICE_KEY_FILE=/path/to/your/service-account-key.json
-
-# Option 2: URL to fetch the key
-GOOGLE_SERVICE_KEY_FILE=https://your-secure-server.com/service-account-key.json
-
-# Option 3: Base64 encoded JSON
-GOOGLE_SERVICE_KEY_FILE=eyJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsICJwcm9qZWN0X2lkIjogInlvdXItcHJvamVjdC1pZCIsIC4uLn0=
-
-# Option 4: Raw JSON string
-GOOGLE_SERVICE_KEY_FILE='{
-  "type": "service_account",
-  "project_id": "your-project-id",
-  "private_key_id": "...",
-  "private_key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
-  "client_email": "...",
-  "client_id": "...",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "..."
-}'
-```
-
-**配置：**
-```yaml
-# `librechat.yaml`
-ocr:
-  mistralModel: "mistral-ocr-2505"                        # Model name as deployed in Vertex AI
-  strategy: "vertexai_mistral_ocr"                       # Use Google Vertex AI strategy
-```
-
-**设置要求：**
-1. 将 Mistral OCR 模型部署到 Google Vertex AI（例如 mistral-ocr-2505）
-2. 创建一个具有适当权限的服务账号，以访问 Vertex AI endpoint
-3. 下载服务账号 JSON 密钥文件
-4. 使用支持的方法之一设置 `GOOGLE_SERVICE_KEY_FILE` 环境变量
-
-### 4. 自定义 OCR(未实现) [#4-custom-ocr-not-implemented]
-
-`custom_ocr` 出现在策略列表的值中，但 LibreChat 中并没有与之对应的实现。对自定义 OCR 提供商和用户自定义策略的支持计划在未来版本中推出。
-
-### 5. 将文件上传至提供商 (直接) [#5-upload-files-to-provider-direct]
-
-对于受支持的 LLM 提供商（**OpenAI, AzureOpenAI, Anthropic, Google 和 AWS Bedrock**）及其各自的模型，现在可以将文件直接作为消息附件发送到提供商 API，从而允许提供商使用其原生的 OCR 实现来解析文件。这可以通过默认上传器实现，或者在启用 `legacyFileUploadUX` 时，通过[组合框 **+** 面板](/docs/features/composer#add-files)中的 **Upload to Provider** 选项来实现。
-
-目前，上述所有五个提供商均支持图像和 PDF，其中 Google 在配合兼容的多模态模型使用时，还支持音频和视频文件。AWS Bedrock 额外支持 CSV、DOC、DOCX、XLS、XLSX、HTML、TXT 和 Markdown 文档。
-
-<Callout type="note" title="Azure OpenAI PDF 上传注意事项" emoji='✏️'>
-对于 **Azure OpenAI** endpoint，PDF 文件的“上传至提供商 (Upload to Provider)”选项仅在使用 Responses API 时可用。Azure OpenAI 的 Chat Completions API 支持图像，但不支持 PDF 文件附件。
-
-如果 PDF 未发送至 Azure OpenAI 提供商（或者在启用了 `legacyFileUploadUX` 时未看到它们的 **Upload to Provider** 选项），请确保在 Parameters 面板中启用了 Responses API 参数。
-
-注意：标准的 OpenAI endpoint 在 Chat Completions 和 Responses API 中均支持 PDF 上传。
-</Callout>
-
-<Callout type="note" title="AWS Bedrock 文档上传限制" emoji='🪨'>
-**AWS Bedrock** 通过 Converse API 支持以下格式的文档上传：
-**PDF、CSV、DOC、DOCX、XLS、XLSX、HTML、TXT 和 Markdown (.md)**
-
-约束：
-- 默认的最大文件大小为 **4.5 MB**
-- 当 `fileConfig` 未设置更小的限制时，Claude 4+ 的 PDF 文件以及 Amazon Nova 的 PDF 或 DOCX 文件最大可达 **32 MB**
-- 文件名经过清理以符合 Bedrock 的命名要求（仅限字母数字、空格、连字符、圆括号、方括号；最大 200 个字符）
-
-有关 Bedrock 配置的更多详细信息，请参阅 [AWS Bedrock 设置指南](/docs/configuration/pre_configured_ai/bedrock)。
-</Callout>
-
-## 详细配置 [#detailed-configuration]
-
-有关更多详细的配置选项，请参阅 [OCR Config Object Structure](/docs/configuration/librechat_yaml/object_structure/ocr)。
-
-## OCR 处理配置 [#ocr-processing-configuration]
-
-使用 `fileConfig` 控制哪些文件类型通过 OCR 进行处理：
-
-```yaml
-fileConfig:
-  ocr:
-    supportedMimeTypes:
-      - "^image/(jpeg|gif|png|webp|heic|heif)$"
-      - "^application/pdf$"
-      - "^application/vnd\\.openxmlformats-officedocument\\.(wordprocessingml\\.document|presentationml\\.(presentation|template)|spreadsheetml\\.sheet)$"
-      - "^application/vnd\\.ms-(word|powerpoint|excel)$"
-      - "^application/epub\\+zip$"
-```
-
-符合这些模式的文件将在以下情况下使用 OCR：
-- 上传至 agent 文件上下文（如果已配置 OCR，则始终上传）
-- 通过聊天上传为文本(如已配置 OCR,则使用 OCR;否则在支持该文件类型时使用内置文档解析器或纯文本读取)
-
-有关文件处理配置的更多详细信息，请参阅 [File Config Object Structure](/docs/configuration/librechat_yaml/object_structure/file_config)。
-
-## Agent 文件上下文的使用场景 [#use-cases-for-agent-file-context]
-
-Agent File Context 非常适合：
-
-- **持久化智能体知识 (Persistent Agent Knowledge)**：将文档、策略或参考资料添加到智能体的系统指令中
-- **Specialized Agents**: 创建具有来自文档的特定领域知识的智能体
-- **基于文档的助手 (Document-Based Assistants)**：构建始终参考特定手册或指南的智能体
-- **代码文件**：在 Agent 指令中包含代码示例或库
-- **结构化数据**：添加 CSV、JSON 或其他结构化数据供智能体参考
-
-当配置了 OCR 时，File Context 还会处理：
-- **扫描文档处理**：从图像或扫描的 PDF 中提取并存储文本
-- **图像文本提取**：从截图或文档照片中提取文本
-
-对于聊天中临时的文档提问，请参阅 [Upload as Text](/docs/features/upload_as_text)。
-
-## 局限性 [#limitations]
-
-- 文本提取的准确性可能会因文件类型、图像质量、文档复杂度和文本清晰度而异。
-- 某些特殊的格式或不常见的布局可能无法被完美保留
-- 由于底层 AI 模型存在 Token 限制，非常大的文档可能会被截断。
-- 为了在使用图像和扫描文档时获得最佳效果，请配置 OCR 服务
-
-## 未来增强功能 [#future-enhancements]
-
-LibreChat 计划在未来的版本中扩展 OCR 功能：
-
-- 支持自定义 OCR 提供商
-- 一个 `user_provided` 策略选项，允许用户选择他们偏好的 OCR 服务
-- 与开源 OCR 解决方案的集成
-- 增强的文档处理选项
-- 对 OCR 设置进行更精细的控制
-- Mistral 计划通过其云合作伙伴（如 GCP 和 AWS）提供 OCR API，并为有严格数据隐私要求的组织提供企业级自托管方案（[来源](https://mistral.ai/fr/news/mistral-ocr)）
-- LibreChat 目前不会在其响应中包含来自 OCR 处理过程的已解析图像内容，尽管诸如 [Mistral's OCR API may provide](https://docs.mistral.ai/api/endpoint/ocr) 之类的服务可能会在结果中提供这些内容。此功能可能会在未来的更新中得到支持。
-
----
-
-有关配置 OCR 的更多信息，请参阅 [OCR 配置对象结构](/docs/configuration/librechat_yaml/object_structure/ocr)。
+在添加 `ocr` 配置段到 `librechat.yaml` 之前,OCR 处于关闭状态。管理员可在 [OCR 配置参考](/docs/configuration/librechat_yaml/object_structure/ocr) 中查看策略、密钥和端点的说明。发送到 OCR 的文件类型通过 [`fileConfig`](/docs/configuration/librechat_yaml/object_structure/file_config#ocr) 中的 `fileConfig.ocr.supportedMimeTypes` 进行设置。代理还需要 `ocr` 功能,该功能默认开启。
