@@ -1,20 +1,12 @@
 ---
 title: Automated Moderation
 icon: Shield
-description: Configuration of the Automated Moderation System. This uses a scoring mechanism to track user violations. As users commit actions like excessive logins, registrations, or messaging, they accumulate violation scores. Upon reaching a set threshold, the user and their IP are temporarily banned. This system ensures platform security by monitoring and penalizing rapid or suspicious activities.
+description: Environment variables for LibreChat's rate limits, violation scores, bans, and OpenAI text moderation.
 ---
 
-The Automated Moderation System uses a scoring mechanism to track user violations. As users commit actions like excessive logins, registrations, or messaging, they accumulate violation scores. Upon reaching a set threshold, the user and their IP are temporarily banned. This system ensures platform security by monitoring and penalizing rapid or suspicious activities.
-
-In production, you should have Cloudflare or some other DDoS protection in place to really protect the server from excessive requests, but these changes will largely protect you from the single or several bad actors targeting your deployed instance for proxying.
-
-**For further details, refer to the user guide provided here: [Automated Moderation](/docs/features/mod_system)**
+These settings control the rate limits, violation scores, and bans described on the [Automated Moderation](/docs/features/mod_system) feature page. All of them are environment variables in your `.env` file; login and registration limits always apply, and [`.env.example`](https://github.com/danny-avila/LibreChat/blob/dev/.env.example) also turns on banning and the concurrent and per-IP message limits. Upload, speech, and import limits can also be set in the [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) block of `librechat.yaml`.
 
 ## Setup
-
-The following are all of the related env variables to make use of and configure the mod system. Note this is also found in the [/.env.example](https://github.com/LibreChat-AI/LibreChat/blob/main/.env.example) file, to be set in your own `.env` file.
-
-**Note:** currently, most of these values are configured through the .env file, but they may soon migrate to be exclusively configured from the [`librechat.yaml` config file](/docs/configuration/librechat_yaml/object_structure/config#ratelimits).
 
 ### Violation, Interval, Duration
 
@@ -23,9 +15,11 @@ The following are all of the related env variables to make use of and configure 
     ['BAN_VIOLATIONS', 'boolean', 'Whether or not to enable banning users for violations (they will still be logged).','BAN_VIOLATIONS=true'],
     ['BAN_DURATION', 'integer', 'How long the user and associated IP are banned for (in milliseconds).','BAN_DURATION=1000 * 60 * 60 * 2'],
     ['BAN_INTERVAL', 'integer', 'The user will be banned every time their score reaches/crosses over the interval threshold.','BAN_INTERVAL=20'],
-    ['VIOLATION_SCORE_TTL', 'integer', 'How long a violation score lives without new violations (in milliseconds). Each new violation restarts the countdown, so scores decay after a quiet period instead of accumulating forever. Set to 0 to never expire scores (legacy behavior).','VIOLATION_SCORE_TTL=1000 * 60 * 60'],
+    ['VIOLATION_SCORE_TTL', 'integer', 'How long (in milliseconds) a violation score is kept without new violations. Each new violation restarts the countdown. 0 keeps scores forever (the old behavior). Default: one hour.','VIOLATION_SCORE_TTL=1000 * 60 * 60'],
   ]}
 />
+
+A ban ends the user's sessions and blocks both the account and the IP it came from. Bans are stored in the `logs` collection in MongoDB and expire after `BAN_DURATION`; to lift one early, delete its entries there. Violation scores are kept in `data/violations.json` (in Redis when `USE_REDIS` is enabled), and every individual violation is recorded per user in `data/logs.json`.
 
 ### The score for each violation
 
@@ -36,26 +30,31 @@ The following are all of the related env variables to make use of and configure 
     ['CONCURRENT_VIOLATION_SCORE', 'integer', 'Score for concurrent violations.','CONCURRENT_VIOLATION_SCORE=1'],
     ['MESSAGE_VIOLATION_SCORE', 'integer', 'Score for message violations.','MESSAGE_VIOLATION_SCORE=1'],
     ['NON_BROWSER_VIOLATION_SCORE', 'integer', 'Score for non-browser violations.','NON_BROWSER_VIOLATION_SCORE=20'],
-    ['IMPORT_VIOLATION_SCORE', 'integer', 'Score for import conversation violations. Defaults to 1 when unset.','IMPORT_VIOLATION_SCORE=1'],
-    ['FORK_VIOLATION_SCORE', 'integer', 'Score for conversation fork violations. Defaults to 1 when unset.','FORK_VIOLATION_SCORE=1'],
+    ['IMPORT_VIOLATION_SCORE', 'integer', 'Score for import conversation violations.','IMPORT_VIOLATION_SCORE=0'],
+    ['FORK_VIOLATION_SCORE', 'integer', 'Score for conversation fork violations.','FORK_VIOLATION_SCORE=0'],
     ['TTS_VIOLATION_SCORE', 'integer', 'Score for text-to-speech violations.','TTS_VIOLATION_SCORE=0'],
     ['STT_VIOLATION_SCORE', 'integer', 'Score for speech-to-text violations.','STT_VIOLATION_SCORE=0'],
     ['FILE_UPLOAD_VIOLATION_SCORE', 'integer', 'Score for file upload violations.','FILE_UPLOAD_VIOLATION_SCORE=0'],
-    ['RESET_PASSWORD_VIOLATION_SCORE', 'integer', 'Score for password reset violations.','RESET_PASSWORD_VIOLATION_SCORE=1'],
-    ['VERIFY_EMAIL_VIOLATION_SCORE', 'integer', 'Score for email verification violations.','VERIFY_EMAIL_VIOLATION_SCORE=1'],
+    ['SHARE_VIOLATION_SCORE', 'integer', 'Score for going over the shared link view limit. Default: 0.','SHARE_VIOLATION_SCORE=0'],
+    ['RESET_PASSWORD_VIOLATION_SCORE', 'integer', 'Score for going over the password reset request limit. Default: 1.','RESET_PASSWORD_VIOLATION_SCORE=1'],
+    ['RESET_PASSWORD_SUBMISSION_VIOLATION_SCORE', 'integer', 'Score for going over the password reset link submission limit. Default: 1.','RESET_PASSWORD_SUBMISSION_VIOLATION_SCORE=1'],
+    ['VERIFY_EMAIL_VIOLATION_SCORE', 'integer', 'Score for going over the email verification request limit. Default: 1.','VERIFY_EMAIL_VIOLATION_SCORE=1'],
+    ['VERIFY_EMAIL_SUBMISSION_VIOLATION_SCORE', 'integer', 'Score for going over the email verification link submission limit. Default: 1.','VERIFY_EMAIL_SUBMISSION_VIOLATION_SCORE=1'],
     ['TOOL_CALL_VIOLATION_SCORE', 'integer', 'Score for tool call violations.','TOOL_CALL_VIOLATION_SCORE=0'],
     ['CONVO_ACCESS_VIOLATION_SCORE', 'integer', 'Score for conversation access violations.','CONVO_ACCESS_VIOLATION_SCORE=0'],
   ]}
 />
 
-### Login and registration rate limiting.
+When a score variable is unset, that violation counts as 1, except non-browser requests (20) and conversation access and shared link views (0). `.env.example` sets several of the others to 0, so going over those limits is blocked but does not move the user toward a ban.
+
+### Login and registration rate limiting
 
 <OptionTable
   options={[    
-    ['LOGIN_MAX', 'number', 'The max amount of logins allowed per IP per LOGIN_WINDOW. Defaults to `7`.'],
-    ['LOGIN_WINDOW', 'number', 'In minutes, determines the window of time for LOGIN_MAX logins. Defaults to `5`.'],
-    ['REGISTER_MAX', 'number', 'The max amount of registrations allowed per IP per REGISTER_WINDOW. Defaults to `5`.'],
-    ['REGISTER_WINDOW', 'number', 'In minutes, determines the window of time for REGISTER_MAX registrations. Defaults to `60`.'],
+    ['LOGIN_MAX', 'number', 'The max amount of logins allowed per IP per LOGIN_WINDOW. Default: 7.'],
+    ['LOGIN_WINDOW', 'number', 'In minutes, determines the window of time for LOGIN_MAX logins. Default: 5.'],
+    ['REGISTER_MAX', 'number', 'The max amount of registrations allowed per IP per REGISTER_WINDOW. Default: 5.'],
+    ['REGISTER_WINDOW', 'number', 'In minutes, determines the window of time for REGISTER_MAX registrations. Default: 60.'],
   ]}
 />
 
@@ -106,93 +105,106 @@ These can also be set under [`rateLimits.emailChange` and `rateLimits.emailChang
 
 <OptionTable
   options={[    
-    ['LIMIT_MESSAGE_IP', 'boolean', 'Whether to limit the amount of messages an IP can send per `MESSAGE_IP_WINDOW`.','LIMIT_MESSAGE_IP=true'],
-    ['MESSAGE_IP_MAX', 'integer', 'The max amount of messages an IP can send per `MESSAGE_IP_WINDOW`.','MESSAGE_IP_MAX=40'],
-    ['MESSAGE_IP_WINDOW', 'integer', 'In minutes, determines the window of time for `MESSAGE_IP_MAX` messages.','MESSAGE_IP_WINDOW=1'],
+    ['LIMIT_MESSAGE_IP', 'boolean', 'Whether to limit the amount of messages an IP can send per MESSAGE_IP_WINDOW.','LIMIT_MESSAGE_IP=true'],
+    ['MESSAGE_IP_MAX', 'integer', 'The max amount of messages an IP can send per MESSAGE_IP_WINDOW.','MESSAGE_IP_MAX=40'],
+    ['MESSAGE_IP_WINDOW', 'integer', 'In minutes, determines the window of time for MESSAGE_IP_MAX messages.','MESSAGE_IP_WINDOW=1'],
   ]}
 />
 
 #### Message rate limiting (per User)
 <OptionTable
   options={[    
-    ['LIMIT_MESSAGE_USER', 'boolean', 'Whether to limit the amount of messages an user can send per `MESSAGE_USER_WINDOW`.','LIMIT_MESSAGE_USER=false'],
-    ['MESSAGE_USER_MAX', 'integer', 'The max amount of messages an user can send per `MESSAGE_USER_WINDOW`.','MESSAGE_USER_MAX=40'],
-    ['MESSAGE_USER_WINDOW', 'integer', 'In minutes, determines the window of time for `MESSAGE_USER_MAX` messages.','MESSAGE_USER_WINDOW=1'],
+    ['LIMIT_MESSAGE_USER', 'boolean', 'Whether to limit the amount of messages a user can send per MESSAGE_USER_WINDOW.','LIMIT_MESSAGE_USER=false'],
+    ['MESSAGE_USER_MAX', 'integer', 'The max amount of messages a user can send per MESSAGE_USER_WINDOW.','MESSAGE_USER_MAX=40'],
+    ['MESSAGE_USER_WINDOW', 'integer', 'In minutes, determines the window of time for MESSAGE_USER_MAX messages.','MESSAGE_USER_WINDOW=1'],
   ]}
 />
 
 ### Import conversation rate limiting
 
-Limits how often users can import conversations to prevent abuse. The per-IP and per-user limiters are always active; tune them with the variables below.
-
-#### Import conversation rate limiting (per IP)
+Both limiters always apply; there is no switch to turn either off.
 
 <OptionTable
-  options={[    
-    ['IMPORT_IP_MAX', 'integer', 'The max amount of conversation imports an IP can perform per IMPORT_IP_WINDOW. Defaults to 100.','IMPORT_IP_MAX=100'],
-    ['IMPORT_IP_WINDOW', 'integer', 'In minutes, determines the window of time for IMPORT_IP_MAX imports. Defaults to 15.','IMPORT_IP_WINDOW=15'],
-  ]}
-/>
-
-#### Import conversation rate limiting (per User)
-
-<OptionTable
-  options={[    
-    ['IMPORT_USER_MAX', 'integer', 'The max amount of conversation imports a user can perform per IMPORT_USER_WINDOW. Defaults to 50.','IMPORT_USER_MAX=50'],
-    ['IMPORT_USER_WINDOW', 'integer', 'In minutes, determines the window of time for IMPORT_USER_MAX imports. Defaults to 15.','IMPORT_USER_WINDOW=15'],
+  options={[
+    ['IMPORT_IP_MAX', 'integer', 'Conversation imports allowed per IP per IMPORT_IP_WINDOW. Default: 100.', 'IMPORT_IP_MAX=100'],
+    ['IMPORT_IP_WINDOW', 'integer', 'Window in minutes for IMPORT_IP_MAX. Default: 15.', 'IMPORT_IP_WINDOW=15'],
+    ['IMPORT_USER_MAX', 'integer', 'Conversation imports allowed per user per IMPORT_USER_WINDOW. Default: 50.', 'IMPORT_USER_MAX=50'],
+    ['IMPORT_USER_WINDOW', 'integer', 'Window in minutes for IMPORT_USER_MAX. Default: 15.', 'IMPORT_USER_WINDOW=15'],
   ]}
 />
 
 ### Conversation forking rate limiting
 
-Limits how often users can fork conversations to prevent abuse. The per-IP and per-user limiters are always active; tune them with the variables below.
-
-#### Conversation forking rate limiting (per IP)
+Both limiters always apply; there is no switch to turn either off.
 
 <OptionTable
-  options={[    
-    ['FORK_IP_MAX', 'integer', 'The max amount of conversation forks an IP can create per `FORK_IP_WINDOW`.','FORK_IP_MAX=30'],
-    ['FORK_IP_WINDOW', 'integer', 'In minutes, determines the window of time for `FORK_IP_MAX` forks.','FORK_IP_WINDOW=1'],
+  options={[
+    ['FORK_IP_MAX', 'integer', 'Conversation forks allowed per IP per FORK_IP_WINDOW. Default: 30.', 'FORK_IP_MAX=30'],
+    ['FORK_IP_WINDOW', 'integer', 'Window in minutes for FORK_IP_MAX. Default: 1.', 'FORK_IP_WINDOW=1'],
+    ['FORK_USER_MAX', 'integer', 'Conversation forks allowed per user per FORK_USER_WINDOW. Default: 7.', 'FORK_USER_MAX=7'],
+    ['FORK_USER_WINDOW', 'integer', 'Window in minutes for FORK_USER_MAX. Default: 1.', 'FORK_USER_WINDOW=1'],
   ]}
 />
 
-#### Conversation forking rate limiting (per User)
+### Shared link rate limiting
+
+Viewing a shared link does not require signing in, so it is limited per IP and, for signed-in viewers, per user.
 
 <OptionTable
-  options={[    
-    ['FORK_USER_MAX', 'integer', 'The max amount of conversation forks a user can create per `FORK_USER_WINDOW`.','FORK_USER_MAX=7'],
-    ['FORK_USER_WINDOW', 'integer', 'In minutes, determines the window of time for `FORK_USER_MAX` forks.','FORK_USER_WINDOW=1'],
+  options={[
+    ['SHARE_IP_MAX', 'integer', 'Shared link views allowed per IP per SHARE_IP_WINDOW. Default: 100.', 'SHARE_IP_MAX=100'],
+    ['SHARE_IP_WINDOW', 'integer', 'Window in minutes for SHARE_IP_MAX. Default: 1.', 'SHARE_IP_WINDOW=1'],
+    ['SHARE_USER_MAX', 'integer', 'Shared link views allowed per user per SHARE_USER_WINDOW. Default: 60.', 'SHARE_USER_MAX=60'],
+    ['SHARE_USER_WINDOW', 'integer', 'Window in minutes for SHARE_USER_MAX. Default: 1.', 'SHARE_USER_WINDOW=1'],
   ]}
 />
 
-### Other limiters
+### File usage rate limiting
 
-The share link (`SHARE_*`), file usage (`FILE_USAGE_*`), password reset (`RESET_PASSWORD_*`), and email verification (`VERIFY_EMAIL_*`) limiters have their own variables, which are listed in the [.env reference](/docs/configuration/dotenv).
-
-#### Illegal model requests
-
-> Note: Illegal model requests are almost always nefarious as it means a 3rd party is attempting to access the server through an automated script. For this, I recommend a relatively high score, no less than 5.
+Agent messages waiting in a queue keep their attachments alive by calling a lightweight file usage endpoint. That endpoint has its own per-user limit.
 
 <OptionTable
-  options={[    
+  options={[
+    ['FILE_USAGE_USER_MAX', 'integer', 'File usage requests allowed per user per FILE_USAGE_USER_WINDOW. Default: 120.', 'FILE_USAGE_USER_MAX=120'],
+    ['FILE_USAGE_USER_WINDOW', 'integer', 'Window in minutes for FILE_USAGE_USER_MAX. Default: 15.', 'FILE_USAGE_USER_WINDOW=15'],
+  ]}
+/>
+
+### Password reset and email verification rate limiting
+
+Requests for an email and submissions of the link from that email are limited separately. The submission values default to the matching request values.
+
+<OptionTable
+  options={[
+    ['RESET_PASSWORD_MAX', 'integer', 'Password reset emails that can be requested per RESET_PASSWORD_WINDOW. Default: 2.', 'RESET_PASSWORD_MAX=2'],
+    ['RESET_PASSWORD_WINDOW', 'integer', 'Window in minutes for RESET_PASSWORD_MAX. Default: 2.', 'RESET_PASSWORD_WINDOW=2'],
+    ['RESET_PASSWORD_SUBMISSION_MAX', 'integer', 'Password reset link submissions allowed per RESET_PASSWORD_SUBMISSION_WINDOW.', 'RESET_PASSWORD_SUBMISSION_MAX=2'],
+    ['RESET_PASSWORD_SUBMISSION_WINDOW', 'integer', 'Window in minutes for RESET_PASSWORD_SUBMISSION_MAX.', 'RESET_PASSWORD_SUBMISSION_WINDOW=2'],
+    ['VERIFY_EMAIL_MAX', 'integer', 'Verification emails that can be requested per VERIFY_EMAIL_WINDOW. Default: 2.', 'VERIFY_EMAIL_MAX=2'],
+    ['VERIFY_EMAIL_WINDOW', 'integer', 'Window in minutes for VERIFY_EMAIL_MAX. Default: 2.', 'VERIFY_EMAIL_WINDOW=2'],
+    ['VERIFY_EMAIL_SUBMISSION_MAX', 'integer', 'Verification link submissions allowed per VERIFY_EMAIL_SUBMISSION_WINDOW.', 'VERIFY_EMAIL_SUBMISSION_MAX=2'],
+    ['VERIFY_EMAIL_SUBMISSION_WINDOW', 'integer', 'Window in minutes for VERIFY_EMAIL_SUBMISSION_MAX.', 'VERIFY_EMAIL_SUBMISSION_WINDOW=2'],
+  ]}
+/>
+
+### Illegal model requests
+
+A request for a model the endpoint does not offer almost always comes from a script rather than the UI, so give it a relatively high score, 5 or more. When unset it counts as 1.
+
+<OptionTable
+  options={[
     ['ILLEGAL_MODEL_REQ_SCORE', 'integer', 'Score for illegal model requests.','ILLEGAL_MODEL_REQ_SCORE=5'],
   ]}
 />
 
 ## OpenAI text moderation
 
-<OptionTable
-  options={[    
-    ['OPENAI_MODERATION', 'boolean', 'Whether or not to enable OpenAI moderation on chat requests sent through the agents routes.','OPENAI_MODERATION=false'],
-    ['OPENAI_MODERATION_API_KEY', 'string', 'Your OpenAI API key.','OPENAI_MODERATION_API_KEY='],
-  ]}
-/>
-
-
-Note that this might not work with all reverse proxies:
+When enabled, chat messages sent to regular chat endpoints and agents (including quoted text) are checked with the OpenAI moderation API before they reach the model. Flagged messages are rejected and the user is told to edit the message. Conversations on the hosted Assistants endpoints are not checked.
 
 <OptionTable
-  options={[    
-    ['OPENAI_MODERATION_REVERSE_PROXY', 'string', 'Note: Commented out by default, this is not working with all reverse proxys.','# OPENAI_MODERATION_REVERSE_PROXY='],
+  options={[
+    ['OPENAI_MODERATION', 'boolean', 'Check chat messages with the OpenAI moderation API before sending them.','OPENAI_MODERATION=false'],
+    ['OPENAI_MODERATION_API_KEY', 'string', 'OpenAI API key used for moderation requests.','OPENAI_MODERATION_API_KEY='],
+    ['OPENAI_MODERATION_REVERSE_PROXY', 'string', 'Full URL to send moderation requests to instead of https://api.openai.com/v1/moderations. Commented out by default; not every reverse proxy supports this endpoint.','# OPENAI_MODERATION_REVERSE_PROXY='],
   ]}
 />

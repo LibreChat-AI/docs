@@ -1,47 +1,24 @@
 ---
 title: Authentication System
 icon: BookOpen
-description: This guide explains how to use the user authentication system of LibreChat, which offers secure and easy email and social logins. You will learn how to set up sign up, log in, password reset, and more.
+description: Environment variables for sign-up, login, email verification, password reset, two-factor authentication, passkeys, sessions, and the user management scripts.
 ---
+
+What users see when they sign up and sign in is described on the [Authentication](/docs/features/authentication) feature page. Provider-specific setup lives in the [OAuth2 and OpenID Connect](/docs/configuration/authentication/OAuth2-OIDC), [SAML](/docs/configuration/authentication/SAML), [LDAP](/docs/configuration/authentication/ldap), [email](/docs/configuration/authentication/email), and [passkeys](/docs/configuration/authentication/passkeys) guides. Allowed email domains and the order of the login buttons are set in the [`registration`](/docs/configuration/librechat_yaml/object_structure/registration) block of `librechat.yaml`.
+
+In a single-tenant deployment, the first account registered gets the `ADMIN` role, so create it yourself before opening registration to others, and make it a local email and password account. Tenant-scoped deployments never promote their first user; provision tenant admins through a trusted administrative flow.
 
 ## General
 
-For a quick overview, refer to the user guide provided here: [Authentication](/docs/features/authentication)
-
-Here's an overview of the general configuration.
-
 <OptionTable
   options={[
-    [
-      'ALLOW_EMAIL_LOGIN',
-      'boolean',
-      'Show email login and allow local or LDAP credential login through the authentication API.',
-      'ALLOW_EMAIL_LOGIN=true',
-    ],
-    [
-      'ALLOW_EMAIL_LOGIN_OVERRIDE',
-      'boolean',
-      'Allow direct credential requests to the login API while ALLOW_EMAIL_LOGIN is false. Default: false.',
-      'ALLOW_EMAIL_LOGIN_OVERRIDE=false',
-    ],
-    [
-      'ALLOW_REGISTRATION',
-      'boolean',
-      'Enable or disable email registration of new users.',
-      'ALLOW_REGISTRATION=true',
-    ],
-    [
-      'ALLOW_SOCIAL_LOGIN',
-      'boolean',
-      'Allow users to connect to LibreChat with various social networks.',
-      'ALLOW_SOCIAL_LOGIN=false',
-    ],
-    [
-      'ALLOW_SOCIAL_REGISTRATION',
-      'boolean',
-      'Enable or disable registration of new users using various social networks.',
-      'ALLOW_SOCIAL_REGISTRATION=false',
-    ],
+    ['ALLOW_EMAIL_LOGIN', 'boolean', 'Show the email login form and accept local or LDAP credential logins through the authentication API.','ALLOW_EMAIL_LOGIN=true'],
+    ['ALLOW_EMAIL_LOGIN_OVERRIDE', 'boolean', 'Still accept email login through the API while ALLOW_EMAIL_LOGIN is false. Each use is logged. Commented out by default.','# ALLOW_EMAIL_LOGIN_OVERRIDE=false'],
+    ['ALLOW_REGISTRATION', 'boolean', 'Enable or disable Email registration of new users.','ALLOW_REGISTRATION=true'],
+    ['ALLOW_SOCIAL_LOGIN', 'boolean', 'Allow users to connect to LibreChat with various social networks.','ALLOW_SOCIAL_LOGIN=false'],
+    ['ALLOW_SOCIAL_REGISTRATION', 'boolean', 'Enable or disable registration of new users using various social networks.','ALLOW_SOCIAL_REGISTRATION=false'],
+    ['ALLOW_ACCOUNT_DELETION', 'boolean', 'Show the Delete account option in Settings > Account. Enabled when unset.','# ALLOW_ACCOUNT_DELETION=true'],
+    ['ALLOW_EMAIL_CHANGE', 'boolean', 'Let email and password users change their email address from Settings > Account (needs email configured). Enabled when unset. emailChange in librechat.yaml takes precedence. See Email address change on the email setup page.','# ALLOW_EMAIL_CHANGE=true'],
   ]}
 />
 
@@ -55,78 +32,59 @@ Quick Tips:
 - To delete a user, you can use [the delete-user script](#delete-user-script) also detailed below.
 
 <ThemeImage
-  light="https://github.com/danny-avila/LibreChat/assets/32828263/4c51dc25-31d3-4c51-8c2a-0cdfb5a25033"
-  dark="https://github.com/danny-avila/LibreChat/assets/32828263/3bc5371d-e51d-4e91-ac68-56db6e85bb2c"
-  alt="User registration screen"
+  light="/images/features/authentication/register-light.png"
+  dark="/images/features/authentication/register-dark.png"
+  alt="The Create your account registration form with Full name, Username (optional), Email, Password, and Confirm password fields"
 />
 
-Related sign-in options for local accounts:
+## Email verification and password reset
 
-- [Passkeys](/docs/configuration/authentication/passkeys): passwordless sign-in with a device screen lock or security key (`ALLOW_PASSKEY_LOGIN`).
-- [Email address change](/docs/configuration/authentication/email#email-address-change): lets users change their registered email from **Settings > Account** (`ALLOW_EMAIL_CHANGE`, on by default).
-
-## Required Two-Factor Authentication
-
-Users can always turn on two-factor authentication (TOTP) themselves from **Settings > Account**. To make it mandatory, set:
-
-```bash filename=".env"
-ENFORCE_TWO_FACTOR_AUTHENTICATION=true
-```
-
-**Who it applies to:** local (email and password) and LDAP accounts. Accounts that sign in through OAuth, OpenID Connect, or SAML are not affected, because their identity provider is responsible for MFA. A federated account that tries to sign in with a password while enforcement is on is told to use its identity provider instead.
-
-**What users see:** a user without 2FA who signs in (with a password, LDAP credentials, or a passkey) gets no session until setup is complete. They land on a **Two-Factor Authentication Required** screen ("Your administrator requires two-factor authentication. Set it up before continuing."), scan a QR code with an authenticator app, enter a code to verify, and save their backup codes. Users who are already signed in are moved into the same setup the next time their session is checked or refreshed, and access tokens issued before enrollment stop working. The setup session lasts 10 minutes; if it expires, the user returns to the login page and starts again.
-
-**After enrollment:** the **Disable 2FA** control in **Settings > Account** shows **Required by administrator**, and the server rejects attempts to disable 2FA while the policy is on. Users can still regenerate backup codes.
+When an [email service](/docs/configuration/authentication/email) is configured, new email and password accounts get a verification link. Without one, accounts are marked verified as soon as they are created.
 
 <OptionTable
   options={[
-    [
-      'ENFORCE_TWO_FACTOR_AUTHENTICATION',
-      'boolean',
-      'Require local and LDAP accounts to enroll in 2FA before a full session is issued. Default: false.',
-      'ENFORCE_TWO_FACTOR_AUTHENTICATION=false',
-    ],
-    [
-      'TWO_FACTOR_TEMP_MAX',
-      'integer',
-      'Two-factor code attempts (sign-in challenge and enrollment confirmation) per TWO_FACTOR_TEMP_WINDOW. Defaults to LOGIN_MAX (7).',
-      '# TWO_FACTOR_TEMP_MAX=7',
-    ],
-    [
-      'TWO_FACTOR_TEMP_WINDOW',
-      'integer',
-      'Window in minutes for TWO_FACTOR_TEMP_MAX. Defaults to LOGIN_WINDOW (5).',
-      '# TWO_FACTOR_TEMP_WINDOW=5',
-    ],
-    [
-      'TWO_FACTOR_SETUP_MAX',
-      'integer',
-      'Enrollment steps that check no guessable code (starting setup, acknowledging backup codes, finishing). Kept separate so wrong codes cannot strand an enrollment. Default: 20.',
-      '# TWO_FACTOR_SETUP_MAX=20',
-    ],
-    [
-      'TWO_FACTOR_SETUP_WINDOW',
-      'integer',
-      'Window in minutes for TWO_FACTOR_SETUP_MAX. Defaults to TWO_FACTOR_TEMP_WINDOW.',
-      '# TWO_FACTOR_SETUP_WINDOW=5',
-    ],
+    ['ALLOW_UNVERIFIED_EMAIL_LOGIN', 'boolean', 'Let users sign in before verifying their email. When false, unverified users cannot sign in, and accounts that are never verified are deleted after one week.','ALLOW_UNVERIFIED_EMAIL_LOGIN=true'],
+    ['ALLOW_PASSWORD_RESET', 'boolean', 'Show the Forgot Password? link and allow password resets. Reset links are valid for 15 minutes, and a successful reset ends all of the account\'s sessions. Without an email service the link is shown directly on the page to anyone who enters the address, so only enable this together with email.','ALLOW_PASSWORD_RESET=false'],
   ]}
 />
 
-<Callout type="info" title="Environment only">
-`ENFORCE_TWO_FACTOR_AUTHENTICATION` and the `TWO_FACTOR_TEMP_*` and `TWO_FACTOR_SETUP_*` limits are process-wide `.env` settings. They apply before a request or tenant configuration is available, so they cannot be set in `librechat.yaml` or per tenant. Set the same values on every replica. The separate budget for managing 2FA from settings is [`rateLimits.twoFactorManagement`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits).
-</Callout>
+## Two-factor authentication
+
+Email and password users and LDAP users can always turn on 2FA themselves from **Settings > Account**. Accounts that sign in through OAuth, OpenID Connect, or SAML do not get the option, because their identity provider is responsible for MFA.
+
+### Required two-factor authentication
+
+Set `ENFORCE_TWO_FACTOR_AUTHENTICATION=true` to make 2FA mandatory for local and LDAP accounts:
+
+- A user without 2FA who signs in (with a password, LDAP credentials, or a passkey) gets no session until setup is done. They land on the **Two-Factor Authentication Required** screen, scan a QR code, confirm a code, and save their backup codes. The setup session lasts 10 minutes; if it expires, they start again from the login page.
+- Users who are already signed in are sent into the same setup the next time their session is checked or refreshed, and access tokens issued before enrollment stop working.
+- After enrollment, the **Disable 2FA** control shows **Required by administrator** and the server refuses to turn 2FA off. Users can still regenerate backup codes.
+- A federated account that tries to sign in with a password while enforcement is on is told to use its identity provider.
+
+<OptionTable
+  options={[
+    ['ENFORCE_TWO_FACTOR_AUTHENTICATION', 'boolean', 'Require local and LDAP accounts to enroll in 2FA before a full session is issued. Default: false.','ENFORCE_TWO_FACTOR_AUTHENTICATION=false'],
+    ['TWO_FACTOR_BACKUP_CODE_FORMAT', 'string', 'Format of newly issued backup codes: strong (default) or legacy. See Backup-code compatibility below.','# TWO_FACTOR_BACKUP_CODE_FORMAT=strong'],
+  ]}
+/>
+
+`ENFORCE_TWO_FACTOR_AUTHENTICATION` and the 2FA attempt limits are process-wide environment settings. They apply before any request or tenant configuration is available, so they cannot be set in `librechat.yaml` or per tenant; set the same values on every replica. The code-attempt limits (`TWO_FACTOR_TEMP_*`, `TWO_FACTOR_SETUP_*`) are on the [Automated Moderation](/docs/configuration/mod_system#two-factor-and-passkey-rate-limiting) page. The separate budget for managing 2FA from Settings is [`rateLimits.twoFactorManagement`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) in `librechat.yaml`.
+
+## Passkeys
+
+Passkeys (WebAuthn) let users sign in with a device screen lock or a security key. They are off by default; turn them on with `ALLOW_PASSKEY_LOGIN=true`. The relying party settings, per-user limit, and rate limits are on the [Passkeys](/docs/configuration/authentication/passkeys) page.
 
 ## Session Expiry and Refresh Token
 
-- Default values: session expiry: 15 minutes, refresh token expiry: 7 days
-  - For more information: **[GitHub PR #927 - Refresh Token](https://github.com/LibreChat-AI/LibreChat/pull/927)**
+`SESSION_EXPIRY` is how long an access token lasts (15 minutes by default); it is renewed automatically in the background. `REFRESH_TOKEN_EXPIRY` is how long a user stays signed in (7 days by default). Each renewal issues a new refresh token tied to the same session and its original expiry, so the window counts from login and activity does not extend it. If users are signed out sooner than you want, raise `REFRESH_TOKEN_EXPIRY`.
+
+With [`OPENID_REUSE_TOKENS=true`](/docs/configuration/authentication/OAuth2-OIDC/token-reuse), the session cookie holds the identity provider's refresh token instead, so the provider's lifetime, rotation, and revocation policy decide when the session ends; `REFRESH_TOKEN_EXPIRY` cannot extend an expired or revoked IdP token.
 
 <OptionTable
   options={[
     ['SESSION_EXPIRY', 'integer (milliseconds)', 'Session expiry time.','SESSION_EXPIRY=1000 * 60 * 15'],
     ['REFRESH_TOKEN_EXPIRY', 'integer (milliseconds)', 'Refresh token expiry time.','REFRESH_TOKEN_EXPIRY=(1000 * 60 * 60 * 24) * 7'],
+    ['SESSION_COOKIE_SECURE', 'boolean', 'Force the Secure attribute on session and auth cookies on (true) or off (false). Leave unset to decide from NODE_ENV and DOMAIN_SERVER. Set false only for plain HTTP deployments where browsers drop Secure cookies.','# SESSION_COOKIE_SECURE=false'],
   ]}
 />
 
@@ -156,7 +114,8 @@ sequenceDiagram
 
 ## JWT Secret and Refresh Secret
 
-Use unique values of at least 32 bytes. Generate permanent values with the [Credentials Generator](/toolkit/creds_generator), store them securely, and provide the same values to every LibreChat replica.
+- If these are left blank, LibreChat generates temporary secrets in `.env.temp`. Set your own persistent values before running a production instance. The examples given are 32-byte keys (64 characters in hex).
+  - Use this tool to generate some quickly: **[JWT Keys](/toolkit/creds_generator)**
 
 <OptionTable
   options={[
@@ -165,23 +124,19 @@ Use unique values of at least 32 bytes. Generate permanent values with the [Cred
   ]}
 />
 
-When either value is blank, LibreChat can generate and reuse a value from its temporary credentials file. The default Docker Compose stacks persist that file, but this is intended only as a bootstrap convenience. If the file is lost or cannot be written, sessions can become invalid after restart. See [Credentials Configuration](/docs/configuration/dotenv#credentials-configuration) for precedence, persistence, and production guidance.
+Use unique values of at least 32 bytes, store them securely, and give every LibreChat replica the same values. When either value is blank, LibreChat can generate and reuse a value from its temporary credentials file. The default Docker Compose stacks persist that file, but this is intended only as a bootstrap convenience. If the file is lost or cannot be written, sessions can become invalid after restart. See [Credentials Configuration](/docs/configuration/dotenv#credentials-configuration) for precedence, persistence, and production guidance.
 
 ---
 
-## Automated Moderation System (optional)
+## Automated Moderation
 
-The Automated Moderation System is enabled by default. It uses a scoring mechanism to track user violations. As users commit actions like excessive logins, registrations, or messaging, they accumulate violation scores. Upon reaching a set threshold, the user and their IP are temporarily banned. This system ensures platform security by monitoring and penalizing rapid or suspicious activities.
-
-To set up the mod system, review [the setup guide](/docs/configuration/mod_system).
-
-> *Please Note: If you want this to work in development mode, you will need to create a file called `.env.development` in the root directory and set `DOMAIN_CLIENT` to `http://localhost:3090` or whatever port  is provided by vite when runnning `npm run frontend-dev`*
+Login, registration, password reset, and 2FA attempts are rate limited, and repeated violations lead to temporary bans. See [Automated Moderation](/docs/configuration/mod_system).
 
 ## User Management Scripts
 
 ### Create User Script
 
-The create-user script allows you to add users directly to the database, even when registration is disabled. Here's how to use it:
+Use the create-user script to add users directly to the database, even when registration is disabled:
 
 1. For the default `docker-compose.yml` (if you use `docker compose up` to start the app):
    ```bash
@@ -221,6 +176,6 @@ To delete a user, you can use the delete-user script:
 
 Replace `email@domain.com` with the email of the user you want to delete.
 
-## Backup-Code Compatibility
+## Backup-code compatibility
 
 New and regenerated backup codes default to 128-bit random values with individually salted hashes. Existing legacy codes remain usable until regenerated. `TWO_FACTOR_BACKUP_CODE_FORMAT=legacy` temporarily issues the older 32-bit, unsalted format. Apply it to every replica while incompatible backends or clients remain, then remove it. Do not roll back to an incompatible backend after issuing strong codes without replacing them. See [rolling-deployment guidance](/docs/configuration/upgrade#mixed-version-compatibility).
