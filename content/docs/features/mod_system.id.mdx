@@ -2,37 +2,37 @@
 title: Moderasi Otomatis
 icon: Shield
 description: >-
-  Rate limits and violation scores that slow down abuse and temporarily ban
-  accounts and IPs that keep tripping them.
+  Batas laju dan skor pelanggaran yang memperlambat penyalahgunaan serta
+  sementara memblokir akun dan IP yang terus melanggarnya.
 ---
 
-LibreChat watches for abusive patterns, such as hammering the login form, sending messages faster than allowed, or calling the API from a script, and records each one as a violation against the user. When a user's violation score crosses a threshold, the account and its IP are banned for a while. It is meant to stop one or a few bad actors, not a flood of traffic; put a reverse proxy or DDoS protection such as Cloudflare in front of a public instance for that.
+LibreChat memantau pola penyalahgunaan, seperti mencoba masuk berulang kali melalui formulir login, mengirim pesan lebih cepat dari yang diizinkan, atau memanggil API dari sebuah skrip, dan mencatat setiap pelanggaran sebagai pelanggaran atas nama pengguna tersebut. Ketika skor pelanggaran seorang pengguna melampaui ambang batas, akun dan IP-nya diblokir untuk sementara waktu. Fitur ini dimaksudkan untuk menghentikan satu atau beberapa pelaku buruk, bukan membendung lalu lintas dalam jumlah besar; untuk itu, pasang reverse proxy atau proteksi DDoS seperti Cloudflare di depan instance publik.
 
-## What counts as a violation [#what-counts-as-a-violation]
+## Apa yang dianggap sebagai pelanggaran [#what-counts-as-a-violation]
 
-Most violations come from rate limits. When a request goes over a limit it is rejected with a "too many requests" style error, and the attempt adds to the user's score. The limits cover:
+Sebagian besar pelanggaran berasal dari batas laju (rate limit). Saat permintaan melebihi batas, permintaan tersebut ditolak dengan galat bergaya "terlalu banyak permintaan", dan percobaan tersebut menambah skor pengguna. Batasnya mencakup:
 
-- Logins and registrations, per IP. Too many failed sign-ins shows "Too many login attempts in a short amount of time."
-- Messages: how many responses one user can have running at once ("Only one message can run at a time"), and how many messages can be sent per minute, per IP and optionally per user.
-- Password reset and email verification requests, and the link submissions that follow them.
-- Two-factor code attempts and passkey enrollment.
-- Conversation imports (100 per IP and 50 per user every 15 minutes), forks (30 per IP and 7 per user each minute), and shared link views, each limited per IP and per user at the same time.
-- File uploads, text-to-speech, speech-to-text, and tool calls.
+- Login dan registrasi, per IP. Terlalu banyak percobaan masuk yang gagal akan menampilkan "Too many login attempts in a short amount of time."
+- Pesan: berapa banyak respons yang dapat dijalankan secara bersamaan oleh satu pengguna ("Hanya satu pesan yang dapat dijalankan dalam satu waktu"), dan berapa banyak pesan yang dapat dikirim per menit, per IP, dan secara opsional per pengguna.
+- Permintaan pengaturan ulang kata sandi dan verifikasi email, serta pengiriman tautan yang mengikutinya.
+- Percobaan kode dua faktor dan pendaftaran passkey.
+- Impor percakapan (100 per IP dan 50 per pengguna setiap 15 menit), fork (30 per IP dan 7 per pengguna setiap menit), serta tampilan tautan bersama, masing-masing dibatasi per IP dan per pengguna pada saat yang sama.
+- Unggah file, text-to-speech, speech-to-text, dan pemanggilan tool.
 
-A few things are violations without any rate limit involved: requests that do not come from a browser, requests for a model the endpoint does not offer (almost always a script probing the server), and attempts to open a conversation the user does not own.
+Beberapa hal dianggap pelanggaran meskipun tidak melibatkan batas laju (rate limit): permintaan yang tidak berasal dari browser, permintaan untuk model yang tidak ditawarkan oleh endpoint (hampir selalu skrip yang sedang menguji server), dan upaya membuka percakapan yang bukan milik pengguna.
 
-Each violation type has its own score. Non-browser requests count heavily by default, and some types are set to 0 in the example `.env`, so they are blocked when they go over the limit but do not move the user toward a ban.
+Setiap jenis pelanggaran memiliki skornya sendiri. Permintaan non-browser dihitung secara berat secara default, dan beberapa jenis diatur ke 0 dalam contoh `.env`, sehingga diblokir saat melebihi batas tetapi tidak membuat pengguna mendekati larangan.
 
-## Bans [#bans]
+## Larangan [#bans]
 
-A ban triggers each time a user's total score reaches another multiple of the ban interval (20 by default). The user's sessions are ended immediately, and both the account and the IP it came from are locked out for the ban duration (2 hours by default). A banned user sees "Your account is temporarily banned for violating the terms of service." Bans expire on their own. Scores decay too: a user's score resets after an hour without new violations by default, and each new violation restarts that hour.
+Ban akan dipicu setiap kali total skor pengguna mencapai kelipatan lain dari interval ban (20 secara default). Sesi pengguna akan langsung diakhiri, dan baik akun maupun IP tempat asalnya akan dikunci selama durasi ban (2 jam secara default). Pengguna yang diblokir akan melihat pesan "Your account is temporarily banned for violating the terms of service." Ban akan berakhir dengan sendirinya. Skor juga meluruh: skor pengguna akan direset setelah satu jam tanpa pelanggaran baru secara default, dan setiap pelanggaran baru akan memulai ulang hitungan satu jam tersebut.
 
-To lift a ban early, an admin removes its entry from the `logs` collection in MongoDB. Violation scores and a per-user history of each violation are kept in `data/violations.json` and `data/logs.json` in the LibreChat directory (scores go to Redis instead when Redis is enabled, so every replica sees the same score; bans stay in MongoDB either way), which is the place to look when you want to know why someone got banned.
+Untuk mencabut larangan lebih awal, admin menghapus entri larangan tersebut dari koleksi `logs` di MongoDB. Skor pelanggaran dan riwayat setiap pelanggaran per pengguna disimpan di `data/violations.json` dan `data/logs.json` di direktori LibreChat (skor akan disimpan di Redis jika Redis diaktifkan, sehingga setiap replika melihat skor yang sama; larangan tetap disimpan di MongoDB dalam kedua kasus), yang menjadi tempat untuk dilihat ketika Anda ingin mengetahui alasan seseorang dilarang.
 
-## Message moderation [#message-moderation]
+## Moderasi pesan [#message-moderation]
 
-Separately from the scoring system, an admin can send chat messages through the OpenAI moderation API before they reach the model. This covers regular chats and agents, not the hosted Assistants endpoints. Flagged messages are not sent, and the user sees "This message was flagged by the moderation system."
+Terpisah dari sistem penilaian, admin dapat mengirim pesan obrolan melalui API moderasi OpenAI sebelum pesan tersebut mencapai model. Ini mencakup obrolan reguler dan agen, bukan endpoint Assistants yang dihosting. Pesan yang ditandai tidak akan dikirim, dan pengguna akan melihat "This message was flagged by the moderation system."
 
 ## Pengaturan [#setup]
 
-Rate limiting and banning are on by default with the values above. An admin tunes every limit, score, and the ban settings through environment variables, and turns on OpenAI moderation the same way; see [Automated Moderation configuration](/docs/configuration/mod_system). Limits for uploads, speech, and conversation imports can also be set in the [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) block of `librechat.yaml`.
+Rate limiting dan pemblokiran dinonaktifkan secara default dengan nilai-nilai di atas. Admin dapat menyesuaikan setiap batas, skor, dan pengaturan pemblokiran melalui variabel lingkungan, serta mengaktifkan moderasi OpenAI dengan cara yang sama; lihat [konfigurasi Automated Moderation](/docs/configuration/mod_system). Batas untuk unggahan, speech, dan impor percakapan juga dapat diatur dalam blok [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) pada `librechat.yaml`.

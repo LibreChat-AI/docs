@@ -1,38 +1,36 @@
 ---
 title: 自动审核
 icon: Shield
-description: >-
-  Rate limits and violation scores that slow down abuse and temporarily ban
-  accounts and IPs that keep tripping them.
+description: 对滥用行为进行限速并累计违规分数，对持续触发限制的账户和 IP 实施临时封禁。
 ---
 
-LibreChat watches for abusive patterns, such as hammering the login form, sending messages faster than allowed, or calling the API from a script, and records each one as a violation against the user. When a user's violation score crosses a threshold, the account and its IP are banned for a while. It is meant to stop one or a few bad actors, not a flood of traffic; put a reverse proxy or DDoS protection such as Cloudflare in front of a public instance for that.
+LibreChat 会监测滥用行为，例如对登录表单进行高频暴力尝试、发送消息的速度超过允许的频率，或通过脚本调用 API，并将每一次行为记录为该用户的一次违规。当用户的违规分数超过阈值时，该账户及其 IP 将被封禁一段时间。该机制旨在阻止一个或少数恶意使用者，而非应对大量流量洪峰；对于公开部署的实例，请在其前面部署反向代理或 DDoS 防护服务（例如 Cloudflare）。
 
-## What counts as a violation [#what-counts-as-a-violation]
+## 什么算作违规行为 [#what-counts-as-a-violation]
 
-Most violations come from rate limits. When a request goes over a limit it is rejected with a "too many requests" style error, and the attempt adds to the user's score. The limits cover:
+大多数违规行为源于速率限制。当请求超出限制时,系统会以"请求过多"类错误予以拒绝,并且该次尝试会计入用户的违规分数。限制范围包括:
 
-- Logins and registrations, per IP. Too many failed sign-ins shows "Too many login attempts in a short amount of time."
-- Messages: how many responses one user can have running at once ("Only one message can run at a time"), and how many messages can be sent per minute, per IP and optionally per user.
-- Password reset and email verification requests, and the link submissions that follow them.
-- Two-factor code attempts and passkey enrollment.
-- Conversation imports (100 per IP and 50 per user every 15 minutes), forks (30 per IP and 7 per user each minute), and shared link views, each limited per IP and per user at the same time.
-- File uploads, text-to-speech, speech-to-text, and tool calls.
+- 按 IP 地址限制登录和注册。登录失败次数过多时,会显示"短时间内登录尝试次数过多。"
+- 消息:单个用户可同时运行的响应数量("同一时间只能运行一条消息"),以及每分钟可发送的消息数量,可按 IP 限制,也可选择按用户限制。
+- 密码重置和邮箱验证请求，以及随后提交的链接。
+- 两步验证码尝试与通行密钥注册。
+- 对话导入(每个 IP 每 15 分钟 100 次,每个用户每 15 分钟 50 次)、分支(每个 IP 每分钟 30 次,每个用户每分钟 7 次)以及共享链接查看,均同时按每个 IP 和每个用户进行限制。
+- 文件上传、文本转语音、语音转文本和工具调用。
 
-A few things are violations without any rate limit involved: requests that do not come from a browser, requests for a model the endpoint does not offer (almost always a script probing the server), and attempts to open a conversation the user does not own.
+以下情况即使未涉及任何速率限制，也属于违规行为：非浏览器发出的请求、针对端点并未提供的模型发出的请求（几乎都是脚本在探测服务器），以及尝试打开并非由该用户拥有的对话。
 
-Each violation type has its own score. Non-browser requests count heavily by default, and some types are set to 0 in the example `.env`, so they are blocked when they go over the limit but do not move the user toward a ban.
+每种违规类型都有各自的分数。默认情况下,非浏览器请求的计分权重较高。示例 `.env` 中部分类型的分数设为 0,因此超出限制时会被拦截,但不会使用户朝封禁方向累积。
 
-## Bans [#bans]
+## 封禁 [#bans]
 
-A ban triggers each time a user's total score reaches another multiple of the ban interval (20 by default). The user's sessions are ended immediately, and both the account and the IP it came from are locked out for the ban duration (2 hours by default). A banned user sees "Your account is temporarily banned for violating the terms of service." Bans expire on their own. Scores decay too: a user's score resets after an hour without new violations by default, and each new violation restarts that hour.
+每当用户的总分达到封禁间隔(默认为 20)的又一个倍数时,就会触发一次封禁。该用户的会话会立即被终止,其账户以及发起请求的 IP 地址都会被锁定,锁定时长为封禁时长(默认为 2 小时)。被封禁的用户会看到提示"您的账户因违反服务条款而被暂时封禁。"封禁会自动到期。分数也会衰减:默认情况下,如果用户在一小时内没有新的违规行为,其分数将被重置;每次新的违规行为都会重新开始计算这一小时。
 
-To lift a ban early, an admin removes its entry from the `logs` collection in MongoDB. Violation scores and a per-user history of each violation are kept in `data/violations.json` and `data/logs.json` in the LibreChat directory (scores go to Redis instead when Redis is enabled, so every replica sees the same score; bans stay in MongoDB either way), which is the place to look when you want to know why someone got banned.
+要提前解除封禁,管理员需要从 MongoDB 的 `logs` 集合中删除该封禁的记录。违规分数以及每个用户的违规历史记录保存在 LibreChat 目录下的 `data/violations.json` 和 `data/logs.json` 中(启用 Redis 后,分数会改存到 Redis 中,从而确保所有副本看到的分数一致;无论如何,封禁记录都保存在 MongoDB 中)。如果想了解某个用户被封禁的原因,应当查看这些文件。
 
-## Message moderation [#message-moderation]
+## 消息审核 [#message-moderation]
 
-Separately from the scoring system, an admin can send chat messages through the OpenAI moderation API before they reach the model. This covers regular chats and agents, not the hosted Assistants endpoints. Flagged messages are not sent, and the user sees "This message was flagged by the moderation system."
+除评分系统之外,管理员可以在聊天消息发送给模型之前,通过 OpenAI 审核 API 对其进行审核。此功能适用于常规聊天和智能体,不适用于托管的 Assistants 端点。被标记的消息不会被发送,用户将看到"此消息已被审核系统标记。"
 
 ## 设置 [#setup]
 
-Rate limiting and banning are on by default with the values above. An admin tunes every limit, score, and the ban settings through environment variables, and turns on OpenAI moderation the same way; see [Automated Moderation configuration](/docs/configuration/mod_system). Limits for uploads, speech, and conversation imports can also be set in the [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) block of `librechat.yaml`.
+默认情况下，速率限制和封禁功能处于启用状态，并使用上述默认值。管理员可以通过环境变量调整所有限制、评分和封禁设置，并以同样的方式开启 OpenAI 审核功能；详见[自动审核配置](/docs/configuration/mod_system)。上传、语音和对话导入的限制也可以在 `librechat.yaml` 的 [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) 模块中设置。

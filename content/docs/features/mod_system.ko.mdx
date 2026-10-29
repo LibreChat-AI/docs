@@ -1,38 +1,36 @@
 ---
 title: 자동화된 조정
 icon: Shield
-description: >-
-  Rate limits and violation scores that slow down abuse and temporarily ban
-  accounts and IPs that keep tripping them.
+description: '남용을 늦추고, 반복해서 제한을 위반하는 계정과 IP를 일시적으로 차단하는 요청 속도 제한 및 위반 점수 기능입니다.'
 ---
 
-LibreChat watches for abusive patterns, such as hammering the login form, sending messages faster than allowed, or calling the API from a script, and records each one as a violation against the user. When a user's violation score crosses a threshold, the account and its IP are banned for a while. It is meant to stop one or a few bad actors, not a flood of traffic; put a reverse proxy or DDoS protection such as Cloudflare in front of a public instance for that.
+LibreChat는 로그인 양식에 대한 반복 시도, 허용된 속도보다 빠른 메시지 전송, 스크립트를 통한 API 호출과 같은 악의적인 패턴을 감지하고, 각 사례를 사용자에 대한 위반으로 기록합니다. 사용자의 위반 점수가 임계값을 넘으면 해당 계정과 IP는 일정 기간 동안 차단됩니다. 이 기능은 대량의 트래픽이 아니라 한두 명 또는 소수의 악의적인 행위자를 막기 위한 것입니다. 공개 인스턴스의 경우 이러한 목적으로 Cloudflare와 같은 리버스 프록시나 DDoS 방어 서비스를 앞단에 두십시오.
 
-## What counts as a violation [#what-counts-as-a-violation]
+## 위반으로 간주되는 항목 [#what-counts-as-a-violation]
 
-Most violations come from rate limits. When a request goes over a limit it is rejected with a "too many requests" style error, and the attempt adds to the user's score. The limits cover:
+대부분의 위반은 요청 속도 제한(rate limit)에서 발생합니다. 요청이 제한을 초과하면 "too many requests" 형태의 오류와 함께 거부되며, 해당 시도는 사용자의 점수에 누적됩니다. 제한 대상은 다음과 같습니다.
 
-- Logins and registrations, per IP. Too many failed sign-ins shows "Too many login attempts in a short amount of time."
-- Messages: how many responses one user can have running at once ("Only one message can run at a time"), and how many messages can be sent per minute, per IP and optionally per user.
-- Password reset and email verification requests, and the link submissions that follow them.
-- Two-factor code attempts and passkey enrollment.
-- Conversation imports (100 per IP and 50 per user every 15 minutes), forks (30 per IP and 7 per user each minute), and shared link views, each limited per IP and per user at the same time.
-- File uploads, text-to-speech, speech-to-text, and tool calls.
+- IP별 로그인 및 회원가입 제한. 짧은 시간에 로그인 실패가 너무 많으면 "짧은 시간에 로그인 시도가 너무 많습니다."라는 메시지가 표시됩니다.
+- 메시지: 한 명의 사용자가 동시에 실행할 수 있는 응답 수("한 번에 하나의 메시지만 실행할 수 있습니다"), 그리고 IP별 및 선택적으로 사용자별로 분당 전송할 수 있는 메시지 수.
+- 비밀번호 재설정 및 이메일 인증 요청, 그리고 그 뒤에 이어지는 링크 제출
+- 2단계 인증 코드 시도 및 패스키 등록.
+- 대화 가져오기(IP당 15분마다 100회, 사용자당 15분마다 50회), 분기(fork)(IP당 1분마다 30회, 사용자당 1분마다 7회), 그리고 공유 링크 조회는 각각 IP 단위와 사용자 단위로 동시에 제한됩니다.
+- 파일 업로드, 텍스트 음성 변환, 음성 텍스트 변환, 도구 호출
 
-A few things are violations without any rate limit involved: requests that do not come from a browser, requests for a model the endpoint does not offer (almost always a script probing the server), and attempts to open a conversation the user does not own.
+다음 항목은 속도 제한과 관계없이 위반으로 간주됩니다. 브라우저에서 오지 않은 요청, 엔드포인트가 제공하지 않는 모델에 대한 요청(대부분 서버를 탐색하는 스크립트), 그리고 사용자가 소유하지 않은 대화를 열려고 시도하는 행위입니다.
 
-Each violation type has its own score. Non-browser requests count heavily by default, and some types are set to 0 in the example `.env`, so they are blocked when they go over the limit but do not move the user toward a ban.
+각 위반 유형에는 고유한 점수가 있습니다. 기본적으로 브라우저가 아닌 요청은 점수가 크게 반영되며, 예시 `.env`에서 일부 유형은 0으로 설정되어 있습니다. 따라서 이러한 유형은 한도를 초과하면 차단되지만, 사용자를 차단(ban)으로 이끄는 방향으로는 점수가 누적되지 않습니다.
 
-## Bans [#bans]
+## 금지 (Bans) [#bans]
 
-A ban triggers each time a user's total score reaches another multiple of the ban interval (20 by default). The user's sessions are ended immediately, and both the account and the IP it came from are locked out for the ban duration (2 hours by default). A banned user sees "Your account is temporarily banned for violating the terms of service." Bans expire on their own. Scores decay too: a user's score resets after an hour without new violations by default, and each new violation restarts that hour.
+임계 점수(기본값 20)의 배수에 사용자의 총점이 도달할 때마다 차단이 발생합니다. 사용자의 세션은 즉시 종료되며, 계정과 해당 계정이 접속한 IP 모두 차단 기간(기본값 2시간) 동안 접근이 잠깁니다. 차단된 사용자에게는 "Your account is temporarily banned for violating the terms of service."라는 메시지가 표시됩니다. 차단은 기간이 지나면 자동으로 해제됩니다. 점수 역시 감소합니다. 새로운 위반이 없는 상태가 기본적으로 1시간 지속되면 사용자의 점수는 초기화되며, 새로운 위반이 발생할 때마다 그 1시간은 다시 시작됩니다.
 
-To lift a ban early, an admin removes its entry from the `logs` collection in MongoDB. Violation scores and a per-user history of each violation are kept in `data/violations.json` and `data/logs.json` in the LibreChat directory (scores go to Redis instead when Redis is enabled, so every replica sees the same score; bans stay in MongoDB either way), which is the place to look when you want to know why someone got banned.
+조기에 제재(ban)를 해제하려면, 관리자는 MongoDB의 `logs` 컬렉션에서 해당 제재 항목을 삭제하면 됩니다. 위반 점수와 사용자별 위반 이력은 LibreChat 디렉터리의 `data/violations.json` 및 `data/logs.json`에 저장됩니다(Redis가 활성화된 경우 점수는 대신 Redis에 저장되므로 모든 레플리카가 동일한 점수를 참조합니다. 제재 정보는 어떤 경우든 MongoDB에 남습니다). 사용자가 왜 제재되었는지 알고 싶을 때는 이 파일들을 확인하면 됩니다.
 
-## Message moderation [#message-moderation]
+## 메시지 모더레이션 [#message-moderation]
 
-Separately from the scoring system, an admin can send chat messages through the OpenAI moderation API before they reach the model. This covers regular chats and agents, not the hosted Assistants endpoints. Flagged messages are not sent, and the user sees "This message was flagged by the moderation system."
+채점 시스템과는 별도로, 관리자는 채팅 메시지가 모델에 전달되기 전에 OpenAI 모더레이션 API를 통해 메시지를 검사하도록 설정할 수 있습니다. 이 기능은 일반 채팅과 에이전트에 적용되며, 호스팅된 Assistants 엔드포인트에는 적용되지 않습니다. 플래그가 지정된 메시지는 전송되지 않으며, 사용자에게는 "This message was flagged by the moderation system."이라는 메시지가 표시됩니다.
 
 ## 설정 [#setup]
 
-Rate limiting and banning are on by default with the values above. An admin tunes every limit, score, and the ban settings through environment variables, and turns on OpenAI moderation the same way; see [Automated Moderation configuration](/docs/configuration/mod_system). Limits for uploads, speech, and conversation imports can also be set in the [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) block of `librechat.yaml`.
+기본적으로 위에 명시된 값으로 요청 제한과 차단 기능이 활성화되어 있습니다. 관리자는 환경 변수를 통해 모든 제한 값, 점수, 차단 설정을 조정할 수 있으며, 같은 방식으로 OpenAI 모더레이션을 켤 수 있습니다. 자세한 내용은 [Automated Moderation configuration](/docs/configuration/mod_system)을 참조하세요. 파일 업로드, 음성, 대화 가져오기에 대한 제한은 `librechat.yaml`의 [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) 블록에서도 설정할 수 있습니다.

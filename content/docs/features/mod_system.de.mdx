@@ -2,37 +2,38 @@
 title: Automatisierte Moderation
 icon: Shield
 description: >-
-  Rate limits and violation scores that slow down abuse and temporarily ban
-  accounts and IPs that keep tripping them.
+  Ratenbegrenzungen und Verstoßbewertungen, die Missbrauch verlangsamen und
+  Konten sowie IP-Adressen, die immer wieder dagegen verstoßen, vorübergehend
+  sperren.
 ---
 
-LibreChat watches for abusive patterns, such as hammering the login form, sending messages faster than allowed, or calling the API from a script, and records each one as a violation against the user. When a user's violation score crosses a threshold, the account and its IP are banned for a while. It is meant to stop one or a few bad actors, not a flood of traffic; put a reverse proxy or DDoS protection such as Cloudflare in front of a public instance for that.
+LibreChat überwacht missbräuchliche Muster, etwa wiederholtes Anklopfen am Anmeldeformular, das Senden von Nachrichten schneller als erlaubt oder das Aufrufen der API aus einem Skript, und erfasst jeden dieser Vorfälle als Verstoß des Benutzers. Überschreitet der Verstoß-Score eines Benutzers einen Schwellenwert, werden das Konto und seine IP-Adresse für eine bestimmte Zeit gesperrt. Dieser Mechanismus soll einen oder wenige böswillige Akteure stoppen, nicht eine Flut von Datenverkehr. Für diesen Fall sollten Sie bei einer öffentlich erreichbaren Instanz einen Reverse-Proxy oder einen DDoS-Schutz wie Cloudflare davorschalten.
 
-## What counts as a violation [#what-counts-as-a-violation]
+## Was als Verstoß gilt [#what-counts-as-a-violation]
 
-Most violations come from rate limits. When a request goes over a limit it is rejected with a "too many requests" style error, and the attempt adds to the user's score. The limits cover:
+Die meisten Verstöße entstehen durch Ratenbegrenzungen. Wenn eine Anfrage ein Limit überschreitet, wird sie mit einer Fehlermeldung im Stil von „zu viele Anfragen“ abgelehnt, und der Versuch erhöht den Punktestand des Nutzers. Die Limits betreffen:
 
-- Logins and registrations, per IP. Too many failed sign-ins shows "Too many login attempts in a short amount of time."
-- Messages: how many responses one user can have running at once ("Only one message can run at a time"), and how many messages can be sent per minute, per IP and optionally per user.
-- Password reset and email verification requests, and the link submissions that follow them.
-- Two-factor code attempts and passkey enrollment.
-- Conversation imports (100 per IP and 50 per user every 15 minutes), forks (30 per IP and 7 per user each minute), and shared link views, each limited per IP and per user at the same time.
-- File uploads, text-to-speech, speech-to-text, and tool calls.
+- Anmeldungen und Registrierungen, pro IP. Zu viele fehlgeschlagene Anmeldeversuche zeigen die Meldung „Too many login attempts in a short amount of time.“ an.
+- Nachrichten: wie viele Antworten ein Benutzer gleichzeitig laufen lassen kann („Es kann nur eine Nachricht gleichzeitig ausgeführt werden“) und wie viele Nachrichten pro Minute gesendet werden können, pro IP-Adresse und optional pro Benutzer.
+- Passwort-Zurücksetzung- und E-Mail-Verifizierungsanfragen sowie die anschließenden Link-Übermittlungen.
+- Zwei-Faktor-Code-Versuche und Passkey-Registrierung.
+- Gesprächsimporte (100 pro IP-Adresse und 50 pro Benutzer alle 15 Minuten), Verzweigungen (30 pro IP-Adresse und 7 pro Benutzer jede Minute) sowie Aufrufe geteilter Links, jeweils gleichzeitig pro IP-Adresse und pro Benutzer begrenzt.
+- Dateiuploads, Text-to-Speech, Speech-to-Text und Tool-Aufrufe.
 
-A few things are violations without any rate limit involved: requests that do not come from a browser, requests for a model the endpoint does not offer (almost always a script probing the server), and attempts to open a conversation the user does not own.
+Ein paar Dinge gelten als Verstöße, unabhängig von jeglichem Rate Limit: Anfragen, die nicht von einem Browser stammen, Anfragen für ein Modell, das der Endpoint nicht anbietet (fast immer ein Skript, das den Server testet), sowie Versuche, eine Unterhaltung zu öffnen, die dem Benutzer nicht gehört.
 
-Each violation type has its own score. Non-browser requests count heavily by default, and some types are set to 0 in the example `.env`, so they are blocked when they go over the limit but do not move the user toward a ban.
+Jede Verstoßart hat ihre eigene Punktzahl. Nicht-Browser-Anfragen zählen standardmäßig stark, und einige Typen sind in der Beispiel-`.env` auf 0 gesetzt. Sie werden daher blockiert, wenn sie das Limit überschreiten, bringen den Benutzer aber nicht Richtung Sperre.
 
-## Bans [#bans]
+## Sperren [#bans]
 
-A ban triggers each time a user's total score reaches another multiple of the ban interval (20 by default). The user's sessions are ended immediately, and both the account and the IP it came from are locked out for the ban duration (2 hours by default). A banned user sees "Your account is temporarily banned for violating the terms of service." Bans expire on their own. Scores decay too: a user's score resets after an hour without new violations by default, and each new violation restarts that hour.
+Ein Bann wird jedes Mal ausgelöst, wenn der Gesamtpunktestand eines Benutzers ein weiteres Vielfaches des Bann-Intervalls erreicht (standardmäßig 20). Die Sitzungen des Benutzers werden sofort beendet, und sowohl das Konto als auch die IP-Adresse, von der aus es genutzt wurde, werden für die Dauer des Banns gesperrt (standardmäßig 2 Stunden). Ein gebannter Benutzer sieht die Meldung „Your account is temporarily banned for violating the terms of service.“ Bänne laufen automatisch ab. Auch Punktestände verfallen: Der Punktestand eines Benutzers wird standardmäßig zurückgesetzt, wenn eine Stunde ohne neue Verstöße vergangen ist, und jeder neue Verstoß startet diese Stunde neu.
 
-To lift a ban early, an admin removes its entry from the `logs` collection in MongoDB. Violation scores and a per-user history of each violation are kept in `data/violations.json` and `data/logs.json` in the LibreChat directory (scores go to Redis instead when Redis is enabled, so every replica sees the same score; bans stay in MongoDB either way), which is the place to look when you want to know why someone got banned.
+Um eine Sperre vorzeitig aufzuheben, entfernt ein Administrator deren Eintrag aus der Collection `logs` in MongoDB. Verstoßpunkte sowie ein Verlauf jedes Verstoßes pro Benutzer werden in `data/violations.json` und `data/logs.json` im LibreChat-Verzeichnis gespeichert (Punkte werden stattdessen in Redis abgelegt, wenn Redis aktiviert ist, damit jeder Replikat-Knoten denselben Stand sieht; Sperren verbleiben in jedem Fall in MongoDB). Dort solltest du nachsehen, wenn du wissen willst, warum jemand gesperrt wurde.
 
-## Message moderation [#message-moderation]
+## Nachrichtenmoderation [#message-moderation]
 
-Separately from the scoring system, an admin can send chat messages through the OpenAI moderation API before they reach the model. This covers regular chats and agents, not the hosted Assistants endpoints. Flagged messages are not sent, and the user sees "This message was flagged by the moderation system."
+Getrennt vom Bewertungssystem kann ein Administrator Chat-Nachrichten über die Moderations-API von OpenAI prüfen lassen, bevor sie das Modell erreichen. Dies gilt für reguläre Chats und Agents, nicht für die gehosteten Assistants-Endpunkte. Als markierte Nachrichten werden nicht gesendet, und der Benutzer sieht die Meldung „This message was flagged by the moderation system."
 
 ## Einrichtung [#setup]
 
-Rate limiting and banning are on by default with the values above. An admin tunes every limit, score, and the ban settings through environment variables, and turns on OpenAI moderation the same way; see [Automated Moderation configuration](/docs/configuration/mod_system). Limits for uploads, speech, and conversation imports can also be set in the [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) block of `librechat.yaml`.
+Ratenbegrenzung und Sperren sind mit den oben genannten Werten standardmäßig aktiviert. Ein Administrator passt sämtliche Grenzwerte, Bewertungen und die Einstellungen für Sperren über Umgebungsvariablen an und aktiviert die OpenAI-Moderation auf die gleiche Weise; siehe [Konfiguration der automatisierten Moderation](/docs/configuration/mod_system). Grenzwerte für Uploads, Sprachausgabe und den Import von Unterhaltungen können außerdem im Block [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) der Datei `librechat.yaml` festgelegt werden.

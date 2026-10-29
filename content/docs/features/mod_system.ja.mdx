@@ -1,38 +1,36 @@
 ---
 title: 自動モデレーション
 icon: Shield
-description: >-
-  Rate limits and violation scores that slow down abuse and temporarily ban
-  accounts and IPs that keep tripping them.
+description: レート制限と違反スコアにより、濫用を抑制し、繰り返し制限に抵触するアカウントおよびIPを一時的に停止します。
 ---
 
-LibreChat watches for abusive patterns, such as hammering the login form, sending messages faster than allowed, or calling the API from a script, and records each one as a violation against the user. When a user's violation score crosses a threshold, the account and its IP are banned for a while. It is meant to stop one or a few bad actors, not a flood of traffic; put a reverse proxy or DDoS protection such as Cloudflare in front of a public instance for that.
+LibreChatは、ログインフォームへの連続した試行、許可された速度を超えるメッセージ送信、スクリプトからのAPI呼び出しといった不正なパターンを監視し、そのたびにユーザーに対する違反として記録します。ユーザーの違反スコアが閾値を超えると、そのアカウントとIPアドレスは一定期間禁止されます。この仕組みは、一人または少数の悪意あるユーザーを止めることを目的としており、大量のトラフィックへの対策ではありません。公開インスタンスの場合は、そのためにリバースプロキシやCloudflareなどのDDoS対策サービスを前段に配置してください。
 
-## What counts as a violation [#what-counts-as-a-violation]
+## 違反とみなされるもの [#what-counts-as-a-violation]
 
-Most violations come from rate limits. When a request goes over a limit it is rejected with a "too many requests" style error, and the attempt adds to the user's score. The limits cover:
+ほとんどの違反はレート制限に起因します。リクエストが制限を超えると、「リクエストが多すぎます」といった趣旨のエラーで拒否され、その試行はユーザーのスコアに加算されます。制限の対象は次のとおりです。
 
-- Logins and registrations, per IP. Too many failed sign-ins shows "Too many login attempts in a short amount of time."
-- Messages: how many responses one user can have running at once ("Only one message can run at a time"), and how many messages can be sent per minute, per IP and optionally per user.
-- Password reset and email verification requests, and the link submissions that follow them.
-- Two-factor code attempts and passkey enrollment.
-- Conversation imports (100 per IP and 50 per user every 15 minutes), forks (30 per IP and 7 per user each minute), and shared link views, each limited per IP and per user at the same time.
-- File uploads, text-to-speech, speech-to-text, and tool calls.
+- IPごとのログインおよび登録。短時間に多数のサインイン失敗があった場合、「短時間に多すぎるログイン試行が行われました。」と表示されます。
+- メッセージ:1人のユーザーが同時に実行できる応答の数(「一度に実行できるメッセージは1つだけです」)と、IPごと、およびオプションでユーザーごとに1分あたりに送信できるメッセージの数。
+- パスワードリセットおよびメールアドレス確認のリクエスト、ならびにその後に続くリンクの送信。
+- 2要素認証コードの試行回数とパスキーの登録について。
+- 会話のインポート(IPアドレスごとに15分ごとに100件、ユーザーごとに15分ごとに50件)、フォーク(IPアドレスごとに毎分30件、ユーザーごとに毎分7件)、および共有リンクの閲覧は、それぞれIPアドレスごとおよびユーザーごとに同時に制限されます。
+- ファイルアップロード、テキスト読み上げ、音声認識、ツール呼び出し。
 
-A few things are violations without any rate limit involved: requests that do not come from a browser, requests for a model the endpoint does not offer (almost always a script probing the server), and attempts to open a conversation the user does not own.
+以下のケースは、レート制限とは無関係に違反として扱われます。ブラウザ以外から送信されたリクエスト、エンドポイントが提供していないモデルへのリクエスト（ほぼ常にサーバーを探査するスクリプトによるものです）、およびユーザー本人が所有していない会話を開こうとする試みです。
 
-Each violation type has its own score. Non-browser requests count heavily by default, and some types are set to 0 in the example `.env`, so they are blocked when they go over the limit but do not move the user toward a ban.
+各違反タイプにはそれぞれ独自のスコアがあります。デフォルトでは、ブラウザ以外からのリクエストが大きくスコアに加算されます。また、サンプルの `.env` では一部のタイプが 0 に設定されているため、上限を超えた場合はブロックされますが、ユーザーの BAN に向けたスコアは増加しません。
 
-## Bans [#bans]
+## バン [#bans]
 
-A ban triggers each time a user's total score reaches another multiple of the ban interval (20 by default). The user's sessions are ended immediately, and both the account and the IP it came from are locked out for the ban duration (2 hours by default). A banned user sees "Your account is temporarily banned for violating the terms of service." Bans expire on their own. Scores decay too: a user's score resets after an hour without new violations by default, and each new violation restarts that hour.
+ユーザーの合計スコアが、ban間隔（デフォルトでは20）の倍数に達するたびにBanが発動します。そのユーザーのセッションは直ちに終了され、アカウントと接続元のIPアドレスの両方が、Banの期間（デフォルトでは2時間）ロックされます。Banされたユーザーには「Your account is temporarily banned for violating the terms of service.」と表示されます。Banは自動的に期限切れとなります。スコアも減衰します。デフォルトでは、新たな違反がない状態が1時間続くと、ユーザーのスコアはリセットされます。新たな違反があるたびに、その1時間の計測は最初からやり直されます。
 
-To lift a ban early, an admin removes its entry from the `logs` collection in MongoDB. Violation scores and a per-user history of each violation are kept in `data/violations.json` and `data/logs.json` in the LibreChat directory (scores go to Redis instead when Redis is enabled, so every replica sees the same score; bans stay in MongoDB either way), which is the place to look when you want to know why someone got banned.
+早期に禁止を解除するには、管理者が MongoDB の `logs` コレクションからその禁止のエントリを削除します。違反スコアと、ユーザーごとの各違反の履歴は、LibreChat ディレクトリ内の `data/violations.json` と `data/logs.json` に保存されています(Redis が有効な場合、スコアは代わりに Redis に保存され、すべてのレプリカが同じスコアを参照できるようになります。禁止情報は、いずれの場合も MongoDB に残ります)。ユーザーが禁止された理由を知りたいときは、これらのファイルを確認してください。
 
-## Message moderation [#message-moderation]
+## メッセージのモデレーション [#message-moderation]
 
-Separately from the scoring system, an admin can send chat messages through the OpenAI moderation API before they reach the model. This covers regular chats and agents, not the hosted Assistants endpoints. Flagged messages are not sent, and the user sees "This message was flagged by the moderation system."
+スコアリングシステムとは別に、管理者はチャットメッセージがモデルに届く前に OpenAI モデレーション API を経由させることができます。これは通常のチャットとエージェントが対象で、ホステッド Assistants エンドポイントは対象外です。フラグが立てられたメッセージは送信されず、ユーザーには「このメッセージはモデレーションシステムによってフラグが立てられました。」と表示されます。
 
 ## セットアップ [#setup]
 
-Rate limiting and banning are on by default with the values above. An admin tunes every limit, score, and the ban settings through environment variables, and turns on OpenAI moderation the same way; see [Automated Moderation configuration](/docs/configuration/mod_system). Limits for uploads, speech, and conversation imports can also be set in the [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) block of `librechat.yaml`.
+レート制限とBAN（アクセス禁止）は、上記の値でデフォルトで有効になっています。管理者は、環境変数を通じてすべての制限値、スコア、およびBANの設定を調整でき、同じ方法でOpenAIのモデレーションを有効にできます。詳細は[Automated Moderation configuration](/docs/configuration/mod_system)を参照してください。アップロード、音声、および会話インポートの制限も、`librechat.yaml`の[`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits)ブロックで設定できます。
