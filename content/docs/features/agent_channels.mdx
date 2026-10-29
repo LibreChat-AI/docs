@@ -5,7 +5,7 @@ icon: MessagesSquare
 ---
 
 <Callout type="warning" title="Beta Integration Contract">
-Agent Channels are a beta integration and are disabled by default. A compatible Slack gateway is also required; this guide does not provide an installable gateway package or container.
+Agent Channels are a beta integration and are disabled by default. The standalone TypeScript Slack gateway lives in `packages/channel-gateway` in the LibreChat repository. Enabling Channels does not start that process or install a Slack app.
 </Callout>
 
 Agent Channels connect external messaging events to [background Agent Responses](/docs/features/background_responses). Channel routes manage identity, admission, leases, delivery receipts, artifacts, and feedback. They are **not an alternative model-execution endpoint**: a compatible gateway submits execution through `/api/agents/v1/responses` using a server-provisioned, bound credential.
@@ -25,19 +25,111 @@ endpoints:
 
 Both enablement settings default to `false`. Existing Remote Agents permissions must also permit the relevant users to use the Agent API, and channel setup requires Agent sharing permission. Configure `DOMAIN_CLIENT` for trusted owner-review and account-link URLs. Configure a strong `CHANNEL_SERVICE_TOKEN` for the gateway-to-LibreChat service boundary; keep it server-side and distribute it only to a trusted integration process over a secure channel. It is not a browser token or a general Agent API key.
 
-The `transport` option accepts `socket_mode` (default) or `webhook`. This selects integration metadata; it does not deploy a receiver or create a public webhook automatically. `gatewayUrl` is an optional URL advertised by setup metadata. Deploy and secure a compatible gateway separately, with its own Slack transport configuration, event authenticity validation, and bot/app credentials.
+The `transport` option accepts `socket_mode` (default) or `webhook`. This selects the generated Slack manifest; it does not deploy a receiver. Webhook manifests require an HTTPS `gatewayUrl` without credentials, a query, or a fragment. Set the gateway's `SLACK_TRANSPORT` explicitly to match this setting: the gateway process defaults to `webhook`, not `socket_mode`.
 
 See the [channel configuration reference](/docs/configuration/librechat_yaml/object_structure/agents#channels) for limits and defaults.
 
 ## Set up a channel
 
-1. Open the Agent's channel setup surface with an authorized LibreChat account.
-2. Create a Slack channel configuration and explicitly choose `shared` or `per_user` credential mode.
-3. Use the generated Slack manifest with your Slack app. Configure the gateway's chosen Slack transport separately; a manifest alone is not a running integration.
-4. Activate the configuration with the matching Slack app ID and bot token. Supply the Slack signing secret when the chosen integration requires signature verification. LibreChat verifies the bot identity and stores credentials encrypted; normal setup responses do not return those secrets.
-5. Complete account linking for the external actor. Send a test event only after the channel is active, the actor is linked, and the gateway is configured.
+1. Save the Agent, then select **Channels → Add** in the Agent builder. Choose per-user or owner-only mode and continue. You need permission to share the Agent.
+2. Create a Slack app from the generated manifest and install it into your workspace. The manifest editor changes only the draft you download; it does not update an installed Slack app.
+3. Under **Add Credentials**, enter the matching Slack app ID and bot token. For webhooks, also enter its signing secret. Activate the connection. LibreChat verifies the bot identity and stores credentials encrypted; normal setup responses do not return those secrets.
+4. Copy the connection ID from the connection details. Configure and start the gateway as described below. It must be able to reach the active connection before startup can complete.
+5. Invite the bot to a Slack channel and mention it. Each sender completes their own account-link flow before their request can run.
 
 Browser setup routes live under `/api/agents/{agentId}/channels`: list/create, read `/{channelId}/manifest`, update `/{channelId}`, and delete `/{channelId}`. These use authenticated Agent authorization, not the management API machine-token contract. The create body is `{ "type": "slack", "credentialMode": "per_user" }` (or `shared`). Activation updates use a `slack` object with `appId`, `botToken`, and optional `signingSecret`. To disable a channel, update its status to `disabled`.
+
+## Run the Slack gateway
+
+The gateway is a separate Node.js 24+ process, not an in-process LibreChat plugin. It uses Slack's official Node SDKs and calls LibreChat over HTTP; it does not connect directly to MongoDB or require a general-purpose Agent API key. One gateway configuration binds to one tenant and connection. Run another configured process for another connection.
+
+From a LibreChat source checkout containing `packages/channel-gateway`:
+
+```sh
+npm ci
+npm run build --workspace @librechat/channel-gateway
+node --env-file=/secure/channel-gateway.env packages/channel-gateway/dist/main.cjs
+```
+
+Supply the environment file through your normal secret-management process. Do not commit it. A Socket Mode configuration is:
+
+```dotenv filename="channel-gateway.env"
+LIBRECHAT_INTERNAL_URL=http://127.0.0.1:3080
+CHANNEL_SERVICE_TOKEN=<same server-side token configured in LibreChat>
+CHANNEL_TENANT_ID=<connection tenant ID>
+CHANNEL_ID=<connection ID from the Agent builder>
+SLACK_TRANSPORT=socket_mode
+SLACK_APP_TOKEN=<app-level token with connections:write>
+```
+
+`LIBRECHAT_INTERNAL_URL` must be reachable from the gateway process. For example, `127.0.0.1` refers to the gateway's own container when running inside a container. Use the exact tenant ID for a multi-tenant deployment; use `_` only for a single-tenant deployment without a tenant ID. The gateway obtains the bot token and signing secret from LibreChat's authenticated connection bundle, so those values do not need separate gateway environment variables.
+
+For Socket Mode, enable Socket Mode for the same Slack app and create an app-level token with `connections:write`. Keep that token only in the gateway's secret configuration. No public callback URL is needed, but the gateway needs outbound access to Slack and LibreChat.
+
+For webhooks, set `SLACK_TRANSPORT=webhook` instead and omit `SLACK_APP_TOKEN`. Put the gateway behind HTTPS and set these Slack request URLs, replacing the placeholders with the configured, URL-encoded IDs:
+
+```text
+Events:       https://gateway.example.com/slack/events/<tenantId>/<channelId>
+Interactivity: https://gateway.example.com/slack/interactions/<tenantId>/<channelId>
+```
+
+The webhook receiver verifies Slack signatures using the connection's signing secret. Keep LibreChat's channel service routes private to trusted integrations. Expose only the required Slack callback paths publicly; keep health and metrics endpoints on an internal network.
+
+### Docker Compose
+
+The source also includes an optional `docker-compose.channels.yml` overlay. It builds the standalone gateway from the repository root using `packages/channel-gateway/Dockerfile`; it does not pull a published gateway image or add the gateway to the default stack.
+
+With a compatible LibreChat `api` service already running in the same Compose project, run this from the LibreChat repository root:
+
+```sh
+docker compose --env-file .env --env-file /secure/channel-gateway.env \
+  -f docker-compose.yml -f docker-compose.channels.yml \
+  --profile channels up -d --build channel-gateway
+```
+
+The second environment file supplies the connection and Socket Mode values from the example above. Keep the same `CHANNEL_SERVICE_TOKEN` in LibreChat's own `.env`; Compose variable substitution does not update the `.env` mounted into the API container. Use the same Compose project name and any existing deployment overrides as your running stack.
+
+The overlay defaults to Socket Mode and points `LIBRECHAT_INTERNAL_URL` at `http://api:${PORT:-3080}` on the Compose network. It does not use the example's host-loopback URL. The gateway itself listens on container port `8080`, with no published host ports. Socket Mode needs no inbound port; for webhooks, configure your HTTPS reverse proxy to reach `channel-gateway:8080` on that network and forward only the Slack callback paths.
+
+The Compose service runs as a non-root user with a read-only filesystem, dropped capabilities, and a health check. To build just the image, the build context must still be the repository root:
+
+```sh
+docker build -f packages/channel-gateway/Dockerfile \
+  -t librechat-channel-gateway:local .
+```
+
+### Gateway settings
+
+| Environment variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `8080` | Gateway HTTP port |
+| `LISTEN_HOST` | `0.0.0.0` | Listen address; use loopback for a host-only local process |
+| `LIBRECHAT_INTERNAL_URL` | `http://localhost:3080` | LibreChat service origin |
+| `CHANNEL_SERVICE_TOKEN` | Required | Shared server-side service-boundary token |
+| `CHANNEL_TENANT_ID` | Required | Exact connection tenant; `_` for single-tenant deployments |
+| `CHANNEL_ID` | Required | Connection ID, not the Slack channel ID or Agent ID |
+| `SLACK_TRANSPORT` | `webhook` | `webhook` or `socket_mode`; match LibreChat's manifest setting |
+| `SLACK_APP_TOKEN` | Required for Socket Mode | App-level token for the same Slack app |
+| `SLACK_NATIVE_SESSIONS` | `false` | Use Slack's native Agent loading, status, and Stop UI after app setup below |
+| `SLACK_LIFECYCLE_REACTIONS` | `false` | Add processing/completion reactions to the sender's message |
+| `APP_TITLE` | `LibreChat` | Application name in browser-review button labels, such as “Open in LibreChat” |
+| `API_CALL_TIMEOUT_MS` | `10000` | Timeout for individual service and Slack API calls |
+| `AGENT_INVOKE_TIMEOUT_MS` | `120000` | Timeout for initial background Response submission, not the full Agent run |
+| `SLACK_SIGNATURE_TOLERANCE_SECS` | `300` | Maximum webhook signature timestamp age/skew |
+
+`SLACK_API_BASE_URL` defaults to `https://slack.com/api/`; leave it unchanged outside controlled tests. Existing `SLACK_SOCKET_TENANT_ID` and `SLACK_SOCKET_CHANNEL_ID` aliases remain accepted, but conflicting old and new values are rejected. Actor-bound durable execution cannot be disabled.
+
+The process exposes `/readyz` for liveness, `/healthz` for startup/Socket Mode readiness, and `/metrics` for Prometheus metrics. A successful connection activation confirms Slack credentials, not that a gateway is running or connected. Check gateway health and perform a real mention before treating setup as complete.
+
+### Native Agent UI and final replies
+
+By default, a stable working message provides Stop and, when needed, Review controls. Answers are posted after generation, rather than repeatedly replacing a growing reply. Formatting includes code, tables, links, file attachments, and qualified cost/time details; unavailable costs are not estimated.
+
+To opt into Slack's native Agent sessions, enable Agent mode in the Slack app, add the `assistant:write` bot scope and `agent_session_stopped` event subscription, and reinstall the app. These are additional to the basic generated manifest. Then set `SLACK_NATIVE_SESSIONS=true` and restart the gateway. Without the required permissions or Stop subscription, the gateway falls back to durable progress controls. See [Slack Agent sessions](https://docs.slack.dev/ai/agent-sessions/) for app configuration.
+
+Native sessions show processing or waiting-for-input status and return to active when the canonical run finishes. Completed answers can include Helpful/Not helpful controls. Optional lifecycle reactions are separate from native sessions and require the reaction permissions already present in the basic manifest. Neither an acknowledgement nor a reaction proves a tool completed; Stop requests cancellation of the sender's authorized work, not another participant's run.
+
+## Identity and permissions
 
 ### Shared versus per-user credentials
 
@@ -49,7 +141,7 @@ Each actor/link revision has its own execution lane. Sharing a Slack thread does
 
 ### Account linking
 
-The gateway can request an actor-bound, short-lived linking ticket. The user opens the trusted LibreChat URL, signs in, previews the request, and explicitly accepts it. A gateway then confirms the same ticket/actor binding; it must not infer linkage from a returned browser URL alone.
+On the first mention, the gateway sends the actor a private linking prompt. Open its trusted LibreChat URL, sign in, preview the request, and accept it. Return to Slack and mention the bot again to receive the exact-account confirmation, then confirm it there. The next mention can run. The gateway does not replay the original request after linking, and browser acceptance alone does not activate the link.
 
 Browser endpoints under `/api/channels/links` support preview, acceptance, listing, and revocation. Mutations require the normal authenticated browser and same-origin checks. Ticket lifetime defaults to 10 minutes; accepted links default to 30 days. Never post a bearer credential or provider OAuth URL into Slack.
 
@@ -86,7 +178,9 @@ The public run snapshot contains only an opaque action descriptor. A review requ
 
 Decision requests include that same actor, revision, external channel, and the existing Responses `decision` body. Backend decision receipts, expiry/conflict checks, full authorization preflight, and same-Response resume remain authoritative. A Slack click alone is not permission to resume work. Provider OAuth URLs remain exclusively in the authenticated browser review flow. See the [background Responses lifecycle](/docs/features/background_responses#review-a-required-action).
 
-An actor-private receipt can confirm that a question answer or per-call tool approval/decline was accepted without disclosing tool arguments or claiming completion. A saved decision whose queue publication failed must remain retryable with the exact immutable decision; it cannot be replaced by a different answer. Keep Stop available while work remains active and update public progress only through the fenced delivery protocol.
+The gateway uses private Slack controls for supported questions and individual tool approvals/declines. Tool names and argument previews, when supplied by the authorized review projection, remain private to that actor. Successful submission closes the modal and sends a private acknowledgement; it does not force a separate browser receipt page or claim the tool finished. Provider sign-in and unsupported review forms still open the authenticated browser flow. The Agent's existing approval policy determines whether a tool needs approval; connecting Slack does not make every tool manual or bypass that policy.
+
+A saved decision whose queue publication failed remains retryable with the exact immutable decision; it cannot be replaced by a different answer. Keep Stop available while work remains active and update public progress only through the fenced delivery protocol.
 
 Artifacts are scoped to the authorized run and actor. Limits default to five files and 10 MiB per file, with a 30-second read timeout. Do not replace an unavailable artifact with another actor's file or an unauthenticated internal download URL. Usage and cost summaries identify incomplete or unavailable coverage instead of presenting a partial subtotal as the complete thread total.
 
@@ -96,4 +190,4 @@ Reaction feedback maps only to confirmed delivered assistant messages. It does n
 
 Disabling a channel or changing its credential mode retires old authority; it does not undo external tool effects. Stop can remain pending until the exact provider is drained and canonical cancellation/cleanup completes. A gateway must poll/reconcile canonical state rather than interpreting an acknowledgement as terminal completion.
 
-This contract does not promise a public gateway distribution, arbitrary chat-platform support, automatic migration of legacy thread-wide identity, or restart-survival of an in-memory OAuth waiter. Legacy thread read/write bookkeeping is not a substitute for actor-scoped runs.
+The gateway package is built from the LibreChat source tree; it is not published as an npm package. This integration does not promise arbitrary chat-platform support, automatic migration of legacy thread-wide identity, or restart-survival of an in-memory OAuth waiter. A restart can require a new browser sign-in; uncertain continuation must not be reported as completed or retried as new work. Legacy thread read/write bookkeeping is not a substitute for actor-scoped runs.
