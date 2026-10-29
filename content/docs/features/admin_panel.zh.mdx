@@ -1,281 +1,45 @@
 ---
 title: 管理面板
 icon: LayoutDashboard
-description: 一个独立的 Web 界面，用于管理 LibreChat 的用户、群组、角色、配置覆盖项和系统授权，无需手动编辑 librechat.yaml。
+description: >-
+  A separate web app for managing LibreChat users, groups, roles, permissions,
+  and configuration from the browser instead of editing librechat.yaml.
 ---
 
-# LibreChat 管理面板 [#librechat-admin-panel]
+The Admin Panel is a separate web app for running a LibreChat instance from the browser. You use it to manage users, groups, and roles, decide what each role is allowed to do, hand out admin powers, and change configuration (for everyone, or only for a specific role or group) without editing `librechat.yaml` and restarting.
 
-**LibreChat Admin Panel** 是一个基于浏览器的独立 LibreChat 管理界面。它连接到与 LibreChat 相同的数据库，并为支持 [granular access control](/docs/features/access_control) 的管理任务提供了图形用户界面（GUI）：包括用户和组管理、角色管理、针对角色或组的配置覆盖，以及系统级权限授予。
+It is its own service with its own URL, developed at [LibreChat-AI/admin-panel](https://github.com/LibreChat-AI/admin-panel). It keeps no data of its own: every change goes through LibreChat's admin API and lands in LibreChat's database.
 
-<Callout type="info" title="状态：预览">
-  管理面板以 `admin-panel` 服务的形式随 `docker-compose.yml` 和 `deploy-compose.yml` 一同提供，并基于 [LibreChat v0.8.5](/changelog/v0.8.5) 中引入的管理 API 构建。源代码、问题反馈和版本发布位于 [github.com/ClickHouse/librechat-admin-panel](https://github.com/ClickHouse/librechat-admin-panel)。
-</Callout>
+## Signing in [#signing-in]
 
-## 功能概述 [#what-it-does]
+You sign in with a LibreChat account, either with its email and password or through single sign-on configured on the instance, such as OpenID Connect or Google. The account needs the `ADMIN` role, or the `access:admin` capability granted to it (directly, or through one of its groups or its role). LibreChat checks this on every request, so the panel cannot give itself more access than the account has. Sessions end after 30 minutes of inactivity by default. With SSO, the panel refreshes your LibreChat session in the background, and each refresh checks again that the account is not banned and still has admin access; losing access ends the panel session.
 
-管理面板是一个瘦客户端：所有数据都存储在 LibreChat 的数据库中，并且每个操作都通过 LibreChat API 服务器上带有版本号的 `/api/admin/*` endpoint 进行。它为管理员提供了一个统一的平台，用于：
+Once an admin panel URL is configured, users with admin access also find an **Admin Panel** link in LibreChat under **Settings > General**. Other users do not see it.
 
-- **管理配置**：通过动态的、基于模式（schema-driven）的表单查看并编辑每一项 LibreChat 设置。添加到配置模式中的新字段会自动显示，无需发布管理面板即可生效。
-- **应用按主体的覆盖配置**:将配置覆盖范围限定到特定角色、群组或用户,并通过基于优先级的层叠规则,确定每个用户在登录时看到的最终解析值。
-- **管理用户**：列出、搜索并查看实例上的每个账户。
-- **管理组**：创建和删除组，添加/移除成员，并将组作为 ACL 和覆盖配置中的一等主体使用。
-- **管理角色**：创建除内置 `USER` / `ADMIN` 之外的自定义角色，编辑其功能权限矩阵，并将用户分配给这些角色。
-- **颁发系统授权**：将管理权限（例如 `manage:users`、`read:usage`、`manage:mcpservers`）委派给特定用户、组或角色，而无需将其设为完全管理员。
-- **Authenticate**: 使用本地 LibreChat 管理员账户登录，或在 LibreChat 实例中启用 OpenID SSO / SAML / 支持的 OAuth 提供商时，通过这些方式进行登录。
+## What you can do [#what-you-can-do]
 
-有关底层权限模型（主体、资源 ACL、功能以及各层如何组合）的详细信息，请参阅 [Access Control](/docs/features/access_control) 页面。
+The sidebar sections map to the main jobs:
 
-## 架构 [#architecture]
+- **Users**: list and search every account on the instance, filter by role, and move people in and out of roles. (The panel has a delete action, but current LibreChat does not accept deletions through the admin API yet; use the delete-user script instead.)
+- **Access**: create custom roles beyond `USER` and `ADMIN` and edit the feature permissions of each role, and create groups and manage their members. Groups and roles created here can be picked in LibreChat's share dialogs.
+- **Configuration**: view and edit LibreChat's settings as forms. The forms are generated from LibreChat's own config schema, so new settings show up without updating the panel.
+- **Grants**: give individual admin capabilities, such as managing users or editing one section of the configuration, to a user, group, or role, without making them a full admin.
 
-```
-┌──────────────────┐         ┌──────────────────┐         ┌──────────────┐
-│  Admin Panel     │ ───────▶│  LibreChat API   │ ───────▶│   MongoDB    │
-│  (Bun + Vite)    │  HTTPS  │  /api/admin/*    │         │  (shared DB) │
-└──────────────────┘         └──────────────────┘         └──────────────┘
-       │                             │
-       │ OAuth/OIDC/SAML redirect    │ Verifies admin access
-       └─────────────────────────────┘
-```
+What each person sees in the panel depends on their capabilities. Someone allowed to manage only the `interface` section, for example, sees only that section. Someone who can only read roles sees the roles but cannot change them; someone without any of the access capabilities gets an access denied page for that section.
 
-管理面板作为独立的服务运行；它不与 LibreChat 共享进程。管理功能通过 LibreChat 端的 `access:admin` 系统授权或 `SystemRoles.ADMIN` 角色进行验证，因此该面板无法授予自身其本不应拥有的权限。
+## Configuration for specific roles and groups [#configuration-for-specific-roles-and-groups]
 
-LibreChat 暴露的管理员 API 接口为：
+Beyond the Base profile, which applies to everyone, you can save a profile of overrides for a single role, group, or user. Only the settings you change are stored in it; everything else is inherited. Each profile has a priority (role profiles default to 10, group to 20, user to 100), and when LibreChat builds a user's configuration it starts from `librechat.yaml` and the Base profile, then applies the profiles that match that user from the lowest priority to the highest, so a user profile wins over a group or role profile by default. That is how a research group gets extra endpoints, or contractors get a stricter interface, without running a second instance.
 
-| 挂载路径 | 用途 |
-| ----------------------------------------- | ------------------------------------------------------------------------------- |
-| `POST /api/admin/login` &nbsp; `/oauth/*` | 管理员专用身份验证端点(本地 + SSO) |
-| `GET /api/admin/verify` | 验证管理员会话 |
-| `/api/admin/users` | 用户列表与搜索 |
-| `/api/admin/groups` | 用户组的增删改查 + 成员管理 |
-| `/api/admin/roles` | 自定义角色的增删改查 + 权限编辑 + 成员管理 |
-| `/api/admin/grants` | 系统能力授权(分配/撤销/列表) |
-| `/api/admin/config` | 基础配置及按主体的配置覆盖 |
-| `/api/admin/skills` | GitHub 技能同步:状态查询、执行及同步凭据 |
-| `/api/admin/code-environments` | 配对与撤销代码环境工作节点(`manage:code_environments`) |
-| `/api/admin/langfuse` | 读取、更新及测试 Langfuse 连接,以及每个对话的会话链接 |
-| `/api/admin/audit-log` | 授权审计日志(`read:audit_log`) |
+A few things to know when editing configuration:
 
-审计日志端点包括 `GET /`(列表)、`GET /export.csv`(CSV 导出)、`GET /verify`(完整性检查)以及 `GET /:id`(单条记录)。这些端点要求具备 `access:admin` 和 `read:audit_log` 权限。日志采用只追加(append-only)方式,因此没有管理(manage)权限,也没有写入端点。
+- Changes are checked against the same rules as `librechat.yaml`. An edit that would make the configuration invalid is refused and nothing is saved. If an upgrade makes an older saved value invalid, LibreChat ignores that field, falls back to the value underneath, and logs a warning, so check the logs after upgrading.
+- API keys and other secrets you enter (for example for web search, speech, OCR, Langfuse, or custom endpoints) are stored encrypted and only shown masked afterwards. If you change where a saved key is sent, such as a server or base URL, you have to enter the key again.
+- `${ENV_VAR}` references are only accepted for variables LibreChat already knows about or that the operator allowed.
+- Some settings stay in `librechat.yaml` only: MCP servers that run a local process (`type: stdio`, or `command`, `args`, `env`), and Langfuse gateway headers. The panel cannot add, change, or remove them. Remote MCP servers can be managed normally.
 
-## 入门指南 [#getting-started]
+Feature permissions are not overrides: the switches that decide whether a role can use or share agents, prompts, and the rest are edited on the role itself under **Access**. See [Access Control](/docs/features/access_control) for how roles, groups, and capabilities fit together. Usage per agent is on the separate [Insights](/docs/features/insights) dashboard inside LibreChat.
 
-### 先决条件 [#prerequisites]
+## 设置 [#setup]
 
-- 一个正在运行的 LibreChat 实例，版本需为 **v0.8.5 或更高版本**（早期版本不提供管理 API）
-- 从 admin-panel 容器/主机到 LibreChat API 的网络访问
-- LibreChat 上的管理员账户：要么是未限定范围的单租户部署中注册的第一个用户（自动管理员），要么是在 Mongo 中设置了 `role: 'ADMIN'` 的用户，或者是已被授予 `access:admin` 权限的主体。租户限定范围的部署必须通过受信任的管理流程来配置其管理员。
-
-### 与 LibreChat 捆绑（推荐） [#bundled-with-librechat-recommended]
-
-如果您使用 LibreChat 官方的 [`docker-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/docker-compose.yml) 或 [`deploy-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/deploy-compose.yml) 运行 LibreChat,管理面板会作为一项服务随 LibreChat 自动启动,无需单独部署。
-
-| Compose 文件 | 管理面板 URL | 服务方式 |
-| ------------------------------ | ------------------------ | ------------------------------------------------------------- |
-| `docker-compose.yml`(默认) | `http://localhost:3000` | 发布到主机端口(`ADMIN_PANEL_PORT`,默认 `3000`) |
-| `deploy-compose.yml` | `http://admin.localhost` | 通过内置的 nginx 反向代理,以子域名方式路由 |
-
-在启动堆栈之前，请在 LibreChat 的 `.env` 文件中设置面板的 session secret；compose 文件会将其作为面板的 `SESSION_SECRET` 进行传递：
-
-```bash filename=".env"
-# Min 32 characters. Generate with: openssl rand -hex 32
-ADMIN_PANEL_SESSION_SECRET=replace-with-a-32-char-random-string
-
-# Optional: host port for the default docker-compose
-# ADMIN_PANEL_PORT=3000
-
-# Optional: set true when the panel is served over HTTPS
-# ADMIN_PANEL_SESSION_COOKIE_SECURE=false
-```
-
-Compose 文件会自动连接其余部分：`API_SERVER_URL` 指向 `api` 服务，`VITE_API_BASE_URL` 遵循 `DOMAIN_CLIENT` 以用于面向浏览器的 OAuth 重定向，而设置 `ADMIN_PANEL_URL` 是为了让 LibreChat 在 SSO 后将管理员返回到面板。若要选择退出，请移除 `admin-panel` 服务或将其置于 Compose [`profiles`](https://docs.docker.com/compose/how-tos/profiles/) 条目之后。
-
-<Callout type="info" title="在真实域名上使用 admin.localhost">
-  现代浏览器会将 `*.localhost`（包括 `admin.localhost`）解析为 `127.0.0.1`，因此 deploy-compose URL 无需修改 hosts 文件即可工作。对于真实域名，请将 DNS 记录指向该主机，更新 `client/nginx.conf` 中的 `admin.localhost` `server_name`，并设置 `ADMIN_PANEL_URL` 以进行匹配。
-</Callout>
-
-### Standalone (独立部署) [#standalone-separate-deployment]
-
-要单独托管管理面板，并将其指向运行在其他位置的 LibreChat 实例，请使用 LibreChat 镜像仓库中发布的镜像（`registry.librechat.ai/librechat-ai/librechat-admin-panel:latest`，即内置 compose 文件所使用的镜像）：
-
-```bash
-# 1. Create an env file
-cp .env.example .env
-
-# 2. Edit .env and set at minimum:
-#    SESSION_SECRET=<random string, min 32 characters>
-#    VITE_API_BASE_URL=http://host.docker.internal:3080
-
-# 3. Start it
-docker compose up -d   # http://localhost:3000
-docker compose down    # stop
-```
-
-独立 `docker run`：
-
-```bash
-docker run -p 3000:3000 \
-  --add-host=host.docker.internal:host-gateway \
-  -e SESSION_SECRET=replace-with-32-char-random-string \
-  -e VITE_API_BASE_URL=http://host.docker.internal:3080 \
-  registry.librechat.ai/librechat-ai/librechat-admin-panel:latest
-```
-
-<Callout type="warning" title="Docker 网络">
-  在容器内部，`localhost` 指的是容器本身，而非您的宿主机。当 LibreChat 在同一台宿主机上运行时，请将 `VITE_API_BASE_URL` 指向 `http://host.docker.internal:3080`（Linux 系统：请添加 `--add-host=host.docker.internal:host-gateway`）。在生产环境中，请使用您 LibreChat API 的公共/内部 DNS 名称。
-</Callout>
-
-### 本地运行以进行开发 [#run-locally-for-development]
-
-```bash
-git clone https://github.com/ClickHouse/librechat-admin-panel.git
-cd librechat-admin-panel
-cp .env.example .env    # then edit
-bun install
-bun dev                 # http://localhost:3000
-```
-
-## 环境变量 [#environment-variables]
-
-| 变量 | 是否必需 | 默认值 | 说明 |
-| ------------------------------- | --------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SESSION_SECRET` | 生产环境中**必需** | 运行 `bun dev` 时使用硬编码的开发环境回退值;Docker 镜像中**无默认值** | 会话加密密钥。长度必须至少为 32 个字符。 |
-| `VITE_API_BASE_URL` | Docker 中**必需** | `http://localhost:3080`(仅限本地开发) | 面向浏览器的 LibreChat API 服务器地址,用于 OAuth 重定向。 |
-| `API_SERVER_URL` | 否 | 回退为 `VITE_API_BASE_URL` | 服务端调用 LibreChat API 时使用的地址。当管理面板服务器访问 LibreChat 的地址与浏览器不同时非常有用(例如内部 Kubernetes 服务与公共主机名不同)。 |
-| `PORT` | 否 | `3000` | 管理面板监听的端口。 |
-| `ADMIN_PANEL_SESSION_SECRET` | **是** | _未设置_ | LibreChat 端的变量,在随附的管理面板服务中映射为管理面板的 `SESSION_SECRET`。启动面板前,请生成一个唯一的、长度至少为 32 个字符的值。 |
-| `ADMIN_PANEL_PORT` | 否 | `3000` | 默认 `docker-compose.yml` 中随附的管理面板服务所暴露的主机端口。 |
-| `ADMIN_SSO_ONLY` | 否 | `false` | 隐藏邮箱/密码登录表单,强制仅使用 SSO 登录。 |
-| `ADMIN_SESSION_IDLE_TIMEOUT_MS` | 否 | `1800000`(30 分钟) | 会话空闲超时时间,单位为毫秒。 |
-| `SESSION_COOKIE_SECURE` | 否 | 生产环境中为 `true` | 会话 Cookie 是否要求使用 HTTPS。 |
-| `ADMIN_PANEL_METRICS_SECRET` | 否 | _未设置_ | 抓取 `/metrics` Prometheus 端点所需的 Bearer 令牌。未设置或不匹配时,该端点返回 `401`。 |
-
-在 LibreChat 的捆绑 Docker 堆栈中，管理面板作为 `admin-panel` 服务运行。默认的 `docker-compose.yml` 通过 `ADMIN_PANEL_PORT` 暴露该服务；`deploy-compose.yml` 通过 nginx 将其路由至 `http://admin.localhost`，并为 API 服务设置 `ADMIN_PANEL_URL`。在配置 `ADMIN_PANEL_SESSION_SECRET` 之前，该面板将拒绝启动。
-
-### LibreChat 重定向 URL [#librechat-redirect-url]
-
-当管理面板托管在与 LibreChat 不同的 URL 上时，请在 LibreChat API 环境中设置 `ADMIN_PANEL_URL`。请使用外部管理面板的基准 URL（包括任何路径前缀），并省略末尾的斜杠：
-
-```bash filename=".env"
-ADMIN_PANEL_URL=https://admin.example.com/admin
-```
-
-当设置该选项后,LibreChat 还会在 **Settings > General** 下为管理员显示 **Admin Panel** 链接。非管理员用户看不到该链接。
-
-对于 Helm 部署，请在您的 values 文件中设置 `librechat.adminPanelUrl`。Chart 会将其渲染为 LibreChat 管理员 OAuth 流程所需的 `ADMIN_PANEL_URL`：
-
-```yaml filename="values.yaml"
-librechat:
-  adminPanelUrl: https://admin.example.com/admin
-```
-
-对于 OpenID SSO，请将 `${DOMAIN_SERVER}/api/admin/oauth/openid/callback` 注册到您的身份提供商中。
-
-### 缓存控制 [#cache-controls]
-
-这些镜像了 LibreChat 的缓存环境变量。`ADMIN_PANEL_*` 变体具有优先权，当未设置时，将回退到共享的 LibreChat 等效项。
-
-| 变量 | 用途 |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `STATIC_CACHE_MAX_AGE` / `ADMIN_PANEL_STATIC_CACHE_MAX_AGE`     | `/assets/` 中哈希资产的浏览器 `max-age`（以秒为单位，默认 172800 = 2 天）。 |
-| `STATIC_CACHE_S_MAX_AGE` / `ADMIN_PANEL_STATIC_CACHE_S_MAX_AGE` | CDN `s-maxage`（以秒为单位，默认 86400 = 1 天）。 |
-| `INDEX_CACHE_CONTROL` / `ADMIN_PANEL_INDEX_CACHE_CONTROL`       | HTML 索引响应的 `Cache-Control` 标头。 |
-| `INDEX_PRAGMA` / `ADMIN_PANEL_INDEX_PRAGMA`                     | HTML 索引响应的 `Pragma` 标头。 |
-| `INDEX_EXPIRES` / `ADMIN_PANEL_INDEX_EXPIRES`                   | HTML 索引响应的 `Expires` 标头。 |
-
-## 身份验证 [#authentication]
-
-管理面板复用了 LibreChat 的身份验证堆栈，且没有自己的用户数据库。支持两种登录路径：
-
-- **Local accounts**: 用户名/密码，适用于任何通过管理员访问检查的 LibreChat 用户账户。
-- **单点登录 (Single sign-on)**：OpenID Connect、SAML 以及已在您的 LibreChat 实例上配置的社交 OAuth 提供商。设置 `ADMIN_SSO_ONLY=true` 可完全隐藏密码登录表单。
-
-LibreChat 会在每次请求时在服务器端验证管理员权限。该账户必须满足以下任一条件：
-
-1. 在 MongoDB 中拥有 `role: 'ADMIN'`，**或者**
-2. 拥有 `access:admin` 系统授权（通过管理面板本身分配给另一个主体；请参阅 [System Grants](/docs/features/access_control#layer-3-system-grants-admin-capabilities)）。
-
-会话基于 cookie，使用 `SESSION_SECRET` 进行加密，并根据 `ADMIN_SESSION_IDLE_TIMEOUT_MS` 设置空闲过期时间。
-
-Google admin SSO 会请求离线访问权限和许可，以便面板可以在不强制立即重新登录的情况下刷新过期的 LibreChat 管理员令牌。请配置 `GOOGLE_CLIENT_ID` 和 `GOOGLE_CLIENT_SECRET`，并将 `${DOMAIN_SERVER}/api/admin/oauth/google/callback` 注册到 Google。每次刷新都会重新检查账户的提供商身份、封禁状态、允许的电子邮件域、租户以及当前的管理员访问权限；一旦失去访问权限，管理员会话即会终止。
-
-## 配置管理 [#configuration-management]
-
-该面板将 LibreChat 配置渲染为由配置模式驱动的动态表单。这具有两个有用的特性：
-
-- **前向兼容**：当 LibreChat 发布新的配置字段时，面板会自动从 schema 中获取该字段。无需升级或重新部署管理面板。
-- **分层覆盖**:基础配置(来自 `librechat.yaml`)可以被按角色、组或用户范围划分的单个主体覆盖配置所覆盖。用户登录时,适用的文档按以下固定顺序合并:首先是基础配置文件(Base profile),无论其优先级如何;然后按优先级升序排列;同一优先级下,角色先于组,组先于用户;最后按创建顺序排列。新建配置文件若未指定优先级,则使用其主体类型的默认值(角色为 10,组为 20,用户为 100,基础配置为 0);若更新时省略优先级,则保留已存储的优先级。
-- **加密凭据**:通过管理员 API 存储的 MCP 服务器凭据、Azure 组密钥和网络搜索密钥会在静态存储时加密,并且仅以脱敏预览的形式返回。如果写入操作保留了已存储的密钥,但同时更改了密钥的发送目标(例如服务器 URL 或基础 URL),则必须重新输入该密钥。
-- **环境变量引用**:覆盖配置中的 `${ENV_VAR}` 引用仅限于 `librechat.yaml` 已引用的名称、内置端点凭据,以及 `CONFIG_OVERRIDE_ENV_ALLOWLIST` 中列出的名称。任何其他引用在写入时都会被拒绝。
-
-<Callout type="warning" title="基于进程的 MCP 服务器保留在 YAML 中">
-  使用 `type: stdio` 或包含 `command`、`args`、`env`、`cwd` 或 `stderr` 等进程字段的 MCP 服务器归操作员所有。请仅在 `librechat.yaml` 中配置这些服务器;管理 API 会拒绝创建或修改它们的请求,覆盖配置也无法替换或移除它们。远程 MCP 服务器的配置仍可通过常规覆盖机制进行设置。
-</Callout>
-
-<Callout type="warning" title="Langfuse 网关标头保留在 YAML 中">
-  部署级别的 `langfuse.headers` 可能包含代理凭据，它不属于基于 Mongo 的配置范围。请在 `librechat.yaml` 中配置这些内容；管理 API 会拒绝整个映射以及单个请求头路径。参见 [Authenticated Proxies and Gateways](/docs/configuration/langfuse#authenticated-proxies-and-gateways)。
-</Callout>
-
-这是 LibreChat [基于数据库的每个主体配置覆盖系统](https://github.com/LibreChat-AI/LibreChat/pull/12354)背后的界面。典型用例包括：
-
-- 为“Research”组提供更高的 `recursionLimit` 和额外的 endpoint
-- 允许 "FinanceAdmins" 角色管理远程 MCP 服务器，而普通用户仅能使用它们
-- 将更严格的 `interface` 权限范围限定为外部承包商组
-
-管理员还可以选择启用 [Admin Insights](/docs/features/insights) 仪表板，用于查看按租户划分的 MongoDB 活动。设置 `ENABLE_INSIGHTS=true` 即可启用；关于哪些人员可以查看哪些 Agent，请参阅 [Admin Insights](/docs/features/insights#access-requirements)。
-
-### 覆盖验证 [#override-validation]
-
-覆盖写入（`PUT /api/admin/config/:principalType/:principalId` 和 `PATCH .../fields`）会根据与 `librechat.yaml` 相同的模式进行验证，并应用于部署的基础配置之上。如果写入会导致配置无效，则会拒绝该请求并返回 HTTP 400，且不会保存任何内容：
-
-```json
-{
-  "error": "Invalid config override",
-  "code": "CONFIG_OVERRIDE_INVALID",
-  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
-}
-```
-
-每个问题仅包含点路径（dot-path）和一个稳定的代码（模式问题代码，例如 `invalid_type`、`missing_merge_key`、`duplicate_merge_key`、`indexed_merge_key_write`、`union_dropped_key` 或 `invalid_document`），绝不会包含提交的值。字段补丁仅在涉及或引入问题时才会被拒绝，因此同一覆盖配置中其他地方存在的旧的无效值不会阻止该补丁。
-
-已存储的覆盖项如果变得无效（例如在升级导致架构收紧之后），并不会导致致命错误。当配置被解析时，无效的字段会被丢弃，其下的值（通常是基础 `librechat.yaml` 中的值）将生效，并且服务器会为每个字段记录一条警告：
-
-```text
-[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
-```
-
-升级后请检查日志中是否有这些行，然后在面板中修复或删除所列字段。不符合 [theme rules](/docs/configuration/librechat_yaml/object_structure/theme#validation) 的覆盖主题将以相同方式回退到基础主题。
-
-### 区域范围委托 [#section-scoped-delegation]
-
-配置授权可以是广泛的（`read:configs`，`manage:configs`），也可以限制为单个顶级部分（`read:configs:<section>`，`manage:configs:<section>`）。具有部分作用域的读取者将收到一个经过过滤的配置响应，其中仅包含已授权的部分，而不是被拒绝整个请求。部分级别的管理授权意味着对同一部分拥有读取权限；广泛的管理访问权限意味着广泛的读取访问权限。
-
-示例包括 `read:configs:interface`、`manage:configs:endpoints` 和 `manage:configs:langfuse`。被授权的用户仍需 `access:admin` 权限才能进入管理界面。对基础 `__base__` 配置文件的每一次创建、修补、删除（tombstone）或删除操作都需要广泛的 `manage:configs` 权限；分段范围的管理适用于角色、组和用户覆盖。
-
-### 存储的密钥 [#stored-secrets]
-
-当通过管理配置 API 写入已注册的密钥字段时，LibreChat 会在静态存储时加密字面值，并仅返回服务器生成的掩码预览。目前这涵盖了 Langfuse、OCR、语音、网页搜索、Assistants、Azure Assistants 以及每个 `endpoints.custom[].apiKey`。在后续编辑中省略密钥将保留已存储的值。
-
-支持的环境变量引用对于允许使用它们的字段而言仍然是可读的引用。自定义 endpoint API 密钥也会保留 `${ENV_VAR}` 和 `user_provided` 值，而不是对其进行加密。密钥处理基于注册表：通用映射（例如自定义标头或 MCP 配置）中的任意值不会被自动加密，因此请继续在这些地方使用环境变量引用或该功能专用的凭据机制。
-
-## 相关内容 [#related]
-
-- [Access Control](/docs/features/access_control)：管理面板所基于的权限模型
-- [界面配置](/docs/configuration/librechat_yaml/object_structure/interface)：面板编辑的功能标志
-- [Authentication](/docs/features/authentication): LibreChat 上的用户身份验证
-- [v0.8.5 更新日志](/changelog/v0.8.5)：admin API 基础架构
-- [GitHub: ClickHouse/librechat-admin-panel](https://github.com/ClickHouse/librechat-admin-panel): 源码，问题，发布版本
-
-## 配置读取 API 与写入报告 [#configuration-read-apis-and-write-reports]
-
-授权调用方可以通过 `GET /api/admin/config/meta` 查看部署能力,通过 `/catalog` 查看作用域和模型选项,通过 `/env-status` 查看环境变量引用状态,通过 `/effective` 查看生效的请求配置,并通过 `/resolved/:principalType/:principalId` 查看某个主体解析后的配置。读取操作仍然保留其授权和密钥脱敏边界。
-
-`POST /api/admin/config/:principalType/:principalId/changes` 支持按配置文件（profile）进行原子性变更。请检查其写入报告：已应用（applied）与已跳过（skipped）的位置是不同的，对于仅限部署的路径，可以跳过而不会拒绝整个批次。存储文档读取也可能报告被忽略的字段；报告缺失并不能证明没有字段被忽略。
-
-支持的键控集合操作可以按名称隐藏自定义端点及其 Model Specs,或将其重置为继承状态。支持的重命名操作和重命名提示会携带已注册的密钥和键控墓碑记录;仅重命名原始键并不能替代该操作。
-
-`POST /api/admin/config/reload` 会重新加载本地配置并广播失效通知。如果本地重新加载成功而跨实例广播失败，该接口可能返回 `503`。此结果并非回滚，也不能证明每个副本都已完成重新加载。关于可选启用的端点重新推导边界，请参阅[升级指南](/docs/configuration/upgrade#admin-configuration-and-secrets)。
-
-### 配置读取中的租户分区 [#tenant-partitions-in-configuration-reads]
-
-群组/用户配置文件预览和生效用户配置会在目标租户内解析,包括该租户的基础配置文件以及适用的角色/群组配置文件。租户范围内的调用方无法跨越到其他租户。角色名称指向调用方所在的分区:未限定范围的管理员所更改的是平台角色及其成员、配置文件、授权和 ACL 条目,而不是所有租户中同名的角色。
+The panel ships as the `admin-panel` service in LibreChat's `docker-compose.yml` and `deploy-compose.yml`, and it will not start until you set `ADMIN_PANEL_SESSION_SECRET` in `.env`. It needs LibreChat v0.8.5 or later. Ports, hosting it on its own domain, SSO redirects, every environment variable, and the admin API used by the panel are covered in [Admin Panel configuration](/docs/configuration/admin_panel).

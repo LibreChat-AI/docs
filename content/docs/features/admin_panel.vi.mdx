@@ -2,282 +2,44 @@
 title: Bảng điều khiển quản trị
 icon: LayoutDashboard
 description: >-
-  Giao diện web độc lập để quản lý người dùng, nhóm, vai trò, ghi đè cấu hình và
-  quyền hệ thống của LibreChat, mà không cần chỉnh sửa librechat.yaml thủ công.
+  A separate web app for managing LibreChat users, groups, roles, permissions,
+  and configuration from the browser instead of editing librechat.yaml.
 ---
 
-# Bảng điều khiển quản trị LibreChat [#librechat-admin-panel]
+The Admin Panel is a separate web app for running a LibreChat instance from the browser. You use it to manage users, groups, and roles, decide what each role is allowed to do, hand out admin powers, and change configuration (for everyone, or only for a specific role or group) without editing `librechat.yaml` and restarting.
 
-**LibreChat Admin Panel** là một giao diện quản lý độc lập trên trình duyệt dành cho LibreChat. Nó kết nối với cùng một cơ sở dữ liệu như LibreChat và cung cấp GUI cho các tác vụ quản trị hỗ trợ [granular access control](/docs/features/access_control): quản trị người dùng và nhóm, quản lý vai trò, ghi đè cấu hình theo phạm vi vai trò hoặc nhóm, và cấp quyền khả năng ở cấp hệ thống.
+It is its own service with its own URL, developed at [LibreChat-AI/admin-panel](https://github.com/LibreChat-AI/admin-panel). It keeps no data of its own: every change goes through LibreChat's admin API and lands in LibreChat's database.
 
-<Callout type="info" title="Trạng thái: Xem trước">
-  Bảng quản trị được cung cấp dưới dạng dịch vụ `admin-panel` trong `docker-compose.yml` và `deploy-compose.yml`, và được xây dựng dựa trên các API quản trị được giới thiệu trong [LibreChat v0.8.5](/changelog/v0.8.5). Mã nguồn, vấn đề và các bản phát hành nằm tại [github.com/ClickHouse/librechat-admin-panel](https://github.com/ClickHouse/librechat-admin-panel).
-</Callout>
+## Signing in [#signing-in]
 
-## Nó làm được gì [#what-it-does]
+You sign in with a LibreChat account, either with its email and password or through single sign-on configured on the instance, such as OpenID Connect or Google. The account needs the `ADMIN` role, or the `access:admin` capability granted to it (directly, or through one of its groups or its role). LibreChat checks this on every request, so the panel cannot give itself more access than the account has. Sessions end after 30 minutes of inactivity by default. With SSO, the panel refreshes your LibreChat session in the background, and each refresh checks again that the account is not banned and still has admin access; losing access ends the panel session.
 
-Bảng điều khiển quản trị là một thin client: tất cả dữ liệu nằm trong cơ sở dữ liệu của LibreChat và mọi hành động đều đi qua các endpoint `/api/admin/*` được đánh phiên bản trên máy chủ API LibreChat. Nó cung cấp cho quản trị viên một nơi duy nhất để:
+Once an admin panel URL is configured, users with admin access also find an **Admin Panel** link in LibreChat under **Settings > General**. Other users do not see it.
 
-- **Quản lý cấu hình**: xem và chỉnh sửa mọi cài đặt LibreChat thông qua biểu mẫu động, dựa trên lược đồ. Các trường mới được thêm vào lược đồ cấu hình sẽ tự động xuất hiện mà không cần phát hành bản cập nhật bảng điều khiển quản trị.
-- **Áp dụng ghi đè theo từng chủ thể**: phạm vi ghi đè cấu hình theo từng vai trò, nhóm hoặc người dùng cụ thể, với cơ chế xếp tầng theo mức độ ưu tiên để xác định giá trị cuối cùng mà mỗi người dùng nhìn thấy khi đăng nhập.
-- **Quản trị người dùng**: liệt kê, tìm kiếm và xem mọi tài khoản trên instance.
-- **Quản lý nhóm**: tạo và xóa nhóm, thêm/xóa thành viên, và sử dụng nhóm như các thực thể chính (principals) trong ACL và các ghi đè (overrides).
-- **Quản lý vai trò**: tạo các vai trò tùy chỉnh ngoài các vai trò mặc định `USER` / `ADMIN`, chỉnh sửa ma trận quyền tính năng của chúng và gán người dùng vào các vai trò.
-- **Cấp quyền hệ thống**: ủy quyền các khả năng quản trị (ví dụ: `manage:users`, `read:usage`, `manage:mcpservers`) cho những người dùng, nhóm hoặc vai trò cụ thể mà không cần cấp quyền quản trị viên toàn quyền cho họ.
-- **Authenticate**: đăng nhập bằng tài khoản quản trị viên LibreChat cục bộ, hoặc thông qua OpenID SSO / SAML / các nhà cung cấp OAuth được hỗ trợ khi các tính năng này được bật trên instance LibreChat.
+## What you can do [#what-you-can-do]
 
-Để biết về mô hình quyền cơ bản (các chủ thể, ACL tài nguyên, khả năng và cách các lớp kết hợp với nhau), hãy xem trang [Access Control](/docs/features/access_control).
+The sidebar sections map to the main jobs:
 
-## Kiến trúc [#architecture]
+- **Users**: list and search every account on the instance, filter by role, and move people in and out of roles. (The panel has a delete action, but current LibreChat does not accept deletions through the admin API yet; use the delete-user script instead.)
+- **Access**: create custom roles beyond `USER` and `ADMIN` and edit the feature permissions of each role, and create groups and manage their members. Groups and roles created here can be picked in LibreChat's share dialogs.
+- **Configuration**: view and edit LibreChat's settings as forms. The forms are generated from LibreChat's own config schema, so new settings show up without updating the panel.
+- **Grants**: give individual admin capabilities, such as managing users or editing one section of the configuration, to a user, group, or role, without making them a full admin.
 
-```
-┌──────────────────┐         ┌──────────────────┐         ┌──────────────┐
-│  Admin Panel     │ ───────▶│  LibreChat API   │ ───────▶│   MongoDB    │
-│  (Bun + Vite)    │  HTTPS  │  /api/admin/*    │         │  (shared DB) │
-└──────────────────┘         └──────────────────┘         └──────────────┘
-       │                             │
-       │ OAuth/OIDC/SAML redirect    │ Verifies admin access
-       └─────────────────────────────┘
-```
+What each person sees in the panel depends on their capabilities. Someone allowed to manage only the `interface` section, for example, sees only that section. Someone who can only read roles sees the roles but cannot change them; someone without any of the access capabilities gets an access denied page for that section.
 
-Bảng điều khiển quản trị chạy như một dịch vụ riêng biệt; nó không chia sẻ tiến trình với LibreChat. Các khả năng quản trị được xác minh ở phía LibreChat thông qua quyền hệ thống `access:admin` hoặc vai trò `SystemRoles.ADMIN`, vì vậy bảng điều khiển không thể tự cấp cho mình các đặc quyền mà nó không được phép có.
+## Configuration for specific roles and groups [#configuration-for-specific-roles-and-groups]
 
-Bề mặt API quản trị được LibreChat cung cấp là:
+Beyond the Base profile, which applies to everyone, you can save a profile of overrides for a single role, group, or user. Only the settings you change are stored in it; everything else is inherited. Each profile has a priority (role profiles default to 10, group to 20, user to 100), and when LibreChat builds a user's configuration it starts from `librechat.yaml` and the Base profile, then applies the profiles that match that user from the lowest priority to the highest, so a user profile wins over a group or role profile by default. That is how a research group gets extra endpoints, or contractors get a stricter interface, without running a second instance.
 
-| Mount                                     | Mục đích                                                                         |
-| ----------------------------------------- | ------------------------------------------------------------------------------- |
-| `POST /api/admin/login` &nbsp; `/oauth/*` | Các endpoint xác thực dành riêng cho quản trị viên (cục bộ + SSO)                 |
-| `GET /api/admin/verify`                   | Xác thực phiên quản trị viên                                                    |
-| `/api/admin/users`                        | Liệt kê và tìm kiếm người dùng                                                  |
-| `/api/admin/groups`                       | Tạo, đọc, cập nhật, xóa nhóm + quản lý thành viên                              |
-| `/api/admin/roles`                        | Tạo, đọc, cập nhật, xóa vai trò tùy chỉnh + chỉnh sửa quyền + quản lý thành viên |
-| `/api/admin/grants`                       | Cấp quyền năng hệ thống (gán/thu hồi/liệt kê)                                   |
-| `/api/admin/config`                       | Cấu hình cơ sở + ghi đè cấu hình theo từng chủ thể                              |
-| `/api/admin/skills`                       | Đồng bộ skill từ GitHub: trạng thái, chạy, và thông tin xác thực đồng bộ        |
-| `/api/admin/code-environments`            | Ghép cặp và thu hồi worker môi trường mã (`manage:code_environments`)           |
-| `/api/admin/langfuse`                     | Đọc, cập nhật và kiểm tra kết nối Langfuse, cùng liên kết phiên theo từng cuộc hội thoại |
-| `/api/admin/audit-log`                    | Nhật ký kiểm toán cấp quyền (`read:audit_log`)                                  |
+A few things to know when editing configuration:
 
-Các endpoint nhật ký kiểm toán là `GET /` (liệt kê), `GET /export.csv` (xuất CSV), `GET /verify` (kiểm tra tính toàn vẹn) và `GET /:id` (một mục đơn lẻ). Các endpoint này yêu cầu `access:admin` và `read:audit_log`. Nhật ký chỉ có thể thêm mới (append-only), vì vậy không có quyền quản lý và cũng không có endpoint ghi.
+- Changes are checked against the same rules as `librechat.yaml`. An edit that would make the configuration invalid is refused and nothing is saved. If an upgrade makes an older saved value invalid, LibreChat ignores that field, falls back to the value underneath, and logs a warning, so check the logs after upgrading.
+- API keys and other secrets you enter (for example for web search, speech, OCR, Langfuse, or custom endpoints) are stored encrypted and only shown masked afterwards. If you change where a saved key is sent, such as a server or base URL, you have to enter the key again.
+- `${ENV_VAR}` references are only accepted for variables LibreChat already knows about or that the operator allowed.
+- Some settings stay in `librechat.yaml` only: MCP servers that run a local process (`type: stdio`, or `command`, `args`, `env`), and Langfuse gateway headers. The panel cannot add, change, or remove them. Remote MCP servers can be managed normally.
 
-## Bắt đầu [#getting-started]
+Feature permissions are not overrides: the switches that decide whether a role can use or share agents, prompts, and the rest are edited on the role itself under **Access**. See [Access Control](/docs/features/access_control) for how roles, groups, and capabilities fit together. Usage per agent is on the separate [Insights](/docs/features/insights) dashboard inside LibreChat.
 
-### Điều kiện tiên quyết [#prerequisites]
+## Thiết lập [#setup]
 
-- Một instance LibreChat đang chạy trên **v0.8.5 hoặc mới hơn** (các API quản trị không khả dụng trong các phiên bản cũ hơn)
-- Truy cập mạng từ container/host admin-panel đến LibreChat API
-- Một tài khoản quản trị viên trên LibreChat: có thể là người dùng đầu tiên đăng ký trong một triển khai đơn thuê (single-tenant) không giới hạn phạm vi (tự động trở thành quản trị viên), một người dùng có `role: 'ADMIN'` được thiết lập trong Mongo, hoặc một thực thể (principal) đã được cấp quyền `access:admin`. Các triển khai theo phạm vi thuê (tenant-scoped) phải cung cấp quyền quản trị viên thông qua một quy trình quản trị đáng tin cậy.
-
-### Được tích hợp sẵn với LibreChat (khuyên dùng) [#bundled-with-librechat-recommended]
-
-Nếu bạn chạy LibreChat với [`docker-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/docker-compose.yml) hoặc [`deploy-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/deploy-compose.yml) chính thức, bảng điều khiển quản trị được đóng gói sẵn như một dịch vụ và tự động khởi động cùng với LibreChat, không cần triển khai riêng.
-
-| Tệp Compose | URL bảng quản trị | Cách phục vụ |
-| ------------------------------ | ------------------------ | ------------------------------------------------------------- |
-| `docker-compose.yml` (mặc định) | `http://localhost:3000` | Được công bố trên cổng máy chủ (`ADMIN_PANEL_PORT`, mặc định `3000`) |
-| `deploy-compose.yml` | `http://admin.localhost` | Được định tuyến qua proxy ngược nginx đi kèm trên một subdomain |
-
-Thiết lập session secret của bảng điều khiển trong tệp `.env` của LibreChat trước khi khởi chạy stack; các tệp compose sẽ chuyển nó dưới dạng `SESSION_SECRET` của bảng điều khiển:
-
-```bash filename=".env"
-# Min 32 characters. Generate with: openssl rand -hex 32
-ADMIN_PANEL_SESSION_SECRET=replace-with-a-32-char-random-string
-
-# Optional: host port for the default docker-compose
-# ADMIN_PANEL_PORT=3000
-
-# Optional: set true when the panel is served over HTTPS
-# ADMIN_PANEL_SESSION_COOKIE_SECURE=false
-```
-
-Các tệp compose tự động kết nối phần còn lại: `API_SERVER_URL` trỏ đến dịch vụ `api`, `VITE_API_BASE_URL` tuân theo `DOMAIN_CLIENT` cho các chuyển hướng OAuth phía trình duyệt, và `ADMIN_PANEL_URL` được thiết lập để LibreChat đưa quản trị viên quay lại bảng điều khiển sau khi SSO. Để từ chối, hãy xóa dịch vụ `admin-panel` hoặc chặn nó phía sau một mục [`profiles`](https://docs.docker.com/compose/how-tos/profiles/) của Compose.
-
-<Callout type="info" title="admin.localhost trên một tên miền thực">
-  Các trình duyệt hiện đại phân giải `*.localhost` (bao gồm `admin.localhost`) thành `127.0.0.1`, vì vậy URL deploy-compose hoạt động mà không cần thay đổi tệp hosts. Đối với một tên miền thực, hãy trỏ bản ghi DNS vào máy chủ, cập nhật `server_name` của `admin.localhost` trong `client/nginx.conf` và đặt `ADMIN_PANEL_URL` cho khớp.
-</Callout>
-
-### Standalone (triển khai riêng biệt) [#standalone-separate-deployment]
-
-Để tự lưu trữ bảng quản trị (admin panel) riêng biệt, trỏ tới một instance LibreChat đang chạy ở nơi khác, hãy sử dụng image đã được publish từ LibreChat registry (`registry.librechat.ai/librechat-ai/librechat-admin-panel:latest`, là image mà các tệp compose đi kèm sử dụng):
-
-```bash
-# 1. Create an env file
-cp .env.example .env
-
-# 2. Edit .env and set at minimum:
-#    SESSION_SECRET=<random string, min 32 characters>
-#    VITE_API_BASE_URL=http://host.docker.internal:3080
-
-# 3. Start it
-docker compose up -d   # http://localhost:3000
-docker compose down    # stop
-```
-
-`docker run` độc lập:
-
-```bash
-docker run -p 3000:3000 \
-  --add-host=host.docker.internal:host-gateway \
-  -e SESSION_SECRET=replace-with-32-char-random-string \
-  -e VITE_API_BASE_URL=http://host.docker.internal:3080 \
-  registry.librechat.ai/librechat-ai/librechat-admin-panel:latest
-```
-
-<Callout type="warning" title="Mạng Docker">
-  Bên trong một container, `localhost` đề cập đến chính container đó, không phải máy chủ của bạn. Khi LibreChat chạy trên cùng một máy chủ, hãy trỏ `VITE_API_BASE_URL` tới `http://host.docker.internal:3080` (Linux: thêm `--add-host=host.docker.internal:host-gateway`). Trong môi trường production, hãy sử dụng tên DNS công khai/nội bộ của API LibreChat của bạn.
-</Callout>
-
-### Chạy cục bộ để phát triển [#run-locally-for-development]
-
-```bash
-git clone https://github.com/ClickHouse/librechat-admin-panel.git
-cd librechat-admin-panel
-cp .env.example .env    # then edit
-bun install
-bun dev                 # http://localhost:3000
-```
-
-## Các biến môi trường [#environment-variables]
-
-| Biến | Bắt buộc | Mặc định | Mô tả |
-| ------------------------------- | --------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SESSION_SECRET` | **Có** trong môi trường production | Khóa dự phòng cứng dành cho phát triển khi chạy `bun dev`; **không có mặc định** trong Docker image | Khóa mã hóa phiên. Phải có ít nhất 32 ký tự. |
-| `VITE_API_BASE_URL` | **Có** khi dùng Docker | `http://localhost:3080` (chỉ dành cho phát triển cục bộ) | URL hướng tới trình duyệt của máy chủ API LibreChat, được dùng cho các chuyển hướng OAuth. |
-| `API_SERVER_URL` | Không | Mặc định dùng `VITE_API_BASE_URL` | URL phía máy chủ dùng cho các lệnh gọi API LibreChat. Hữu ích khi máy chủ admin-panel truy cập LibreChat qua một URL khác với URL mà trình duyệt sử dụng (ví dụ: dịch vụ nội bộ Kubernetes so với tên miền công khai). |
-| `PORT` | Không | `3000` | Cổng mà admin panel lắng nghe. |
-| `ADMIN_PANEL_SESSION_SECRET` | **Có** | _chưa đặt_ | Biến phía LibreCh at được ánh xạ tới `SESSION_SECRET` của admin panel cho dịch vụ admin-panel đi kèm. Hãy tạo một giá trị duy nhất có ít nhất 32 ký tự trước khi khởi động panel. |
-| `ADMIN_PANEL_PORT` | Không | `3000` | Cổng trên máy chủ được dịch vụ admin-panel đi kèm trong `docker-compose.yml` mặc định mở ra. |
-| `ADMIN_SSO_ONLY` | Không | `false` | Ẩn biểu mẫu email/mật khẩu, buộc chỉ đăng nhập qua SSO. |
-| `ADMIN_SESSION_IDLE_TIMEOUT_MS` | Không | `1800000` (30 phút) | Thời gian chờ phiên khi không hoạt động, tính bằng mili giây. |
-| `SESSION_COOKIE_SECURE` | Không | `true` trong môi trường production | Cookie phiên có yêu cầu HTTPS hay không. |
-| `ADMIN_PANEL_METRICS_SECRET` | Không | _chưa đặt_ | Bearer token bắt buộc để thu thập dữ liệu từ endpoint Prometheus `/metrics`. Endpoint trả về `401` khi chưa đặt hoặc không khớp. |
-
-Trong các ngăn xếp Docker đi kèm của LibreChat, bảng quản trị chạy dưới dạng dịch vụ `admin-panel`. Tệp `docker-compose.yml` mặc định hiển thị nó trên `ADMIN_PANEL_PORT`; `deploy-compose.yml` định tuyến nó thông qua nginx tại `http://admin.localhost` và thiết lập `ADMIN_PANEL_URL` cho dịch vụ API. Bảng điều khiển sẽ từ chối khởi động cho đến khi `ADMIN_PANEL_SESSION_SECRET` được cấu hình.
-
-### URL chuyển hướng LibreChat [#librechat-redirect-url]
-
-Khi bảng quản trị được lưu trữ trên một URL riêng biệt với LibreChat, hãy thiết lập `ADMIN_PANEL_URL` trong môi trường API của LibreChat. Sử dụng URL cơ sở của bảng quản trị bên ngoài, bao gồm cả tiền tố đường dẫn (nếu có) và bỏ dấu gạch chéo ở cuối:
-
-```bash filename=".env"
-ADMIN_PANEL_URL=https://admin.example.com/admin
-```
-
-Khi được thiết lập, LibreChat cũng hiển thị liên kết **Admin Panel** cho quản trị viên trong **Settings > General**. Người dùng không phải quản trị viên sẽ không thấy liên kết này.
-
-Đối với các triển khai Helm, hãy đặt `librechat.adminPanelUrl` trong tệp values của bạn. Chart sẽ hiển thị nó dưới dạng `ADMIN_PANEL_URL` cho luồng OAuth quản trị của LibreChat:
-
-```yaml filename="values.yaml"
-librechat:
-  adminPanelUrl: https://admin.example.com/admin
-```
-
-Đối với OpenID SSO, hãy đăng ký `${DOMAIN_SERVER}/api/admin/oauth/openid/callback` với nhà cung cấp danh tính của bạn.
-
-### Kiểm soát bộ nhớ đệm (Cache Controls) [#cache-controls]
-
-Các biến này phản ánh các biến môi trường bộ nhớ đệm của LibreChat. Các biến `ADMIN_PANEL_*` sẽ được ưu tiên, và sẽ sử dụng các biến tương đương của LibreChat làm dự phòng khi không được thiết lập.
-
-| Biến | Mục đích |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `STATIC_CACHE_MAX_AGE` / `ADMIN_PANEL_STATIC_CACHE_MAX_AGE`     | `max-age` của trình duyệt tính bằng giây cho các tài nguyên đã băm trong `/assets/` (mặc định 172800 = 2 ngày). |
-| `STATIC_CACHE_S_MAX_AGE` / `ADMIN_PANEL_STATIC_CACHE_S_MAX_AGE` | `s-maxage` của CDN tính bằng giây (mặc định 86400 = 1 ngày). |
-| `INDEX_CACHE_CONTROL` / `ADMIN_PANEL_INDEX_CACHE_CONTROL`       | Header `Cache-Control` cho phản hồi HTML index. |
-| `INDEX_PRAGMA` / `ADMIN_PANEL_INDEX_PRAGMA`                     | Header `Pragma` cho phản hồi HTML index. |
-| `INDEX_EXPIRES` / `ADMIN_PANEL_INDEX_EXPIRES`                   | Header `Expires` cho phản hồi HTML index. |
-
-## Xác thực [#authentication]
-
-Bảng điều khiển quản trị sử dụng lại ngăn xếp xác thực của LibreChat và không có cơ sở dữ liệu người dùng riêng. Hai đường dẫn đăng nhập được hỗ trợ:
-
-- **Tài khoản cục bộ**: tên người dùng/mật khẩu đối với bất kỳ người dùng LibreChat nào có tài khoản vượt qua bước kiểm tra quyền truy cập quản trị viên.
-- **Đăng nhập một lần (Single sign-on)**: OpenID Connect, SAML và các nhà cung cấp OAuth xã hội đã được cấu hình trên instance LibreChat của bạn. Thiết lập `ADMIN_SSO_ONLY=true` để ẩn hoàn toàn biểu mẫu mật khẩu.
-
-Quyền truy cập quản trị viên được LibreChat xác minh ở phía máy chủ cho mọi yêu cầu. Tài khoản phải đáp ứng một trong các điều kiện sau:
-
-1. Có `role: 'ADMIN'` trong MongoDB, **hoặc**
-2. Sở hữu quyền hệ thống `access:admin` (được gán cho một chủ thể khác thông qua chính bảng điều khiển quản trị; xem [System Grants](/docs/features/access_control#layer-3-system-grants-admin-capabilities)).
-
-Các phiên làm việc dựa trên cookie, được mã hóa bằng `SESSION_SECRET` và sẽ hết hạn khi không hoạt động theo `ADMIN_SESSION_IDLE_TIMEOUT_MS`.
-
-Google admin SSO yêu cầu quyền truy cập ngoại tuyến và sự đồng ý để bảng điều khiển có thể làm mới token quản trị viên LibreChat đã hết hạn mà không buộc phải đăng nhập lại ngay lập tức. Hãy cấu hình cả `GOOGLE_CLIENT_ID` và `GOOGLE_CLIENT_SECRET`, đồng thời đăng ký `${DOMAIN_SERVER}/api/admin/oauth/google/callback` với Google. Mỗi lần làm mới sẽ kiểm tra lại danh tính nhà cung cấp, trạng thái bị cấm, tên miền email được phép, đối tượng thuê (tenant) và quyền truy cập quản trị viên hiện tại của tài khoản; việc mất quyền truy cập sẽ kết thúc phiên quản trị viên.
-
-## Quản lý cấu hình [#configuration-management]
-
-Bảng điều khiển hiển thị cấu hình LibreChat dưới dạng một biểu mẫu động được điều khiển bởi lược đồ cấu hình. Điều này có hai đặc tính hữu ích:
-
-- **Tương thích ngược**: khi LibreChat phát hành một trường cấu hình mới, bảng điều khiển sẽ tự động nhận diện nó từ schema. Không cần nâng cấp bảng quản trị hay triển khai lại.
-- **Ghi đè theo lớp**: cấu hình cơ sở (từ `librechat.yaml`) có thể bị ghi đè bởi các cấu hình riêng theo từng đối tượng, được phạm vi hóa theo vai trò, nhóm hoặc người dùng. Khi người dùng đăng nhập, các tài liệu áp dụng sẽ được gộp theo một thứ tự cố định: hồ sơ Base đứng đầu bất kể mức ưu tiên của nó, sau đó đến mức ưu tiên tăng dần, rồi đến vai trò trước nhóm, nhóm trước người dùng, và cuối cùng là thứ tự tạo. Một hồ sơ mới được ghi mà không có mức ưu tiên sẽ nhận mức mặc định của loại đối tượng tương ứng (vai trò 10, nhóm 20, người dùng 100, Base 0), và một lần ghi bỏ qua mức ưu tiên sẽ giữ nguyên mức ưu tiên đã lưu.
-- **Thông tin xác thực được mã hóa**: Thông tin xác thực máy chủ MCP, khóa nhóm Azure và khóa tìm kiếm web được lưu qua API quản trị sẽ được mã hóa khi lưu trữ và chỉ được trả về dưới dạng xem trước đã che. Khi một thao tác ghi giữ lại khóa đã lưu nhưng thay đổi nơi khóa đó được gửi đến (chẳng hạn như URL máy chủ hoặc URL cơ sở), bạn phải nhập lại khóa.
-- **Tham chiếu môi trường**: Các tham chiếu `${ENV_VAR}` trong overrides chỉ được giới hạn ở những tên mà `librechat.yaml` đã tham chiếu, thông tin xác thực endpoint tích hợp sẵn, và các tên được liệt kê trong `CONFIG_OVERRIDE_ENV_ALLOWLIST`. Mọi tham chiếu khác sẽ bị từ chối khi ghi.
-
-<Callout type="warning" title="Các máy chủ MCP dựa trên tiến trình được giữ trong YAML">
-  Các máy chủ MCP sử dụng `type: stdio` hoặc các trường tiến trình như `command`, `args`, `env`, `cwd`, hoặc `stderr` thuộc quyền quản lý của người vận hành. Chỉ cấu hình chúng trong `librechat.yaml`; API quản trị sẽ từ chối mọi nỗ lực tạo hoặc sửa đổi chúng, và các ghi đè không thể thay thế hoặc xóa bỏ chúng. Cấu hình máy chủ MCP từ xa vẫn khả dụng thông qua hệ thống ghi đè thông thường.
-</Callout>
-
-<Callout type="warning" title="Các header gateway Langfuse vẫn nằm trong YAML">
-  Deployment-level `langfuse.headers` có thể chứa thông tin xác thực proxy và không phải là cấu hình được lưu trữ trên Mongo. Hãy cấu hình chúng trong `librechat.yaml`; API quản trị sẽ từ chối toàn bộ map cũng như từng đường dẫn header riêng lẻ. Xem [Authenticated Proxies and Gateways](/docs/configuration/langfuse#authenticated-proxies-and-gateways).
-</Callout>
-
-Đây là giao diện đằng sau [hệ thống ghi đè cấu hình theo chủ thể dựa trên DB](https://github.com/LibreChat-AI/LibreChat/pull/12354) của LibreChat. Các trường hợp sử dụng điển hình:
-
-- Cấp cho nhóm "Research" giá trị `recursionLimit` cao hơn và các endpoint bổ sung
-- Cho phép vai trò "FinanceAdmins" quản lý các máy chủ MCP từ xa trong khi người dùng thông thường chỉ có thể sử dụng chúng
-- Giới hạn quyền `interface` chặt chẽ hơn cho các nhóm nhà thầu bên ngoài
-
-Quản trị viên cũng có thể sử dụng bảng điều khiển [Admin Insights](/docs/features/insights) (tùy chọn bật) để xem lại hoạt động MongoDB theo phạm vi tenant. Đặt `ENABLE_INSIGHTS=true`; người có thể xem các Agent nào được mô tả trong [Admin Insights](/docs/features/insights#access-requirements).
-
-### Ghi đè xác thực (Override Validation) [#override-validation]
-
-Các ghi đè (`PUT /api/admin/config/:principalType/:principalId` và `PATCH .../fields`) được xác thực dựa trên cùng một lược đồ (schema) như `librechat.yaml`, được áp dụng trên cấu hình cơ sở của quá trình triển khai. Một thao tác ghi tạo ra cấu hình không hợp lệ sẽ bị từ chối với mã HTTP 400 và không có dữ liệu nào được lưu lại:
-
-```json
-{
-  "error": "Invalid config override",
-  "code": "CONFIG_OVERRIDE_INVALID",
-  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
-}
-```
-
-Mỗi vấn đề chỉ mang theo đường dẫn dấu chấm (dot-path) và một mã lỗi ổn định (mã lỗi lược đồ như `invalid_type`, hoặc `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key` hoặc `invalid_document`), không bao giờ chứa giá trị đã gửi. Một bản vá trường chỉ bị từ chối đối với các vấn đề mà nó tác động hoặc tạo ra, vì vậy một giá trị không hợp lệ cũ hơn ở nơi khác trong cùng một ghi đè (override) sẽ không chặn bản vá đó.
-
-Các ghi đè đã lưu trở nên không hợp lệ, ví dụ như sau khi nâng cấp làm chặt chẽ lược đồ, sẽ không gây lỗi nghiêm trọng. Khi cấu hình được phân giải, các trường không hợp lệ sẽ bị loại bỏ, giá trị bên dưới chúng (thường là giá trị cơ sở trong `librechat.yaml`) sẽ được áp dụng và máy chủ sẽ ghi lại một cảnh báo cho mỗi trường:
-
-```text
-[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
-```
-
-Kiểm tra các dòng này trong nhật ký (logs) sau khi nâng cấp, sau đó sửa hoặc xóa các trường được liệt kê trong bảng điều khiển. Một chủ đề (theme) ghi đè không vượt qua được [quy tắc chủ đề](/docs/configuration/librechat_yaml/object_structure/theme#validation) sẽ quay trở lại chủ đề cơ sở theo cách tương tự.
-
-### Ủy quyền theo phạm vi phần (Section-Scoped Delegation) [#section-scoped-delegation]
-
-Các quyền cấu hình có thể ở phạm vi rộng (`read:configs`, `manage:configs`) hoặc giới hạn trong một phần cấp cao nhất (`read:configs:<section>`, `manage:configs:<section>`). Người đọc có phạm vi theo phần sẽ nhận được phản hồi cấu hình đã lọc chỉ chứa các phần được ủy quyền thay vì bị từ chối toàn bộ yêu cầu. Các quyền quản lý cấp phần bao gồm quyền đọc cho cùng phần đó; quyền quản lý phạm vi rộng bao gồm quyền đọc phạm vi rộng.
-
-Các ví dụ bao gồm `read:configs:interface`, `manage:configs:endpoints` và `manage:configs:langfuse`. Người dùng được ủy quyền vẫn cần `access:admin` để truy cập giao diện quản trị. Mọi thay đổi tạo mới, vá lỗi, xóa bỏ hoặc xóa vĩnh viễn (tombstone) đối với cấu hình `__base__` cơ sở đều yêu cầu quyền `manage:configs` ở phạm vi rộng; việc quản lý theo phạm vi phần áp dụng cho các ghi đè vai trò, nhóm và người dùng.
-
-### Các bí mật được lưu trữ [#stored-secrets]
-
-Khi các trường bí mật đã đăng ký được ghi thông qua API cấu hình quản trị viên, LibreChat sẽ mã hóa các giá trị theo nghĩa đen khi lưu trữ và chỉ trả về các bản xem trước đã được ẩn do máy chủ tạo ra. Điều này hiện bao gồm Langfuse, OCR, speech, web-search, Assistants, Azure Assistants và từng `endpoints.custom[].apiKey`. Việc bỏ qua một bí mật trong lần chỉnh sửa sau đó sẽ bảo toàn giá trị đã lưu trữ.
-
-Các tham chiếu môi trường được hỗ trợ vẫn là các tham chiếu có thể đọc được đối với các trường cho phép sử dụng chúng. Các khóa API của endpoint tùy chỉnh cũng bảo toàn các giá trị `${ENV_VAR}` và `user_provided` thay vì mã hóa chúng. Việc xử lý bí mật dựa trên registry: các giá trị tùy ý trong các bản đồ chung như tiêu đề tùy chỉnh hoặc cấu hình MCP không được tự động mã hóa, vì vậy hãy tiếp tục sử dụng các tham chiếu môi trường hoặc cơ chế thông tin xác thực chuyên dụng của tính năng đó tại đó.
-
-## Liên quan [#related]
-
-- [Access Control](/docs/features/access_control): mô hình phân quyền mà bảng điều khiển quản trị được xây dựng dựa trên đó
-- [Cấu hình giao diện](/docs/configuration/librechat_yaml/object_structure/interface): các cờ tính năng mà bảng điều khiển chỉnh sửa
-- [Authentication](/docs/features/authentication): xác thực người dùng trên LibreChat
-- [v0.8.5 changelog](/changelog/v0.8.5): nền tảng API quản trị
-- [GitHub: ClickHouse/librechat-admin-panel](https://github.com/ClickHouse/librechat-admin-panel): mã nguồn, vấn đề, bản phát hành
-
-## Cấu hình API đọc và báo cáo ghi [#configuration-read-apis-and-write-reports]
-
-Người gọi được ủy quyền có thể kiểm tra các khả năng triển khai bằng `GET /api/admin/config/meta`, các tùy chọn phạm vi/mô hình bằng `/catalog`, trạng thái tham chiếu môi trường bằng `/env-status`, cấu hình yêu cầu hiệu lực bằng `/effective`, và cấu hình đã phân giải của một đối tượng bằng `/resolved/:principalType/:principalId`. Các thao tác đọc vẫn giữ nguyên ranh giới ủy quyền và che giấu thông tin bí mật.
-
-`POST /api/admin/config/:principalType/:principalId/changes` hỗ trợ các thay đổi nguyên tử (atomic) theo từng hồ sơ (profile). Hãy kiểm tra báo cáo ghi (write report) của endpoint này: các vị trí đã áp dụng (applied) và các vị trí bị bỏ qua (skipped) là khác nhau, và các đường dẫn chỉ dành cho triển khai (deployment-only) có thể bị bỏ qua mà không làm từ chối toàn bộ lô (batch). Việc đọc tài liệu đã lưu (stored-document) cũng có thể báo cáo các trường bị bỏ qua (ignored fields); việc không có báo cáo không chứng minh rằng không có trường nào bị bỏ qua.
-
-Các thao tác tập hợp có khóa được hỗ trợ có thể ẩn một endpoint tùy chỉnh theo tên cùng với các Model Specs của nó, hoặc đặt lại về trạng thái kế thừa. Các thao tác đổi tên và gợi ý đổi tên được hỗ trợ sẽ mang theo các bí mật đã đăng ký và các bản ghi xóa (tombstone) có khóa; việc đổi tên trực tiếp một khóa thô không thể thay thế cho thao tác đó.
-
-`POST /api/admin/config/reload` tải lại cấu hình cục bộ và phát tín hiệu vô hiệu hóa (invalidation) tới các instance khác. Endpoint này có thể trả về `503` sau khi việc tải lại cục bộ đã thành công, nếu việc phát tín hiệu giữa các instance thất bại. Kết quả đó không phải là một lần khôi phục (rollback) và cũng không xác nhận rằng mọi replica đã tải lại cấu hình. Xem [hướng dẫn nâng cấp](/docs/configuration/upgrade#admin-configuration-and-secrets) để biết ranh giới tái tạo endpoint theo cơ chế tự nguyện (opt-in).
-
-### Phân vùng theo tenant khi đọc cấu hình [#tenant-partitions-in-configuration-reads]
-
-Hồ sơ xem trước của nhóm/người dùng và cấu hình người dùng hiệu lực được phân giải trong tenant của mục tiêu, bao gồm hồ sơ Base của tenant đó và các hồ sơ vai trò/nhóm áp dụng. Người gọi có phạm vi tenant không thể truy cập sang tenant khác. Tên vai trò tham chiếu đến phân vùng của người gọi: quản trị viên không có phạm vi sẽ thay đổi các vai trò nền tảng và thành viên, hồ sơ, quyền cấp và mục ACL của chúng, chứ không thay đổi các vai trò cùng tên trong mọi tenant.
+The panel ships as the `admin-panel` service in LibreChat's `docker-compose.yml` and `deploy-compose.yml`, and it will not start until you set `ADMIN_PANEL_SESSION_SECRET` in `.env`. It needs LibreChat v0.8.5 or later. Ports, hosting it on its own domain, SSO redirects, every environment variable, and the admin API used by the panel are covered in [Admin Panel configuration](/docs/configuration/admin_panel).

@@ -2,48 +2,26 @@
 title: 인증 시스템
 icon: BookOpen
 description: >-
-  이 가이드는 안전하고 간편한 이메일 및 소셜 로그인을 제공하는 LibreChat의 사용자 인증 시스템 사용 방법을 설명합니다. 회원가입,
-  로그인, 비밀번호 재설정 등을 설정하는 방법을 배우게 됩니다.
+  Environment variables for sign-up, login, email verification, password reset,
+  two-factor authentication, passkeys, sessions, and the user management
+  scripts.
 ---
+
+What users see when they sign up and sign in is described on the [Authentication](/docs/features/authentication) feature page. Provider-specific setup lives in the [OAuth2 and OpenID Connect](/docs/configuration/authentication/OAuth2-OIDC), [SAML](/docs/configuration/authentication/SAML), [LDAP](/docs/configuration/authentication/ldap), [email](/docs/configuration/authentication/email), and [passkeys](/docs/configuration/authentication/passkeys) guides. Allowed email domains and the order of the login buttons are set in the [`registration`](/docs/configuration/librechat_yaml/object_structure/registration) block of `librechat.yaml`.
+
+In a single-tenant deployment, the first account registered gets the `ADMIN` role, so create it yourself before opening registration to others, and make it a local email and password account. Tenant-scoped deployments never promote their first user; provision tenant admins through a trusted administrative flow.
 
 ## 일반 [#general]
 
-빠른 개요를 보려면 여기에 제공된 사용자 가이드를 참조하세요: [Authentication](/docs/features/authentication)
-
-다음은 일반적인 구성에 대한 개요입니다.
-
 <OptionTable
   options={[
-    [
-      'ALLOW_EMAIL_LOGIN',
-      'boolean',
-      '이메일 로그인을 표시하고 인증 API를 통해 로컬 또는 LDAP 자격 증명 로그인을 허용합니다.',
-      'ALLOW_EMAIL_LOGIN=true',
-    ],
-    [
-      'ALLOW_EMAIL_LOGIN_OVERRIDE',
-      'boolean',
-      'ALLOW_EMAIL_LOGIN이 false일 때 로그인 API에 대한 직접적인 자격 증명 요청을 허용합니다. 기본값: false.',
-      'ALLOW_EMAIL_LOGIN_OVERRIDE=false',
-    ],
-    [
-      'ALLOW_REGISTRATION',
-      'boolean',
-      '새 사용자의 이메일 등록을 활성화하거나 비활성화합니다.',
-      'ALLOW_REGISTRATION=true',
-    ],
-    [
-      'ALLOW_SOCIAL_LOGIN',
-      'boolean',
-      '사용자가 다양한 소셜 네트워크를 통해 LibreChat에 연결할 수 있도록 허용합니다.',
-      'ALLOW_SOCIAL_LOGIN=false',
-    ],
-    [
-      'ALLOW_SOCIAL_REGISTRATION',
-      'boolean',
-      '다양한 소셜 네트워크를 사용하여 새 사용자 등록을 활성화하거나 비활성화합니다.',
-      'ALLOW_SOCIAL_REGISTRATION=false',
-    ],
+    ['ALLOW_EMAIL_LOGIN', 'boolean', 'Show the email login form and accept local or LDAP credential logins through the authentication API.','ALLOW_EMAIL_LOGIN=true'],
+    ['ALLOW_EMAIL_LOGIN_OVERRIDE', 'boolean', 'Still accept email login through the API while ALLOW_EMAIL_LOGIN is false. Each use is logged. Commented out by default.','# ALLOW_EMAIL_LOGIN_OVERRIDE=false'],
+    ['ALLOW_REGISTRATION', 'boolean', '새 사용자의 이메일 등록을 활성화하거나 비활성화합니다.','ALLOW_REGISTRATION=true'],
+    ['ALLOW_SOCIAL_LOGIN', 'boolean', '사용자가 다양한 소셜 네트워크를 통해 LibreChat에 연결할 수 있도록 허용합니다.','ALLOW_SOCIAL_LOGIN=false'],
+    ['ALLOW_SOCIAL_REGISTRATION', 'boolean', '다양한 소셜 네트워크를 사용하여 새 사용자 등록을 활성화하거나 비활성화합니다.','ALLOW_SOCIAL_REGISTRATION=false'],
+    ['ALLOW_ACCOUNT_DELETION', 'boolean', 'Show the Delete account option in Settings > Account. Enabled when unset.','# ALLOW_ACCOUNT_DELETION=true'],
+    ['ALLOW_EMAIL_CHANGE', 'boolean', 'Let email and password users change their email address from Settings > Account (needs email configured). Enabled when unset. emailChange in librechat.yaml takes precedence. See Email address change on the email setup page.','# ALLOW_EMAIL_CHANGE=true'],
   ]}
 />
 
@@ -57,78 +35,59 @@ description: >-
 - 사용자를 삭제하려면 아래에 자세히 설명된 [delete-user 스크립트](#delete-user-script)를 사용할 수 있습니다.
 
 <ThemeImage
-  light="https://github.com/danny-avila/LibreChat/assets/32828263/4c51dc25-31d3-4c51-8c2a-0cdfb5a25033"
-  dark="https://github.com/danny-avila/LibreChat/assets/32828263/3bc5371d-e51d-4e91-ac68-56db6e85bb2c"
-  alt="사용자 등록 화면"
+  light="/images/features/authentication/register-light.png"
+  dark="/images/features/authentication/register-dark.png"
+  alt="The Create your account registration form with Full name, Username (optional), Email, Password, and Confirm password fields"
 />
 
-로컬 계정에 대한 관련 로그인 옵션:
+## Email verification and password reset [#email-verification-and-password-reset]
 
-- [Passkeys](/docs/configuration/authentication/passkeys): 기기 화면 잠금 또는 보안 키를 사용한 비밀번호 없는 로그인 (`ALLOW_PASSKEY_LOGIN`).
-- [Email address change](/docs/configuration/authentication/email#email-address-change): 사용자가 **Settings > Account**에서 등록된 이메일을 변경할 수 있도록 합니다(`ALLOW_EMAIL_CHANGE`, 기본값은 켜짐).
-
-## 필수 2단계 인증 [#required-two-factor-authentication]
-
-사용자는 언제든지 **설정 > 계정**에서 직접 이중 인증(TOTP)을 활성화할 수 있습니다. 이를 필수로 설정하려면 다음을 지정하세요:
-
-```bash filename=".env"
-ENFORCE_TWO_FACTOR_AUTHENTICATION=true
-```
-
-**적용 대상:** 로컬(이메일 및 비밀번호) 계정 및 LDAP 계정. OAuth, OpenID Connect 또는 SAML을 통해 로그인하는 계정은 MFA를 담당하는 ID 공급자가 별도로 존재하므로 영향을 받지 않습니다. MFA가 강제된 상태에서 비밀번호로 로그인을 시도하는 페더레이션 계정은 대신 ID 공급자를 사용하라는 안내를 받게 됩니다.
-
-**사용자가 보는 화면:** 2FA를 설정하지 않은 사용자가 (비밀번호, LDAP 자격 증명 또는 패스키를 사용하여) 로그인하면 설정이 완료될 때까지 세션이 생성되지 않습니다. 사용자는 **Two-Factor Authentication Required** 화면("관리자가 2단계 인증을 요구합니다. 계속하기 전에 설정하십시오.")으로 이동하며, 인증 앱으로 QR 코드를 스캔하고, 코드를 입력하여 확인한 뒤, 백업 코드를 저장하게 됩니다. 이미 로그인된 사용자는 다음 번 세션 확인 또는 새로고침 시 동일한 설정 화면으로 이동하며, 등록 이전에 발급된 액세스 토큰은 작동이 중지됩니다. 설정 세션은 10분 동안 유지되며, 만료될 경우 사용자는 로그인 페이지로 돌아가 처음부터 다시 시작해야 합니다.
-
-**등록 후:** **설정 > 계정**의 **2FA 비활성화** 컨트롤에 **관리자에 의해 필수 설정됨**이 표시되며, 정책이 활성화된 동안 서버는 2FA 비활성화 시도를 거부합니다. 사용자는 여전히 백업 코드를 재생성할 수 있습니다.
+When an [email service](/docs/configuration/authentication/email) is configured, new email and password accounts get a verification link. Without one, accounts are marked verified as soon as they are created.
 
 <OptionTable
   options={[
-    [
-      'ENFORCE_TWO_FACTOR_AUTHENTICATION',
-      'boolean',
-      '전체 세션이 발급되기 전에 로컬 및 LDAP 계정이 2FA에 등록하도록 요구합니다. 기본값: false.',
-      'ENFORCE_TWO_FACTOR_AUTHENTICATION=false',
-    ],
-    [
-      'TWO_FACTOR_TEMP_MAX',
-      'integer',
-      'TWO_FACTOR_TEMP_WINDOW당 2단계 인증 코드 시도 횟수(로그인 챌린지 및 등록 확인). 기본값은 LOGIN_MAX(7)입니다.',
-      '# TWO_FACTOR_TEMP_MAX=7',
-    ],
-    [
-      'TWO_FACTOR_TEMP_WINDOW',
-      'integer',
-      'TWO_FACTOR_TEMP_MAX에 대한 분 단위 시간 창입니다. 기본값은 LOGIN_WINDOW(5)입니다.',
-      '# TWO_FACTOR_TEMP_WINDOW=5',
-    ],
-    [
-      'TWO_FACTOR_SETUP_MAX',
-      'integer',
-      '추측 불가능한 코드를 확인하는 등록 단계(설정 시작, 백업 코드 확인, 완료)입니다. 잘못된 코드로 인해 등록이 중단되지 않도록 별도로 유지됩니다. 기본값: 20.',
-      '# TWO_FACTOR_SETUP_MAX=20',
-    ],
-    [
-      'TWO_FACTOR_SETUP_WINDOW',
-      'integer',
-      'TWO_FACTOR_SETUP_MAX에 대한 분 단위 시간 창입니다. 기본값은 TWO_FACTOR_TEMP_WINDOW입니다.',
-      '# TWO_FACTOR_SETUP_WINDOW=5',
-    ],
+    ['ALLOW_UNVERIFIED_EMAIL_LOGIN', 'boolean', 'Let users sign in before verifying their email. When false, unverified users cannot sign in, and accounts that are never verified are deleted after one week.','ALLOW_UNVERIFIED_EMAIL_LOGIN=true'],
+    ['ALLOW_PASSWORD_RESET', 'boolean', 'Show the Forgot Password? link and allow password resets. Reset links are valid for 15 minutes, and a successful reset ends all of the account\'s sessions. Without an email service the link is shown directly on the page to anyone who enters the address, so only enable this together with email.','ALLOW_PASSWORD_RESET=false'],
   ]}
 />
 
-<Callout type="info" title="환경 전용">
-`ENFORCE_TWO_FACTOR_AUTHENTICATION` 및 `TWO_FACTOR_TEMP_*`와 `TWO_FACTOR_SETUP_*` 제한은 프로세스 전체에 적용되는 `.env` 설정입니다. 이 설정들은 요청이나 테넌트 구성이 사용 가능해지기 전에 적용되므로, `librechat.yaml`이나 테넌트별로 설정할 수 없습니다. 모든 복제본(replica)에 동일한 값을 설정하십시오. 설정에서 2FA를 관리하기 위한 별도의 예산은 [`rateLimits.twoFactorManagement`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits)를 참조하십시오.
-</Callout>
+## Two-factor authentication [#two-factor-authentication]
+
+Email and password users and LDAP users can always turn on 2FA themselves from **Settings > Account**. Accounts that sign in through OAuth, OpenID Connect, or SAML do not get the option, because their identity provider is responsible for MFA.
+
+### Required two-factor authentication [#required-two-factor-authentication]
+
+Set `ENFORCE_TWO_FACTOR_AUTHENTICATION=true` to make 2FA mandatory for local and LDAP accounts:
+
+- A user without 2FA who signs in (with a password, LDAP credentials, or a passkey) gets no session until setup is done. They land on the **Two-Factor Authentication Required** screen, scan a QR code, confirm a code, and save their backup codes. The setup session lasts 10 minutes; if it expires, they start again from the login page.
+- Users who are already signed in are sent into the same setup the next time their session is checked or refreshed, and access tokens issued before enrollment stop working.
+- After enrollment, the **Disable 2FA** control shows **Required by administrator** and the server refuses to turn 2FA off. Users can still regenerate backup codes.
+- A federated account that tries to sign in with a password while enforcement is on is told to use its identity provider.
+
+<OptionTable
+  options={[
+    ['ENFORCE_TWO_FACTOR_AUTHENTICATION', 'boolean', '전체 세션이 발급되기 전에 로컬 및 LDAP 계정이 2FA에 등록하도록 요구합니다. 기본값: false.','ENFORCE_TWO_FACTOR_AUTHENTICATION=false'],
+    ['TWO_FACTOR_BACKUP_CODE_FORMAT', 'string', 'Format of newly issued backup codes: strong (default) or legacy. See Backup-code compatibility below.','# TWO_FACTOR_BACKUP_CODE_FORMAT=strong'],
+  ]}
+/>
+
+`ENFORCE_TWO_FACTOR_AUTHENTICATION` and the 2FA attempt limits are process-wide environment settings. They apply before any request or tenant configuration is available, so they cannot be set in `librechat.yaml` or per tenant; set the same values on every replica. The code-attempt limits (`TWO_FACTOR_TEMP_*`, `TWO_FACTOR_SETUP_*`) are on the [Automated Moderation](/docs/configuration/mod_system#two-factor-and-passkey-rate-limiting) page. The separate budget for managing 2FA from Settings is [`rateLimits.twoFactorManagement`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) in `librechat.yaml`.
+
+## Passkeys [#passkeys]
+
+Passkeys (WebAuthn) let users sign in with a device screen lock or a security key. They are off by default; turn them on with `ALLOW_PASSKEY_LOGIN=true`. The relying party settings, per-user limit, and rate limits are on the [Passkeys](/docs/configuration/authentication/passkeys) page.
 
 ## 세션 만료 및 리프레시 토큰 [#session-expiry-and-refresh-token]
 
-- 기본값: 세션 만료: 15분, 리프레시 토큰 만료: 7일
-  - 더 자세한 정보는 다음을 참조하세요: **[GitHub PR #927 - Refresh Token](https://github.com/LibreChat-AI/LibreChat/pull/927)**
+`SESSION_EXPIRY` is how long an access token lasts (15 minutes by default); it is renewed automatically in the background. `REFRESH_TOKEN_EXPIRY` is how long a user stays signed in (7 days by default). Each renewal issues a new refresh token tied to the same session and its original expiry, so the window counts from login and activity does not extend it. If users are signed out sooner than you want, raise `REFRESH_TOKEN_EXPIRY`.
+
+With [`OPENID_REUSE_TOKENS=true`](/docs/configuration/authentication/OAuth2-OIDC/token-reuse), the session cookie holds the identity provider's refresh token instead, so the provider's lifetime, rotation, and revocation policy decide when the session ends; `REFRESH_TOKEN_EXPIRY` cannot extend an expired or revoked IdP token.
 
 <OptionTable
   options={[
     ['SESSION_EXPIRY', 'integer (milliseconds)', '세션 만료 시간.','SESSION_EXPIRY=1000 * 60 * 15'],
     ['REFRESH_TOKEN_EXPIRY', 'integer (milliseconds)', '리프레시 토큰 만료 시간.','REFRESH_TOKEN_EXPIRY=(1000 * 60 * 60 * 24) * 7'],
+    ['SESSION_COOKIE_SECURE', 'boolean', 'Force the Secure attribute on session and auth cookies on (true) or off (false). Leave unset to decide from NODE_ENV and DOMAIN_SERVER. Set false only for plain HTTP deployments where browsers drop Secure cookies.','# SESSION_COOKIE_SECURE=false'],
   ]}
 />
 
@@ -158,7 +117,8 @@ sequenceDiagram
 
 ## JWT Secret 및 Refresh Secret [#jwt-secret-and-refresh-secret]
 
-최소 32바이트 이상의 고유한 값을 사용하세요. [Credentials Generator](/toolkit/creds_generator)를 사용하여 영구적인 값을 생성하고, 이를 안전하게 저장한 뒤 모든 LibreChat 복제본에 동일한 값을 제공하세요.
+- If these are left blank, LibreChat generates temporary secrets in `.env.temp`. Set your own persistent values before running a production instance. The examples given are 32-byte keys (64 characters in hex).
+  - Use this tool to generate some quickly: **[JWT Keys](/toolkit/creds_generator)**
 
 <OptionTable
   options={[
@@ -167,23 +127,19 @@ sequenceDiagram
   ]}
 />
 
-두 값 중 하나라도 비어 있으면, LibreChat은 임시 자격 증명 파일에서 값을 생성하고 재사용할 수 있습니다. 기본 Docker Compose 스택은 해당 파일을 유지하지만, 이는 부트스트랩 편의를 위한 용도일 뿐입니다. 파일이 손실되거나 기록할 수 없는 경우, 재시작 후 세션이 유효하지 않게 될 수 있습니다. 우선순위, 지속성 및 프로덕션 지침에 대해서는 [Credentials Configuration](/docs/configuration/dotenv#credentials-configuration)을 참조하세요.
+Use unique values of at least 32 bytes, store them securely, and give every LibreChat replica the same values. When either value is blank, LibreChat can generate and reuse a value from its temporary credentials file. The default Docker Compose stacks persist that file, but this is intended only as a bootstrap convenience. If the file is lost or cannot be written, sessions can become invalid after restart. See [Credentials Configuration](/docs/configuration/dotenv#credentials-configuration) for precedence, persistence, and production guidance.
 
 ---
 
-## 자동화된 조정 시스템 (선택 사항) [#automated-moderation-system-optional]
+## Automated Moderation [#automated-moderation]
 
-자동화된 중재 시스템(Automated Moderation System)은 기본적으로 활성화되어 있습니다. 이 시스템은 점수 매기기 메커니즘을 사용하여 사용자 위반 사항을 추적합니다. 사용자가 과도한 로그인, 등록 또는 메시지 전송과 같은 행동을 하면 위반 점수가 누적됩니다. 설정된 임계값에 도달하면 해당 사용자와 IP는 일시적으로 차단됩니다. 이 시스템은 급격하거나 의심스러운 활동을 모니터링하고 제재함으로써 플랫폼 보안을 보장합니다.
-
-mod system을 설정하려면 [설정 가이드](/docs/configuration/mod_system)를 검토하세요.
-
-> *참고: 개발 모드에서 작동하게 하려면 루트 디렉토리에 `.env.development`라는 파일을 생성하고 `DOMAIN_CLIENT`를 `http://localhost:3090` 또는 `npm run frontend-dev` 실행 시 vite가 제공하는 포트로 설정해야 합니다.*
+Login, registration, password reset, and 2FA attempts are rate limited, and repeated violations lead to temporary bans. See [Automated Moderation](/docs/configuration/mod_system).
 
 ## 사용자 관리 스크립트 [#user-management-scripts]
 
 ### 사용자 스크립트 생성 [#create-user-script]
 
-create-user 스크립트를 사용하면 등록 기능이 비활성화된 경우에도 데이터베이스에 사용자를 직접 추가할 수 있습니다. 사용 방법은 다음과 같습니다:
+Use the create-user script to add users directly to the database, even when registration is disabled:
 
 1. 기본 `docker-compose.yml`의 경우 (앱을 시작하기 위해 `docker compose up`을 사용하는 경우):
    ```bash
@@ -223,6 +179,6 @@ create-user 스크립트를 사용하면 등록 기능이 비활성화된 경우
 
 `email@domain.com`을 삭제하려는 사용자의 이메일 주소로 바꾸세요.
 
-## 백업 코드 호환성 [#backup-code-compatibility]
+## Backup-code compatibility [#backup-code-compatibility]
 
 새로 생성되거나 재생성된 백업 코드는 기본적으로 128비트 무작위 값이며, 각 코드마다 개별적으로 솔트를 적용한 해시로 저장됩니다. 기존 레거시 코드는 재생성될 때까지 계속 사용할 수 있습니다. `TWO_FACTOR_BACKUP_CODE_FORMAT=legacy`를 설정하면 이전 방식인 32비트 무솔트 형식의 코드가 일시적으로 발급됩니다. 호환되지 않는 백엔드나 클라이언트가 남아 있는 동안에는 모든 레플리카에 이 설정을 적용하고, 이후 제거하십시오. 강력한 코드를 발급한 뒤에는 해당 코드를 교체하지 않은 채로 호환되지 않는 백엔드로 롤백하지 마십시오. 자세한 내용은 [롤링 배포 가이드](/docs/configuration/upgrade#mixed-version-compatibility)를 참조하십시오.

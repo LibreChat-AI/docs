@@ -2,253 +2,77 @@
 title: Erişim Denetimi
 icon: ShieldCheck
 description: >-
-  LibreChat'in ayrıntılı yetkilendirme sistemi: ajanları, istemleri, MCP
-  sunucularını ve diğer kaynakları kimlerin kullanabileceğini,
-  paylaşabileceğini, düzenleyebileceğini ve yönetebileceğini kullanıcı, grup,
-  rol ve örnek düzeyinde denetleyin.
+  Who can use which features, who can see and edit a shared agent, prompt, or
+  MCP server, and how admin powers can be handed out.
 ---
 
-# Granular Access Control [#granular-access-control]
+Access control decides three things: which features a user can use at all, who can see or change a specific agent, prompt, MCP server, or skill that someone shared, and who gets admin powers. A small team can leave the defaults alone and share freely; a larger deployment can lock features down per role, share with groups synced from Entra ID, and delegate parts of administration without handing out full admin accounts.
 
-LibreChat, kimlik doğrulamanın üzerine tam kapsamlı bir yetkilendirme sistemiyle birlikte gelir. Erişim "hepsi ya da hiçbiri" şeklinde değildir: uygulamadaki paylaşılabilir her varlığın (agent'lar, prompt'lar, MCP sunucuları, uzak agent'lar, skill'ler, kod ortamları ve paylaşılan bağlantılar) kendi Erişim Kontrol Listesi (ACL) vardır ve her özellik **kullanıcı**, **grup**, **rol** veya **herkese açık** bazında bağımsız olarak etkinleştirilebilir ya da kısıtlanabilir.
+## Users, groups, roles, and everyone [#users-groups-roles-and-everyone]
 
-Bu sayfa, herkesin özgürce paylaşım yaptığı küçük bir ekipten, senkronize edilmiş Entra ID grupları, özel roller ve yetkilendirilmiş yöneticilere sahip kurumsal bir dağıtıma kadar, organizasyonunuza uygun izinleri modelleyebilmeniz için parçaların nasıl bir araya geldiğini açıklamaktadır.
+Permissions are granted to four kinds of principal:
 
-## Erişim Modeline Bir Bakış [#the-access-model-at-a-glance]
+- A user, meaning one LibreChat account.
+- A group of users. Groups are created by admins, or synced from Entra ID when users sign in through Entra with OpenID token reuse enabled. Sharing with a group is one entry, and membership changes in Entra apply at each member's next login.
+- A role. Every user has exactly one role: `USER` by default, `ADMIN` for the first account on a single-tenant instance, or a custom role an admin created. Sharing with a role reaches everyone who currently holds it.
+- Everyone, meaning every signed-in user on the instance.
 
-LibreChat'in yetkilendirme sistemi, birlikte çalışan üç bağımsız katmandan oluşur:
+## Özellik izinleri [#feature-permissions]
 
-| Katman | Kapsam | Neyi kontrol eder |
-| :--- | :--- | :--- |
-| **Özellik İzinleri** | Rol bazlı (USER, ADMIN, özel) | Bir yetkilinin bir özellik sınıfını (ajanlar, istemler, MCP sunucuları, anılar, web araması vb.) _kullanıp kullanamayacağı_, _oluşturup oluşturamayacağı_, _paylaşıp paylaşamayacağı_ veya _herkese açık paylaşıp paylaşamayacağı_. `librechat.yaml` dosyasında veya yönetici panelinde yapılandırılır. |
-| **Kaynak ACL'leri** | Bireysel kaynak bazlı | Belirli bir ajanı, istemi, MCP sunucusunu vb. kimin görüntüleyebileceği, düzenleyebileceği, silebileceği veya yeniden paylaşabileceği. Kaynak sahibi tarafından uygulama içi paylaşım iletişim kutusu aracılığıyla yönetilir. |
-| **Sistem Yetkileri** | Platform genelinde | Yönetici yetenekleri (örneğin `manage:users`, `manage:roles`, `read:usage`). Yönetici paneli tarafından kullanılır. |
+Each role carries a set of on and off switches per feature: whether its users can use agents, create them, share them with specific people, or share them with everyone, and the same for prompts, MCP servers, skills, and shared links. Other switches cover scheduled chats, memories, bookmarks, temporary chat, multi-conversation, the code interpreter, web search, file search, citations, the Agent Marketplace, and the people picker.
 
-Üçü de aynı dört temel tür için değerlendirilir:
+When a switch is off, the matching part of the UI disappears for that role. A user without agent creation rights does not see the option to create an agent; a user without "share with everyone" rights does not get the **Share with everyone** toggle.
 
-- **User**: bireysel bir LibreChat hesabı
-- **Grup**: kullanıcıların bir koleksiyonu (yerel veya Entra ID üzerinden senkronize edilmiş)
-- **Role**: adlandırılmış bir izin profili (örneğin `USER`, `ADMIN` veya herhangi bir özel rol)
-- **Public**: örnek üzerindeki her kimliği doğrulanmış kullanıcı
+By default, users can use and create agents, prompts, MCP servers, and skills, but cannot share them; sharing is something an admin opts into. The full list with defaults is on the [Access Control configuration](/docs/configuration/access_control#feature-permissions) page.
 
-## Katman 1: Özellik İzinleri (Rol Tabanlı) [#layer-1-feature-permissions-role-based]
+Admins change these switches without a restart. In LibreChat, the panels for agents, prompts, MCP servers, memories, and skills have an **Admin Settings** button that opens the switches for that feature, with a **Role** picker at the top. The [Admin Panel](/docs/features/admin_panel) edits the same switches for every role, including custom ones.
 
-Özellik düzeyi izinleri, belirli bir rol için uygulamanın tüm yeteneklerini denetler. Bu izinler, _"Bu roldeki kullanıcılar hiç ajan oluşturabilir mi?"_, _"İstemleri herkese açık olarak paylaşmalarına izin veriliyor mu?"_, _"Kod yorumlayıcıyı çalıştırabilirler mi?"_ gibi sorulara yanıt verir.
+<ThemeImage
+  light="/images/features/access_control/admin-settings-light.png"
+  dark="/images/features/access_control/admin-settings-dark.png"
+  alt="The Admin Settings - Agents dialog with the Role picker set to USER and permission toggles for using, creating, and sharing agents"
+/>
 
-### Yerleşik Sistem Rolleri [#built-in-system-roles]
+## Sharing a resource [#sharing-a-resource]
 
-LibreChat, her zaman mevcut olan ve silinemeyen iki sistem rolüyle birlikte gelir:
+Agents, prompts, MCP servers, skills, and shared links each keep their own list of who can access them. (Agents used through the [Agents API](/docs/features/agents_api) and deployment-owned code environments use the same lists, managed outside the share dialog.) The person who created one is its owner and decides who else gets in.
 
-- **`ADMIN`**: kapsamı belirlenmemiş tek kiracılı bir dağıtımda kaydedilen ilk hesaba atanır. Kiracı kapsamlı dağıtımlar, yöneticileri güvenilir bir idari akış aracılığıyla sağlamalıdır. Yöneticiler her kaynağı görebilir, herhangi bir ayarı değiştirebilir, yönetici paneline erişebilir ve platform genelindeki davranışları yapılandırabilir.
-- **`USER`**: her yeni hesaba atanan varsayılan rol.
+<Steps>
+  <Step>Open the resource and click its **Share** button. You only see it if you own the resource (or hold the Owner role on it, or are an admin) and your role is allowed to share that kind of resource.</Step>
+  <Step>In the **Share** dialog, search for people or groups by name or email. Roles show up in the search too, unless the admin hid them.</Step>
+  <Step>Pick an access role for each person or group you add.</Step>
+  <Step>If your role allows it, turn on **Share with everyone** and choose **Everyone's permission level**.</Step>
+  <Step>Click **Save**.</Step>
+</Steps>
 
-Yöneticiler, MongoDB'deki kullanıcı belgesini güncelleyerek manuel olarak terfi ettirilebilir. Bkz. [Başka bir yöneticiyi terfi ettirme](/docs/configuration/access_control#promote-another-admin).
+<ThemeImage
+  light="/images/features/access_control/share-dialog-light.png"
+  dark="/images/features/access_control/share-dialog-dark.png"
+  alt="Share dialog for an agent listing a user as Owner and a group as Viewer, with the Share with everyone toggle below"
+/>
 
-### İzin Türleri [#permission-types]
+The access roles are the same for every resource type:
 
-Her rol bir **izin türleri × eylemler** matrisi tutar:
+| Access role | What they can do |
+| ----------- | ---------------- |
+| Viewer | Find and use the resource, for example pick the agent and chat with it. They cannot change it. |
+| Editor | Everything a Viewer can, plus change its settings, instructions, tools, and files. |
+| Owner | Everything an Editor can, plus delete it and change who it is shared with. |
 
-| İzin Türü | Kullanılabilir eylemler |
-| ---------------- | --------------------------------------------------------- |
-| `AGENTS`         | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`                  |
-| `PROMPTS`        | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`                  |
-| `MCP_SERVERS`    | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`, `CONFIGURE_OBO` |
-| `REMOTE_AGENTS`  | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`                  |
-| `SKILLS`         | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`                  |
-| `SHARED_LINKS`   | `CREATE`, `SHARE`, `SHARE_PUBLIC`                         |
-| `SCHEDULES`      | `USE`, `CREATE`                                            |
-| `MEMORIES`       | `USE`, `CREATE`, `UPDATE`, `READ`, `OPT_OUT`              |
-| `BOOKMARKS`      | `USE`                                                     |
-| `MULTI_CONVO`    | `USE`                                                     |
-| `TEMPORARY_CHAT` | `USE`                                                     |
-| `RUN_CODE`       | `USE`                                                     |
-| `WEB_SEARCH`     | `USE`                                                     |
-| `FILE_SEARCH`    | `USE`                                                     |
-| `FILE_CITATIONS` | `USE`                                                     |
-| `MARKETPLACE`    | `USE`                                                     |
-| `PEOPLE_PICKER`  | `VIEW_USERS`, `VIEW_GROUPS`, `VIEW_ROLES`                 |
+Shared links only have Viewer and Owner. A resource always needs at least one owner, so the dialog will not let you remove the last one.
 
-`SHARE` ve `SHARE_PUBLIC` arasındaki ayrım önemlidir: Bir role, temsilcileri _herkese_ görünür kılmalarına izin vermeden (`SHARE_PUBLIC`), _belirli_ kullanıcılara veya gruplara (`SHARE`) temsilci paylaşma yetkisi verebilirsiniz.
+Agents have one extra permission that is not part of any of these roles: **View insights**, which lets someone who can already see the agent open its [Insights](/docs/features/insights). Only admins see this toggle in the share dialog, and it cannot be given to everyone.
 
-### Özellik İzinlerini Yapılandırma [#configuring-feature-permissions]
+Before giving someone Editor or Owner on an agent, remember that they see everything configured on it, including its instructions and attached files. Even Viewers can coax attached content out through the chat, so do not attach anything to a shared agent that its audience should not read.
 
-Özellik izinlerini yönetmenin önerilen yolu, her rol (oluşturduğunuz özel roller dahil) üzerindeki izin matrisini doğrudan düzenleyen [**LibreChat Admin Panel**](/docs/features/admin_panel) kullanmaktır. Değişiklikler, LibreChat'i yeniden dağıtmaya gerek kalmadan geçerli olur ve genel `USER` varsayılanı yerine, değiştirmek istediğiniz tam role özel olarak uygulanır.
+## Admins and delegated admin powers [#admins-and-delegated-admin-powers]
 
-<Callout type="warning" title="Eski: `librechat.yaml` arayüz bloğu">
-  `librechat.yaml` içindeki [`interface` bloğu](/docs/configuration/librechat_yaml/object_structure/interface), başlangıçta varsayılan `USER` rolü için izinleri hala tanımlayabilir ve yeni bir örneği başlatmak veya tamamen dosya tabanlı dağıtımlar için yararlı olmaya devam eder. Ancak, bu blok yalnızca `USER` rolünü hedefler ve özel roller arasındaki farkları ifade edemez. Süregelen izin yönetimi için yönetici panelini tercih edin.
-</Callout>
+Users with the `ADMIN` role can see and manage every resource on the instance and change any role's feature permissions. They also get an **Admin Panel** link under **Settings > General** when an admin panel URL is configured.
 
-### Özel Roller [#custom-roles]
+When you want someone to handle part of the administration without making them a full admin, grant them a capability instead, such as managing users, managing groups, editing configuration (all of it, or a single section such as `interface`), viewing every agent's Insights, or moderating every agent, prompt, skill, or shared link. Delegated admins also need the `access:admin` capability to sign in to the Admin Panel. Capabilities can go to a user, a group, or a role, and they are granted from the Admin Panel's **Grants** page. Holding a "manage" capability implies the matching "read" one.
 
-`USER` ve `ADMIN` rollerinin ötesinde, yöneticiler kendi özellik-izin matrislerine sahip **özel roller** oluşturabilirler (v0.8.5 ile tanıtılmıştır; bkz. [#12528](https://github.com/LibreChat-AI/LibreChat/pull/12528)). Bir kullanıcı birden fazla role sahip olabilir ve kullanıcının geçerli izinleri, sahip olduğu tüm rollerin birleşimidir. Özel roller, yönetici panelinden yönetilir.
+Admins can also give a role or group its own configuration, for example extra endpoints for a research group, layered on top of `librechat.yaml`. That is done from the Admin Panel as well.
 
-### Rol ve Grup Kapsamlı Yapılandırma Geçersiz Kılmaları [#role--and-group-scoped-configuration-overrides]
+## Kurulum [#setup]
 
-Özellik bayraklarına ek olarak, v0.8.5 sürümü **veritabanı destekli bir yapılandırma geçersiz kılma (override)** sistemi getirdi ([#12354](https://github.com/LibreChat-AI/LibreChat/pull/12354)). Bu sistem, belirli gruplara veya rollere _farklı bir `librechat.yaml` tarzı yapılandırma_ atamanıza olanak tanır. Örneğin, bir "Araştırma" grubu, varsayılan yapılandırmadan farklı olarak ek endpoint'lere, daha yüksek bir özyineleme sınırına ve farklı ajan yeteneklerine erişebilir. Geçersiz kılmalar giriş sırasında çözümlenir ve temel yapılandırmanın üzerine eklenerek oluşturulur.
-
-## Katman 2: Kaynak ACL'leri (Varlık Bazlı Paylaşım) [#layer-2-resource-acls-per-entity-sharing]
-
-LibreChat içindeki her paylaşılabilir kaynağın, rol tabanlı izinlerden bağımsız olarak kendi Erişim Kontrol Listesi (Access Control List) bulunur. `SHARE` iznine sahip bir kullanıcının, kendi temsilcisine (agent), istemine (prompt) veya MCP sunucusuna *kimin* erişebileceğini seçme yöntemi budur.
-
-### Kaynak Türleri [#resource-types]
-
-Kaynak ACL'leri şu anda şunlar için geçerlidir:
-
-- **Ajanlar** (`agent`)
-- **İstemler / İstem Grupları** (`promptGroup`)
-- **MCP Sunucuları** (`mcpServer`)
-- **Beceriler** (`skill`), bkz. [Beceriler](/docs/features/skills)
-- **Uzak Temsilciler** (`remoteAgent`), [Agents API](/docs/features/agents_api) için
-- **Kod Ortamları** (`codeEnvironment`), dağıtıma ait kod çalışanları için; bkz. [Kod Yorumlayıcı](/docs/features/code_interpreter)
-- **Paylaşılan Bağlantılar** (`sharedLink`), bkz. [Paylaşılabilir Bağlantılar](/docs/features/shareable_links)
-
-### Erişim Rolleri (İzin Ön Ayarları) [#access-roles-permission-presets]
-
-Ham izinlerin son kullanıcılara gösterilmesi yerine, paylaşım her kaynak türü için üç adlandırılmış rol kullanır (paylaşılan bağlantılarda yalnızca Görüntüleyici ve Sahip rolleri bulunur):
-
-| Rol | İzin bitleri | Yetkilinin yapabilecekleri |
-| ---------- | ----------------------------------------------- | ------------------------------------------------------------------- |
-| **Viewer** | `VIEW` (`0b0001`) | Kaynağı kullanabilir / etkileşime geçebilir |
-| **Editor** | `VIEW` + `EDIT` (`0b0011`) | Kaynağın ayarlarını, talimatlarını, araçlarını ve dosyalarını görüntüleyebilir ve değiştirebilir |
-| **Owner** | `VIEW` + `EDIT` + `DELETE` + `SHARE` (`0b1111`) | Tam kontrol: düzenleyebilir, silebilir ve başkalarıyla yeniden paylaşabilir |
-
-Arka planda izinler, her (kaynak, sorumlu) çifti için bir bit maskesi (`permBits`) olarak saklanır; üst kümeler otomatik olarak işlenir, bu nedenle Düzenleyici (Editor) yetkisi vermek, Görüntüleyici (Viewer) yetkisini de beraberinde getirir.
-
-Beşinci bit olan `VIEW_INSIGHTS` (`0b10000`) yalnızca agent'lar için geçerlidir. Bu bite sahip bir principal, `VIEW` iznine de sahipse, o agent'ın [Insights](/docs/features/insights) bölümünü görebilir. Bu bit Viewer, Editor veya Owner ön ayarlarının bir parçası değildir: yalnızca yöneticiler bu izni verebilir; bunu yapmak için agent'ın paylaşım penceresindeki **View insights** anahtarını kullanırlar. Ayrıca bu izin herkese açık (public) principal'a verilemez.
-
-### Arayüzden Erişim Verme [#granting-access-from-the-ui]
-
-1. Kaynağı açın (agent builder, prompt form, MCP server settings, vb.)
-2. **Paylaş** düğmesine tıklayın (sohbetin sahibi olduğunuzda, yönetici olduğunuzda veya size `SHARE` yetkisi verildiğinde görünür)
-3. Paylaşım iletişim kutusunda:
-   - **Kullanıcıları**, **grupları** veya **rolleri** eklemek üzere aramak için kişi seçiciyi kullanın
-   - Her bir asıl (principal) için bir erişim rolü (Viewer / Editor / Owner) seçin
-   - İsteğe bağlı olarak, kaynağı örnekteki (instance) herkes için görünür kılmak üzere **Public access** (Herkese açık erişim) seçeneğini açıp kapatabilirsiniz (`SHARE_PUBLIC` özellik izni gerektirir)
-4. Kaydet. Kullanıcılar sayfayı bir sonraki yenilediklerinde kaynağı görürler.
-
-<Callout type="warning" title="Veri Sızıntılarına Karşı Korunma">
-  Editor (Düzenleyici) ve Owner (Sahip) yetkisine sahip kullanıcılar, sistem talimatları, ekli dosyalar ve araçlar dahil olmak üzere kaynak üzerinde yapılandırılmış her şeyi görebilirler. Herhangi bir ajan, ekli verileri sohbet çıktısı yoluyla sızdırabilir; bu nedenle düzenleme erişimi vermeden veya bir ajanı herkese açık hale getirmeden önce talimatlarınızın prompt injection saldırılarına karşı sağlam olduğundan emin olun.
-</Callout>
-
-### Kullanıcıların Gördükleri [#what-grantees-see]
-
-- **Görüntüleyiciler**, kaynağı ilgili seçicide (örneğin ajan açılır menüsü) kullanıma hazır bir öğe olarak görürler. Oluşturucuyu açamaz, ham talimatları göremez veya ayarları değiştiremezler.
-- **Editors** (Düzenleyiciler), kaynağın yapılandırmasını açabilir ve değiştirebilir, ancak onu silemez veya yeniden paylaşamazlar.
-- **Owners**, orijinal yazarla aynı kullanıcı arayüzüne sahiptir ve diledikleri gibi silme ve yeniden paylaşma işlemi yapabilirler.
-- **Orijinal yazar**, ACL durumundan bağımsız olarak her zaman tam kontrole sahiptir ve yöneticiler örnek üzerindeki herhangi bir kaynağı yönetebilir.
-
-## Katman 3: Sistem İzinleri (Yönetici Yetenekleri) [#layer-3-system-grants-admin-capabilities]
-
-Sistem izinleri (system grants), **yönetici düzeyi yetenekler** için kullanılan ayrı bir izin tablosudur ve _"Bu kullanıcı yönetici paneline erişebilir mi?"_ veya _"Bu grup MCP sunucularını küresel olarak yönetebilir mi?"_ gibi soruları yanıtlar. Bunlar her zaman bir özneye (kullanıcı, grup veya rol) ve bir yetenek dizisine (capability string) göre kapsamlandırılır.
-
-Kanonik yetenekler şunları içerir:
-
-| Capability                           | Purpose                                       |
-| ------------------------------------ | --------------------------------------------- |
-| `access:admin`                       | Access the admin panel at all                 |
-| `read:users` / `manage:users`        | View / modify user accounts                   |
-| `read:groups` / `manage:groups`      | View / modify groups                          |
-| `read:roles` / `manage:roles`        | View / modify custom roles                    |
-| `read:configs` / `manage:configs`    | View / modify all system configuration        |
-| `read:configs:<section>` / `manage:configs:<section>` | View / modify one top-level configuration section |
-| `assign:configs:{user\|group\|role}` | Assign config-override profiles to principals |
-| `read:usage`                         | View platform usage and telemetry             |
-| `read:agents` / `manage:agents`      | View / moderate every agent on the instance   |
-| `read:prompts` / `manage:prompts`    | View / moderate every prompt                  |
-| `read:skills` / `manage:skills`      | View / moderate every skill                   |
-| `read:sharedlinks` / `manage:sharedlinks` | View / moderate every shared link        |
-| `manage:mcpservers`                  | Manage MCP servers globally                   |
-| `manage:code_environments`           | Enroll and revoke deployment-owned code workers |
-| `read:insights`                      | View [Insights](/docs/features/insights) for every agent |
-| `read:audit_log`                     | List, view, and export the grant audit log (read-only; there is no manage counterpart) |
-
-Yönetme (manage) yetenekleri, karşılık gelen okuma (read) yeteneklerini de kapsar (örneğin, `manage:users` yetkisine sahip olmak otomatik olarak `read:users` yetkisini de verir). Bu durum yapılandırma bölümleri için de geçerlidir: `manage:configs:endpoints`, `read:configs:endpoints` yetkisini karşılar. Yalnızca bölüm kapsamlı yapılandırma erişimine sahip kullanıcılar, okuyabildikleri bölümlerle filtrelenmiş yönetici yapılandırma yanıtlarını alırlar; hiçbir yapılandırma okuma yetkisi olmayan kullanıcılar ise `403` hatası alırlar.
-
-`read:assistants` ve `manage:assistants` de mevcuttur ancak ayrılmıştır: henüz bunları uygulayan bir middleware yoktur.
-
-Bir `SystemRoles.ADMIN` kullanıcısı örtük olarak tüm yetkilere sahiptir; izinler (grants), yönetici olmayan asıllara (principals), onları tam yönetici yapmadan yönetici yetkilerinin bir alt kümesini **devretmenize** olanak tanır. Yönetici arayüzünün kendisine erişim hala `access:admin` gerektirir.
-
-Sistem yetkileri [Yönetici Paneli](/docs/features/admin_panel) üzerinden verilir ve geri alınır.
-
-## İlkelerin Derinlemesine İncelenmesi [#principals-in-depth]
-
-### Kullanıcılar [#users]
-
-Standart LibreChat hesapları. Kullanıcılar **yerel** (e-posta/parola) veya **federe** (OAuth2, OIDC, SAML, LDAP) olabilir. Federe kullanıcılar harici bir kimlikle (`idOnTheSource`) eşleştirilebilir; Entra ID için bu, grup senkronizasyonunu sağlayan OID'dir.
-
-### Gruplar [#groups]
-
-Bir grup, adlandırılmış bir kullanıcı koleksiyonudur. LibreChat iki kaynağı destekler:
-
-- **Yerel gruplar**: yönetici panelinden veya doğrudan veritabanından oluşturulur ve yönetilir. Üyeler LibreChat kullanıcı kimlikleridir (user ID).
-- **Entra ID (Azure AD) grupları**: [token reuse](/docs/configuration/authentication/OAuth2-OIDC/token-reuse) etkinleştirilmiş şekilde bir kullanıcı Azure OIDC aracılığıyla giriş yaptığında Microsoft Graph'ten senkronize edilir. Senkronize edilen her grup, Entra Nesne Kimliğini `idOnTheSource` olarak saklar; bu da LibreChat'in kiracı üyeliğiyle uyumlu kalmasını sağlar.
-
-Gruplar herhangi bir ACL'de, `peoplePicker` aramasında ve yapılandırma geçersiz kılmaları veya sistem izinleri için birincil hedef olarak görünebilir. 500 kişilik bir grupla paylaşılan tek bir kaynak, 500 değil, tek bir ACL girdisidir ve Entra'daki üyelik değişiklikleri bir sonraki girişte otomatik olarak yansıtılır.
-
-### ACL Principal Önbellek Ayarları [#acl-principal-cache-tuning]
-
-LibreChat, bir kullanıcının ACL sorumlularını çözümlemek için kullanılan grup kimliklerini varsayılan olarak beş dakika boyunca önbelleğe alır. Önbellek, kiracı ve üye kimliğine göre kapsamlandırılır ve grup üyeliğindeki değişiklikler etkilenen girdileri geçersiz kılar. Kullanıcının rolünü veya `idOnTheSource` aramasını önbelleğe almaz, bu nedenle bu değerler mevcut istek kullanıcısından veya veritabanından çözümlenmeye devam eder.
-
-```bash filename=".env"
-# Group-membership cache lifetime; 0 disables the cache
-USER_PRINCIPALS_CACHE_TTL_MS=300000
-
-# Redis-backed deployments only: deduplicate cold cache builds across replicas
-USER_PRINCIPALS_LOCK_TTL_MS=5000
-USER_PRINCIPALS_LOCK_WAIT_MS=5000
-```
-
-Ana önbellek Redis destekli olduğunda, kilit ayarları birden fazla replikanın aynı soğuk girdiyi aynı anda yeniden oluşturmasını engeller. Yalnızca oluşturma kilitlemesini devre dışı bırakmak için `USER_PRINCIPALS_LOCK_TTL_MS=0` olarak ayarlayın; paylaşılan önbellek depolaması ve süreçler arası geçersiz kılma etkin kalmaya devam eder. Önbellek ve kilit hataları veritabanına geri döner ve izin denetimlerini engellemez.
-
-### Roller [#roles]
-
-Herhangi bir sistem veya özel rol, yetkili (principal) olarak kullanılabilir. Bir ajanı bir rolle (örneğin `SupportEngineers`) paylaşmak, bireyleri tek tek listelemeye gerek kalmadan, şu anda o role sahip olan her kullanıcıya erişim sağlar. Rol tabanlı paylaşımın yalnızca yöneticiye özel olduğu ortamlar için roller, [`interface.peoplePicker.roles`](/docs/configuration/librechat_yaml/object_structure/interface#peoplepicker) aracılığıyla kişi seçiciden gizlenebilir.
-
-### Genel [#public]
-
-Her kimlik doğrulanmış kullanıcıyla eşleşen özel bir yönetici (principal). Genel izinler (public grants), yalnızca izni veren kullanıcı ilgili kaynak türü için `SHARE_PUBLIC` özellik iznine sahip olduğunda verilebilir.
-
-## Kişi Seçici Görünürlüğü [#people-picker-visibility]
-
-Kişi seçici (paylaşım iletişim kutularındaki arama kutusu), dağıtımınız için uygun olmayan asıl türleri gizlemek üzere örnek düzeyinde sınırlandırılabilir:
-
-```yaml filename="librechat.yaml"
-interface:
-  peoplePicker:
-    users: true
-    groups: true
-    roles: false
-```
-
-Bu durum yalnızca _arama arayüzünü_ etkiler; gizli asıl türleri (principal types) için mevcut ACL girişleri çalışmaya devam eder ve normal şekilde uygulanır.
-
-## ACL Öncesi Sürümlerden Geçişler [#migrations-from-pre-acl-versions]
-
-v0.8.0-rc3 öncesi sürümler daha basit bir sahiplik modeli kullanıyordu. Yükseltme işlemi, mevcut ajanların ve istemlerin erişilebilir kalması için ACL geçişinin çalıştırılmasını gerektirir:
-
-**Dry run (değişiklikleri önizle):**
-
-```bash
-npm run migrate:agent-permissions:dry-run
-npm run migrate:prompt-permissions:dry-run
-```
-
-**Yürüt:**
-
-```bash
-npm run migrate:agent-permissions
-npm run migrate:prompt-permissions
-```
-
-Docker varyantları ve toplu işlem boyutu (batch-size) seçenekleri için [geçiş kılavuzuna](/docs/configuration/access_control#migrating-from-pre-acl-versions) bakın.
-
-## İlgili Dokümantasyon [#related-documentation]
-
-- [Ajanlar: Paylaşım ve İzinler](/docs/features/agents#sharing-and-permissions)
-- [Arayüz Yapılandırması (özellik izinleri)](/docs/configuration/librechat_yaml/object_structure/interface)
-- [Kimlik Doğrulama](/docs/features/authentication)
-- [OpenID Connect Token Reuse (Entra ID grup senkronizasyonu için gereklidir)](/docs/configuration/authentication/OAuth2-OIDC/token-reuse)
-- [Azure / Entra ID OAuth2](/docs/configuration/authentication/OAuth2-OIDC/azure)
-- [SharePoint Entegrasyonu](/docs/configuration/sharepoint)
-- [Agents API (Remote Agents)](/docs/features/agents_api)
-- [LibreChat Yönetim Paneli](/docs/features/admin_panel)
+The defaults work without any setup: the first account is the admin, and everyone else can use but not share. To change feature defaults from `librechat.yaml`, limit what the people picker shows, sync Entra ID groups, promote another admin, or migrate an instance upgraded from before v0.8.0-rc3, see [Access Control configuration](/docs/configuration/access_control). Custom roles, groups, grants, and per-group configuration need the [Admin Panel](/docs/features/admin_panel).

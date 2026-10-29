@@ -2,49 +2,26 @@
 title: Authenticatiesysteem
 icon: BookOpen
 description: >-
-  Deze handleiding legt uit hoe je het gebruikersauthenticatiesysteem van
-  LibreChat gebruikt, dat veilige en eenvoudige e-mail- en sociale aanmeldingen
-  biedt. Je leert hoe je aanmelden, inloggen, wachtwoordherstel en meer instelt.
+  Environment variables for sign-up, login, email verification, password reset,
+  two-factor authentication, passkeys, sessions, and the user management
+  scripts.
 ---
+
+What users see when they sign up and sign in is described on the [Authentication](/docs/features/authentication) feature page. Provider-specific setup lives in the [OAuth2 and OpenID Connect](/docs/configuration/authentication/OAuth2-OIDC), [SAML](/docs/configuration/authentication/SAML), [LDAP](/docs/configuration/authentication/ldap), [email](/docs/configuration/authentication/email), and [passkeys](/docs/configuration/authentication/passkeys) guides. Allowed email domains and the order of the login buttons are set in the [`registration`](/docs/configuration/librechat_yaml/object_structure/registration) block of `librechat.yaml`.
+
+In a single-tenant deployment, the first account registered gets the `ADMIN` role, so create it yourself before opening registration to others, and make it a local email and password account. Tenant-scoped deployments never promote their first user; provision tenant admins through a trusted administrative flow.
 
 ## Algemeen [#general]
 
-Voor een snel overzicht, raadpleeg de gebruikershandleiding die hier wordt verstrekt: [Authentication](/docs/features/authentication)
-
-Hier is een overzicht van de algemene configuratie.
-
 <OptionTable
   options={[
-    [
-      'ALLOW_EMAIL_LOGIN',
-      'boolean',
-      'Toon e-mail login en sta lokale of LDAP-inloggegevens toe via de authenticatie-API.',
-      'ALLOW_EMAIL_LOGIN=true',
-    ],
-    [
-      'ALLOW_EMAIL_LOGIN_OVERRIDE',
-      'boolean',
-      'Sta directe inloggegevensverzoeken toe aan de login API terwijl ALLOW_EMAIL_LOGIN op false staat. Standaard: false.',
-      'ALLOW_EMAIL_LOGIN_OVERRIDE=false',
-    ],
-    [
-      'ALLOW_REGISTRATION',
-      'boolean',
-      'Schakel e-mailregistratie voor nieuwe gebruikers in of uit.',
-      'ALLOW_REGISTRATION=true',
-    ],
-    [
-      'ALLOW_SOCIAL_LOGIN',
-      'boolean',
-      'Sta gebruikers toe om verbinding te maken met LibreChat via verschillende sociale netwerken.',
-      'ALLOW_SOCIAL_LOGIN=false',
-    ],
-    [
-      'ALLOW_SOCIAL_REGISTRATION',
-      'boolean',
-      'Schakel registratie van nieuwe gebruikers via verschillende sociale netwerken in of uit.',
-      'ALLOW_SOCIAL_REGISTRATION=false',
-    ],
+    ['ALLOW_EMAIL_LOGIN', 'boolean', 'Show the email login form and accept local or LDAP credential logins through the authentication API.','ALLOW_EMAIL_LOGIN=true'],
+    ['ALLOW_EMAIL_LOGIN_OVERRIDE', 'boolean', 'Still accept email login through the API while ALLOW_EMAIL_LOGIN is false. Each use is logged. Commented out by default.','# ALLOW_EMAIL_LOGIN_OVERRIDE=false'],
+    ['ALLOW_REGISTRATION', 'boolean', 'Schakel e-mailregistratie voor nieuwe gebruikers in of uit.','ALLOW_REGISTRATION=true'],
+    ['ALLOW_SOCIAL_LOGIN', 'boolean', 'Sta gebruikers toe om verbinding te maken met LibreChat via verschillende sociale netwerken.','ALLOW_SOCIAL_LOGIN=false'],
+    ['ALLOW_SOCIAL_REGISTRATION', 'boolean', 'Schakel registratie van nieuwe gebruikers via verschillende sociale netwerken in of uit.','ALLOW_SOCIAL_REGISTRATION=false'],
+    ['ALLOW_ACCOUNT_DELETION', 'boolean', 'Show the Delete account option in Settings > Account. Enabled when unset.','# ALLOW_ACCOUNT_DELETION=true'],
+    ['ALLOW_EMAIL_CHANGE', 'boolean', 'Let email and password users change their email address from Settings > Account (needs email configured). Enabled when unset. emailChange in librechat.yaml takes precedence. See Email address change on the email setup page.','# ALLOW_EMAIL_CHANGE=true'],
   ]}
 />
 
@@ -58,78 +35,59 @@ Snelle tips:
 - Om een gebruiker te verwijderen, kun je [het delete-user script](#delete-user-script) gebruiken, dat hieronder ook in detail wordt beschreven.
 
 <ThemeImage
-  light="https://github.com/danny-avila/LibreChat/assets/32828263/4c51dc25-31d3-4c51-8c2a-0cdfb5a25033"
-  dark="https://github.com/danny-avila/LibreChat/assets/32828263/3bc5371d-e51d-4e91-ac68-56db6e85bb2c"
-  alt="Scherm voor gebruikersregistratie"
+  light="/images/features/authentication/register-light.png"
+  dark="/images/features/authentication/register-dark.png"
+  alt="The Create your account registration form with Full name, Username (optional), Email, Password, and Confirm password fields"
 />
 
-Gerelateerde aanmeldopties voor lokale accounts:
+## Email verification and password reset [#email-verification-and-password-reset]
 
-- [Passkeys](/docs/configuration/authentication/passkeys): wachtwoordloos inloggen met een schermvergrendeling van een apparaat of een beveiligingssleutel (`ALLOW_PASSKEY_LOGIN`).
-- [Emailadres wijzigen](/docs/configuration/authentication/email#email-address-change): stelt gebruikers in staat om hun geregistreerde e-mailadres te wijzigen via **Instellingen > Account** (`ALLOW_EMAIL_CHANGE`, standaard ingeschakeld).
-
-## Vereiste tweefactorauthenticatie [#required-two-factor-authentication]
-
-Gebruikers kunnen tweefactorauthenticatie (TOTP) altijd zelf inschakelen via **Settings > Account**. Om dit verplicht te stellen, stel het volgende in:
-
-```bash filename=".env"
-ENFORCE_TWO_FACTOR_AUTHENTICATION=true
-```
-
-**Op wie dit van toepassing is:** lokale (e-mail en wachtwoord) en LDAP-accounts. Accounts die inloggen via OAuth, OpenID Connect of SAML worden niet beïnvloed, omdat hun identiteitsprovider verantwoordelijk is voor MFA. Een gefedereerd account dat probeert in te loggen met een wachtwoord terwijl handhaving is ingeschakeld, krijgt de melding om in plaats daarvan de identiteitsprovider te gebruiken.
-
-**Wat gebruikers zien:** een gebruiker zonder 2FA die inlogt (met een wachtwoord, LDAP-inloggegevens of een passkey) krijgt geen sessie totdat de configuratie is voltooid. Ze komen terecht op een **Two-Factor Authentication Required**-scherm ("Your administrator requires two-factor authentication. Set it up before continuing."), scannen een QR-code met een authenticator-app, voeren een code in om te verifiëren en slaan hun back-upcodes op. Gebruikers die al zijn ingelogd, worden naar dezelfde configuratie geleid zodra hun sessie de volgende keer wordt gecontroleerd of vernieuwd, en toegangstokens die vóór de inschrijving zijn uitgegeven, werken niet meer. De configuratiesessie duurt 10 minuten; als deze verloopt, keert de gebruiker terug naar de inlogpagina en begint het proces opnieuw.
-
-**Na inschrijving:** de **Disable 2FA**-besturing in **Settings > Account** toont **Required by administrator**, en de server weigert pogingen om 2FA uit te schakelen terwijl het beleid actief is. Gebruikers kunnen nog steeds back-upcodes opnieuw genereren.
+When an [email service](/docs/configuration/authentication/email) is configured, new email and password accounts get a verification link. Without one, accounts are marked verified as soon as they are created.
 
 <OptionTable
   options={[
-    [
-      'ENFORCE_TWO_FACTOR_AUTHENTICATION',
-      'boolean',
-      'Vereis dat lokale en LDAP-accounts 2FA inschakelen voordat een volledige sessie wordt verleend. Standaard: false.',
-      'ENFORCE_TWO_FACTOR_AUTHENTICATION=false',
-    ],
-    [
-      'TWO_FACTOR_TEMP_MAX',
-      'integer',
-      'Pogingen voor tweefactorcode (inlogcontrole en inschrijvingsbevestiging) per TWO_FACTOR_TEMP_WINDOW. Standaard ingesteld op LOGIN_MAX (7).',
-      '# TWO_FACTOR_TEMP_MAX=7',
-    ],
-    [
-      'TWO_FACTOR_TEMP_WINDOW',
-      'integer',
-      'Venster in minuten voor TWO_FACTOR_TEMP_MAX. Standaard ingesteld op LOGIN_WINDOW (5).',
-      '# TWO_FACTOR_TEMP_WINDOW=5',
-    ],
-    [
-      'TWO_FACTOR_SETUP_MAX',
-      'integer',
-      'Inschrijvingsstappen die controleren op niet-raadbare codes (starten van de configuratie, bevestigen van back-upcodes, voltooien). Apart gehouden zodat onjuiste codes een inschrijving niet kunnen blokkeren. Standaard: 20.',
-      '# TWO_FACTOR_SETUP_MAX=20',
-    ],
-    [
-      'TWO_FACTOR_SETUP_WINDOW',
-      'integer',
-      'Venster in minuten voor TWO_FACTOR_SETUP_MAX. Standaard ingesteld op TWO_FACTOR_TEMP_WINDOW.',
-      '# TWO_FACTOR_SETUP_WINDOW=5',
-    ],
+    ['ALLOW_UNVERIFIED_EMAIL_LOGIN', 'boolean', 'Let users sign in before verifying their email. When false, unverified users cannot sign in, and accounts that are never verified are deleted after one week.','ALLOW_UNVERIFIED_EMAIL_LOGIN=true'],
+    ['ALLOW_PASSWORD_RESET', 'boolean', 'Show the Forgot Password? link and allow password resets. Reset links are valid for 15 minutes, and a successful reset ends all of the account\'s sessions. Without an email service the link is shown directly on the page to anyone who enters the address, so only enable this together with email.','ALLOW_PASSWORD_RESET=false'],
   ]}
 />
 
-<Callout type="info" title="Alleen omgeving">
-`ENFORCE_TWO_FACTOR_AUTHENTICATION` en de `TWO_FACTOR_TEMP_*` en `TWO_FACTOR_SETUP_*` limieten zijn procesbrede `.env` instellingen. Ze zijn van toepassing voordat een verzoek of tenantconfiguratie beschikbaar is, dus ze kunnen niet worden ingesteld in `librechat.yaml` of per tenant. Stel dezelfde waarden in op elke replica. Het afzonderlijke budget voor het beheren van 2FA vanuit de instellingen is [`rateLimits.twoFactorManagement`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits).
-</Callout>
+## Two-factor authentication [#two-factor-authentication]
+
+Email and password users and LDAP users can always turn on 2FA themselves from **Settings > Account**. Accounts that sign in through OAuth, OpenID Connect, or SAML do not get the option, because their identity provider is responsible for MFA.
+
+### Required two-factor authentication [#required-two-factor-authentication]
+
+Set `ENFORCE_TWO_FACTOR_AUTHENTICATION=true` to make 2FA mandatory for local and LDAP accounts:
+
+- A user without 2FA who signs in (with a password, LDAP credentials, or a passkey) gets no session until setup is done. They land on the **Two-Factor Authentication Required** screen, scan a QR code, confirm a code, and save their backup codes. The setup session lasts 10 minutes; if it expires, they start again from the login page.
+- Users who are already signed in are sent into the same setup the next time their session is checked or refreshed, and access tokens issued before enrollment stop working.
+- After enrollment, the **Disable 2FA** control shows **Required by administrator** and the server refuses to turn 2FA off. Users can still regenerate backup codes.
+- A federated account that tries to sign in with a password while enforcement is on is told to use its identity provider.
+
+<OptionTable
+  options={[
+    ['ENFORCE_TWO_FACTOR_AUTHENTICATION', 'boolean', 'Vereis dat lokale en LDAP-accounts 2FA inschakelen voordat een volledige sessie wordt verleend. Standaard: false.','ENFORCE_TWO_FACTOR_AUTHENTICATION=false'],
+    ['TWO_FACTOR_BACKUP_CODE_FORMAT', 'string', 'Format of newly issued backup codes: strong (default) or legacy. See Backup-code compatibility below.','# TWO_FACTOR_BACKUP_CODE_FORMAT=strong'],
+  ]}
+/>
+
+`ENFORCE_TWO_FACTOR_AUTHENTICATION` and the 2FA attempt limits are process-wide environment settings. They apply before any request or tenant configuration is available, so they cannot be set in `librechat.yaml` or per tenant; set the same values on every replica. The code-attempt limits (`TWO_FACTOR_TEMP_*`, `TWO_FACTOR_SETUP_*`) are on the [Automated Moderation](/docs/configuration/mod_system#two-factor-and-passkey-rate-limiting) page. The separate budget for managing 2FA from Settings is [`rateLimits.twoFactorManagement`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) in `librechat.yaml`.
+
+## Passkeys [#passkeys]
+
+Passkeys (WebAuthn) let users sign in with a device screen lock or a security key. They are off by default; turn them on with `ALLOW_PASSKEY_LOGIN=true`. The relying party settings, per-user limit, and rate limits are on the [Passkeys](/docs/configuration/authentication/passkeys) page.
 
 ## Sessieverloop en Refresh Token [#session-expiry-and-refresh-token]
 
-- Standaardwaarden: sessieverloop: 15 minuten, verloop van refresh token: 7 dagen
-  - Voor meer informatie: **[GitHub PR #927 - Refresh Token](https://github.com/LibreChat-AI/LibreChat/pull/927)**
+`SESSION_EXPIRY` is how long an access token lasts (15 minutes by default); it is renewed automatically in the background. `REFRESH_TOKEN_EXPIRY` is how long a user stays signed in (7 days by default). Each renewal issues a new refresh token tied to the same session and its original expiry, so the window counts from login and activity does not extend it. If users are signed out sooner than you want, raise `REFRESH_TOKEN_EXPIRY`.
+
+With [`OPENID_REUSE_TOKENS=true`](/docs/configuration/authentication/OAuth2-OIDC/token-reuse), the session cookie holds the identity provider's refresh token instead, so the provider's lifetime, rotation, and revocation policy decide when the session ends; `REFRESH_TOKEN_EXPIRY` cannot extend an expired or revoked IdP token.
 
 <OptionTable
   options={[
     ['SESSION_EXPIRY', 'integer (milliseconds)', 'Sessie-verlooptijd.','SESSION_EXPIRY=1000 * 60 * 15'],
     ['REFRESH_TOKEN_EXPIRY', 'integer (milliseconds)', 'Verlooptijd van het refresh token.','REFRESH_TOKEN_EXPIRY=(1000 * 60 * 60 * 24) * 7'],
+    ['SESSION_COOKIE_SECURE', 'boolean', 'Force the Secure attribute on session and auth cookies on (true) or off (false). Leave unset to decide from NODE_ENV and DOMAIN_SERVER. Set false only for plain HTTP deployments where browsers drop Secure cookies.','# SESSION_COOKIE_SECURE=false'],
   ]}
 />
 
@@ -159,7 +117,8 @@ sequenceDiagram
 
 ## JWT Secret en Refresh Secret [#jwt-secret-and-refresh-secret]
 
-Gebruik unieke waarden van ten minste 32 bytes. Genereer permanente waarden met de [Credentials Generator](/toolkit/creds_generator), sla deze veilig op en verstrek dezelfde waarden aan elke LibreChat replica.
+- If these are left blank, LibreChat generates temporary secrets in `.env.temp`. Set your own persistent values before running a production instance. The examples given are 32-byte keys (64 characters in hex).
+  - Use this tool to generate some quickly: **[JWT Keys](/toolkit/creds_generator)**
 
 <OptionTable
   options={[
@@ -168,23 +127,19 @@ Gebruik unieke waarden van ten minste 32 bytes. Genereer permanente waarden met 
   ]}
 />
 
-Wanneer een van beide waarden leeg is, kan LibreChat een waarde genereren en hergebruiken vanuit het tijdelijke inloggegevensbestand. De standaard Docker Compose stacks behouden dat bestand, maar dit is alleen bedoeld als een bootstrap-gemak. Als het bestand verloren gaat of niet kan worden geschreven, kunnen sessies na een herstart ongeldig worden. Zie [Credentials Configuration](/docs/configuration/dotenv#credentials-configuration) voor prioriteit, persistentie en richtlijnen voor productie.
+Use unique values of at least 32 bytes, store them securely, and give every LibreChat replica the same values. When either value is blank, LibreChat can generate and reuse a value from its temporary credentials file. The default Docker Compose stacks persist that file, but this is intended only as a bootstrap convenience. If the file is lost or cannot be written, sessions can become invalid after restart. See [Credentials Configuration](/docs/configuration/dotenv#credentials-configuration) for precedence, persistence, and production guidance.
 
 ---
 
-## Geautomatiseerd moderatiesysteem (optioneel) [#automated-moderation-system-optional]
+## Automated Moderation [#automated-moderation]
 
-Het Automated Moderation System is standaard ingeschakeld. Het maakt gebruik van een scoresysteem om gebruikersovertredingen bij te houden. Wanneer gebruikers acties uitvoeren zoals overmatig inloggen, registreren of berichten sturen, verzamelen zij overtredingspunten. Bij het bereiken van een ingestelde drempelwaarde worden de gebruiker en hun IP-adres tijdelijk verbannen. Dit systeem waarborgt de platformbeveiliging door snelle of verdachte activiteiten te monitoren en te bestraffen.
-
-Om het mod-systeem in te stellen, bekijk [de installatiehandleiding](/docs/configuration/mod_system).
-
-> *Let op: Als je wilt dat dit werkt in de development-modus, moet je een bestand genaamd `.env.development` aanmaken in de hoofdmap en `DOMAIN_CLIENT` instellen op `http://localhost:3090` of de poort die door vite wordt verstrekt bij het uitvoeren van `npm run frontend-dev`*
+Login, registration, password reset, and 2FA attempts are rate limited, and repeated violations lead to temporary bans. See [Automated Moderation](/docs/configuration/mod_system).
 
 ## Gebruikersbeheerscripts [#user-management-scripts]
 
 ### Gebruikersscript aanmaken [#create-user-script]
 
-Het create-user script stelt je in staat om gebruikers direct aan de database toe te voegen, zelfs wanneer registratie is uitgeschakeld. Zo gebruik je het:
+Use the create-user script to add users directly to the database, even when registration is disabled:
 
 1. Voor de standaard `docker-compose.yml` (als je `docker compose up` gebruikt om de app te starten):
    ```bash
@@ -224,6 +179,6 @@ Om een gebruiker te verwijderen, kun je het delete-user script gebruiken:
 
 Vervang `email@domain.com` door het e-mailadres van de gebruiker die je wilt verwijderen.
 
-## Compatibiliteit van back-upcodes [#backup-code-compatibility]
+## Backup-code compatibility [#backup-code-compatibility]
 
 Nieuwe en opnieuw gegenereerde back-upcodes gebruiken standaard willekeurige waarden van 128 bit met individueel gesalte hashes. Bestaande verouderde codes blijven bruikbaar totdat ze opnieuw worden gegenereerd. `TWO_FACTOR_BACKUP_CODE_FORMAT=legacy` geeft tijdelijk het oudere, niet-gesalte formaat van 32 bit uit. Pas dit toe op elke replica zolang er incompatibele backends of clients zijn, en verwijder het daarna. Ga niet terug naar een incompatibele backend nadat sterke codes zijn uitgegeven zonder ze te vervangen. Zie [richtlijnen voor gefaseerde implementatie](/docs/configuration/upgrade#mixed-version-compatibility).

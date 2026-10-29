@@ -1,250 +1,78 @@
 ---
 title: 访问控制
 icon: ShieldCheck
-description: 'LibreChat 的细粒度授权系统:在用户、群组、角色和实例层面,控制谁可以使用、共享、编辑和管理智能体、提示词、MCP 服务器及其他资源。'
+description: >-
+  Who can use which features, who can see and edit a shared agent, prompt, or
+  MCP server, and how admin powers can be handed out.
 ---
 
-# 细粒度访问控制 [#granular-access-control]
+Access control decides three things: which features a user can use at all, who can see or change a specific agent, prompt, MCP server, or skill that someone shared, and who gets admin powers. A small team can leave the defaults alone and share freely; a larger deployment can lock features down per role, share with groups synced from Entra ID, and delegate parts of administration without handing out full admin accounts.
 
-LibreChat 在身份验证之上内置了完整的授权系统。访问权限并非“全有或全无”:应用中每个可共享的实体(智能体、提示词、MCP 服务器、远程智能体、技能、代码环境、共享链接)都拥有各自的访问控制列表(ACL),并且每项功能都可以针对**用户**、**群组**、**角色**或**公开**范围独立启用或限制。
+## Users, groups, roles, and everyone [#users-groups-roles-and-everyone]
 
-本页面介绍了各组件是如何协同工作的，以便您可以根据组织需求对权限进行建模，无论是适用于所有人自由共享的小型团队，还是包含同步 Entra ID 组、自定义角色和委派管理员的企业级部署。
+Permissions are granted to four kinds of principal:
 
-## 访问模型概览 [#the-access-model-at-a-glance]
+- A user, meaning one LibreChat account.
+- A group of users. Groups are created by admins, or synced from Entra ID when users sign in through Entra with OpenID token reuse enabled. Sharing with a group is one entry, and membership changes in Entra apply at each member's next login.
+- A role. Every user has exactly one role: `USER` by default, `ADMIN` for the first account on a single-tenant instance, or a custom role an admin created. Sharing with a role reaches everyone who currently holds it.
+- Everyone, meaning every signed-in user on the instance.
 
-LibreChat 的授权包含三个相互独立的层级，它们共同构成了完整的授权体系：
+## 功能权限 [#feature-permissions]
 
-| 层级 | 范围 | 控制内容 |
-| :--- | :--- | :--- |
-| **功能权限 (Feature Permissions)** | 按角色 (USER, ADMIN, 自定义) | 主体是否可以_使用_、_创建_、_共享_或_公开共享_某类功能（Agent、提示词、MCP 服务器、记忆、网页搜索等）。在 `librechat.yaml` 或管理面板中配置。 |
-| **资源访问控制列表 (Resource ACLs)** | 按单个资源 | 谁可以查看、编辑、删除或重新共享特定的 Agent、提示词、MCP 服务器等。由资源所有者通过应用内的共享对话框管理。 |
-| **系统授权 (System Grants)** | 全平台 | 管理员功能（例如 `manage:users`、`manage:roles`、`read:usage`）。由管理面板使用。 |
+Each role carries a set of on and off switches per feature: whether its users can use agents, create them, share them with specific people, or share them with everyone, and the same for prompts, MCP servers, skills, and shared links. Other switches cover scheduled chats, memories, bookmarks, temporary chat, multi-conversation, the code interpreter, web search, file search, citations, the Agent Marketplace, and the people picker.
 
-这三者均针对以下四种主要类型进行评估：
+When a switch is off, the matching part of the UI disappears for that role. A user without agent creation rights does not see the option to create an agent; a user without "share with everyone" rights does not get the **Share with everyone** toggle.
 
-- **User**: 一个独立的 LibreChat 账户
-- **Group**: 用户集合（本地用户或从 Entra ID 同步的用户）
-- **Role**: 一个命名的权限配置文件（例如 `USER`、`ADMIN` 或任何自定义角色）
-- **Public**: 实例上的每一位已认证用户
+By default, users can use and create agents, prompts, MCP servers, and skills, but cannot share them; sharing is something an admin opts into. The full list with defaults is on the [Access Control configuration](/docs/configuration/access_control#feature-permissions) page.
 
-## 层级 1：功能权限（基于角色） [#layer-1-feature-permissions-role-based]
+Admins change these switches without a restart. In LibreChat, the panels for agents, prompts, MCP servers, memories, and skills have an **Admin Settings** button that opens the switches for that feature, with a **Role** picker at the top. The [Admin Panel](/docs/features/admin_panel) edits the same switches for every role, including custom ones.
 
-功能级权限控制着应用程序中特定角色的全部功能。它们回答了诸如_“此角色的用户是否可以创建智能体？”_、_“他们是否被允许公开分享提示词？”_、_“他们是否可以调用代码解释器？”_之类的问题。
+<ThemeImage
+  light="/images/features/access_control/admin-settings-light.png"
+  dark="/images/features/access_control/admin-settings-dark.png"
+  alt="The Admin Settings - Agents dialog with the Role picker set to USER and permission toggles for using, creating, and sharing agents"
+/>
 
-### 内置系统角色 [#built-in-system-roles]
+## Sharing a resource [#sharing-a-resource]
 
-LibreChat 附带两个始终存在且无法删除的系统角色：
+Agents, prompts, MCP servers, skills, and shared links each keep their own list of who can access them. (Agents used through the [Agents API](/docs/features/agents_api) and deployment-owned code environments use the same lists, managed outside the share dialog.) The person who created one is its owner and decides who else gets in.
 
-- **`ADMIN`**：分配给在无范围单租户部署中注册的第一个账户。租户范围的部署必须通过受信任的管理流程来配置管理员。管理员可以查看所有资源、修改任何设置、访问管理面板并配置平台范围的行为。
-- **`USER`**: 分配给每个新账户的默认角色。
+<Steps>
+  <Step>Open the resource and click its **Share** button. You only see it if you own the resource (or hold the Owner role on it, or are an admin) and your role is allowed to share that kind of resource.</Step>
+  <Step>In the **Share** dialog, search for people or groups by name or email. Roles show up in the search too, unless the admin hid them.</Step>
+  <Step>Pick an access role for each person or group you add.</Step>
+  <Step>If your role allows it, turn on **Share with everyone** and choose **Everyone's permission level**.</Step>
+  <Step>Click **Save**.</Step>
+</Steps>
 
-管理员可以通过更新 MongoDB 中的用户文档手动提升权限,参见[提升其他管理员](/docs/configuration/access_control#promote-another-admin)。
+<ThemeImage
+  light="/images/features/access_control/share-dialog-light.png"
+  dark="/images/features/access_control/share-dialog-dark.png"
+  alt="Share dialog for an agent listing a user as Owner and a group as Viewer, with the Share with everyone toggle below"
+/>
 
-### 权限类型 [#permission-types]
+The access roles are the same for every resource type:
 
-每个角色都包含一个 **权限类型 × 操作** 的矩阵：
+| Access role | What they can do |
+| ----------- | ---------------- |
+| Viewer | Find and use the resource, for example pick the agent and chat with it. They cannot change it. |
+| Editor | Everything a Viewer can, plus change its settings, instructions, tools, and files. |
+| Owner | Everything an Editor can, plus delete it and change who it is shared with. |
 
-| 权限类型 | 可用操作 |
-| ---------------- | --------------------------------------------------------- |
-| `AGENTS`         | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`                  |
-| `PROMPTS`        | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`                  |
-| `MCP_SERVERS`    | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`, `CONFIGURE_OBO` |
-| `REMOTE_AGENTS`  | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`                  |
-| `SKILLS`         | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`                  |
-| `SHARED_LINKS`   | `CREATE`, `SHARE`, `SHARE_PUBLIC`                         |
-| `SCHEDULES`      | `USE`, `CREATE`                                            |
-| `MEMORIES`       | `USE`, `CREATE`, `UPDATE`, `READ`, `OPT_OUT`              |
-| `BOOKMARKS`      | `USE`                                                     |
-| `MULTI_CONVO`    | `USE`                                                     |
-| `TEMPORARY_CHAT` | `USE`                                                     |
-| `RUN_CODE`       | `USE`                                                     |
-| `WEB_SEARCH`     | `USE`                                                     |
-| `FILE_SEARCH`    | `USE`                                                     |
-| `FILE_CITATIONS` | `USE`                                                     |
-| `MARKETPLACE`    | `USE`                                                     |
-| `PEOPLE_PICKER`  | `VIEW_USERS`, `VIEW_GROUPS`, `VIEW_ROLES`                 |
+Shared links only have Viewer and Owner. A resource always needs at least one owner, so the dialog will not let you remove the last one.
 
-`SHARE` 和 `SHARE_PUBLIC` 之间的区别非常重要：你可以允许某个角色与_特定_用户或群组共享智能体（`SHARE`），而不必让他们将智能体对实例上的_所有人_可见（`SHARE_PUBLIC`）。
+Agents have one extra permission that is not part of any of these roles: **View insights**, which lets someone who can already see the agent open its [Insights](/docs/features/insights). Only admins see this toggle in the share dialog, and it cannot be given to everyone.
 
-### 配置功能权限 [#configuring-feature-permissions]
+Before giving someone Editor or Owner on an agent, remember that they see everything configured on it, including its instructions and attached files. Even Viewers can coax attached content out through the chat, so do not attach anything to a shared agent that its audience should not read.
 
-管理功能权限的推荐方式是使用 [**LibreChat Admin Panel**](/docs/features/admin_panel)，它直接编辑每个角色（包括您创建的任何自定义角色）的权限矩阵。更改无需重新部署 LibreChat 即可生效，并且作用于您想要修改的具体角色，而不是全局的 `USER` 默认设置。
+## Admins and delegated admin powers [#admins-and-delegated-admin-powers]
 
-<Callout type="warning" title="旧版：`librechat.yaml` 界面配置块">
-  `librechat.yaml` 中的 [`interface` 块](/docs/configuration/librechat_yaml/object_structure/interface) 仍然可以在启动时为默认的 `USER` 角色植入权限，对于引导全新实例或完全由文件驱动的部署仍然很有用。但是，它仅针对 `USER` 角色，无法表达自定义角色之间的差异。对于持续的权限管理，请优先使用管理面板。
-</Callout>
+Users with the `ADMIN` role can see and manage every resource on the instance and change any role's feature permissions. They also get an **Admin Panel** link under **Settings > General** when an admin panel URL is configured.
 
-### 自定义角色 [#custom-roles]
+When you want someone to handle part of the administration without making them a full admin, grant them a capability instead, such as managing users, managing groups, editing configuration (all of it, or a single section such as `interface`), viewing every agent's Insights, or moderating every agent, prompt, skill, or shared link. Delegated admins also need the `access:admin` capability to sign in to the Admin Panel. Capabilities can go to a user, a group, or a role, and they are granted from the Admin Panel's **Grants** page. Holding a "manage" capability implies the matching "read" one.
 
-除了 `USER` 和 `ADMIN` 之外，管理员还可以创建具有自定义功能权限矩阵的**自定义角色**（于 v0.8.5 版本引入；请参阅 [#12528](https://github.com/LibreChat-AI/LibreChat/pull/12528)）。用户可以拥有多个角色，其有效权限是所有持有角色的权限并集。自定义角色可在管理面板中进行管理。
+Admins can also give a role or group its own configuration, for example extra endpoints for a research group, layered on top of `librechat.yaml`. That is done from the Admin Panel as well.
 
-### 基于角色和群组的配置覆盖 [#role--and-group-scoped-configuration-overrides]
+## 设置 [#setup]
 
-除了功能标志外，v0.8.5 还引入了**基于数据库的配置覆盖**系统 ([#12354](https://github.com/LibreChat-AI/LibreChat/pull/12354))。这允许你为特定的组或角色分配_不同的 `librechat.yaml` 风格配置_。例如，“研究”组可能比默认配置拥有更多的 endpoint 访问权限、更高的递归限制以及不同的智能体功能。覆盖配置会在登录时进行解析，并叠加在基础配置之上。
-
-## Layer 2: Resource ACLs (Per-Entity Sharing) [#layer-2-resource-acls-per-entity-sharing]
-
-LibreChat 中的每个可共享资源都有其自己的访问控制列表，独立于基于角色的权限。这就是拥有 `SHARE` 权限的个人用户选择_谁_可以访问_他们_的 Agent、提示词或 MCP 服务器的方式。
-
-### 资源类型 [#resource-types]
-
-资源 ACL 目前适用于：
-
-- **智能体** (`agent`)
-- **提示词 / 提示词组** (`promptGroup`)
-- **MCP 服务器** (`mcpServer`)
-- **技能** (`skill`)，请参阅 [Skills](/docs/features/skills)
-- **远程代理** (`remoteAgent`)，适用于 [Agents API](/docs/features/agents_api)
-- **代码环境**(`codeEnvironment`),用于部署方自有的代码工作节点;参见 [Code Interpreter](/docs/features/code_interpreter)
-- **共享链接** (`sharedLink`),参见 [可共享链接](/docs/features/shareable_links)
-
-### 访问角色（权限预设） [#access-roles-permission-presets]
-
-与其向终端用户暴露原始的权限位,共享功能为每种资源类型提供三种命名角色(共享链接仅有查看者和所有者两种角色):
-
-| 角色 | 权限位 | 被授权者可以执行的操作 |
-| ---------- | ----------------------------------------------- | ------------------------------------------------------------------- |
-| **Viewer** | `VIEW` (`0b0001`) | 使用 / 与资源交互 |
-| **Editor** | `VIEW` + `EDIT` (`0b0011`) | 查看并修改资源的设置、指令、工具、文件 |
-| **Owner**  | `VIEW` + `EDIT` + `DELETE` + `SHARE` (`0b1111`) | 完全控制：编辑、删除以及重新分享给他人 |
-
-在底层实现中，权限作为位掩码（`permBits`）存储在每个（资源，主体）对中；超集会自动处理，因此授予 Editor 权限意味着同时也授予了 Viewer 权限。
-
-第五个位 `VIEW_INSIGHTS`(`0b10000`)仅适用于智能体。持有 `VIEW` 权限的主体若同时拥有该位,即可查看该智能体的[洞察](/docs/features/insights)。它不属于 Viewer、Editor 或 Owner 预设的组成部分:只有管理员可以授予该权限,方法是在智能体的共享对话框中打开 **View insights** 开关,且该权限不能授予公共主体。
-
-### 通过 UI 授予访问权限 [#granting-access-from-the-ui]
-
-1. 打开资源（Agent 构建器、提示词表单、MCP 服务器设置等）
-2. 点击 **Share** 按钮（当您是所有者、管理员或已被授予 `SHARE` 权限时可见）
-3. 在分享对话框中：
-   - 使用人员选择器搜索要添加的**用户**、**组**或**角色**
-   - 为每个主体选择一个访问角色（Viewer / Editor / Owner）
-   - 可以选择性地切换 **Public access**，使该资源对实例上的所有人可见（需要 `SHARE_PUBLIC` 功能权限）
-4. 保存。受赠者在下次刷新时即可看到该资源。
-
-<Callout type="warning" title="防范数据泄露">
-  Editor 和 Owner 被授权者可以查看资源上配置的所有内容，包括系统指令、附加文件和工具。任何 Agent 也可能通过对话输出泄露附加数据，因此在授予编辑权限或将 Agent 公开之前，请确保您的指令能够有效抵御提示词注入攻击。
-</Callout>
-
-### 授权用户所见 [#what-grantees-see]
-
-- **查看者**在相关选择器（例如 agent 下拉菜单）中将资源视为可直接使用的项目。他们无法打开构建器、查看原始指令或修改设置。
-- **Editors** 可以打开资源的配置并进行修改，但不能删除或重新共享它。
-- **Owners** 拥有与原始作者相同的 UI，并且可以自由删除和重新共享。
-- **原始作者**无论 ACL 状态如何，始终保留完全控制权，且管理员可以管理实例上的任何资源。
-
-## 层级 3：系统授权（管理员功能） [#layer-3-system-grants-admin-capabilities]
-
-系统授权（System grants）是一个独立的授权表，用于**管理员级别的功能**，用于回答诸如_“该用户能否访问管理面板？”_或_“该群组能否全局管理 MCP 服务器？”_之类的问题。它们始终限定于主体（用户、群组或角色）以及一个功能字符串。
-
-规范功能包括：
-
-| 能力 | 用途 |
-| ------------------------------------ | --------------------------------------------- |
-| `access:admin` | 访问管理面板 |
-| `read:users` / `manage:users` | 查看 / 修改用户账户 |
-| `read:groups` / `manage:groups` | 查看 / 修改组 |
-| `read:roles` / `manage:roles` | 查看 / 修改自定义角色 |
-| `read:configs` / `manage:configs` | 查看 / 修改所有系统配置 |
-| `read:configs:<section>` / `manage:configs:<section>` | 查看 / 修改单个顶级配置节 |
-| `assign:configs:{user\|group\|role}` | 为主体分配配置覆盖方案 |
-| `read:usage` | 查看平台使用情况和遥测数据 |
-| `read:agents` / `manage:agents` | 查看 / 审核实例上的所有智能体 |
-| `read:prompts` / `manage:prompts` | 查看 / 审核所有提示词 |
-| `read:skills` / `manage:skills` | 查看 / 审核所有技能 |
-| `read:sharedlinks` / `manage:sharedlinks` | 查看 / 审核所有共享链接 |
-| `manage:mcpservers` | 全局管理 MCP 服务器 |
-| `manage:code_environments` | 注册和撤销部署所有的代码工作节点 |
-| `read:insights` | 查看每个智能体的[洞察](/docs/features/insights) |
-| `read:audit_log` | 列出、查看和导出授权审计日志(只读;没有对应的 manage 权限) |
-
-管理权限隐含了其对应的读取权限（例如，拥有 `manage:users` 会自动授予 `read:users`）。这也适用于配置部分：`manage:configs:endpoints` 满足 `read:configs:endpoints`。仅拥有部分范围配置访问权限的用户，其收到的管理配置响应将过滤为他们有权读取的部分；没有配置读取权限的用户将收到 `403` 错误。
-
-`read:assistants` 和 `manage:assistants` 也已存在,但目前为保留项:尚无中间件对其进行强制执行。
-
-`SystemRoles.ADMIN` 用户隐式拥有所有权限；授权（grants）允许您将部分管理员权限**委派**给非管理员主体，而无需将其设为完全管理员。访问管理 UI 本身仍需要 `access:admin` 权限。
-
-系统授权通过[管理面板](/docs/features/admin_panel)进行发放和撤销。
-
-## Principals in Depth [#principals-in-depth]
-
-### 用户 [#users]
-
-标准的 LibreChat 账户。用户可以是**本地**账户（电子邮件/密码）或**联合**账户（OAuth2、OIDC、SAML、LDAP）。联合用户可以匹配到外部身份（`idOnTheSource`）；对于 Entra ID，这是 OID，它也是实现组同步的关键。
-
-### 组 [#groups]
-
-组是用户的命名集合。LibreChat 支持两个来源：
-
-- **本地组 (Local groups)**：在管理面板中创建和管理，或直接在数据库中进行管理。成员为 LibreChat 用户 ID。
-- **Entra ID (Azure AD) 组**：当用户通过启用了 [token reuse](/docs/configuration/authentication/OAuth2-OIDC/token-reuse) 的 Azure OIDC 登录时，这些组会从 Microsoft Graph 同步。每个同步的组都会将其 Entra 对象 ID 存储为 `idOnTheSource`，这使得 LibreChat 能够与租户成员资格保持同步。
-
-组可以出现在任何 ACL、`peoplePicker` 搜索中，并作为配置覆盖或系统授权的主要目标。与一个 500 人的组共享的单个资源仅占用一个 ACL 条目（而非 500 个），且 Entra 中的成员资格变更会在下次登录时自动同步。
-
-### ACL Principal 缓存调优 [#acl-principal-cache-tuning]
-
-LibreChat 默认将用于解析用户 ACL 主体的组 ID 缓存五分钟。该缓存的作用域由租户和成员身份限定，组成员资格的变更会使受影响的条目失效。它不会缓存用户的角色或 `idOnTheSource` 的查找结果，因此这些值将继续从当前请求用户或数据库中进行解析。
-
-```bash filename=".env"
-# Group-membership cache lifetime; 0 disables the cache
-USER_PRINCIPALS_CACHE_TTL_MS=300000
-
-# Redis-backed deployments only: deduplicate cold cache builds across replicas
-USER_PRINCIPALS_LOCK_TTL_MS=5000
-USER_PRINCIPALS_LOCK_WAIT_MS=5000
-```
-
-当主缓存由 Redis 支持时，锁定设置可防止多个副本同时重建同一个冷条目。设置 `USER_PRINCIPALS_LOCK_TTL_MS=0` 可仅禁用构建锁定；共享缓存存储和跨进程失效仍保持活动状态。缓存和锁定失败将回退到数据库，且不会阻塞权限检查。
-
-### 角色 [#roles]
-
-任何系统角色或自定义角色都可以用作主体。将 Agent 与角色（例如 `SupportEngineers`）共享，即可让当前拥有该角色的所有用户获得访问权限，而无需逐一列出个人。对于角色共享仅限管理员操作的环境，可以通过 [`interface.peoplePicker.roles`](/docs/configuration/librechat_yaml/object_structure/interface#peoplepicker) 在人员选择器中隐藏这些角色。
-
-### 公共 [#public]
-
-一个匹配所有已认证用户的特殊主体。仅当授予权限的用户针对该资源类型拥有 `SHARE_PUBLIC` 功能权限时，才允许授予公开权限。
-
-## 人员选择器可见性 [#people-picker-visibility]
-
-人员选择器（共享对话框中的搜索框）可以在实例级别进行限制，以隐藏与您的部署无关的主体类型：
-
-```yaml filename="librechat.yaml"
-interface:
-  peoplePicker:
-    users: true
-    groups: true
-    roles: false
-```
-
-这仅影响 _搜索 UI_；现有的针对隐藏主体类型的 ACL 条目将继续正常工作并被强制执行。
-
-## 从 ACL 之前的版本进行迁移 [#migrations-from-pre-acl-versions]
-
-v0.8.0-rc3 之前的版本使用了更简单的所有权模型。升级需要运行 ACL 迁移，以确保现有的 Agent 和提示词仍然可以访问：
-
-**预演（预览更改）：**
-
-```bash
-npm run migrate:agent-permissions:dry-run
-npm run migrate:prompt-permissions:dry-run
-```
-
-**执行：**
-
-```bash
-npm run migrate:agent-permissions
-npm run migrate:prompt-permissions
-```
-
-请参阅[迁移指南](/docs/configuration/access_control#migrating-from-pre-acl-versions),了解 Docker 变体和批量大小选项。
-
-## 相关文档 [#related-documentation]
-
-- [智能体：共享与权限](/docs/features/agents#sharing-and-permissions)
-- [界面配置（功能权限）](/docs/configuration/librechat_yaml/object_structure/interface)
-- [身份验证](/docs/features/authentication)
-- [OpenID Connect 令牌重用（Entra ID 组同步所必需）](/docs/configuration/authentication/OAuth2-OIDC/token-reuse)
-- [Azure / Entra ID OAuth2](/docs/configuration/authentication/OAuth2-OIDC/azure)
-- [SharePoint 集成](/docs/configuration/sharepoint)
-- [Agents API (Remote Agents)](/docs/features/agents_api)
-- [LibreChat 管理面板](/docs/features/admin_panel)
+The defaults work without any setup: the first account is the admin, and everyone else can use but not share. To change feature defaults from `librechat.yaml`, limit what the people picker shows, sync Entra ID groups, promote another admin, or migrate an instance upgraded from before v0.8.0-rc3, see [Access Control configuration](/docs/configuration/access_control). Custom roles, groups, grants, and per-group configuration need the [Admin Panel](/docs/features/admin_panel).

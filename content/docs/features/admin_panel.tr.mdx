@@ -2,283 +2,44 @@
 title: Yönetici Paneli
 icon: LayoutDashboard
 description: >-
-  LibreChat kullanıcılarını, gruplarını, rollerini, yapılandırma geçersiz
-  kılmalarını ve sistem yetkilerini, librechat.yaml dosyasını elle düzenlemeden
-  yönetmek için bağımsız bir web arayüzü.
+  A separate web app for managing LibreChat users, groups, roles, permissions,
+  and configuration from the browser instead of editing librechat.yaml.
 ---
 
-# LibreChat Yönetici Paneli [#librechat-admin-panel]
+The Admin Panel is a separate web app for running a LibreChat instance from the browser. You use it to manage users, groups, and roles, decide what each role is allowed to do, hand out admin powers, and change configuration (for everyone, or only for a specific role or group) without editing `librechat.yaml` and restarting.
 
-**LibreChat Yönetim Paneli**, LibreChat için tarayıcı tabanlı bağımsız bir yönetim arayüzüdür. LibreChat'in kendisiyle aynı veritabanına bağlanır ve [ayrıntılı erişim denetimini](/docs/features/access_control) destekleyen idari görevler için bir grafik kullanıcı arayüzü (GUI) sağlar: kullanıcı ve grup yönetimi, rol yönetimi, rol veya gruplara göre kapsamlandırılmış yapılandırma geçersiz kılmaları ve sistem düzeyinde yetki tanımlamaları.
+It is its own service with its own URL, developed at [LibreChat-AI/admin-panel](https://github.com/LibreChat-AI/admin-panel). It keeps no data of its own: every change goes through LibreChat's admin API and lands in LibreChat's database.
 
-<Callout type="info" title="Durum: Önizleme">
-  Yönetici paneli, `docker-compose.yml` ve `deploy-compose.yml` dosyalarında `admin-panel` servisi olarak gelir ve [LibreChat v0.8.5](/changelog/v0.8.5) ile tanıtılan yönetici API'leri üzerine inşa edilmiştir. Kaynak kodu, sorunlar ve sürümler [github.com/ClickHouse/librechat-admin-panel](https://github.com/ClickHouse/librechat-admin-panel) adresinde bulunmaktadır.
-</Callout>
+## Signing in [#signing-in]
 
-## Ne İşe Yarar [#what-it-does]
+You sign in with a LibreChat account, either with its email and password or through single sign-on configured on the instance, such as OpenID Connect or Google. The account needs the `ADMIN` role, or the `access:admin` capability granted to it (directly, or through one of its groups or its role). LibreChat checks this on every request, so the panel cannot give itself more access than the account has. Sessions end after 30 minutes of inactivity by default. With SSO, the panel refreshes your LibreChat session in the background, and each refresh checks again that the account is not banned and still has admin access; losing access ends the panel session.
 
-Yönetici paneli ince bir istemcidir: tüm veriler LibreChat veritabanında bulunur ve her işlem LibreChat API sunucusundaki sürümlü `/api/admin/*` endpoint'leri üzerinden gerçekleşir. Yöneticilere aşağıdakileri yapabilecekleri tek bir yer sağlar:
+Once an admin panel URL is configured, users with admin access also find an **Admin Panel** link in LibreChat under **Settings > General**. Other users do not see it.
 
-- **Yapılandırmayı yönetin**: Her bir LibreChat ayarını dinamik, şema tabanlı bir form aracılığıyla görüntüleyin ve düzenleyin. Yapılandırma şemasına eklenen yeni alanlar otomatik olarak görünür, yönetici paneli sürümü gerektirmez.
-- **Kişi bazlı geçersiz kılmaları uygula**: yapılandırma geçersiz kılmalarını belirli roller, gruplar veya kullanıcılara kapsamlandır ve giriş yapan her kullanıcının göreceği nihai çözümlenmiş değeri belirleyen öncelik tabanlı bir kademe (cascade) uygula.
-- **Kullanıcıları yönetin**: örnek üzerindeki her hesabı listeleyin, arayın ve görüntüleyin.
-- **Grupları yönetin**: grup oluşturun ve silin, üye ekleyin/çıkarın ve grupları ACL'lerde ve geçersiz kılmalarda (overrides) birinci sınıf özneler olarak kullanın.
-- **Rolleri yönetin**: yerleşik `USER` / `ADMIN` dışında özel roller oluşturun, bunların özellik-izin matrisini düzenleyin ve kullanıcılara roller atayın.
-- **Sorun sistemi yetkilendirmeleri**: Belirli kullanıcılara, gruplara veya rollere, onları tam yönetici yapmadan yönetici yetenekleri (örneğin `manage:users`, `read:usage`, `manage:mcpservers`) atayın.
-- **Kimlik Doğrulama**: Yerel bir LibreChat yönetici hesabı ile veya LibreChat örneğinde etkinleştirilmişse OpenID SSO / SAML / desteklenen OAuth sağlayıcıları aracılığıyla giriş yapın.
+## What you can do [#what-you-can-do]
 
-Temel izin modeli (sorumlular, kaynak ACL'leri, yetenekler ve katmanların nasıl oluşturulduğu) için [Access Control](/docs/features/access_control) sayfasına bakın.
+The sidebar sections map to the main jobs:
 
-## Mimari [#architecture]
+- **Users**: list and search every account on the instance, filter by role, and move people in and out of roles. (The panel has a delete action, but current LibreChat does not accept deletions through the admin API yet; use the delete-user script instead.)
+- **Access**: create custom roles beyond `USER` and `ADMIN` and edit the feature permissions of each role, and create groups and manage their members. Groups and roles created here can be picked in LibreChat's share dialogs.
+- **Configuration**: view and edit LibreChat's settings as forms. The forms are generated from LibreChat's own config schema, so new settings show up without updating the panel.
+- **Grants**: give individual admin capabilities, such as managing users or editing one section of the configuration, to a user, group, or role, without making them a full admin.
 
-```
-┌──────────────────┐         ┌──────────────────┐         ┌──────────────┐
-│  Admin Panel     │ ───────▶│  LibreChat API   │ ───────▶│   MongoDB    │
-│  (Bun + Vite)    │  HTTPS  │  /api/admin/*    │         │  (shared DB) │
-└──────────────────┘         └──────────────────┘         └──────────────┘
-       │                             │
-       │ OAuth/OIDC/SAML redirect    │ Verifies admin access
-       └─────────────────────────────┘
-```
+What each person sees in the panel depends on their capabilities. Someone allowed to manage only the `interface` section, for example, sees only that section. Someone who can only read roles sees the roles but cannot change them; someone without any of the access capabilities gets an access denied page for that section.
 
-Yönetici paneli ayrı bir servis olarak çalışır; LibreChat ile aynı süreci paylaşmaz. Yönetici yetenekleri, LibreChat tarafında `access:admin` sistem izni veya `SystemRoles.ADMIN` rolü aracılığıyla doğrulanır, bu nedenle panel kendisine sahip olmaması gereken ayrıcalıkları tanıyamaz.
+## Configuration for specific roles and groups [#configuration-for-specific-roles-and-groups]
 
-LibreChat tarafından sunulan yönetici API yüzeyi şöyledir:
+Beyond the Base profile, which applies to everyone, you can save a profile of overrides for a single role, group, or user. Only the settings you change are stored in it; everything else is inherited. Each profile has a priority (role profiles default to 10, group to 20, user to 100), and when LibreChat builds a user's configuration it starts from `librechat.yaml` and the Base profile, then applies the profiles that match that user from the lowest priority to the highest, so a user profile wins over a group or role profile by default. That is how a research group gets extra endpoints, or contractors get a stricter interface, without running a second instance.
 
-| Mount | Amaç |
-| ----------------------------------------- | ------------------------------------------------------------------------------- |
-| `POST /api/admin/login` &nbsp; `/oauth/*` | Yönetici'ye özgü kimlik doğrulama uç noktaları (yerel + SSO) |
-| `GET /api/admin/verify` | Yönetici oturumunu doğrular |
-| `/api/admin/users` | Kullanıcı listeleme ve arama |
-| `/api/admin/groups` | Grup CRUD + üye yönetimi |
-| `/api/admin/roles` | Özel rol CRUD + izin düzenleme + üye yönetimi |
-| `/api/admin/grants` | Sistem yetenek izinleri (atama/iptal/listeleme) |
-| `/api/admin/config` | Temel + kişi bazında yapılandırma geçersiz kılmaları |
-| `/api/admin/skills` | GitHub beceri senkronizasyonu: durum, çalıştırma ve senkronizasyon kimlik bilgileri |
-| `/api/admin/code-environments` | Kod ortamı çalışanlarını eşleştirme ve iptal etme (`manage:code_environments`) |
-| `/api/admin/langfuse` | Langfuse bağlantısını okuma, güncelleme ve test etme, ayrıca konuşma bazında oturum bağlantıları |
-| `/api/admin/audit-log` | İzin denetim günlüğü (`read:audit_log`) |
+A few things to know when editing configuration:
 
-Denetim günlüğü uç noktaları şunlardır: `GET /` (listeleme), `GET /export.csv` (CSV dışa aktarma), `GET /verify` (bütünlük denetimi) ve `GET /:id` (tek kayıt). Bu uç noktalar `access:admin` ve `read:audit_log` izinlerini gerektirir. Günlük yalnızca ekleme yoluyla yazıldığından, yönetme yetkisi ve yazma uç noktası bulunmaz.
+- Changes are checked against the same rules as `librechat.yaml`. An edit that would make the configuration invalid is refused and nothing is saved. If an upgrade makes an older saved value invalid, LibreChat ignores that field, falls back to the value underneath, and logs a warning, so check the logs after upgrading.
+- API keys and other secrets you enter (for example for web search, speech, OCR, Langfuse, or custom endpoints) are stored encrypted and only shown masked afterwards. If you change where a saved key is sent, such as a server or base URL, you have to enter the key again.
+- `${ENV_VAR}` references are only accepted for variables LibreChat already knows about or that the operator allowed.
+- Some settings stay in `librechat.yaml` only: MCP servers that run a local process (`type: stdio`, or `command`, `args`, `env`), and Langfuse gateway headers. The panel cannot add, change, or remove them. Remote MCP servers can be managed normally.
 
-## Başlarken [#getting-started]
+Feature permissions are not overrides: the switches that decide whether a role can use or share agents, prompts, and the rest are edited on the role itself under **Access**. See [Access Control](/docs/features/access_control) for how roles, groups, and capabilities fit together. Usage per agent is on the separate [Insights](/docs/features/insights) dashboard inside LibreChat.
 
-### Ön Koşullar [#prerequisites]
+## Kurulum [#setup]
 
-- **v0.8.5 veya üzeri** bir sürümde çalışan bir LibreChat örneği (yönetici API'leri önceki sürümlerde mevcut değildir)
-- admin-panel kapsayıcısından/ana bilgisayarından LibreChat API'sine ağ erişimi
-- LibreChat üzerinde bir yönetici hesabı: ya kapsam dışı tek kiracılı bir dağıtımda kayıtlı ilk kullanıcı (otomatik yönetici), ya Mongo'da `role: 'ADMIN'` olarak ayarlanmış bir kullanıcı ya da `access:admin` yetkisi verilmiş bir asıl kullanıcıdır. Kiracı kapsamlı dağıtımlar, yöneticilerini güvenilir bir idari akış aracılığıyla sağlamalıdır.
-
-### LibreChat ile birlikte gelir (önerilen) [#bundled-with-librechat-recommended]
-
-Eğer LibreChat'i resmi [`docker-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/docker-compose.yml) veya [`deploy-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/deploy-compose.yml) dosyalarıyla çalıştırıyorsanız, yönetim paneli bir hizmet olarak birlikte gelir ve LibreChat ile birlikte otomatik olarak başlar; ayrıca bir dağıtım yapılmasına gerek yoktur.
-
-| Compose dosyası | Yönetici paneli URL'si | Nasıl sunulur |
-| --- | --- | --- |
-| `docker-compose.yml` (varsayılan) | `http://localhost:3000` | Ana makinede bir bağlantı noktasında yayınlanır (`ADMIN_PANEL_PORT`, varsayılan `3000`) |
-| `deploy-compose.yml` | `http://admin.localhost` | Bir alt alan adında, birlikte gelen nginx ters vekil sunucusu üzerinden yönlendirilir |
-
-Yığını başlatmadan önce LibreChat'in `.env` dosyasında panelin oturum gizli anahtarını (session secret) ayarlayın; compose dosyaları bunu panelin `SESSION_SECRET` değeri olarak aktarır:
-
-```bash filename=".env"
-# Min 32 characters. Generate with: openssl rand -hex 32
-ADMIN_PANEL_SESSION_SECRET=replace-with-a-32-char-random-string
-
-# Optional: host port for the default docker-compose
-# ADMIN_PANEL_PORT=3000
-
-# Optional: set true when the panel is served over HTTPS
-# ADMIN_PANEL_SESSION_COOKIE_SECURE=false
-```
-
-Compose dosyaları geri kalanını otomatik olarak bağlar: `API_SERVER_URL`, `api` servisini işaret eder; `VITE_API_BASE_URL`, tarayıcı tabanlı OAuth yönlendirmeleri için `DOMAIN_CLIENT` değerini takip eder ve `ADMIN_PANEL_URL`, LibreChat'in SSO sonrası yöneticileri panele geri yönlendirmesi için ayarlanır. Bu özelliği devre dışı bırakmak için `admin-panel` servisini kaldırın veya bir Compose [`profiles`](https://docs.docker.com/compose/how-tos/profiles/) girdisi ile sınırlandırın.
-
-<Callout type="info" title="gerçek bir alan adında admin.localhost">
-  Modern tarayıcılar `*.localhost` adresini ( `admin.localhost` dahil) `127.0.0.1` olarak çözümler, bu nedenle deploy-compose URL'si hosts dosyası değişikliği gerektirmeden çalışır. Gerçek bir alan adı için, bir DNS kaydını ana bilgisayara yönlendirin, `client/nginx.conf` içindeki `admin.localhost` `server_name` değerini güncelleyin ve `ADMIN_PANEL_URL` değerini buna uyacak şekilde ayarlayın.
-</Callout>
-
-### Standalone (ayrı dağıtım) [#standalone-separate-deployment]
-
-Admin panelini kendi başına barındırmak ve farklı bir yerde çalışan bir LibreChat örneğine yönlendirmek için, LibreChat kayıt defterinden yayımlanan imajı kullanın (`registry.librechat.ai/librechat-ai/librechat-admin-panel:latest`, paketlenmiş compose dosyalarının kullandığı imaj):
-
-```bash
-# 1. Create an env file
-cp .env.example .env
-
-# 2. Edit .env and set at minimum:
-#    SESSION_SECRET=<random string, min 32 characters>
-#    VITE_API_BASE_URL=http://host.docker.internal:3080
-
-# 3. Start it
-docker compose up -d   # http://localhost:3000
-docker compose down    # stop
-```
-
-Bağımsız `docker run`:
-
-```bash
-docker run -p 3000:3000 \
-  --add-host=host.docker.internal:host-gateway \
-  -e SESSION_SECRET=replace-with-32-char-random-string \
-  -e VITE_API_BASE_URL=http://host.docker.internal:3080 \
-  registry.librechat.ai/librechat-ai/librechat-admin-panel:latest
-```
-
-<Callout type="warning" title="Docker Ağ Yapılandırması">
-  Bir konteyner içinde `localhost`, ana makinenizi değil, konteynerin kendisini ifade eder. LibreChat aynı ana makinede çalıştığında, `VITE_API_BASE_URL` değerini `http://host.docker.internal:3080` adresine yönlendirin (Linux için: `--add-host=host.docker.internal:host-gateway` ekleyin). Üretim ortamında, LibreChat API'nizin genel/dahili DNS adını kullanın.
-</Callout>
-
-### Geliştirme için Yerel Olarak Çalıştırma [#run-locally-for-development]
-
-```bash
-git clone https://github.com/ClickHouse/librechat-admin-panel.git
-cd librechat-admin-panel
-cp .env.example .env    # then edit
-bun install
-bun dev                 # http://localhost:3000
-```
-
-## Ortam Değişkenleri [#environment-variables]
-
-| Değişken | Gerekli | Varsayılan | Açıklama |
-| -------- | ------- | ---------- | -------- |
-| `SESSION_SECRET` | **Evet** (üretimde) | `bun dev` çalıştırıldığında sabit kodlanmış geliştirme yedeği; Docker imajında **varsayılan yok** | Oturum şifreleme anahtarı. En az 32 karakter olmalıdır. |
-| `VITE_API_BASE_URL` | **Evet** (Docker'da) | `http://localhost:3080` (yalnızca yerel geliştirme) | OAuth yönlendirmeleri için kullanılan, tarayıcıya yönelik LibreChat API sunucusu URL'si. |
-| `API_SERVER_URL` | Hayır | `VITE_API_BASE_URL` değerine geri döner | LibreChat API çağrıları için sunucu tarafı URL'si. Yönetim paneli sunucusu LibreChat'e tarayıcıdan farklı bir URL üzerinden ulaştığında kullanışlıdır (ör. dahili Kubernetes servisi ile genel ana bilgisayar adı). |
-| `PORT` | Hayır | `3000` | Yönetim panelinin dinlediği port. |
-| `ADMIN_PANEL_SESSION_SECRET` | **Evet** | _ayarlanmamış_ | Paketlenmiş yönetim paneli servisi için, yönetim panelinin `SESSION_SECRET` değerine eşlenen LibreChat tarafı değişken. Paneli başlatmadan önce en az 32 karakterlik benzersiz bir değer oluşturun. |
-| `ADMIN_PANEL_PORT` | Hayır | `3000` | Varsayılan `docker-compose.yml` dosyasında, paketlenmiş yönetim paneli servisinin açtığı ana bilgisayar portu. |
-| `ADMIN_SSO_ONLY` | Hayır | `false` | E-posta/parola formunu gizleyerek yalnızca SSO ile giriş yapılmasını zorunlu kılar. |
-| `ADMIN_SESSION_IDLE_TIMEOUT_MS` | Hayır | `1800000` (30 dakika) | Milisaniye cinsinden oturum boşta kalma zaman aşımı. |
-| `SESSION_COOKIE_SECURE` | Hayır | Üretimde `true` | Oturum çerezinin HTTPS gerektirip gerektirmediği. |
-| `ADMIN_PANEL_METRICS_SECRET` | Hayır | _ayarlanmamış_ | `/metrics` Prometheus uç noktasını taramak için gereken Bearer belirteci. Ayarlanmamış veya eşleşmeyen durumlarda uç nokta `401` döndürür. |
-
-LibreChat'in paketlenmiş Docker yığınlarında, admin paneli bir `admin-panel` servisi olarak çalışır. Varsayılan `docker-compose.yml` dosyası bunu `ADMIN_PANEL_PORT` üzerinde dışa aktarır; `deploy-compose.yml` ise bunu nginx üzerinden `http://admin.localhost` adresine yönlendirir ve API servisi için `ADMIN_PANEL_URL` değerini ayarlar. Panel, `ADMIN_PANEL_SESSION_SECRET` yapılandırılana kadar başlamayı reddeder.
-
-### LibreChat Yönlendirme URL'si [#librechat-redirect-url]
-
-Yönetici paneli LibreChat'ten ayrı bir URL'de barındırıldığında, LibreChat API ortamında `ADMIN_PANEL_URL` ayarını yapın. Herhangi bir yol öneki dahil olmak üzere harici yönetici paneli temel URL'sini kullanın ve sondaki eğik çizgiyi (slash) kaldırın:
-
-```bash filename=".env"
-ADMIN_PANEL_URL=https://admin.example.com/admin
-```
-
-Ayarlandığında, LibreChat ayrıca yöneticilere **Ayarlar > Genel** altında bir **Yönetici Paneli** bağlantısı gösterir. Yönetici olmayan kullanıcılar bu bağlantıyı görmez.
-
-Helm dağıtımları için, values dosyanızda `librechat.adminPanelUrl` değerini ayarlayın. Chart, bunu LibreChat'in yönetici OAuth akışı için `ADMIN_PANEL_URL` olarak işler:
-
-```yaml filename="values.yaml"
-librechat:
-  adminPanelUrl: https://admin.example.com/admin
-```
-
-OpenID SSO için, `${DOMAIN_SERVER}/api/admin/oauth/openid/callback` adresini kimlik sağlayıcınızla kaydedin.
-
-### Önbellek Kontrolleri [#cache-controls]
-
-Bunlar LibreChat'in önbellek env var'larını yansıtır. `ADMIN_PANEL_*` varyantları önceliklidir; ayarlanmadıklarında paylaşılan LibreChat karşılıklarına geri dönülür.
-
-| Değişken | Amaç |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `STATIC_CACHE_MAX_AGE` / `ADMIN_PANEL_STATIC_CACHE_MAX_AGE`     | `/assets/` içindeki hash'lenmiş varlıklar için saniye cinsinden tarayıcı `max-age` değeri (varsayılan 172800 = 2 gün). |
-| `STATIC_CACHE_S_MAX_AGE` / `ADMIN_PANEL_STATIC_CACHE_S_MAX_AGE` | Saniye cinsinden CDN `s-maxage` değeri (varsayılan 86400 = 1 gün). |
-| `INDEX_CACHE_CONTROL` / `ADMIN_PANEL_INDEX_CACHE_CONTROL`       | HTML index yanıtı için `Cache-Control` başlığı. |
-| `INDEX_PRAGMA` / `ADMIN_PANEL_INDEX_PRAGMA`                     | HTML index yanıtı için `Pragma` başlığı. |
-| `INDEX_EXPIRES` / `ADMIN_PANEL_INDEX_EXPIRES`                   | HTML index yanıtı için `Expires` başlığı. |
-
-## Kimlik Doğrulama [#authentication]
-
-Yönetici paneli, LibreChat'in kimlik doğrulama yığınını yeniden kullanır ve kendine ait bir kullanıcı veritabanına sahip değildir. İki giriş yolu desteklenmektedir:
-
-- **Yerel hesaplar**: hesapları yönetici erişimi denetiminden geçen herhangi bir LibreChat kullanıcısına karşı kullanıcı adı/parola.
-- **Tek oturum açma (SSO)**: OpenID Connect, SAML ve LibreChat örneğinizde halihazırda yapılandırılmış olan sosyal OAuth sağlayıcıları. Parola formunu tamamen gizlemek için `ADMIN_SSO_ONLY=true` olarak ayarlayın.
-
-LibreChat tarafından her istek için yönetici erişimi sunucu tarafında doğrulanır. Hesabın şunlardan birine sahip olması gerekir:
-
-1. MongoDB'de `role: 'ADMIN'` değerine sahip olun **veya**
-2. `access:admin` sistem yetkisine sahip olun (yönetim paneli aracılığıyla başka bir kullanıcıya atanır; bkz. [System Grants](/docs/features/access_control#layer-3-system-grants-admin-capabilities)).
-
-Oturumlar çerez tabanlıdır, `SESSION_SECRET` ile şifrelenir ve `ADMIN_SESSION_IDLE_TIMEOUT_MS` değerine göre boşta kalma süresi sonunda sona erer.
-
-Google yönetici SSO'su, panelin süresi dolmuş bir LibreChat yönetici belirtecini (token) hemen yeni bir giriş yapmaya zorlamadan yenileyebilmesi için çevrimdışı erişim ve onay ister. Hem `GOOGLE_CLIENT_ID` hem de `GOOGLE_CLIENT_SECRET` değerlerini yapılandırın ve `${DOMAIN_SERVER}/api/admin/oauth/google/callback` adresini Google'a kaydedin. Her yenileme işlemi; hesabın sağlayıcı kimliğini, yasaklanma durumunu, izin verilen e-posta alan adını, kiracısını ve mevcut yönetici erişimini yeniden kontrol eder; erişimin kaybedilmesi yönetici oturumunu sonlandırır.
-
-## Yapılandırma Yönetimi [#configuration-management]
-
-Panel, LibreChat yapılandırmasını yapılandırma şeması tarafından yönlendirilen dinamik bir form olarak oluşturur. Bunun iki yararlı özelliği vardır:
-
-- **Geriye dönük uyumlu**: LibreChat yeni bir yapılandırma alanı sunduğunda, panel bunu şemadan otomatik olarak alır. Yönetici paneli yükseltmesi veya yeniden dağıtım gerekmez.
-- **Katmanlı geçersiz kılmalar**: temel yapılandırma (`librechat.yaml` dosyasından), bir rol, grup veya kullanıcıya özgü kişi bazlı geçersiz kılmalarla gölgelenebilir. Bir kullanıcı oturum açtığında, geçerli belgeler sabit bir sırayla birleştirilir: önce öncelik değerinden bağımsız olarak Base profili, ardından artan öncelik sırası, sonra rol, grup ve kullanıcı sırası ve son olarak oluşturulma sırası. Önceliği belirtilmeden yazılan yeni bir profile, ilgili kişi türünün varsayılan önceliği atanır (rol 10, grup 20, kullanıcı 100, Base 0). Önceliğin belirtilmediği bir yazma işleminde ise depolanmış öncelik korunur.
-- **Şifrelenmiş kimlik bilgileri**: Yönetici API'si aracılığıyla saklanan MCP sunucu kimlik bilgileri, Azure grup anahtarları ve web arama anahtarları, depolama sırasında şifrelenir ve yalnızca maskelenmiş önizlemeler olarak döndürülür. Saklanan bir anahtarı koruyup gönderildiği yeri (örneğin bir sunucu URL'si veya temel URL) değiştiren bir yazma işlemi, anahtarı yeniden girmelidir.
-- **Ortam referansları**: Geçersiz kılmalardaki `${ENV_VAR}` referansları yalnızca `librechat.yaml` dosyasının zaten başvurduğu adlar, yerleşik endpoint kimlik bilgileri ve `CONFIG_OVERRIDE_ENV_ALLOWLIST` içinde listelenen adlarla sınırlıdır. Bunların dışındaki her referans yazma sırasında reddedilir.
-
-<Callout type="warning" title="İşlem destekli MCP sunucuları YAML içinde kalır">
-  `type: stdio` veya `command`, `args`, `env`, `cwd` ya da `stderr` gibi süreç alanlarını kullanan MCP sunucuları operatör tarafından yönetilir. Bunları yalnızca `librechat.yaml` dosyasında yapılandırın; yönetici API'si bunları oluşturma veya değiştirme girişimlerini reddeder ve geçersiz kılmalar bunları değiştiremez veya kaldıramaz. Uzak MCP sunucusu yapılandırması ise normal geçersiz kılma sistemi üzerinden kullanılabilir olmaya devam eder.
-</Callout>
-
-<Callout type="warning" title="Langfuse gateway başlıkları YAML içinde kalır">
-  Dağıtım düzeyindeki `langfuse.headers` proxy kimlik bilgileri içerebilir ve Mongo destekli bir yapılandırma yüzeyi değildir. Bunları `librechat.yaml` dosyasında yapılandırın; yönetici API'si tüm haritayı ve tek tek header yollarını reddeder. Bkz. [Kimlik Doğrulamalı Proxy'ler ve Ağ Geçitleri](/docs/configuration/langfuse#authenticated-proxies-and-gateways).
-</Callout>
-
-Bu, LibreChat'in [DB destekli temel bazlı yapılandırma geçersiz kılma sisteminin](https://github.com/LibreChat-AI/LibreChat/pull/12354) arkasındaki arayüzdür. Tipik kullanım durumları:
-
-- Bir "Research" grubuna daha yüksek bir `recursionLimit` ve ek endpoint'ler verin
-- "FinanceAdmins" rolünün uzak MCP sunucularını yönetmesine izin verin, normal kullanıcılar ise bunları yalnızca kullanabilsin
-- `interface` izinlerini harici yüklenici grupları için daha katı olacak şekilde sınırlandırın
-
-Yöneticiler ayrıca, kiracıya özgü MongoDB etkinliklerini incelemek için isteğe bağlı olarak etkinleştirilebilen [Admin Insights](/docs/features/insights) panosunu da kullanabilir. `ENABLE_INSIGHTS=true` değerini ayarlayın; hangi Agent'ları kimin inceleyebileceği [Admin Insights](/docs/features/insights#access-requirements) bölümünde açıklanmıştır.
-
-### Geçersiz Kılma Doğrulaması (Override Validation) [#override-validation]
-
-Geçersiz kılma yazma işlemleri (`PUT /api/admin/config/:principalType/:principalId` ve `PATCH .../fields`), dağıtımın temel yapılandırması üzerine uygulanan `librechat.yaml` ile aynı şemaya göre doğrulanır. Geçersiz bir yapılandırma oluşturacak bir yazma işlemi HTTP 400 hatasıyla reddedilir ve hiçbir şey kaydedilmez:
-
-```json
-{
-  "error": "Invalid config override",
-  "code": "CONFIG_OVERRIDE_INVALID",
-  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
-}
-```
-
-Her sorun yalnızca nokta yolunu ve sabit bir kod taşır (örneğin `invalid_type`, `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key` veya `invalid_document` gibi bir şema sorun kodu), gönderilen değeri asla taşımaz. Bir alan yaması yalnızca etkilediği veya ortaya çıkardığı sorunlar nedeniyle reddedilir, bu nedenle aynı geçersiz kılma içindeki başka bir yerdeki eski geçersiz bir değer onu engellemez.
-
-Örneğin bir yükseltme şemayı sıkılaştırdıktan sonra geçersiz hale gelen kayıtlı geçersiz kılmalar (overrides) ölümcül değildir. Yapılandırma çözümlendiğinde, geçersiz alanlar atılır, altlarındaki değer (genellikle temel `librechat.yaml` değeri) uygulanır ve sunucu her alan için bir uyarı günlüğe kaydeder:
-
-```text
-[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
-```
-
-Yükseltme işleminden sonra bu satırlar için günlükleri kontrol edin, ardından panelde listelenen alanları düzeltin veya kaldırın. [Tema kurallarına](/docs/configuration/librechat_yaml/object_structure/theme#validation) uymayan bir geçersiz kılma teması, aynı şekilde temel temaya geri döner.
-
-### Bölüm Kapsamlı Yetkilendirme [#section-scoped-delegation]
-
-Yapılandırma izinleri geniş (`read:configs`, `manage:configs`) veya tek bir üst düzey bölümle sınırlı (`read:configs:<section>`, `manage:configs:<section>`) olabilir. Bölüm kapsamlı bir okuyucu, tüm isteğin reddedilmesi yerine yalnızca yetkili bölümleri içeren filtrelenmiş bir yapılandırma yanıtı alır. Bölüm düzeyindeki yönetme izinleri, aynı bölüm için okuma erişimini de kapsar; geniş kapsamlı yönetme erişimi ise geniş kapsamlı okuma erişimini kapsar.
-
-Örnekler arasında `read:configs:interface`, `manage:configs:endpoints` ve `manage:configs:langfuse` yer alır. Yetkilendirilmiş kullanıcıların yönetici arayüzüne girmek için yine de `access:admin` yetkisine sahip olmaları gerekir. Temel `__base__` profilinin her oluşturma, yama (patch), silme (tombstone) veya kaldırma mutasyonu geniş kapsamlı `manage:configs` yetkisi gerektirir; bölüm kapsamlı yönetim, rol, grup ve kullanıcı geçersiz kılmaları (overrides) için geçerlidir.
-
-### Saklanan Sırlar [#stored-secrets]
-
-Kayıtlı gizli alanlar yönetici yapılandırma API'si aracılığıyla yazıldığında, LibreChat değişmez değerleri bekleme durumunda şifreler ve yalnızca sunucu tarafından oluşturulan maskelenmiş önizlemeleri döndürür. Bu durum şu anda Langfuse, OCR, konuşma, web araması, Assistants, Azure Assistants ve her bir `endpoints.custom[].apiKey` için geçerlidir. Daha sonraki bir düzenleme sırasında bir gizli değerin atlanması, depolanan değerin korunmasını sağlar.
-
-Desteklenen ortam referansları, bunlara izin veren alanlar için okunabilir referanslar olarak kalmaya devam eder. Özel endpoint API anahtarları da şifrelenmek yerine `${ENV_VAR}` ve `user_provided` değerlerini korur. Gizli veri yönetimi kayıt defteri tabanlıdır: özel başlıklar veya MCP yapılandırması gibi genel haritalardaki rastgele değerler otomatik olarak şifrelenmez, bu nedenle buralarda ortam referanslarını veya özelliğin kendi özel kimlik bilgisi mekanizmasını kullanmaya devam edin.
-
-## İlgili [#related]
-
-- [Access Control](/docs/features/access_control): yönetici panelinin üzerine inşa edildiği izin modeli
-- [Arayüz Yapılandırması](/docs/configuration/librechat_yaml/object_structure/interface): panelin düzenlediği özellik bayrakları
-- [Authentication](/docs/features/authentication): LibreChat üzerinde kullanıcı kimlik doğrulaması
-- [v0.8.5 sürüm notları](/changelog/v0.8.5): admin API temelleri
-- [GitHub: ClickHouse/librechat-admin-panel](https://github.com/ClickHouse/librechat-admin-panel): kaynak, sorunlar, sürümler
-
-## Yapılandırma Okuma API'leri ve Yazma Raporları [#configuration-read-apis-and-write-reports]
-
-Yetkili çağıranlar, `GET /api/admin/config/meta` ile dağıtım yeteneklerini, `/catalog` ile kapsam ve model seçeneklerini, `/env-status` ile ortam değişkeni referansı durumunu, `/effective` ile etkin istek yapılandırmasını ve `/resolved/:principalType/:principalId` ile bir principal'ın çözümlenmiş yapılandırmasını inceleyebilir. Okuma işlemleri, yetkilendirme ve gizli bilgi maskeleme sınırlarını korumaya devam eder.
-
-`POST /api/admin/config/:principalType/:principalId/changes` uç noktası profil bazında atomik değişiklikleri destekler. Yazma raporunu inceleyin: uygulanan ve atlanan konumlar birbirinden farklıdır ve yalnızca dağıtıma özgü yollar, tüm toplu işlemi reddetmeden atlanabilir. Saklanan belge okumaları da yok sayılan alanları bildirebilir; rapor bulunmaması, hiçbir alanın yok sayılmadığını kanıtlamaz.
-
-Desteklenen anahtarlı koleksiyon işlemleri, özel bir endpoint'i adıyla, model spec'leriyle birlikte gizleyebilir veya onu devralma durumuna sıfırlayabilir. Desteklenen yeniden adlandırma işlemleri ve yeniden adlandırma ipuçları kayıtlı gizli anahtarları ve anahtarlı tombstone kayıtlarını taşır; ham bir anahtarı yeniden adlandırmak bu işlemin yerini tutmaz.
-
-`POST /api/admin/config/reload` yerel yapılandırmayı yeniden yükler ve geçersiz kılma bilgisini yayınlar. Yerel yeniden yükleme başarılı olduktan sonra, örnekler arası yayın başarısız olursa `503` döndürebilir. Bu sonuç bir geri alma (rollback) değildir ve her replikanın yeniden yüklendiğini kanıtlamaz. Açt-in uç nokta yeniden türetme sınırı için [yükseltme kılavuzuna](/docs/configuration/upgrade#admin-configuration-and-secrets) bakın.
-
-### Yapılandırma Okumalarında Kiracı Bölümleri [#tenant-partitions-in-configuration-reads]
-
-Grup/kullanıcı profili önizlemeleri ve etkin kullanıcı yapılandırması, hedefin kiracısında çözümlenir; bu kiracının Temel profili ve geçerli rol/grup profilleri de buna dahildir. Kiracı kapsamlı bir çağıran, başka bir kiracıya geçemez. Rol adları çağıranın bölümünü ifade eder: kapsamsız bir yönetici, platform rollerini ve bunların üyelerini, profillerini, yetkilerini ve ACL girişlerini değiştirir; ancak tüm kiracılardaki aynı adlı rolleri değiştirmez.
+The panel ships as the `admin-panel` service in LibreChat's `docker-compose.yml` and `deploy-compose.yml`, and it will not start until you set `ADMIN_PANEL_SESSION_SECRET` in `.env`. It needs LibreChat v0.8.5 or later. Ports, hosting it on its own domain, SSO redirects, every environment variable, and the admin API used by the panel are covered in [Admin Panel configuration](/docs/configuration/admin_panel).

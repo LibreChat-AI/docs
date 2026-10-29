@@ -2,282 +2,44 @@
 title: 管理パネル
 icon: LayoutDashboard
 description: >-
-  LibreChat のユーザー、グループ、ロール、設定オーバーライド、システム権限を管理するためのスタンドアロン Web UI。librechat.yaml
-  を手動で編集する必要はありません。
+  A separate web app for managing LibreChat users, groups, roles, permissions,
+  and configuration from the browser instead of editing librechat.yaml.
 ---
 
-# LibreChat 管理パネル [#librechat-admin-panel]
+The Admin Panel is a separate web app for running a LibreChat instance from the browser. You use it to manage users, groups, and roles, decide what each role is allowed to do, hand out admin powers, and change configuration (for everyone, or only for a specific role or group) without editing `librechat.yaml` and restarting.
 
-**LibreChat Admin Panel**は、LibreChatのためのスタンドアロンなブラウザベースの管理インターフェースです。LibreChat本体と同じデータベースに接続し、[granular access control](/docs/features/access_control)を支える管理タスクのためのGUIを提供します。これには、ユーザーおよびグループの管理、ロール管理、ロールやグループにスコープされた設定のオーバーライド、システムレベルの権限付与などが含まれます。
+It is its own service with its own URL, developed at [LibreChat-AI/admin-panel](https://github.com/LibreChat-AI/admin-panel). It keeps no data of its own: every change goes through LibreChat's admin API and lands in LibreChat's database.
 
-<Callout type="info" title="ステータス: プレビュー">
-  管理パネルは`docker-compose.yml`および`deploy-compose.yml`内の`admin-panel`サービスとして提供されており、[LibreChat v0.8.5](/changelog/v0.8.5)で導入された管理APIを基盤としています。ソース、イシュー、リリースは[github.com/ClickHouse/librechat-admin-panel](https://github.com/ClickHouse/librechat-admin-panel)にあります。
-</Callout>
+## Signing in [#signing-in]
 
-## What It Does [#what-it-does]
+You sign in with a LibreChat account, either with its email and password or through single sign-on configured on the instance, such as OpenID Connect or Google. The account needs the `ADMIN` role, or the `access:admin` capability granted to it (directly, or through one of its groups or its role). LibreChat checks this on every request, so the panel cannot give itself more access than the account has. Sessions end after 30 minutes of inactivity by default. With SSO, the panel refreshes your LibreChat session in the background, and each refresh checks again that the account is not banned and still has admin access; losing access ends the panel session.
 
-管理パネルはシンクライアントです。すべてのデータはLibreChatのデータベースに存在し、すべてのアクションはLibreChat APIサーバー上のバージョン管理された `/api/admin/*` endpoint を経由します。これにより、管理者は以下の操作を一元的に行えるようになります。
+Once an admin panel URL is configured, users with admin access also find an **Admin Panel** link in LibreChat under **Settings > General**. Other users do not see it.
 
-- **設定の管理**: 動的でスキーマ駆動型のフォームを通じて、すべての LibreChat 設定を表示および編集できます。設定スキーマに新しいフィールドが追加されると自動的に反映されるため、管理パネルのリリースは不要です。
-- **プリンシパル単位のオーバーライドを適用**: 設定の上書きを特定のロール、グループ、またはユーザーに限定して適用し、優先度に基づくカスケードによって、ログイン時に各ユーザーが参照する最終的な解決済みの値を決定します。
-- **ユーザーの管理**: インスタンス上のすべてのアカウントのリスト表示、検索、および閲覧を行います。
-- **グループの管理**: グループの作成と削除、メンバーの追加と削除を行い、ACLやオーバーライドにおいてグループを第一級のプリンシパルとして使用します。
-- **ロールの管理**: 組み込みの `USER` / `ADMIN` 以外のカスタムロールを作成し、機能権限マトリックスを編集し、ユーザーにロールを割り当てます。
-- **Issue system grants**: 特定のユーザー、グループ、またはロールに対して、完全な管理者権限を付与することなく、管理機能（例: `manage:users`、`read:usage`、`manage:mcpservers`）を委任します。
-- **Authenticate**: LibreChatのローカル管理者アカウントでログインするか、LibreChatインスタンスで有効になっている場合はOpenID SSO / SAML / サポートされているOAuthプロバイダー経由でログインします。
+## What you can do [#what-you-can-do]
 
-基盤となる権限モデル（プリンシパル、リソースACL、機能、およびレイヤーの構成方法）については、[Access Control](/docs/features/access_control) ページを参照してください。
+The sidebar sections map to the main jobs:
 
-## アーキテクチャ [#architecture]
+- **Users**: list and search every account on the instance, filter by role, and move people in and out of roles. (The panel has a delete action, but current LibreChat does not accept deletions through the admin API yet; use the delete-user script instead.)
+- **Access**: create custom roles beyond `USER` and `ADMIN` and edit the feature permissions of each role, and create groups and manage their members. Groups and roles created here can be picked in LibreChat's share dialogs.
+- **Configuration**: view and edit LibreChat's settings as forms. The forms are generated from LibreChat's own config schema, so new settings show up without updating the panel.
+- **Grants**: give individual admin capabilities, such as managing users or editing one section of the configuration, to a user, group, or role, without making them a full admin.
 
-```
-┌──────────────────┐         ┌──────────────────┐         ┌──────────────┐
-│  Admin Panel     │ ───────▶│  LibreChat API   │ ───────▶│   MongoDB    │
-│  (Bun + Vite)    │  HTTPS  │  /api/admin/*    │         │  (shared DB) │
-└──────────────────┘         └──────────────────┘         └──────────────┘
-       │                             │
-       │ OAuth/OIDC/SAML redirect    │ Verifies admin access
-       └─────────────────────────────┘
-```
+What each person sees in the panel depends on their capabilities. Someone allowed to manage only the `interface` section, for example, sees only that section. Someone who can only read roles sees the roles but cannot change them; someone without any of the access capabilities gets an access denied page for that section.
 
-管理パネルは独立したサービスとして実行され、LibreChatとプロセスを共有しません。管理機能は、`access:admin` システム権限または `SystemRoles.ADMIN` ロールを通じてLibreChat側で検証されるため、パネル自体が本来持つべきでない権限を付与することはできません。
+## Configuration for specific roles and groups [#configuration-for-specific-roles-and-groups]
 
-LibreChat が公開する管理 API サーフェスは以下の通りです：
+Beyond the Base profile, which applies to everyone, you can save a profile of overrides for a single role, group, or user. Only the settings you change are stored in it; everything else is inherited. Each profile has a priority (role profiles default to 10, group to 20, user to 100), and when LibreChat builds a user's configuration it starts from `librechat.yaml` and the Base profile, then applies the profiles that match that user from the lowest priority to the highest, so a user profile wins over a group or role profile by default. That is how a research group gets extra endpoints, or contractors get a stricter interface, without running a second instance.
 
-| マウント | 目的 |
-| ----------------------------------------- | ------------------------------------------------------------------------------- |
-| `POST /api/admin/login` &nbsp; `/oauth/*` | 管理者専用の認証エンドポイント（ローカル + SSO） |
-| `GET /api/admin/verify` | 管理者セッションを検証する |
-| `/api/admin/users` | ユーザーの一覧表示と検索 |
-| `/api/admin/groups` | グループの CRUD + メンバー管理 |
-| `/api/admin/roles` | カスタムロールの CRUD + 権限編集 + メンバー管理 |
-| `/api/admin/grants` | システム機能の付与（割り当て・取り消し・一覧） |
-| `/api/admin/config` | 基本設定 + プリンシパルごとの設定オーバーライド |
-| `/api/admin/skills` | GitHub スキル同期：ステータス、実行、同期資格情報 |
-| `/api/admin/code-environments` | コード環境ワーカーのペアリングと取り消し（`manage:code_environments`） |
-| `/api/admin/langfuse` | Langfuse 接続の読み取り、更新、テスト、および会話ごとのセッションリンク |
-| `/api/admin/audit-log` | 付与の監査ログ（`read:audit_log`） |
+A few things to know when editing configuration:
 
-監査ログのエンドポイントは、`GET /`(一覧)、`GET /export.csv`(CSVエクスポート)、`GET /verify`(整合性チェック)、`GET /:id`(単一エントリ)です。これらには `access:admin` と `read:audit_log` が必要です。ログは追記専用のため、管理(manage)機能や書き込みエンドポイントはありません。
+- Changes are checked against the same rules as `librechat.yaml`. An edit that would make the configuration invalid is refused and nothing is saved. If an upgrade makes an older saved value invalid, LibreChat ignores that field, falls back to the value underneath, and logs a warning, so check the logs after upgrading.
+- API keys and other secrets you enter (for example for web search, speech, OCR, Langfuse, or custom endpoints) are stored encrypted and only shown masked afterwards. If you change where a saved key is sent, such as a server or base URL, you have to enter the key again.
+- `${ENV_VAR}` references are only accepted for variables LibreChat already knows about or that the operator allowed.
+- Some settings stay in `librechat.yaml` only: MCP servers that run a local process (`type: stdio`, or `command`, `args`, `env`), and Langfuse gateway headers. The panel cannot add, change, or remove them. Remote MCP servers can be managed normally.
 
-## はじめに [#getting-started]
+Feature permissions are not overrides: the switches that decide whether a role can use or share agents, prompts, and the rest are edited on the role itself under **Access**. See [Access Control](/docs/features/access_control) for how roles, groups, and capabilities fit together. Usage per agent is on the separate [Insights](/docs/features/insights) dashboard inside LibreChat.
 
-### 前提条件 [#prerequisites]
+## セットアップ [#setup]
 
-- **v0.8.5以降**で実行中のLibreChatインスタンス（それ以前のバージョンでは管理者APIは利用できません）
-- admin-panel コンテナ/ホストから LibreChat API へのネットワークアクセス
-- LibreChat上の管理者アカウント：スコープなしのシングルテナントデプロイメントで最初に登録されたユーザー（自動管理者）、Mongoで `role: 'ADMIN'` が設定されたユーザー、または `access:admin` 権限が付与されたプリンシパルのいずれかです。テナントスコープのデプロイメントでは、信頼された管理フローを通じて管理者をプロビジョニングする必要があります。
-
-### LibreChatに同梱（推奨） [#bundled-with-librechat-recommended]
-
-公式の[`docker-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/docker-compose.yml)または[`deploy-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/deploy-compose.yml)を使用してLibreChatを実行する場合、管理パネルはサービスとして同梱されており、LibreChatと一緒に自動的に起動します。別途デプロイする必要はありません。
-
-| Compose file | Admin panel URL | 提供方法 |
-| --- | --- | --- |
-| `docker-compose.yml` (default) | `http://localhost:3000` | ホストのポート（`ADMIN_PANEL_PORT`、デフォルトは `3000`）に公開 |
-| `deploy-compose.yml` | `http://admin.localhost` | 同梱の nginx リバースプロキシを経由し、サブドメインでルーティング |
-
-スタックを起動する前に、LibreChatの`.env`でパネルのセッションシークレットを設定してください。composeファイルはそれをパネルの`SESSION_SECRET`として渡します：
-
-```bash filename=".env"
-# Min 32 characters. Generate with: openssl rand -hex 32
-ADMIN_PANEL_SESSION_SECRET=replace-with-a-32-char-random-string
-
-# Optional: host port for the default docker-compose
-# ADMIN_PANEL_PORT=3000
-
-# Optional: set true when the panel is served over HTTPS
-# ADMIN_PANEL_SESSION_COOKIE_SECURE=false
-```
-
-composeファイルは残りの設定を自動的に接続します。`API_SERVER_URL`は`api`サービスを指し、`VITE_API_BASE_URL`はブラウザ向けのOAuthリダイレクトのために`DOMAIN_CLIENT`に従い、`ADMIN_PANEL_URL`はSSO後にLibreChatが管理者をパネルへ戻すように設定されます。これを使用しない場合は、`admin-panel`サービスを削除するか、Composeの[`profiles`](https://docs.docker.com/compose/how-tos/profiles/)エントリを使用して制限してください。
-
-<Callout type="info" title="実ドメイン上のadmin.localhost">
-  モダンブラウザは `*.localhost`（`admin.localhost` を含む）を `127.0.0.1` に解決するため、hostsファイルを変更しなくても deploy-compose のURLが機能します。実際のドメインを使用する場合は、DNSレコードをホストに向け、`client/nginx.conf` 内の `admin.localhost` の `server_name` を更新し、それに合わせて `ADMIN_PANEL_URL` を設定してください。
-</Callout>
-
-### スタンドアロン（個別デプロイ） [#standalone-separate-deployment]
-
-To host the admin panel on its own, pointed at a LibreChat instance running elsewhere, use the published image from the LibreChat registry (`registry.librechat.ai/librechat-ai/librechat-admin-panel:latest`, the image the bundled compose files use):
-
-```bash
-# 1. Create an env file
-cp .env.example .env
-
-# 2. Edit .env and set at minimum:
-#    SESSION_SECRET=<random string, min 32 characters>
-#    VITE_API_BASE_URL=http://host.docker.internal:3080
-
-# 3. Start it
-docker compose up -d   # http://localhost:3000
-docker compose down    # stop
-```
-
-スタンドアロンの `docker run`:
-
-```bash
-docker run -p 3000:3000 \
-  --add-host=host.docker.internal:host-gateway \
-  -e SESSION_SECRET=replace-with-32-char-random-string \
-  -e VITE_API_BASE_URL=http://host.docker.internal:3080 \
-  registry.librechat.ai/librechat-ai/librechat-admin-panel:latest
-```
-
-<Callout type="warning" title="Docker ネットワーク">
-  コンテナ内では、`localhost` はホストではなくコンテナ自身を指します。LibreChat が同じホスト上で実行されている場合、`VITE_API_BASE_URL` を `http://host.docker.internal:3080` に指定してください（Linux の場合は `--add-host=host.docker.internal:host-gateway` を追加してください）。本番環境では、LibreChat API のパブリックまたは内部 DNS 名を使用してください。
-</Callout>
-
-### 開発用にローカルで実行する [#run-locally-for-development]
-
-```bash
-git clone https://github.com/ClickHouse/librechat-admin-panel.git
-cd librechat-admin-panel
-cp .env.example .env    # then edit
-bun install
-bun dev                 # http://localhost:3000
-```
-
-## 環境変数 [#environment-variables]
-
-| 変数 | 必須 | デフォルト | 説明 |
-| ------------------------------- | --------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SESSION_SECRET` | **本番環境では必須** | `bun dev` 実行時はハードコードされた開発用フォールバック値; Docker イメージでは**デフォルトなし** | セッション暗号化キー。32文字以上である必要があります。 |
-| `VITE_API_BASE_URL` | **Docker では必須** | `http://localhost:3080`(ローカル開発環境のみ) | OAuth リダイレクトに使用される、ブラウザからアクセスする LibreChat API サーバーの URL。 |
-| `API_SERVER_URL` | 不要 | `VITE_API_BASE_URL` にフォールバック | LibreChat API 呼び出し用のサーバーサイド URL。管理パネルサーバーがブラウザとは異なる URL で LibreChat に到達する場合に便利です(例: 内部 Kubernetes サービスと公開ホスト名の違い)。 |
-| `PORT` | 不要 | `3000` | 管理パネルがリッスンするポート。 |
-| `ADMIN_PANEL_SESSION_SECRET` | **必須** | _未設定_ | バンドルされた管理パネルサービス用に、管理パネルの `SESSION_SECRET` へマッピングされる LibreChat 側の変数。パネルを起動する前に、32文字以上の一意な値を生成してください。 |
-| `ADMIN_PANEL_PORT` | 不要 | `3000` | デフォルトの `docker-compose.yml` でバンドルされた管理パネルサービスが公開するホストポート。 |
-| `ADMIN_SSO_ONLY` | 不要 | `false` | メールアドレス/パスワードのフォームを非表示にし、SSO のみのログインを強制します。 |
-| `ADMIN_SESSION_IDLE_TIMEOUT_MS` | 不要 | `1800000`(30分) | セッションのアイドルタイムアウト(ミリ秒)。 |
-| `SESSION_COOKIE_SECURE` | 不要 | 本番環境では `true` | セッション Cookie が HTTPS を必要とするかどうか。 |
-| `ADMIN_PANEL_METRICS_SECRET` | 不要 | _未設定_ | Prometheus の `/metrics` エンドポイントをスクレイプするために必要な Bearer トークン。未設定または不一致の場合、エンドポイントは `401` を返します。 |
-
-LibreChatのバンドルされたDockerスタックでは、管理パネルは `admin-panel` サービスとして実行されます。デフォルトの `docker-compose.yml` はこれを `ADMIN_PANEL_PORT` で公開し、`deploy-compose.yml` は nginx を介して `http://admin.localhost` にルーティングし、APIサービス用に `ADMIN_PANEL_URL` を設定します。`ADMIN_PANEL_SESSION_SECRET` が設定されるまで、パネルは起動を拒否します。
-
-### LibreChat リダイレクト URL [#librechat-redirect-url]
-
-管理パネルがLibreChatとは別のURLでホストされている場合は、LibreChat API環境で `ADMIN_PANEL_URL` を設定してください。パスプレフィックスを含む外部管理パネルのベースURLを使用し、末尾のスラッシュは省略してください：
-
-```bash filename=".env"
-ADMIN_PANEL_URL=https://admin.example.com/admin
-```
-
-LibreChatを設定すると、管理者には**設定 > 一般**の下に**管理パネル**へのリンクも表示されます。管理者以外のユーザーには、このリンクは表示されません。
-
-Helmデプロイの場合は、valuesファイルで `librechat.adminPanelUrl` を設定してください。チャートはこれをLibreChatの管理用OAuthフローのために `ADMIN_PANEL_URL` としてレンダリングします：
-
-```yaml filename="values.yaml"
-librechat:
-  adminPanelUrl: https://admin.example.com/admin
-```
-
-OpenID SSOの場合、`${DOMAIN_SERVER}/api/admin/oauth/openid/callback` をアイデンティティプロバイダーに登録してください。
-
-### キャッシュ制御 [#cache-controls]
-
-これらはLibreChatのキャッシュ環境変数を反映したものです。`ADMIN_PANEL_*` バリアントが優先され、設定されていない場合は共有のLibreChat相当の設定にフォールバックされます。
-
-| 変数 | 目的 |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `STATIC_CACHE_MAX_AGE` / `ADMIN_PANEL_STATIC_CACHE_MAX_AGE`     | `/assets/` 内のハッシュ化されたアセットに対するブラウザの `max-age`（秒単位、デフォルトは 172800 = 2日間）。 |
-| `STATIC_CACHE_S_MAX_AGE` / `ADMIN_PANEL_STATIC_CACHE_S_MAX_AGE` | CDN の `s-maxage`（秒単位、デフォルトは 86400 = 1日間）。 |
-| `INDEX_CACHE_CONTROL` / `ADMIN_PANEL_INDEX_CACHE_CONTROL`       | HTML インデックスレスポンス用の `Cache-Control` ヘッダー。 |
-| `INDEX_PRAGMA` / `ADMIN_PANEL_INDEX_PRAGMA`                     | HTML インデックスレスポンス用の `Pragma` ヘッダー。 |
-| `INDEX_EXPIRES` / `ADMIN_PANEL_INDEX_EXPIRES`                   | HTML インデックスレスポンス用の `Expires` ヘッダー。 |
-
-## 認証 [#authentication]
-
-管理パネルはLibreChatの認証スタックを再利用しており、独自のユーザーデータベースは持っていません。以下の2つのログインパスがサポートされています：
-
-- **ローカルアカウント**: 管理者アクセスチェックを通過したLibreChatユーザーに対するユーザー名/パスワード。
-- **シングルサインオン**: OpenID Connect、SAML、およびLibreChatインスタンス上で既に設定済みのソーシャルOAuthプロバイダー。`ADMIN_SSO_ONLY=true`を設定すると、パスワードフォームを完全に非表示にできます。
-
-LibreChatでは、すべてのリクエストに対してサーバーサイドで管理者アクセス権が検証されます。アカウントは以下のいずれかの条件を満たしている必要があります。
-
-1. MongoDBで `role: 'ADMIN'` を持っているか、**または**
-2. `access:admin` システム権限を保持していること（管理パネル自体を通じて別のプリンシパルに割り当てられます。詳細は [System Grants](/docs/features/access_control#layer-3-system-grants-admin-capabilities) を参照してください）。
-
-セッションはCookieベースであり、`SESSION_SECRET`で暗号化され、`ADMIN_SESSION_IDLE_TIMEOUT_MS`に基づいてアイドル状態でのタイムアウトが発生します。
-
-Google admin SSOは、LibreChatの管理トークンの有効期限が切れた際に、強制的に再ログインさせることなくトークンを更新できるよう、オフラインアクセスと同意を要求します。`GOOGLE_CLIENT_ID` と `GOOGLE_CLIENT_SECRET` の両方を設定し、`${DOMAIN_SERVER}/api/admin/oauth/google/callback` をGoogleに登録してください。更新のたびに、アカウントのプロバイダーID、BAN状態、許可されたメールドメイン、テナント、および現在の管理者アクセス権が再確認されます。アクセス権を失うと、管理者セッションは終了します。
-
-## 設定管理 [#configuration-management]
-
-このパネルは、LibreChatの設定をconfig schemaによって駆動される動的なフォームとしてレンダリングします。これには2つの有用な特性があります：
-
-- **前方互換性**: LibreChatが新しい設定フィールドをリリースすると、パネルはスキーマからそれを自動的に取得します。管理パネルのアップグレードや再デプロイは不要です。
-- **階層化されたオーバーライド**: ベース設定(`librechat.yaml` から読み込まれるもの)は、ロール、グループ、ユーザーのいずれかにスコープされたプリンシパル単位のオーバーライドによって上書きされることがあります。ユーザーがログインすると、適用される各ドキュメントは次の固定された順序でマージされます。まず Base プロファイルが優先度に関係なく最初に適用され、次に優先度の昇順、続いてロール、グループ、ユーザーの順、最後に作成順となります。優先度を指定せずに新しいプロファイルを作成した場合は、そのプリンシパルタイプのデフォルト値(ロールは10、グループは20、ユーザーは100、Base は0)が設定されます。また、更新時に優先度を省略した場合は、保存されている値がそのまま維持されます。
-- **暗号化された資格情報**: 管理者 API を通じて保存される MCP サーバーの資格情報、Azure グループキー、および Web 検索キーは、保存時に暗号化され、マスクされたプレビューとしてのみ返されます。保存済みのキーを維持したまま、送信先(サーバー URL やベース URL など)を変更する書き込みでは、キーを再入力する必要があります。
-- **環境変数の参照**: オーバーライド内の `${ENV_VAR}` 参照は、`librechat.yaml` で既に参照されている名前、組み込みエンドポイントの認証情報、および `CONFIG_OVERRIDE_ENV_ALLOWLIST` に列挙された名前に限定されます。それ以外の参照は、書き込み時に拒否されます。
-
-<Callout type="warning" title="プロセスベースのMCPサーバーはYAMLに保持されます">
-  `type: stdio` や、`command`、`args`、`env`、`cwd`、`stderr` などのプロセス関連フィールドを使用する MCP サーバーは、オペレーター所有となります。これらは `librechat.yaml` でのみ設定してください。管理者 API はこれらの作成や変更を試みるリクエストを拒否し、オーバーライドによって置き換えたり削除したりすることはできません。リモート MCP サーバーの設定は、通常のオーバーライドシステムを通じて引き続き利用できます。
-</Callout>
-
-<Callout type="warning" title="Langfuse gatewayのヘッダーはYAML内に保持されます">
-  デプロイメントレベルの `langfuse.headers` にはプロキシの認証情報が含まれる場合があり、MongoDB に保存される設定の対象ではありません。これらは `librechat.yaml` で設定してください。管理者 API は、マップ全体および個々のヘッダーパスのいずれに対する変更も拒否します。詳細は [認証済みプロキシとゲートウェイ](/docs/configuration/langfuse#authenticated-proxies-and-gateways) を参照してください。
-</Callout>
-
-これは、LibreChatの[DB-backed per-principal configuration override system](https://github.com/LibreChat-AI/LibreChat/pull/12354)の背後にあるインターフェースです。一般的な使用例は以下の通りです：
-
-- 「Research」グループに、より高い `recursionLimit` と追加の endpoint を付与する
-- "FinanceAdmins" ロールにリモート MCP サーバーの管理を許可し、通常のユーザーには利用のみを許可します
-- 外部委託業者グループに対して、より厳格な `interface` 権限を適用する
-
-管理者は、オプトインの [Admin Insights](/docs/features/insights) ダッシュボードを使用して、テナント単位の MongoDB アクティビティを確認することもできます。`ENABLE_INSIGHTS=true` を設定してください。どのエージェントを誰が確認できるかについては、[Admin Insights](/docs/features/insights#access-requirements) を参照してください。
-
-### Override Validation [#override-validation]
-
-オーバーライドの書き込み（`PUT /api/admin/config/:principalType/:principalId` および `PATCH .../fields`）は、`librechat.yaml` と同じスキーマに対して検証され、デプロイのベース設定の上に適用されます。無効な設定を生成するような書き込みは HTTP 400 で拒否され、何も保存されません：
-
-```json
-{
-  "error": "Invalid config override",
-  "code": "CONFIG_OVERRIDE_INVALID",
-  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
-}
-```
-
-各イシューには、ドットパスと安定したコード（`invalid_type`、`missing_merge_key`、`duplicate_merge_key`、`indexed_merge_key_write`、`union_dropped_key`、`invalid_document` といったスキーマイシューコード）のみが含まれ、送信された値は含まれません。フィールドパッチは、それが影響を与える、または導入する問題に対してのみ拒否されるため、同じオーバーライド内の他の場所にある古い無効な値によってブロックされることはありません。
-
-アップグレードによってスキーマが厳格化された場合など、無効になった保存済みオーバーライドは致命的なエラーにはなりません。設定が解決される際、無効なフィールドは破棄され、その下の値（通常はベースとなる `librechat.yaml` の値）が適用されます。また、サーバーはフィールドごとに1つの警告をログに出力します。
-
-```text
-[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
-```
-
-アップグレード後にこれらの行についてログを確認し、パネルでリストされているフィールドを修正または削除してください。[テーマのルール](/docs/configuration/librechat_yaml/object_structure/theme#validation)を満たさないオーバーライドテーマは、同様の方法でベーステーマにフォールバックします。
-
-### セクションスコープの委任 [#section-scoped-delegation]
-
-設定の権限は、広範なもの（`read:configs`、`manage:configs`）にすることも、特定のトップレベルセクションに限定したもの（`read:configs:<section>`、`manage:configs:<section>`）にすることも可能です。セクションスコープの閲覧者は、リクエスト全体が拒否されるのではなく、許可されたセクションのみを含むフィルタリングされた設定レスポンスを受け取ります。セクションレベルの管理権限は、同じセクションに対する閲覧権限を包含します。また、広範な管理権限は、広範な閲覧権限を包含します。
-
-例として `read:configs:interface`、`manage:configs:endpoints`、`manage:configs:langfuse` などがあります。委任されたユーザーが管理画面に入るには、依然として `access:admin` が必要です。ベースとなる `__base__` プロファイルの作成、パッチ適用、削除（tombstone）、または削除の各ミューテーションには、広範な `manage:configs` 権限が必要です。セクション単位の管理は、ロール、グループ、およびユーザーのオーバーライドに適用されます。
-
-### Stored Secrets [#stored-secrets]
-
-登録済みのシークレットフィールドが管理設定APIを通じて書き込まれる際、LibreChatはリテラル値を保存時に暗号化し、サーバーで生成されたマスク済みのプレビューのみを返します。これは現在、Langfuse、OCR、音声、ウェブ検索、Assistants、Azure Assistants、および各 `endpoints.custom[].apiKey` を対象としています。その後の編集時にシークレットを省略した場合、保存されている値は保持されます。
-
-サポートされている環境変数の参照は、それらを許可するフィールドに対して読み取り可能な参照として保持されます。カスタム endpoint の API キーも、暗号化される代わりに `${ENV_VAR}` および `user_provided` の値を保持します。シークレットの取り扱いはレジストリベースです。カスタムヘッダーや MCP 設定などの汎用マップ内の任意の値は自動的に暗号化されないため、引き続き環境変数の参照や、その機能専用の認証情報メカニズムを使用してください。
-
-## 関連情報 [#related]
-
-- [Access Control](/docs/features/access_control): 管理パネルの基盤となる権限モデル
-- [Interface Configuration](/docs/configuration/librechat_yaml/object_structure/interface): パネルが編集する機能フラグ
-- [Authentication](/docs/features/authentication): LibreChatにおけるユーザー認証
-- [v0.8.5 changelog](/changelog/v0.8.5): 管理者APIの基盤
-- [GitHub: ClickHouse/librechat-admin-panel](https://github.com/ClickHouse/librechat-admin-panel): ソース、イシュー、リリース
-
-## 設定の読み取りAPIと書き込みレポート [#configuration-read-apis-and-write-reports]
-
-認可された呼び出し元は、`GET /api/admin/config/meta` でデプロイの機能を確認でき、`/catalog` でスコープとモデルのオプションを、`/env-status` で環境変数参照のステータスを、`/effective` で有効なリクエスト設定を、`/resolved/:principalType/:principalId` でプリンシパルの解決済み設定を確認できます。読み取り操作では、認可とシークレットのマスキングの境界が引き続き適用されます。
-
-`POST /api/admin/config/:principalType/:principalId/changes` は、プロファイル単位でのアトミックな変更をサポートします。書き込みレポートを確認してください。適用された場所とスキップされた場所は区別されており、デプロイ専用のパスはバッチ全体を拒否することなくスキップされる場合があります。保存済みドキュメントの読み取りでも無視されたフィールドが報告されることがあります。レポートが存在しないことは、無視されたフィールドがなかったことを証明するものではありません。
-
-サポートされているキー付きコレクション操作では、カスタムエンドポイントを名前で、そのモデル仕様とともに非表示にしたり、継承の状態にリセットしたりできます。サポートされている名前変更操作および名前変更のヒントは、登録済みのシークレットとキー付きのトゥームストーンを伴います。生のキーの名前を変更しても、この操作の代わりにはなりません。
-
-`POST /api/admin/config/reload` は、ローカルの設定を再読み込みし、無効化(invalidation)をブロードキャストします。ローカルの再読み込みが成功した後、インスタンス間のブロードキャストに失敗した場合は `503` を返すことがあります。この結果はロールバックではなく、すべてのレプリカが再読み込みを完了したことを示すものでもありません。オプトインのエンドポイント再導出の境界については、[アップグレードガイド](/docs/configuration/upgrade#admin-configuration-and-secrets)を参照してください。
-
-### テナントパーティションによる設定の読み取り [#tenant-partitions-in-configuration-reads]
-
-グループ・ユーザーのプロファイルプレビューおよび実効ユーザー設定は、対象のテナント内で解決されます。これには、そのテナントの Base プロファイルと、該当するロール・グループのプロファイルが含まれます。テナントにスコープされた呼び出し元が、別のテナントに越境することはできません。ロール名は呼び出し元のパーティションを指します。スコープなしの管理者が変更できるのは、プラットフォームのロールとそのメンバー、プロファイル、権限付与、ACL エントリであり、すべてのテナントにある同名のロールが変更されるわけではありません。
+The panel ships as the `admin-panel` service in LibreChat's `docker-compose.yml` and `deploy-compose.yml`, and it will not start until you set `ADMIN_PANEL_SESSION_SECRET` in `.env`. It needs LibreChat v0.8.5 or later. Ports, hosting it on its own domain, SSO redirects, every environment variable, and the admin API used by the panel are covered in [Admin Panel configuration](/docs/configuration/admin_panel).

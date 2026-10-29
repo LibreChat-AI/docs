@@ -2,119 +2,37 @@
 title: Otomatik Denetleme
 icon: Shield
 description: >-
-  Otomatik Denetleme Sistemi, kullanıcı ihlallerini takip etmek için bir
-  puanlama mekanizması kullanır. Kullanıcılar aşırı giriş denemeleri, kayıtlar
-  veya mesajlaşma gibi eylemlerde bulundukça ihlal puanları biriktirirler.
-  Belirlenen bir eşiğe ulaşıldığında, kullanıcı ve IP adresi geçici olarak
-  yasaklanır. Bu sistem, hızlı veya şüpheli etkinlikleri izleyip cezalandırarak
-  platform güvenliğini sağlar.
+  Rate limits and violation scores that slow down abuse and temporarily ban
+  accounts and IPs that keep tripping them.
 ---
 
-## Otomatik Denetleme Sistemi (isteğe bağlı) [#automated-moderation-system-optional]
-Otomatik Denetleme Sistemi, kullanıcı ihlallerini takip etmek için bir puanlama mekanizması kullanır. Kullanıcılar aşırı giriş denemeleri, kayıtlar veya mesajlaşma gibi eylemlerde bulundukça ihlal puanları biriktirirler. Belirlenen bir eşiğe ulaşıldığında, kullanıcı ve IP adresi geçici olarak yasaklanır. Bu sistem, hızlı veya şüpheli etkinlikleri izleyip cezalandırarak platform güvenliğini sağlar.
+LibreChat watches for abusive patterns, such as hammering the login form, sending messages faster than allowed, or calling the API from a script, and records each one as a violation against the user. When a user's violation score crosses a threshold, the account and its IP are banned for a while. It is meant to stop one or a few bad actors, not a flood of traffic; put a reverse proxy or DDoS protection such as Cloudflare in front of a public instance for that.
 
-Üretim ortamında, sunucuyu aşırı isteklerden gerçekten korumak için Cloudflare veya başka bir DDoS koruması kullanmalısınız; ancak bu değişiklikler, dağıtılan örneğinizi proxy kullanımı için hedef alan tekil veya birkaç kötü niyetli aktöre karşı sizi büyük ölçüde koruyacaktır.
+## What counts as a violation [#what-counts-as-a-violation]
 
-### Notlar [#notes]
+Most violations come from rate limits. When a request goes over a limit it is rejected with a "too many requests" style error, and the attempt adds to the user's score. The limits cover:
 
-- Temel güvenlik ve ihlal kaydı (yasaklar, eşzamanlı mesajlar, hız sınırlarının aşılması) için önbellekleme kullanır
-    - `USE_REDIS=true` olduğunda, ihlal puanları ve yasaklamalar **Redis** içinde saklanır ve böylece kopyalar (replicas) arasında paylaşılır. Redis kullanılmadığında ise bellek içi önbellek (in-memory cache) kullanılır.
-    - İhlal puanları, `VIOLATION_SCORE_TTL` ile belirlenen bir sessiz dönem sonunda sona erer (milisaniye cinsinden, varsayılan bir saattir; her yeni ihlal geri sayımı yeniden başlatır ve sıfır veya negatif bir değer sona ermeyi devre dışı bırakır). Bkz. [Otomatik Moderasyon](/docs/configuration/mod_system)
-- Hız sınırlayıcılardan (giriş/kayıt/mesajlaşma) herhangi birinin aşılması bir ihlal olarak kabul edilir, varsayılan puan 1'dir
-- Tarayıcı dışı kaynak bir ihlaldir
-- Her ihlal için varsayılan puan yapılandırılabilir
-- Sınırlayıcılardan ve/veya yasaklamalardan herhangi birini etkinleştirmek, önbelleğe almayı/günlüğe kaydetmeyi etkinleştirir
-- İhlal günlükleri, günlük kaydı başladığında oluşturulan veri klasöründe bulunabilir: `librechat/data`
-  - **Sadece ihlaller günlüğe kaydedilir**
-  - `violations.json`, kullanıcı başına her ihlalin toplam sayısını takip eder
-  - `logs.json` dosyası, kullanıcı başına her bir ihlali kaydeder
-- Yasaklama günlükleri (ban logs), MongoDB'de `logs` koleksiyonu altında saklanır. Bunlar yalnızca yasaklama süresi boyunca var olduklarından geçicidirler.
-    - Bir yasağı manuel olarak kaldırmak için, girişi veritabanından silin ve sunucuyu yeniden başlatın.
+- Logins and registrations, per IP. Too many failed sign-ins shows "Too many login attempts in a short amount of time."
+- Messages: how many responses one user can have running at once ("Only one message can run at a time"), and how many messages can be sent per minute, per IP and optionally per user.
+- Password reset and email verification requests, and the link submissions that follow them.
+- Two-factor code attempts and passkey enrollment.
+- Conversation imports (100 per IP and 50 per user every 15 minutes), forks (30 per IP and 7 per user each minute), and shared link views, each limited per IP and per user at the same time.
+- File uploads, text-to-speech, speech-to-text, and tool calls.
 
-### Hız Sınırlayıcı Türleri [#rate-limiter-types]
+A few things are violations without any rate limit involved: requests that do not come from a browser, requests for a model the endpoint does not offer (almost always a script probing the server), and attempts to open a conversation the user does not own.
 
-#### Giriş ve Kayıt Hız Sınırlaması [#login-and-registration-rate-limiting]
-Belirli bir zaman aralığında tek bir IP adresinden yapılabilecek giriş denemesi veya yeni hesap kaydı sayısını sınırlayarak kaba kuvvet saldırılarını ve spam kayıtlarını önler.
+Each violation type has its own score. Non-browser requests count heavily by default, and some types are set to 0 in the example `.env`, so they are blocked when they go over the limit but do not move the user toward a ban.
 
-#### Mesaj Hız Sınırlaması [#message-rate-limiting]
-Spam ve kötüye kullanımı önlemek için kullanıcıların ne sıklıkla mesaj gönderebileceğini kontrol eder:
-- **Eşzamanlı Mesaj Sınırlandırma**: Bir kullanıcının aynı anda gönderebileceği mesaj sayısını sınırlar (kullanıcıların sınırları aşmak için birden fazla sekme açmasını engeller)
-- **Mesaj Sıklığı Sınırlandırma**: IP adresi ve bireysel kullanıcı bazında yapılandırılabilir şekilde, mesajların ne sıklıkla gönderilebileceğini kontrol eder
+## Bans [#bans]
 
-#### Sohbet İçe Aktarma Hız Sınırlaması [#import-conversation-rate-limiting]
-Sohbet içe aktarma özelliğinin kötüye kullanımını, belirli bir zaman aralığında kaç sohbetin içe aktarılabileceğini sınırlayarak önler. Bu, şunları önlemeye yardımcı olur:
-- Sunucuyu aşırı yükleyebilecek toplu veri içe aktarımları
-- Sistemi içe aktarılan verilerle doldurmaya çalışan otomatik betikler
-- Çok sayıda içe aktarma işleminin işlenmesinden kaynaklanan kaynak tükenmesi
+A ban triggers each time a user's total score reaches another multiple of the ban interval (20 by default). The user's sessions are ended immediately, and both the account and the IP it came from are locked out for the ban duration (2 hours by default). A banned user sees "Your account is temporarily banned for violating the terms of service." Bans expire on their own. Scores decay too: a user's score resets after an hour without new violations by default, and each new violation restarts that hour.
 
-Varsayılan limitler (her iki sınırlayıcı da her zaman uygulanır):
-- IP tabanlı: 15 dakikada 100 içe aktarma
-- Kullanıcı bazlı: 15 dakikada 50 içe aktarma
+To lift a ban early, an admin removes its entry from the `logs` collection in MongoDB. Violation scores and a per-user history of each violation are kept in `data/violations.json` and `data/logs.json` in the LibreChat directory (scores go to Redis instead when Redis is enabled, so every replica sees the same score; bans stay in MongoDB either way), which is the place to look when you want to know why someone got banned.
 
-#### Sohbet Çatallama (Conversation Forking) Hız Sınırlaması [#conversation-forking-rate-limiting]
-Kullanıcıların mevcut konuşmaların çatallarını (kopyalarını) ne sıklıkla oluşturabileceğini kontrol eder. Bu şunları önler:
-- Toplu sohbet kopyalamadan kaynaklanan aşırı veritabanı büyümesi
-- Fork işlemlerinden kaynaklanan kaynak tükenmesi
-- Forking özelliğinin spam veya veri toplama amacıyla kötüye kullanılması
+## Message moderation [#message-moderation]
 
-Varsayılan limitler (her iki sınırlayıcı da her zaman uygulanır):
-- IP tabanlı: 1 dakika içinde 30 fork
-- Kullanıcı bazlı: dakikada 7 çatal
+Separately from the scoring system, an admin can send chat messages through the OpenAI moderation API before they reach the model. This covers regular chats and agents, not the hosted Assistants endpoints. Flagged messages are not sent, and the user sees "This message was flagged by the moderation system."
 
-#### Dosya Yükleme Hız Sınırlaması [#file-upload-rate-limiting]
-librechat.yaml dosyası aracılığıyla yapılandırılan bu ayar, depolama alanının kötüye kullanımını ve bant genişliği tükenmesini önlemek için kullanıcıların ne sıklıkla dosya yükleyebileceğini kontrol eder.
+## Kurulum [#setup]
 
-#### Metinden Sese (TTS) Hız Sınırlaması [#text-to-speech-tts-rate-limiting]
-Kullanıcıların metinden sese dönüştürme taleplerini ne sıklıkla yapabileceklerini kontrol eder. Bu şunları önler:
-- Aşırı API kullanım maliyetleri
-- Ses üretimi nedeniyle sunucu kaynaklarının tükenmesi
-- Veri toplama amacıyla TTS özelliğinin kötüye kullanımı
-
-librechat.yaml dosyası aracılığıyla yapılandırılır ve IP başına ve kullanıcı başına özelleştirilebilir limitler sunar.
-
-#### Konuşmadan Metne (STT) Hız Sınırlaması [#speech-to-text-stt-rate-limiting]
-Kullanıcıların transkripsiyon için ne sıklıkla ses dosyası gönderebileceğini kontrol eder. Bu şunları önler:
-- Aşırı API kullanım maliyetleri
-- Ses işleme nedeniyle sunucu kaynaklarının tükenmesi
-- STT özelliğinin yetkisiz transkripsiyon hizmetleri için kötüye kullanımı
-
-librechat.yaml dosyası aracılığıyla yapılandırılır ve IP başına ve kullanıcı başına özelleştirilebilir limitler sunar.
-
-#### Parola Sıfırlama Hız Sınırlaması [#password-reset-rate-limiting]
-Kullanıcıların ne sıklıkla parola sıfırlama e-postası talep edebileceğini kontrol eder. Bu şunları önler:
-- E-posta bombardımanı saldırıları
-- Parola sıfırlama sisteminin kötüye kullanımı
-- Aşırı e-posta hizmeti kullanımı
-
-#### E-posta Doğrulama Hız Sınırlaması [#email-verification-rate-limiting]
-Kullanıcıların ne sıklıkla e-posta doğrulama mesajı isteyebileceğini kontrol eder. Bu şunları önler:
-- Doğrulama sistemi üzerinden spam saldırıları
-- E-posta hizmeti istismarı
-- Doğrulama isteklerinden kaynaklanan kaynak tükenmesi
-
-#### Araç Çağrısı Hız Sınırlaması (Tool Call Rate Limiting) [#tool-call-rate-limiting]
-Kullanıcıların ne sıklıkla araç/eklenti çağrısı yapabileceğini kontrol eder. Bu şunları önler:
-- Entegre araçlardan kaynaklanan aşırı API kullanımı
-- Harici hizmet entegrasyonlarının kötüye kullanımı
-- Araç işleme kaynaklarının tükenmesi
-
-#### Sohbet Erişim Hız Sınırlaması [#conversation-access-rate-limiting]
-Kullanıcıların konuşmalara ne sıklıkla erişebileceğini veya erişmeye çalışabileceğini kontrol eder. Bu şunları önler:
-- Yetkisiz erişim denemeleri
-- Veri kazıma saldırıları
-- Aşırı veritabanı sorguları
-
-### Hız Sınırlayıcılar [#rate-limiters]
-
-Projenin mevcut hız sınırlayıcıları aşağıdaki gibidir (varsayılan değerler için kurulum başlığı altındaki bölüme bakın):
-
-- Giriş ve kayıt hız sınırlaması
-- `Optional:` Eşzamanlı Mesaj sınırlaması (kullanıcı başına aynı anda yalnızca X mesaj)
-- `Optional:` Mesaj sınırlama (bir kullanıcının ne sıklıkla mesaj gönderebileceği, IP ve Kullanıcı bazında yapılandırılabilir)
-- İçe aktarma konuşma sınırlaması (bir kullanıcının konuşmaları ne sıklıkla içe aktarabileceği, IP ve Kullanıcıya göre yapılandırılabilir)
-- Konuşma çatallama sınırlaması (kullanıcıların konuşmaları ne sıklıkla çatallayabileceği, IP ve kullanıcı bazında yapılandırılabilir)
-- `Optional:` Text-to-Speech (TTS) limiting (configurable through [`librechat.yaml` config file](/docs/configuration/librechat_yaml/object_structure/config#ratelimits))
-- `Optional:` Speech-to-Text (STT) limiting (configurable through [`librechat.yaml` config file](/docs/configuration/librechat_yaml/object_structure/config#ratelimits))
-- `Optional:` File Upload limiting (configurable through [`librechat.yaml` config file](/docs/configuration/librechat_yaml/object_structure/config#ratelimits))
-
-Daha fazla ayrıntı için burada sağlanan yapılandırma kılavuzuna başvurun: [Automated Moderation](/docs/configuration/mod_system)
+Rate limiting and banning are on by default with the values above. An admin tunes every limit, score, and the ban settings through environment variables, and turns on OpenAI moderation the same way; see [Automated Moderation configuration](/docs/configuration/mod_system). Limits for uploads, speech, and conversation imports can also be set in the [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) block of `librechat.yaml`.

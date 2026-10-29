@@ -2,114 +2,37 @@
 title: 自動モデレーション
 icon: Shield
 description: >-
-  自動モデレーションシステムは、ユーザーの違反を追跡するためにスコアリングメカニズムを使用します。ユーザーが過度なログイン、登録、メッセージ送信などの行為を行うと、違反スコアが蓄積されます。設定されたしきい値に達すると、そのユーザーおよびIPアドレスは一時的にBAN（禁止）されます。このシステムは、急激な活動や疑わしい活動を監視およびペナルティを課すことで、プラットフォームのセキュリティを確保します。
+  Rate limits and violation scores that slow down abuse and temporarily ban
+  accounts and IPs that keep tripping them.
 ---
 
-## 自動モデレーションシステム (オプション) [#automated-moderation-system-optional]
-自動モデレーションシステムは、ユーザーの違反を追跡するためにスコアリングメカニズムを使用します。ユーザーが過度なログイン、登録、メッセージ送信などの行為を行うと、違反スコアが蓄積されます。設定されたしきい値に達すると、そのユーザーおよびIPアドレスは一時的にBAN（禁止）されます。このシステムは、急激な活動や疑わしい活動を監視およびペナルティを課すことで、プラットフォームのセキュリティを確保します。
+LibreChat watches for abusive patterns, such as hammering the login form, sending messages faster than allowed, or calling the API from a script, and records each one as a violation against the user. When a user's violation score crosses a threshold, the account and its IP are banned for a while. It is meant to stop one or a few bad actors, not a flood of traffic; put a reverse proxy or DDoS protection such as Cloudflare in front of a public instance for that.
 
-本番環境では、サーバーを過剰なリクエストから確実に保護するために、Cloudflareやその他のDDoS保護を導入する必要があります。しかし、これらの変更を行うことで、デプロイされたインスタンスをプロキシとして悪用しようとする単一または少数の悪意ある攻撃者から、大部分を守ることができます。
+## What counts as a violation [#what-counts-as-a-violation]
 
-### 注記 [#notes]
+Most violations come from rate limits. When a request goes over a limit it is rejected with a "too many requests" style error, and the attempt adds to the user's score. The limits cover:
 
-- 基本的なセキュリティのためにキャッシュを使用し、違反のログ記録(BAN、同時メッセージ、レート制限の超過)を行います。
-    - `USE_REDIS=true`のとき、違反スコアとBANは**Redis**に保存されるため、レプリカ間で共有されます。Redisを使用しない場合は、インメモリキャッシュが使用されます。
-    - 違反スコアは、`VIOLATION_SCORE_TTL`(ミリ秒単位、デフォルトは1時間)で設定された静穏期間の後に失効します。新たな違反が発生するたびにカウントダウンは再開され、0以下の値を設定すると失効は無効になります。詳しくは[自動モデレーション](/docs/configuration/mod_system)をご覧ください。
-- レート制限（ログイン/登録/メッセージング）のいずれかを超過することは違反とみなされ、デフォルトのスコアは1となります。
-- ブラウザ以外のオリジンは違反です
-- 各違反に対するデフォルトスコアは設定可能です
-- 制限機能や禁止機能のいずれかを有効にすると、キャッシュおよびログ記録が有効になります。
-- 違反ログは、ログ記録が開始されると作成されるデータフォルダー内にあります：`librechat/data`
-  - **違反のみがログに記録されます**
-  - `violations.json` は、ユーザーごとの各違反の合計回数を記録します。
-  - `logs.json` は、ユーザーごとの個別の違反を記録します。
-- Ban logsはMongoDBの`logs`コレクションに保存されます。これらはBAN期間中のみ存在するため、一時的なものです。
-    - 手動でBANを解除するには、データベースからそのエントリを削除し、サーバーを再起動してください。
+- Logins and registrations, per IP. Too many failed sign-ins shows "Too many login attempts in a short amount of time."
+- Messages: how many responses one user can have running at once ("Only one message can run at a time"), and how many messages can be sent per minute, per IP and optionally per user.
+- Password reset and email verification requests, and the link submissions that follow them.
+- Two-factor code attempts and passkey enrollment.
+- Conversation imports (100 per IP and 50 per user every 15 minutes), forks (30 per IP and 7 per user each minute), and shared link views, each limited per IP and per user at the same time.
+- File uploads, text-to-speech, speech-to-text, and tool calls.
 
-### レートリミッターの種類 [#rate-limiter-types]
+A few things are violations without any rate limit involved: requests that do not come from a browser, requests for a model the endpoint does not offer (almost always a script probing the server), and attempts to open a conversation the user does not own.
 
-#### ログインおよび登録のレート制限 [#login-and-registration-rate-limiting]
-単一のIPアドレスから一定期間内に行えるログイン試行回数や新規アカウント登録数を制限することで、ブルートフォース攻撃やスパム登録を防止します。
+Each violation type has its own score. Non-browser requests count heavily by default, and some types are set to 0 in the example `.env`, so they are blocked when they go over the limit but do not move the user toward a ban.
 
-#### メッセージレート制限 [#message-rate-limiting]
-スパムや不正利用を防ぐため、ユーザーがメッセージを送信できる頻度を制御します：
-- **Concurrent Message Limiting**: ユーザーが同時に送信できるメッセージ数を制限します（ユーザーが複数のタブを開いて制限を回避することを防ぎます）
-- **メッセージ頻度制限**: メッセージを送信できる頻度を制御します。IPアドレスおよび個々のユーザーの両方で設定可能です。
+## Bans [#bans]
 
-#### 会話インポートのレート制限 [#import-conversation-rate-limiting]
-会話インポート機能の乱用を防ぐため、一定期間内にインポートできる会話の数を制限します。これは以下を防ぐのに役立ちます：
-- サーバーに過度な負荷をかける可能性のある大量データインポート
-- インポートされたデータでシステムを氾濫させようとする自動化スクリプト
-- 大量のインポート処理によるリソース枯渇
+A ban triggers each time a user's total score reaches another multiple of the ban interval (20 by default). The user's sessions are ended immediately, and both the account and the IP it came from are locked out for the ban duration (2 hours by default). A banned user sees "Your account is temporarily banned for violating the terms of service." Bans expire on their own. Scores decay too: a user's score resets after an hour without new violations by default, and each new violation restarts that hour.
 
-デフォルトの制限（両方のリミッターは常に適用されます）：
-- IPベース: 15分あたり100回のインポート
-- ユーザーごと：15分あたり50回のインポート
+To lift a ban early, an admin removes its entry from the `logs` collection in MongoDB. Violation scores and a per-user history of each violation are kept in `data/violations.json` and `data/logs.json` in the LibreChat directory (scores go to Redis instead when Redis is enabled, so every replica sees the same score; bans stay in MongoDB either way), which is the place to look when you want to know why someone got banned.
 
-#### 会話のフォーク（分岐）に関するレート制限 [#conversation-forking-rate-limiting]
-ユーザーが既存の会話のフォーク（コピー）を作成できる頻度を制御します。これにより、以下を防ぎます：
-- 大量の会話複製によるデータベースの過度な肥大化
-- fork操作によるリソース枯渇
-- スパムやデータ収集を目的としたフォーク機能の悪用
+## Message moderation [#message-moderation]
 
-デフォルトの制限（両方のリミッターは常に適用されます）：
-- IPベース: 1分間に30回のフォーク
-- ユーザーごと: 1分あたり7フォーク
+Separately from the scoring system, an admin can send chat messages through the OpenAI moderation API before they reach the model. This covers regular chats and agents, not the hosted Assistants endpoints. Flagged messages are not sent, and the user sees "This message was flagged by the moderation system."
 
-#### ファイルアップロードのレート制限 [#file-upload-rate-limiting]
-librechat.yaml ファイルを通じて設定され、ストレージの乱用や帯域幅の枯渇を防ぐために、ユーザーがファイルをアップロードできる頻度を制御します。
+## セットアップ [#setup]
 
-#### Text-to-Speech (TTS) レート制限 [#text-to-speech-tts-rate-limiting]
-ユーザーがテキスト読み上げ変換をリクエストできる頻度を制御します。これにより、以下を防ぎます：
-- 過剰なAPI利用コスト
-- 音声生成によるサーバーリソースの枯渇
-- データ収集のためのTTS機能の悪用
-
-librechat.yaml ファイルを通じて設定され、IP ごとおよびユーザーごとの制限をカスタマイズ可能です。
-
-#### Speech-to-Text (STT) レート制限 [#speech-to-text-stt-rate-limiting]
-ユーザーが文字起こしのために音声を送信できる頻度を制御します。これにより、以下を防ぎます：
-- 過剰なAPI利用コスト
-- 音声処理によるサーバーリソースの枯渇
-- STT機能を不正な文字起こしサービスに悪用すること
-
-librechat.yaml ファイルを通じて設定され、IP ごとおよびユーザーごとの制限をカスタマイズ可能です。
-
-#### パスワードリセットのレート制限 [#password-reset-rate-limiting]
-ユーザーがパスワードリセットメールをリクエストできる頻度を制御します。これにより、以下を防ぎます：
-- メール爆弾攻撃
-- パスワードリセットシステムの悪用
-- メールサービスの過剰な使用
-
-#### メール認証のレート制限 [#email-verification-rate-limiting]
-ユーザーがメール認証メッセージをリクエストできる頻度を制御します。これにより、以下を防ぎます：
-- 検証システムを通じたスパム攻撃
-- メールサービスの悪用
-- 検証リクエストによるリソースの枯渇
-
-#### ツール呼び出しのレート制限 [#tool-call-rate-limiting]
-ユーザーがツール/プラグイン呼び出しを行える頻度を制御します。これにより、以下を防ぎます：
-- 統合されたツールからの過剰なAPI使用
-- 外部サービス統合の悪用
-- ツール処理によるリソース枯渇
-
-#### 会話アクセスレート制限 [#conversation-access-rate-limiting]
-ユーザーが会話にアクセス、またはアクセスを試みる頻度を制御します。これにより、以下を防ぎます：
-- 不正なアクセス試行
-- データスクレイピング攻撃
-- 過剰なデータベースクエリ
-
-### レートリミッター [#rate-limiters]
-
-このプロジェクトの現在のレートリミッターは以下の通りです（デフォルト値については、セットアップの項を参照してください）。
-
-- ログインおよび登録のレート制限
-- `Optional:` 同時メッセージ制限（ユーザーごとに一度にXメッセージまで）
-- `Optional:` メッセージ制限（ユーザーがメッセージを送信できる頻度。IPおよびユーザーごとに設定可能）
-- 会話インポートの制限(ユーザーが会話をインポートできる頻度を、IPアドレスおよびユーザーごとに設定可能)
-- 会話のフォーク制限(ユーザーが会話をフォークできる頻度を、IPアドレスおよびユーザーごとに設定可能)
-- `Optional:` テキスト読み上げ (TTS) の制限（[`librechat.yaml` 設定ファイル](/docs/configuration/librechat_yaml/object_structure/config#ratelimits)から設定可能）
-- `Optional:` Speech-to-Text (STT) の制限（[`librechat.yaml` 設定ファイル](/docs/configuration/librechat_yaml/object_structure/config#ratelimits)で設定可能）
-- `Optional:` ファイルアップロードの制限 ([`librechat.yaml` 設定ファイル](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) で設定可能)
-
-詳細については、こちらで提供されている設定ガイドを参照してください: [Automated Moderation](/docs/configuration/mod_system)
+Rate limiting and banning are on by default with the values above. An admin tunes every limit, score, and the ban settings through environment variables, and turns on OpenAI moderation the same way; see [Automated Moderation configuration](/docs/configuration/mod_system). Limits for uploads, speech, and conversation imports can also be set in the [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) block of `librechat.yaml`.

@@ -2,120 +2,37 @@
 title: Moderazione automatizzata
 icon: Shield
 description: >-
-  Il sistema di moderazione automatizzata utilizza un meccanismo di punteggio
-  per tracciare le violazioni degli utenti. Man mano che gli utenti compiono
-  azioni come accessi, registrazioni o invio di messaggi eccessivi, accumulano
-  punteggi di violazione. Al raggiungimento di una soglia prestabilita, l'utente
-  e il suo IP vengono temporaneamente bannati. Questo sistema garantisce la
-  sicurezza della piattaforma monitorando e penalizzando le attività rapide o
-  sospette.
+  Rate limits and violation scores that slow down abuse and temporarily ban
+  accounts and IPs that keep tripping them.
 ---
 
-## Sistema di moderazione automatizzato (opzionale) [#automated-moderation-system-optional]
-Il sistema di moderazione automatizzata utilizza un meccanismo di punteggio per tracciare le violazioni degli utenti. Man mano che gli utenti compiono azioni come accessi, registrazioni o invio di messaggi eccessivi, accumulano punteggi di violazione. Al raggiungimento di una soglia prestabilita, l'utente e il suo IP vengono temporaneamente bannati. Questo sistema garantisce la sicurezza della piattaforma monitorando e penalizzando le attività rapide o sospette.
+LibreChat watches for abusive patterns, such as hammering the login form, sending messages faster than allowed, or calling the API from a script, and records each one as a violation against the user. When a user's violation score crosses a threshold, the account and its IP are banned for a while. It is meant to stop one or a few bad actors, not a flood of traffic; put a reverse proxy or DDoS protection such as Cloudflare in front of a public instance for that.
 
-In produzione, dovresti disporre di Cloudflare o di un'altra protezione DDoS per proteggere realmente il server da richieste eccessive, ma queste modifiche ti proteggeranno in gran parte da uno o più malintenzionati che prendono di mira la tua istanza distribuita per il proxying.
+## What counts as a violation [#what-counts-as-a-violation]
 
-### Note [#notes]
+Most violations come from rate limits. When a request goes over a limit it is rejected with a "too many requests" style error, and the attempt adds to the user's score. The limits cover:
 
-- Utilizza la cache per la sicurezza di base e la registrazione delle violazioni (ban, messaggi simultanei, superamento dei limiti di frequenza)
-    - Quando `USE_REDIS=true`, i punteggi delle violazioni e i ban vengono memorizzati in **Redis**, così da essere condivisi tra le repliche. Senza Redis, vengono utilizzati la cache in memoria.
-    - I punteggi delle violazioni scadono dopo un periodo di inattività definito da `VIOLATION_SCORE_TTL` (in millisecondi, per impostazione predefinita un'ora; ogni nuova violazione riavvia il conteggio alla rovescia, e un valore non positivo disabilita la scadenza). Vedi [Moderazione automatica](/docs/configuration/mod_system)
-- Il superamento di uno qualsiasi dei limitatori di frequenza (accesso/registrazione/messaggistica) è considerato una violazione, il punteggio predefinito è 1
-- L'origine non-browser è una violazione
-- Il punteggio predefinito per ogni violazione è configurabile
-- L'abilitazione di uno qualsiasi dei limitatori e/o dei ban abilita la memorizzazione nella cache/la registrazione
-- I log delle violazioni possono essere trovati nella cartella data, che viene creata all'avvio della registrazione: `librechat/data`
-  - **Vengono registrate solo le violazioni**
-  - `violations.json` tiene traccia del conteggio totale per ogni violazione per utente
-  - `logs.json` registra ogni singola violazione per utente
-- I log di ban sono archiviati in MongoDB nella collezione `logs`. Sono transitori poiché esistono solo per la durata del ban.
-    - Per rimuovere manualmente un ban, elimina la voce dal database e riavvia il server
+- Logins and registrations, per IP. Too many failed sign-ins shows "Too many login attempts in a short amount of time."
+- Messages: how many responses one user can have running at once ("Only one message can run at a time"), and how many messages can be sent per minute, per IP and optionally per user.
+- Password reset and email verification requests, and the link submissions that follow them.
+- Two-factor code attempts and passkey enrollment.
+- Conversation imports (100 per IP and 50 per user every 15 minutes), forks (30 per IP and 7 per user each minute), and shared link views, each limited per IP and per user at the same time.
+- File uploads, text-to-speech, speech-to-text, and tool calls.
 
-### Tipi di Rate Limiter [#rate-limiter-types]
+A few things are violations without any rate limit involved: requests that do not come from a browser, requests for a model the endpoint does not offer (almost always a script probing the server), and attempts to open a conversation the user does not own.
 
-#### Limitazione della frequenza di accesso e registrazione [#login-and-registration-rate-limiting]
-Previene attacchi brute force e registrazioni spam limitando il numero di tentativi di accesso o di nuove registrazioni di account che possono essere effettuati da un singolo indirizzo IP entro un determinato intervallo di tempo.
+Each violation type has its own score. Non-browser requests count heavily by default, and some types are set to 0 in the example `.env`, so they are blocked when they go over the limit but do not move the user toward a ban.
 
-#### Limitazione della frequenza dei messaggi [#message-rate-limiting]
-Controlla la frequenza con cui gli utenti possono inviare messaggi per prevenire spam e abusi:
-- **Limitazione dei messaggi simultanei**: limita il numero di messaggi che un utente può inviare contemporaneamente (impedisce agli utenti di aprire più schede per aggirare i limiti)
-- **Limitazione della frequenza dei messaggi**: Controlla la frequenza con cui possono essere inviati i messaggi, configurabile sia per indirizzo IP che per singolo utente
+## Bans [#bans]
 
-#### Limitazione della frequenza di importazione delle conversazioni [#import-conversation-rate-limiting]
-Previene l'abuso della funzionalità di importazione delle conversazioni limitando il numero di conversazioni che possono essere importate entro un determinato intervallo di tempo. Questo aiuta a prevenire:
-- Importazioni massive di dati che potrebbero sovraccaricare il server
-- Script automatizzati che tentano di inondare il sistema con dati importati
-- Esaurimento delle risorse dovuto all'elaborazione di un gran numero di importazioni
+A ban triggers each time a user's total score reaches another multiple of the ban interval (20 by default). The user's sessions are ended immediately, and both the account and the IP it came from are locked out for the ban duration (2 hours by default). A banned user sees "Your account is temporarily banned for violating the terms of service." Bans expire on their own. Scores decay too: a user's score resets after an hour without new violations by default, and each new violation restarts that hour.
 
-Limiti predefiniti (entrambi i limitatori vengono sempre applicati):
-- IP-based: 100 importazioni ogni 15 minuti
-- Basato sull'utente: 50 importazioni ogni 15 minuti
+To lift a ban early, an admin removes its entry from the `logs` collection in MongoDB. Violation scores and a per-user history of each violation are kept in `data/violations.json` and `data/logs.json` in the LibreChat directory (scores go to Redis instead when Redis is enabled, so every replica sees the same score; bans stay in MongoDB either way), which is the place to look when you want to know why someone got banned.
 
-#### Limitazione della frequenza di forking delle conversazioni [#conversation-forking-rate-limiting]
-Controlla la frequenza con cui gli utenti possono creare fork (copie) di conversazioni esistenti. Questo previene:
-- Eccessiva crescita del database dovuta alla duplicazione di massa delle conversazioni
-- Esaurimento delle risorse dovuto alle operazioni di fork
-- Abuso della funzionalità di forking per spam o data harvesting
+## Message moderation [#message-moderation]
 
-Limiti predefiniti (entrambi i limitatori vengono sempre applicati):
-- IP-based: 30 forks per 1 minute
-- User-based: 7 forks per 1 minute
+Separately from the scoring system, an admin can send chat messages through the OpenAI moderation API before they reach the model. This covers regular chats and agents, not the hosted Assistants endpoints. Flagged messages are not sent, and the user sees "This message was flagged by the moderation system."
 
-#### Limitazione della frequenza di caricamento dei file [#file-upload-rate-limiting]
-Configurato tramite il file librechat.yaml, questo controlla la frequenza con cui gli utenti possono caricare file per prevenire l'abuso dello spazio di archiviazione e l'esaurimento della larghezza di banda.
+## Setup [#setup]
 
-#### Limitazione della frequenza (Rate Limiting) di Text-to-Speech (TTS) [#text-to-speech-tts-rate-limiting]
-Controlla la frequenza con cui gli utenti possono richiedere conversioni da testo a parlato. Questo previene:
-- Costi eccessivi di utilizzo dell'API
-- Esaurimento delle risorse del server dovuto alla generazione audio
-- Abuso della funzionalità TTS per la raccolta dati
-
-Configurato tramite il file librechat.yaml con limiti personalizzabili per IP e per utente.
-
-#### Limitazione della frequenza (Rate Limiting) Speech-to-Text (STT) [#speech-to-text-stt-rate-limiting]
-Controlla la frequenza con cui gli utenti possono inviare audio per la trascrizione. Questo previene:
-- Costi eccessivi di utilizzo dell'API
-- Esaurimento delle risorse del server dovuto all'elaborazione audio
-- Abuso della funzionalità STT per servizi di trascrizione non autorizzati
-
-Configurato tramite il file librechat.yaml con limiti personalizzabili per IP e per utente.
-
-#### Limitazione della frequenza di reset della password [#password-reset-rate-limiting]
-Controlla la frequenza con cui gli utenti possono richiedere le email di reimpostazione della password. Questo previene:
-- Attacchi di email bombing
-- Abuso del sistema di reimpostazione della password
-- Utilizzo eccessivo del servizio email
-
-#### Limitazione della frequenza di verifica email [#email-verification-rate-limiting]
-Controlla la frequenza con cui gli utenti possono richiedere messaggi di verifica email. Questo previene:
-- Attacchi spam tramite il sistema di verifica
-- Abuso del servizio email
-- Esaurimento delle risorse dovuto alle richieste di verifica
-
-#### Limitazione della frequenza delle chiamate agli strumenti [#tool-call-rate-limiting]
-Controlla la frequenza con cui gli utenti possono effettuare chiamate a strumenti/plugin. Questo previene:
-- Utilizzo eccessivo dell'API da parte degli strumenti integrati
-- Abuso delle integrazioni di servizi esterni
-- Esaurimento delle risorse dovuto all'elaborazione degli strumenti
-
-#### Limitazione della frequenza di accesso alle conversazioni [#conversation-access-rate-limiting]
-Controlla la frequenza con cui gli utenti possono accedere o tentare di accedere alle conversazioni. Questo previene:
-- Tentativi di accesso non autorizzati
-- Attacchi di data scraping
-- Query al database eccessive
-
-### Rate Limiters [#rate-limiters]
-
-I limitatori di frequenza attuali del progetto sono i seguenti (vedi sotto nella sezione setup per i valori predefiniti):
-
-- Limitazione della frequenza di accesso e registrazione
-- `Optional:` Concurrent Message limiting (only X messages at a time per user)
-- `Optional:` Limitazione dei messaggi (con quale frequenza un utente può inviare un messaggio, configurabile per IP e Utente)
-- Limitazione dell'importazione delle conversazioni (con quale frequenza un utente può importare conversazioni, configurabile per IP e per utente)
-- Limitazione della creazione di biforcazioni delle conversazioni (con quale frequenza un utente può creare biforcazioni delle conversazioni, configurabile per IP e per utente)
-- `Optional:` Text-to-Speech (TTS) limiting (configurable through [`librechat.yaml` config file](/docs/configuration/librechat_yaml/object_structure/config#ratelimits))
-- `Optional:` Speech-to-Text (STT) limiting (configurable through [`librechat.yaml` config file](/docs/configuration/librechat_yaml/object_structure/config#ratelimits))
-- `Optional:` File Upload limiting (configurable through [`librechat.yaml` config file](/docs/configuration/librechat_yaml/object_structure/config#ratelimits))
-
-Per ulteriori dettagli, fare riferimento alla guida alla configurazione fornita qui: [Automated Moderation](/docs/configuration/mod_system)
+Rate limiting and banning are on by default with the values above. An admin tunes every limit, score, and the ban settings through environment variables, and turns on OpenAI moderation the same way; see [Automated Moderation configuration](/docs/configuration/mod_system). Limits for uploads, speech, and conversation imports can also be set in the [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) block of `librechat.yaml`.

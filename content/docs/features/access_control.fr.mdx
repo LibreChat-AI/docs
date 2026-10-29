@@ -2,253 +2,77 @@
 title: Contrôle d'accès
 icon: ShieldCheck
 description: >-
-  Le système d'autorisation granulaire de LibreChat : contrôlez qui peut
-  utiliser, partager, modifier et gérer les agents, les prompts, les serveurs
-  MCP et les autres ressources au niveau de l'utilisateur, du groupe, du rôle et
-  de l'instance.
+  Who can use which features, who can see and edit a shared agent, prompt, or
+  MCP server, and how admin powers can be handed out.
 ---
 
-# Contrôle d'accès granulaire [#granular-access-control]
+Access control decides three things: which features a user can use at all, who can see or change a specific agent, prompt, MCP server, or skill that someone shared, and who gets admin powers. A small team can leave the defaults alone and share freely; a larger deployment can lock features down per role, share with groups synced from Entra ID, and delegate parts of administration without handing out full admin accounts.
 
-LibreChat est livré avec un système complet d'autorisation qui s'ajoute à l'authentification. L'accès n'est pas « tout ou rien » : chaque entité partageable de l'application (agents, prompts, serveurs MCP, agents distants, compétences, environnements de code, liens partagés) dispose de sa propre liste de contrôle d'accès (ACL), et chaque fonctionnalité peut être activée ou restreinte indépendamment par **utilisateur**, par **groupe**, par **rôle** ou **publiquement**.
+## Users, groups, roles, and everyone [#users-groups-roles-and-everyone]
 
-Cette page explique comment les différents éléments s'articulent afin que vous puissiez modéliser les permissions en fonction de votre organisation, qu'il s'agisse d'une petite équipe où tout le monde partage librement ou d'un déploiement en entreprise avec des groupes Entra ID synchronisés, des rôles personnalisés et des administrateurs délégués.
+Permissions are granted to four kinds of principal:
 
-## Aperçu du modèle d'accès [#the-access-model-at-a-glance]
+- A user, meaning one LibreChat account.
+- A group of users. Groups are created by admins, or synced from Entra ID when users sign in through Entra with OpenID token reuse enabled. Sharing with a group is one entry, and membership changes in Entra apply at each member's next login.
+- A role. Every user has exactly one role: `USER` by default, `ADMIN` for the first account on a single-tenant instance, or a custom role an admin created. Sharing with a role reaches everyone who currently holds it.
+- Everyone, meaning every signed-in user on the instance.
 
-L'autorisation de LibreChat comporte trois couches indépendantes qui se combinent entre elles :
+## Autorisations des fonctionnalités [#feature-permissions]
 
-| Couche | Portée | Ce qu'elle contrôle |
-| :--- | :--- | :--- |
-| **Autorisations de fonctionnalités** | Par rôle (USER, ADMIN, personnalisé) | Si un principal peut _utiliser_, _créer_, _partager_ ou _partager publiquement_ une catégorie de fonctionnalité (agents, prompts, serveurs MCP, mémoires, recherche web, etc.). Configuré dans `librechat.yaml` ou le panneau d'administration. |
-| **ACL de ressources** | Par ressource individuelle | Qui peut voir, modifier, supprimer ou repartager un agent, un prompt, un serveur MCP spécifique, etc. Géré par le propriétaire de la ressource via la boîte de dialogue de partage dans l'application. |
-| **Octrois système** | À l'échelle de la plateforme | Capacités d'administration (par ex. `manage:users`, `manage:roles`, `read:usage`). Utilisé par le panneau d'administration. |
+Each role carries a set of on and off switches per feature: whether its users can use agents, create them, share them with specific people, or share them with everyone, and the same for prompts, MCP servers, skills, and shared links. Other switches cover scheduled chats, memories, bookmarks, temporary chat, multi-conversation, the code interpreter, web search, file search, citations, the Agent Marketplace, and the people picker.
 
-Les trois sont évalués pour les quatre mêmes types principaux :
+When a switch is off, the matching part of the UI disappears for that role. A user without agent creation rights does not see the option to create an agent; a user without "share with everyone" rights does not get the **Share with everyone** toggle.
 
-- **Utilisateur** : un compte LibreChat individuel
-- **Groupe** : une collection d'utilisateurs (locaux ou synchronisés depuis Entra ID)
-- **Role** : un profil d'autorisation nommé (par exemple `USER`, `ADMIN`, ou tout rôle personnalisé)
-- **Public** : chaque utilisateur authentifié sur l'instance
+By default, users can use and create agents, prompts, MCP servers, and skills, but cannot share them; sharing is something an admin opts into. The full list with defaults is on the [Access Control configuration](/docs/configuration/access_control#feature-permissions) page.
 
-## Couche 1 : Autorisations des fonctionnalités (basées sur les rôles) [#layer-1-feature-permissions-role-based]
+Admins change these switches without a restart. In LibreChat, the panels for agents, prompts, MCP servers, memories, and skills have an **Admin Settings** button that opens the switches for that feature, with a **Role** picker at the top. The [Admin Panel](/docs/features/admin_panel) edits the same switches for every role, including custom ones.
 
-Les autorisations au niveau des fonctionnalités restreignent des capacités entières de l'application pour un rôle donné. Elles répondent à des questions telles que : _"Les utilisateurs de ce rôle peuvent-ils créer des agents ?"_, _"Sont-ils autorisés à partager des prompts publiquement ?"_, _"Peuvent-ils invoquer l'interpréteur de code ?"_.
+<ThemeImage
+  light="/images/features/access_control/admin-settings-light.png"
+  dark="/images/features/access_control/admin-settings-dark.png"
+  alt="The Admin Settings - Agents dialog with the Role picker set to USER and permission toggles for using, creating, and sharing agents"
+/>
 
-### Rôles système intégrés [#built-in-system-roles]
+## Sharing a resource [#sharing-a-resource]
 
-LibreChat est fourni avec deux rôles système qui sont toujours présents et ne peuvent pas être supprimés :
+Agents, prompts, MCP servers, skills, and shared links each keep their own list of who can access them. (Agents used through the [Agents API](/docs/features/agents_api) and deployment-owned code environments use the same lists, managed outside the share dialog.) The person who created one is its owner and decides who else gets in.
 
-- **`ADMIN`** : attribué au premier compte enregistré dans un déploiement à locataire unique non délimité. Les déploiements à locataire délimité doivent provisionner les administrateurs via un flux administratif approuvé. Les administrateurs peuvent voir toutes les ressources, modifier n'importe quel paramètre, accéder au panneau d'administration et configurer le comportement à l'échelle de la plateforme.
-- **`USER`** : le rôle par défaut attribué à chaque nouveau compte.
+<Steps>
+  <Step>Open the resource and click its **Share** button. You only see it if you own the resource (or hold the Owner role on it, or are an admin) and your role is allowed to share that kind of resource.</Step>
+  <Step>In the **Share** dialog, search for people or groups by name or email. Roles show up in the search too, unless the admin hid them.</Step>
+  <Step>Pick an access role for each person or group you add.</Step>
+  <Step>If your role allows it, turn on **Share with everyone** and choose **Everyone's permission level**.</Step>
+  <Step>Click **Save**.</Step>
+</Steps>
 
-Les administrateurs peuvent être promus manuellement en mettant à jour le document utilisateur dans MongoDB, voir [Promouvoir un autre administrateur](/docs/configuration/access_control#promote-another-admin).
+<ThemeImage
+  light="/images/features/access_control/share-dialog-light.png"
+  dark="/images/features/access_control/share-dialog-dark.png"
+  alt="Share dialog for an agent listing a user as Owner and a group as Viewer, with the Share with everyone toggle below"
+/>
 
-### Types de permissions [#permission-types]
+The access roles are the same for every resource type:
 
-Chaque rôle détient une matrice de **types de permission × actions** :
+| Access role | What they can do |
+| ----------- | ---------------- |
+| Viewer | Find and use the resource, for example pick the agent and chat with it. They cannot change it. |
+| Editor | Everything a Viewer can, plus change its settings, instructions, tools, and files. |
+| Owner | Everything an Editor can, plus delete it and change who it is shared with. |
 
-| Type de permission | Actions disponibles |
-| ---------------- | --------------------------------------------------------- |
-| `AGENTS`         | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`                  |
-| `PROMPTS`        | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`                  |
-| `MCP_SERVERS`    | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`, `CONFIGURE_OBO` |
-| `REMOTE_AGENTS`  | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`                  |
-| `SKILLS`         | `USE`, `CREATE`, `SHARE`, `SHARE_PUBLIC`                  |
-| `SHARED_LINKS`   | `CREATE`, `SHARE`, `SHARE_PUBLIC`                         |
-| `SCHEDULES`      | `USE`, `CREATE`                                            |
-| `MEMORIES`       | `USE`, `CREATE`, `UPDATE`, `READ`, `OPT_OUT`              |
-| `BOOKMARKS`      | `USE`                                                     |
-| `MULTI_CONVO`    | `USE`                                                     |
-| `TEMPORARY_CHAT` | `USE`                                                     |
-| `RUN_CODE`       | `USE`                                                     |
-| `WEB_SEARCH`     | `USE`                                                     |
-| `FILE_SEARCH`    | `USE`                                                     |
-| `FILE_CITATIONS` | `USE`                                                     |
-| `MARKETPLACE`    | `USE`                                                     |
-| `PEOPLE_PICKER`  | `VIEW_USERS`, `VIEW_GROUPS`, `VIEW_ROLES`                 |
+Shared links only have Viewer and Owner. A resource always needs at least one owner, so the dialog will not let you remove the last one.
 
-La distinction entre `SHARE` et `SHARE_PUBLIC` est importante : vous pouvez autoriser un rôle à partager des agents avec des utilisateurs ou des groupes _spécifiques_ (`SHARE`) sans leur permettre de rendre les agents visibles par _tout le monde_ sur l'instance (`SHARE_PUBLIC`).
+Agents have one extra permission that is not part of any of these roles: **View insights**, which lets someone who can already see the agent open its [Insights](/docs/features/insights). Only admins see this toggle in the share dialog, and it cannot be given to everyone.
 
-### Configuration des permissions des fonctionnalités [#configuring-feature-permissions]
+Before giving someone Editor or Owner on an agent, remember that they see everything configured on it, including its instructions and attached files. Even Viewers can coax attached content out through the chat, so do not attach anything to a shared agent that its audience should not read.
 
-La méthode recommandée pour gérer les autorisations des fonctionnalités est le [**Panneau d'administration LibreChat**](/docs/features/admin_panel), qui modifie directement la matrice d'autorisations de chaque rôle (y compris tous les rôles personnalisés que vous créez). Les modifications prennent effet sans redéployer LibreChat et sont appliquées précisément au rôle que vous souhaitez modifier, plutôt qu'au rôle `USER` par défaut global.
+## Admins and delegated admin powers [#admins-and-delegated-admin-powers]
 
-<Callout type="warning" title="Héritage : bloc d'interface `librechat.yaml`">
-  Le bloc [`interface`](/docs/configuration/librechat_yaml/object_structure/interface) dans `librechat.yaml` peut toujours initialiser les permissions pour le rôle `USER` par défaut au démarrage, et reste utile pour l'amorçage d'une nouvelle instance ou pour des déploiements entièrement pilotés par fichier. Cependant, il cible uniquement le rôle `USER` et ne peut pas exprimer de différences entre des rôles personnalisés. Pour une gestion continue des permissions, préférez le panneau d'administration.
-</Callout>
+Users with the `ADMIN` role can see and manage every resource on the instance and change any role's feature permissions. They also get an **Admin Panel** link under **Settings > General** when an admin panel URL is configured.
 
-### Rôles personnalisés [#custom-roles]
+When you want someone to handle part of the administration without making them a full admin, grant them a capability instead, such as managing users, managing groups, editing configuration (all of it, or a single section such as `interface`), viewing every agent's Insights, or moderating every agent, prompt, skill, or shared link. Delegated admins also need the `access:admin` capability to sign in to the Admin Panel. Capabilities can go to a user, a group, or a role, and they are granted from the Admin Panel's **Grants** page. Holding a "manage" capability implies the matching "read" one.
 
-Au-delà de `USER` et `ADMIN`, les administrateurs peuvent créer des **rôles personnalisés** avec leur propre matrice de permissions de fonctionnalités (introduite dans la v0.8.5 ; voir [#12528](https://github.com/LibreChat-AI/LibreChat/pull/12528)). Un utilisateur peut détenir plusieurs rôles, et ses permissions effectives correspondent à l'union de tous les rôles détenus. Les rôles personnalisés sont gérés depuis le panneau d'administration.
+Admins can also give a role or group its own configuration, for example extra endpoints for a research group, layered on top of `librechat.yaml`. That is done from the Admin Panel as well.
 
-### Remplacements de configuration par rôle et par groupe [#role--and-group-scoped-configuration-overrides]
+## Configuration [#setup]
 
-En plus des indicateurs de fonctionnalités, la version v0.8.5 a introduit un système de **remplacement de configuration basé sur la base de données** ([#12354](https://github.com/LibreChat-AI/LibreChat/pull/12354)). Cela vous permet d'attribuer une _configuration différente de type `librechat.yaml`_ à des groupes ou des rôles spécifiques. Par exemple, un groupe « Recherche » pourrait avoir accès à des endpoint supplémentaires, une limite de récursion plus élevée et des capacités d'agent différentes de celles par défaut. Les remplacements sont résolus lors de la connexion et composés par-dessus la configuration de base.
-
-## Couche 2 : ACL de ressources (Partage par entité) [#layer-2-resource-acls-per-entity-sharing]
-
-Chaque ressource partageable dans LibreChat possède sa propre liste de contrôle d'accès (Access Control List), indépendante des autorisations basées sur les rôles. C'est ainsi qu'un utilisateur individuel disposant de l'autorisation `SHARE` choisit _qui_ obtient l'accès à _son_ agent, prompt ou serveur MCP.
-
-### Types de ressources [#resource-types]
-
-Les ACL de ressources s'appliquent actuellement à :
-
-- **Agents** (`agent`)
-- **Prompts / Groupes de prompts** (`promptGroup`)
-- **Serveurs MCP** (`mcpServer`)
-- **Skills** (`skill`), voir [Skills](/docs/features/skills)
-- **Agents distants** (`remoteAgent`), pour l'[API Agents](/docs/features/agents_api)
-- **Environnements de code** (`codeEnvironment`), pour les workers de code gérés par le déploiement ; voir [Interpréteur de code](/docs/features/code_interpreter)
-- **Liens partagés** (`sharedLink`), voir [Liens partageables](/docs/features/shareable_links)
-
-### Rôles d'accès (Préréglages de permissions) [#access-roles-permission-presets]
-
-Plutôt que d'exposer les bits de permission bruts aux utilisateurs finaux, le partage repose sur trois rôles nommés par type de ressource (les liens partagés ne disposent que des rôles Viewer et Owner) :
-
-| Rôle       | Bits de permission                              | Ce que le bénéficiaire peut faire                                   |
-| ---------- | ----------------------------------------------- | ------------------------------------------------------------------- |
-| **Viewer** | `VIEW` (`0b0001`)                               | Utiliser / interagir avec la ressource                              |
-| **Editor** | `VIEW` + `EDIT` (`0b0011`)                      | Voir et modifier les paramètres, instructions, outils et fichiers de la ressource |
-| **Owner**  | `VIEW` + `EDIT` + `DELETE` + `SHARE` (`0b1111`) | Contrôle total : modifier, supprimer et repartager avec d'autres    |
-
-Sous le capot, les permissions sont stockées sous forme de masque binaire (`permBits`) pour chaque paire (ressource, principal) ; les sur-ensembles sont gérés automatiquement, ainsi l'octroi du rôle Editor implique celui de Viewer.
-
-Un cinquième bit, `VIEW_INSIGHTS` (`0b10000`), s'applique uniquement aux agents. Il permet à un principal qui détient également `VIEW` de consulter les [Insights](/docs/features/insights) de cet agent. Il ne fait pas partie des préréglages Viewer, Editor ou Owner : seuls les administrateurs peuvent l'accorder, via le bouton **View insights** dans la boîte de dialogue de partage d'un agent, et il ne peut pas être attribué au principal public.
-
-### Accorder l'accès depuis l'interface utilisateur [#granting-access-from-the-ui]
-
-1. Ouvrez la ressource (constructeur d'agent, formulaire de prompt, paramètres du serveur MCP, etc.)
-2. Cliquez sur le bouton **Share** (visible lorsque vous êtes le propriétaire, un administrateur, ou que vous avez reçu l'autorisation `SHARE`)
-3. Dans la boîte de dialogue de partage :
-   - Utilisez le sélecteur de personnes pour rechercher des **utilisateurs**, des **groupes** ou des **rôles** à ajouter
-   - Choisissez un rôle d'accès (Viewer / Editor / Owner) par principal
-   - Activez éventuellement l'**Accès public** pour rendre la ressource visible par tout le monde sur l'instance (nécessite l'autorisation de fonctionnalité `SHARE_PUBLIC`)
-4. Enregistrer. Les bénéficiaires voient la ressource la prochaine fois qu'ils actualisent.
-
-<Callout type="warning" title="Protection contre les fuites de données">
-  Les bénéficiaires ayant les rôles Editor et Owner peuvent voir tout ce qui est configuré sur la ressource, y compris les instructions système, les fichiers joints et les outils. Tout agent peut également divulguer des données jointes via la sortie de la conversation ; assurez-vous donc que vos instructions sont robustes contre l'injection de prompt avant d'accorder un accès en modification ou de rendre un agent public.
-</Callout>
-
-### Ce que voient les bénéficiaires [#what-grantees-see]
-
-- Les **Viewers** voient la ressource comme un élément prêt à l'emploi dans le sélecteur correspondant (par exemple, le menu déroulant des agents). Ils ne peuvent pas ouvrir le constructeur, voir les instructions brutes ou modifier les paramètres.
-- Les **Editors** peuvent ouvrir la configuration de la ressource et la modifier, mais ne peuvent ni la supprimer ni la repartager.
-- Les **Owners** disposent de la même interface utilisateur que l'auteur original et peuvent supprimer et repartager librement.
-- **L'auteur original** conserve toujours un contrôle total, quel que soit l'état de l'ACL, et les administrateurs peuvent gérer n'importe quelle ressource sur l'instance.
-
-## Couche 3 : Octroi de privilèges système (Capacités d'administration) [#layer-3-system-grants-admin-capabilities]
-
-Les octrois système (system grants) sont une table d'octrois distincte utilisée pour les **capacités de niveau administrateur**, répondant à des questions telles que _"Cet utilisateur peut-il accéder au panneau d'administration ?"_ ou _"Ce groupe peut-il gérer les serveurs MCP globalement ?"_. Ils sont toujours limités à un principal (utilisateur, groupe ou rôle) et à une chaîne de caractères de capacité.
-
-Les capacités canoniques incluent :
-
-| Capacité | Objectif |
-| ------------------------------------ | --------------------------------------------- |
-| `access:admin` | Accéder au panneau d'administration |
-| `read:users` / `manage:users` | Consulter / modifier les comptes utilisateurs |
-| `read:groups` / `manage:groups` | Consulter / modifier les groupes |
-| `read:roles` / `manage:roles` | Consulter / modifier les rôles personnalisés |
-| `read:configs` / `manage:configs` | Consulter / modifier l'ensemble de la configuration système |
-| `read:configs:<section>` / `manage:configs:<section>` | Consulter / modifier une section de configuration de premier niveau |
-| `assign:configs:{user\|group\|role}` | Attribuer des profils de surcharge de configuration à des entités |
-| `read:usage` | Consulter l'utilisation de la plateforme et la télémétrie |
-| `read:agents` / `manage:agents` | Consulter / modérer tous les agents de l'instance |
-| `read:prompts` / `manage:prompts` | Consulter / modérer tous les prompts |
-| `read:skills` / `manage:skills` | Consulter / modérer toutes les compétences |
-| `read:sharedlinks` / `manage:sharedlinks` | Consulter / modérer tous les liens partagés |
-| `manage:mcpservers` | Gérer les serveurs MCP globalement |
-| `manage:code_environments` | Enregistrer et révoquer les workers de code détenus par le déploiement |
-| `read:insights` | Consulter les [Insights](/docs/features/insights) de chaque agent |
-| `read:audit_log` | Lister, consulter et exporter le journal d'audit des autorisations (lecture seule ; il n'existe pas de équivalent en écriture) |
-
-Les capacités de gestion impliquent leurs capacités de lecture correspondantes (par exemple, détenir `manage:users` accorde automatiquement `read:users`). Cela s'applique également aux sections de configuration : `manage:configs:endpoints` satisfait `read:configs:endpoints`. Les utilisateurs disposant uniquement d'un accès en lecture à une section de configuration reçoivent des réponses de configuration administrateur filtrées selon les sections qu'ils sont autorisés à lire ; les utilisateurs sans droit de lecture de configuration reçoivent une erreur `403`.
-
-`read:assistants` et `manage:assistants` existent également mais sont réservés : aucun middleware ne les applique pour l'instant.
-
-Un utilisateur `SystemRoles.ADMIN` détient implicitement toutes les capacités ; les autorisations (grants) vous permettent de **déléguer** un sous-ensemble de pouvoirs d'administration à des principaux non-administrateurs sans en faire des administrateurs complets. L'accès à l'interface utilisateur d'administration elle-même nécessite toujours `access:admin`.
-
-Les autorisations système sont accordées et révoquées via le [Panneau d'administration](/docs/features/admin_panel).
-
-## Principes en profondeur [#principals-in-depth]
-
-### Utilisateurs [#users]
-
-Comptes LibreChat standard. Les utilisateurs peuvent être **locaux** (e-mail/mot de passe) ou **fédérés** (OAuth2, OIDC, SAML, LDAP). Les utilisateurs fédérés peuvent être associés à une identité externe (`idOnTheSource`) ; pour Entra ID, il s'agit de l'OID, ce qui permet la synchronisation des groupes.
-
-### Groupes [#groups]
-
-Un groupe est une collection nommée d'utilisateurs. LibreChat prend en charge deux sources :
-
-- **Groupes locaux** : créés et gérés depuis le panneau d'administration ou directement dans la base de données. Les membres sont des identifiants utilisateur LibreChat.
-- **Groupes Entra ID (Azure AD)** : synchronisés depuis Microsoft Graph lorsqu'un utilisateur se connecte via Azure OIDC avec la [réutilisation de jeton](/docs/configuration/authentication/OAuth2-OIDC/token-reuse) activée. Chaque groupe synchronisé stocke son ID d'objet Entra en tant que `idOnTheSource`, ce qui permet à LibreChat de rester en parfaite adéquation avec l'appartenance au tenant.
-
-Les groupes peuvent apparaître dans n'importe quelle ACL, dans la recherche `peoplePicker`, et en tant que cible principale pour les remplacements de configuration ou les octrois système. Une ressource unique partagée avec un groupe de 500 personnes constitue une seule entrée ACL (et non 500), et les changements d'appartenance dans Entra se propagent automatiquement lors de la connexion suivante.
-
-### Réglage du cache principal ACL [#acl-principal-cache-tuning]
-
-LibreChat met en cache les ID de groupe utilisés pour résoudre les principaux ACL d'un utilisateur pendant cinq minutes par défaut. Le cache est limité par locataire et par identité de membre, et les changements d'appartenance à un groupe invalident les entrées concernées. Il ne met pas en cache le rôle de l'utilisateur ni la recherche de `idOnTheSource`, de sorte que ces valeurs continuent d'être résolues à partir de l'utilisateur de la requête actuelle ou de la base de données.
-
-```bash filename=".env"
-# Group-membership cache lifetime; 0 disables the cache
-USER_PRINCIPALS_CACHE_TTL_MS=300000
-
-# Redis-backed deployments only: deduplicate cold cache builds across replicas
-USER_PRINCIPALS_LOCK_TTL_MS=5000
-USER_PRINCIPALS_LOCK_WAIT_MS=5000
-```
-
-Lorsque le cache principal est basé sur Redis, les paramètres de verrouillage empêchent plusieurs réplicas de reconstruire la même entrée froide simultanément. Définissez `USER_PRINCIPALS_LOCK_TTL_MS=0` pour désactiver uniquement le verrouillage de construction ; le stockage en cache partagé et l'invalidation inter-processus restent actifs. Les échecs de cache et de verrouillage reviennent à la base de données et ne bloquent pas les vérifications d'autorisation.
-
-### Rôles [#roles]
-
-N'importe quel rôle système ou personnalisé peut être utilisé comme mandant. Partager un agent avec un rôle (par exemple `SupportEngineers`) donne accès à chaque utilisateur détenant actuellement ce rôle, sans avoir besoin d'énumérer les individus. Les rôles peuvent être masqués du sélecteur de personnes via [`interface.peoplePicker.roles`](/docs/configuration/librechat_yaml/object_structure/interface#peoplepicker) pour les environnements où le partage basé sur les rôles est une préoccupation réservée aux administrateurs.
-
-### Public [#public]
-
-Un principal spécial qui correspond à chaque utilisateur authentifié. Les accès publics ne sont autorisés que lorsque l'utilisateur qui accorde l'accès détient l'autorisation de fonctionnalité `SHARE_PUBLIC` pour ce type de ressource.
-
-## Visibilité du sélecteur de personnes [#people-picker-visibility]
-
-Le sélecteur de personnes (la zone de recherche dans les boîtes de dialogue de partage) peut être limité au niveau de l'instance pour masquer les types de principaux qui ne sont pas pertinents pour votre déploiement :
-
-```yaml filename="librechat.yaml"
-interface:
-  peoplePicker:
-    users: true
-    groups: true
-    roles: false
-```
-
-Cela affecte uniquement l'_interface utilisateur de recherche_ ; les entrées ACL existantes pour les types de principaux masqués continuent de fonctionner et sont appliquées normalement.
-
-## Migrations depuis les versions antérieures à l'ACL [#migrations-from-pre-acl-versions]
-
-Les versions antérieures à v0.8.0-rc3 utilisaient un modèle de propriété plus simple. La mise à niveau nécessite l'exécution de la migration ACL afin que les agents et les prompts existants restent accessibles :
-
-**Dry run (prévisualisation des changements) :**
-
-```bash
-npm run migrate:agent-permissions:dry-run
-npm run migrate:prompt-permissions:dry-run
-```
-
-**Exécuter :**
-
-```bash
-npm run migrate:agent-permissions
-npm run migrate:prompt-permissions
-```
-
-Consultez le [guide de migration](/docs/configuration/access_control#migrating-from-pre-acl-versions) pour les variantes Docker et les options de taille de lot.
-
-## Documentation associée [#related-documentation]
-
-- [Agents : Partage et autorisations](/docs/features/agents#sharing-and-permissions)
-- [Configuration de l'interface (autorisations des fonctionnalités)](/docs/configuration/librechat_yaml/object_structure/interface)
-- [Authentification](/docs/features/authentication)
-- [Réutilisation de jeton OpenID Connect (requis pour la synchronisation de groupe Entra ID)](/docs/configuration/authentication/OAuth2-OIDC/token-reuse)
-- [Azure / Entra ID OAuth2](/docs/configuration/authentication/OAuth2-OIDC/azure)
-- [Intégration SharePoint](/docs/configuration/sharepoint)
-- [API des Agents (Agents Distants)](/docs/features/agents_api)
-- [Panneau d'administration LibreChat](/docs/features/admin_panel)
+The defaults work without any setup: the first account is the admin, and everyone else can use but not share. To change feature defaults from `librechat.yaml`, limit what the people picker shows, sync Entra ID groups, promote another admin, or migrate an instance upgraded from before v0.8.0-rc3, see [Access Control configuration](/docs/configuration/access_control). Custom roles, groups, grants, and per-group configuration need the [Admin Panel](/docs/features/admin_panel).

@@ -2,283 +2,44 @@
 title: Panel Admin
 icon: LayoutDashboard
 description: >-
-  Antarmuka web mandiri untuk mengelola pengguna, grup, peran, penimpaan
-  konfigurasi, dan hibah sistem LibreChat, tanpa perlu mengedit librechat.yaml
-  secara manual.
+  A separate web app for managing LibreChat users, groups, roles, permissions,
+  and configuration from the browser instead of editing librechat.yaml.
 ---
 
-# Panel Admin LibreChat [#librechat-admin-panel]
+The Admin Panel is a separate web app for running a LibreChat instance from the browser. You use it to manage users, groups, and roles, decide what each role is allowed to do, hand out admin powers, and change configuration (for everyone, or only for a specific role or group) without editing `librechat.yaml` and restarting.
 
-**LibreChat Admin Panel** adalah antarmuka manajemen berbasis peramban yang berdiri sendiri untuk LibreChat. Panel ini terhubung ke basis data yang sama dengan LibreChat itu sendiri dan menyediakan GUI untuk tugas-tugas administratif yang mendukung [granular access control](/docs/features/access_control): administrasi pengguna dan grup, manajemen peran, penggantian konfigurasi yang dicakup untuk peran atau grup, serta pemberian kapabilitas tingkat sistem.
+It is its own service with its own URL, developed at [LibreChat-AI/admin-panel](https://github.com/LibreChat-AI/admin-panel). It keeps no data of its own: every change goes through LibreChat's admin API and lands in LibreChat's database.
 
-<Callout type="info" title="Status: Pratinjau">
-  Panel admin dikirim sebagai layanan `admin-panel` di `docker-compose.yml` dan `deploy-compose.yml`, serta dibangun di atas API admin yang diperkenalkan di [LibreChat v0.8.5](/changelog/v0.8.5). Sumber kode, isu, dan rilis tersedia di [github.com/ClickHouse/librechat-admin-panel](https://github.com/ClickHouse/librechat-admin-panel).
-</Callout>
+## Signing in [#signing-in]
 
-## Apa Fungsinya [#what-it-does]
+You sign in with a LibreChat account, either with its email and password or through single sign-on configured on the instance, such as OpenID Connect or Google. The account needs the `ADMIN` role, or the `access:admin` capability granted to it (directly, or through one of its groups or its role). LibreChat checks this on every request, so the panel cannot give itself more access than the account has. Sessions end after 30 minutes of inactivity by default. With SSO, the panel refreshes your LibreChat session in the background, and each refresh checks again that the account is not banned and still has admin access; losing access ends the panel session.
 
-Panel admin adalah klien tipis: semua data tersimpan di basis data LibreChat, dan setiap tindakan melalui endpoint `/api/admin/*` yang memiliki versi di server API LibreChat. Panel ini memberikan administrator satu tempat untuk:
+Once an admin panel URL is configured, users with admin access also find an **Admin Panel** link in LibreChat under **Settings > General**. Other users do not see it.
 
-- **Kelola konfigurasi**: lihat dan edit setiap pengaturan LibreChat melalui formulir dinamis berbasis skema. Bidang baru yang ditambahkan ke skema konfigurasi akan muncul secara otomatis, tanpa memerlukan rilis panel admin.
-- **Terapkan override per-principal**: terapkan override konfigurasi dengan cakupan spesifik ke peran, grup, atau pengguna, dengan kaskade berbasis prioritas yang menentukan nilai akhir yang terselesaikan dan dilihat setiap pengguna saat login.
-- **Mengelola pengguna**: mencantumkan, mencari, dan melihat setiap akun pada instance.
-- **Kelola grup**: membuat dan menghapus grup, menambah/menghapus anggota, serta menggunakan grup sebagai prinsipal kelas satu dalam ACL dan penggantian (overrides).
-- **Kelola peran**: buat peran kustom di luar `USER` / `ADMIN` bawaan, edit matriks fitur-izin mereka, dan tetapkan pengguna ke peran tersebut.
-- **Issue system grants**: mendelegasikan kemampuan admin (contoh: `manage:users`, `read:usage`, `manage:mcpservers`) kepada pengguna, grup, atau peran tertentu tanpa menjadikan mereka admin penuh.
-- **Authenticate**: masuk dengan akun admin LibreChat lokal, atau melalui OpenID SSO / SAML / penyedia OAuth yang didukung saat fitur tersebut diaktifkan pada instance LibreChat.
+## What you can do [#what-you-can-do]
 
-Untuk model izin yang mendasarinya (prinsipal, ACL sumber daya, kapabilitas, dan bagaimana lapisan-lapisan tersebut disusun), lihat halaman [Access Control](/docs/features/access_control).
+The sidebar sections map to the main jobs:
 
-## Arsitektur [#architecture]
+- **Users**: list and search every account on the instance, filter by role, and move people in and out of roles. (The panel has a delete action, but current LibreChat does not accept deletions through the admin API yet; use the delete-user script instead.)
+- **Access**: create custom roles beyond `USER` and `ADMIN` and edit the feature permissions of each role, and create groups and manage their members. Groups and roles created here can be picked in LibreChat's share dialogs.
+- **Configuration**: view and edit LibreChat's settings as forms. The forms are generated from LibreChat's own config schema, so new settings show up without updating the panel.
+- **Grants**: give individual admin capabilities, such as managing users or editing one section of the configuration, to a user, group, or role, without making them a full admin.
 
-```
-┌──────────────────┐         ┌──────────────────┐         ┌──────────────┐
-│  Admin Panel     │ ───────▶│  LibreChat API   │ ───────▶│   MongoDB    │
-│  (Bun + Vite)    │  HTTPS  │  /api/admin/*    │         │  (shared DB) │
-└──────────────────┘         └──────────────────┘         └──────────────┘
-       │                             │
-       │ OAuth/OIDC/SAML redirect    │ Verifies admin access
-       └─────────────────────────────┘
-```
+What each person sees in the panel depends on their capabilities. Someone allowed to manage only the `interface` section, for example, sees only that section. Someone who can only read roles sees the roles but cannot change them; someone without any of the access capabilities gets an access denied page for that section.
 
-Panel admin berjalan sebagai layanan terpisah; layanan ini tidak berbagi proses dengan LibreChat. Kemampuan admin diverifikasi di sisi LibreChat melalui pemberian akses `access:admin` atau peran `SystemRoles.ADMIN`, sehingga panel tidak dapat memberikan hak istimewa kepada dirinya sendiri yang seharusnya tidak dimilikinya.
+## Configuration for specific roles and groups [#configuration-for-specific-roles-and-groups]
 
-Permukaan API admin yang diekspos oleh LibreChat adalah:
+Beyond the Base profile, which applies to everyone, you can save a profile of overrides for a single role, group, or user. Only the settings you change are stored in it; everything else is inherited. Each profile has a priority (role profiles default to 10, group to 20, user to 100), and when LibreChat builds a user's configuration it starts from `librechat.yaml` and the Base profile, then applies the profiles that match that user from the lowest priority to the highest, so a user profile wins over a group or role profile by default. That is how a research group gets extra endpoints, or contractors get a stricter interface, without running a second instance.
 
-| Mount | Tujuan |
-| ----------------------------------------- | ------------------------------------------------------------------------------- |
-| `POST /api/admin/login` &nbsp; `/oauth/*` | Endpoint autentikasi khusus admin (lokal + SSO) |
-| `GET /api/admin/verify` | Memvalidasi sesi admin |
-| `/api/admin/users` | Daftar dan pencarian pengguna |
-| `/api/admin/groups` | CRUD grup + manajemen anggota |
-| `/api/admin/roles` | CRUD peran kustom + pengeditan izin + manajemen anggota |
-| `/api/admin/grants` | Pemberian kapabilitas sistem (tetapkan/cabut/daftar) |
-| `/api/admin/config` | Konfigurasi dasar + penggantian konfigurasi per prinsipal |
-| `/api/admin/skills` | Sinkronisasi skill GitHub: status, jalankan, dan kredensial sinkronisasi |
-| `/api/admin/code-environments` | Memasangkan dan mencabut worker lingkungan kode (`manage:code_environments`) |
-| `/api/admin/langfuse` | Membaca, memperbarui, dan menguji koneksi Langfuse, serta tautan sesi per percakapan |
-| `/api/admin/audit-log` | Log audit pemberian akses (`read:audit_log`) |
+A few things to know when editing configuration:
 
-Endpoint log audit adalah `GET /` (daftar), `GET /export.csv` (ekspor CSV), `GET /verify` (pemeriksaan integritas), dan `GET /:id` (entri tunggal). Endpoint tersebut memerlukan `access:admin` dan `read:audit_log`. Log bersifat append-only, sehingga tidak ada kemampuan manage dan tidak ada endpoint tulis.
+- Changes are checked against the same rules as `librechat.yaml`. An edit that would make the configuration invalid is refused and nothing is saved. If an upgrade makes an older saved value invalid, LibreChat ignores that field, falls back to the value underneath, and logs a warning, so check the logs after upgrading.
+- API keys and other secrets you enter (for example for web search, speech, OCR, Langfuse, or custom endpoints) are stored encrypted and only shown masked afterwards. If you change where a saved key is sent, such as a server or base URL, you have to enter the key again.
+- `${ENV_VAR}` references are only accepted for variables LibreChat already knows about or that the operator allowed.
+- Some settings stay in `librechat.yaml` only: MCP servers that run a local process (`type: stdio`, or `command`, `args`, `env`), and Langfuse gateway headers. The panel cannot add, change, or remove them. Remote MCP servers can be managed normally.
 
-## Memulai [#getting-started]
+Feature permissions are not overrides: the switches that decide whether a role can use or share agents, prompts, and the rest are edited on the role itself under **Access**. See [Access Control](/docs/features/access_control) for how roles, groups, and capabilities fit together. Usage per agent is on the separate [Insights](/docs/features/insights) dashboard inside LibreChat.
 
-### Prasyarat [#prerequisites]
+## Pengaturan [#setup]
 
-- Instans LibreChat yang sedang berjalan pada **v0.8.5 atau lebih baru** (API admin tidak tersedia pada versi sebelumnya)
-- Akses jaringan dari container/host admin-panel ke API LibreChat
-- Akun admin di LibreChat: baik pengguna pertama yang terdaftar dalam penyebaran penyewa tunggal (single-tenant) tanpa cakupan (auto-admin), pengguna dengan `role: 'ADMIN'` yang diatur di Mongo, atau prinsipal yang telah diberikan kemampuan `access:admin`. Penyebaran dengan cakupan penyewa (tenant-scoped) harus menyediakan administrator mereka melalui alur administratif yang tepercaya.
-
-### Dibundel dengan LibreChat (direkomendasikan) [#bundled-with-librechat-recommended]
-
-Jika Anda menjalankan LibreChat dengan [`docker-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/docker-compose.yml) atau [`deploy-compose.yml`](https://github.com/LibreChat-AI/LibreChat/blob/main/deploy-compose.yml) resmi, panel admin disertakan sebagai sebuah layanan dan akan otomatis berjalan bersama LibreChat, tanpa perlu penerapan terpisah.
-
-| File Compose | URL Panel Admin | Cara Penyajiannya |
-| ------------------------------ | ------------------------ | ------------------------------------------------------------- |
-| `docker-compose.yml` (default) | `http://localhost:3000` | Dipublikasikan pada port host (`ADMIN_PANEL_PORT`, default `3000`) |
-| `deploy-compose.yml` | `http://admin.localhost` | Diarahkan melalui reverse proxy nginx bawaan pada subdomain |
-
-Atur session secret panel di dalam `.env` LibreChat sebelum memulai stack; file compose akan meneruskannya sebagai `SESSION_SECRET` panel:
-
-```bash filename=".env"
-# Min 32 characters. Generate with: openssl rand -hex 32
-ADMIN_PANEL_SESSION_SECRET=replace-with-a-32-char-random-string
-
-# Optional: host port for the default docker-compose
-# ADMIN_PANEL_PORT=3000
-
-# Optional: set true when the panel is served over HTTPS
-# ADMIN_PANEL_SESSION_COOKIE_SECURE=false
-```
-
-File compose menghubungkan sisanya secara otomatis: `API_SERVER_URL` mengarah ke layanan `api`, `VITE_API_BASE_URL` mengikuti `DOMAIN_CLIENT` untuk pengalihan OAuth yang menghadap ke browser, dan `ADMIN_PANEL_URL` diatur agar LibreChat mengembalikan admin ke panel setelah SSO. Untuk tidak ikut serta, hapus layanan `admin-panel` atau batasi di balik entri [`profiles`](https://docs.docker.com/compose/how-tos/profiles/) Compose.
-
-<Callout type="info" title="admin.localhost pada domain asli">
-  Peramban modern meresolusi `*.localhost` (termasuk `admin.localhost`) ke `127.0.0.1`, sehingga URL deploy-compose berfungsi tanpa perubahan file hosts. Untuk domain asli, arahkan record DNS ke host tersebut, perbarui `server_name` `admin.localhost` di `client/nginx.conf`, dan atur `ADMIN_PANEL_URL` agar sesuai.
-</Callout>
-
-### Standalone (penyebaran terpisah) [#standalone-separate-deployment]
-
-Untuk menjalankan panel admin secara mandiri, yang mengarah ke instans LibreChat yang berjalan di tempat lain, gunakan image yang telah dipublikasikan dari registry LibreChat (`registry.librechat.ai/librechat-ai/librechat-admin-panel:latest`, image yang digunakan oleh file compose bawaan):
-
-```bash
-# 1. Create an env file
-cp .env.example .env
-
-# 2. Edit .env and set at minimum:
-#    SESSION_SECRET=<random string, min 32 characters>
-#    VITE_API_BASE_URL=http://host.docker.internal:3080
-
-# 3. Start it
-docker compose up -d   # http://localhost:3000
-docker compose down    # stop
-```
-
-`docker run` mandiri:
-
-```bash
-docker run -p 3000:3000 \
-  --add-host=host.docker.internal:host-gateway \
-  -e SESSION_SECRET=replace-with-32-char-random-string \
-  -e VITE_API_BASE_URL=http://host.docker.internal:3080 \
-  registry.librechat.ai/librechat-ai/librechat-admin-panel:latest
-```
-
-<Callout type="warning" title="Jaringan Docker">
-  Di dalam container, `localhost` merujuk pada container itu sendiri, bukan host Anda. Saat LibreChat berjalan pada host yang sama, arahkan `VITE_API_BASE_URL` ke `http://host.docker.internal:3080` (Linux: tambahkan `--add-host=host.docker.internal:host-gateway`). Dalam produksi, gunakan nama DNS publik/internal dari API LibreChat Anda.
-</Callout>
-
-### Jalankan Secara Lokal untuk Pengembangan [#run-locally-for-development]
-
-```bash
-git clone https://github.com/ClickHouse/librechat-admin-panel.git
-cd librechat-admin-panel
-cp .env.example .env    # then edit
-bun install
-bun dev                 # http://localhost:3000
-```
-
-## Environment Variables [#environment-variables]
-
-| Variabel | Wajib | Default | Deskripsi |
-| -------- | ----- | ------- | --------- |
-| `SESSION_SECRET` | **Ya** di production | Fallback pengembangan yang di-hardcode saat menjalankan `bun dev`; **tidak ada default** di Docker image | Kunci enkripsi sesi. Harus minimal 32 karakter. |
-| `VITE_API_BASE_URL` | **Ya** di Docker | `http://localhost:3080` (hanya untuk pengembangan lokal) | URL server API LibreChat yang diakses dari browser, digunakan untuk redirect OAuth. |
-| `API_SERVER_URL` | Tidak | Menggunakan `VITE_API_BASE_URL` sebagai fallback | URL sisi server untuk panggilan API LibreChat. Berguna ketika server admin-panel mengakses LibreChat melalui URL yang berbeda dari browser (misalnya layanan Kubernetes internal vs. hostname publik). |
-| `PORT` | Tidak | `3000` | Port tempat admin panel mendengarkan. |
-| `ADMIN_PANEL_SESSION_SECRET` | **Ya** | _tidak diatur_ | Variabel sisi LibreChat yang dipetakan ke `SESSION_SECRET` milik admin panel untuk layanan admin-panel bawaan. Buat nilai unik dengan minimal 32 karakter sebelum menjalankan panel. |
-| `ADMIN_PANEL_PORT` | Tidak | `3000` | Port host yang diekspos oleh layanan admin-panel bawaan di `docker-compose.yml` default. |
-| `ADMIN_SSO_ONLY` | Tidak | `false` | Menyembunyikan formulir email/kata sandi, sehingga login hanya melalui SSO. |
-| `ADMIN_SESSION_IDLE_TIMEOUT_MS` | Tidak | `1800000` (30 menit) | Batas waktu sesi tidak aktif dalam milidetik. |
-| `SESSION_COOKIE_SECURE` | Tidak | `true` di production | Menentukan apakah cookie sesi memerlukan HTTPS. |
-| `ADMIN_PANEL_METRICS_SECRET` | Tidak | _tidak diatur_ | Bearer token yang diperlukan untuk mengambil data dari endpoint Prometheus `/metrics`. Endpoint mengembalikan `401` jika tidak diatur atau tidak cocok. |
-
-Dalam tumpukan Docker bawaan LibreChat, panel admin berjalan sebagai layanan `admin-panel`. `docker-compose.yml` standar mengeksposnya pada `ADMIN_PANEL_PORT`; `deploy-compose.yml` mengarahkannya melalui nginx di `http://admin.localhost` dan menetapkan `ADMIN_PANEL_URL` untuk layanan API. Panel tersebut menolak untuk dimulai sampai `ADMIN_PANEL_SESSION_SECRET` dikonfigurasi.
-
-### URL Pengalihan LibreChat [#librechat-redirect-url]
-
-Ketika panel admin di-host pada URL yang terpisah dari LibreChat, atur `ADMIN_PANEL_URL` di lingkungan API LibreChat. Gunakan URL dasar panel admin eksternal, termasuk awalan jalur (path prefix) apa pun, dan hilangkan garis miring (trailing slash) di akhir:
-
-```bash filename=".env"
-ADMIN_PANEL_URL=https://admin.example.com/admin
-```
-
-Ketika diatur, LibreChat juga menampilkan tautan **Admin Panel** kepada administrator di bawah **Settings > General**. Pengguna non-admin tidak melihat tautan tersebut.
-
-Untuk penyebaran Helm, atur `librechat.adminPanelUrl` di dalam file values Anda. Chart tersebut akan merendernya sebagai `ADMIN_PANEL_URL` untuk alur OAuth admin LibreChat:
-
-```yaml filename="values.yaml"
-librechat:
-  adminPanelUrl: https://admin.example.com/admin
-```
-
-Untuk OpenID SSO, daftarkan `${DOMAIN_SERVER}/api/admin/oauth/openid/callback` dengan penyedia identitas Anda.
-
-### Kontrol Cache [#cache-controls]
-
-Ini mencerminkan env var cache LibreChat. Varian `ADMIN_PANEL_*` lebih diutamakan, dan akan kembali ke padanan LibreChat bersama jika tidak diatur.
-
-| Variabel | Tujuan |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `STATIC_CACHE_MAX_AGE` / `ADMIN_PANEL_STATIC_CACHE_MAX_AGE`     | `max-age` peramban dalam detik untuk aset yang di-hash di `/assets/` (default 172800 = 2 hari). |
-| `STATIC_CACHE_S_MAX_AGE` / `ADMIN_PANEL_STATIC_CACHE_S_MAX_AGE` | `s-maxage` CDN dalam detik (default 86400 = 1 hari).                                      |
-| `INDEX_CACHE_CONTROL` / `ADMIN_PANEL_INDEX_CACHE_CONTROL`       | Header `Cache-Control` untuk respons indeks HTML.                                     |
-| `INDEX_PRAGMA` / `ADMIN_PANEL_INDEX_PRAGMA`                     | Header `Pragma` untuk respons indeks HTML.                                            |
-| `INDEX_EXPIRES` / `ADMIN_PANEL_INDEX_EXPIRES`                   | Header `Expires` untuk respons indeks HTML.                                           |
-
-## Autentikasi [#authentication]
-
-Panel admin menggunakan kembali tumpukan autentikasi LibreChat dan tidak memiliki basis data pengguna sendiri. Dua jalur masuk didukung:
-
-- **Akun lokal**: nama pengguna/kata sandi terhadap pengguna LibreChat mana pun yang akunnya lolos pemeriksaan akses admin.
-- **Single sign-on**: OpenID Connect, SAML, dan penyedia OAuth sosial yang sudah dikonfigurasi pada instans LibreChat Anda. Atur `ADMIN_SSO_ONLY=true` untuk menyembunyikan formulir kata sandi sepenuhnya.
-
-Akses admin diverifikasi di sisi server oleh LibreChat untuk setiap permintaan. Akun tersebut harus:
-
-1. Memiliki `role: 'ADMIN'` di MongoDB, **atau**
-2. Memiliki hak akses sistem `access:admin` (diberikan kepada principal lain melalui panel admin itu sendiri; lihat [System Grants](/docs/features/access_control#layer-3-system-grants-admin-capabilities)).
-
-Sesi berbasis cookie, dienkripsi dengan `SESSION_SECRET`, dan akan kedaluwarsa saat tidak aktif sesuai dengan `ADMIN_SESSION_IDLE_TIMEOUT_MS`.
-
-SSO admin Google meminta akses offline dan persetujuan agar panel dapat menyegarkan token admin LibreChat yang kedaluwarsa tanpa memaksa login baru secara langsung. Konfigurasikan `GOOGLE_CLIENT_ID` dan `GOOGLE_CLIENT_SECRET`, serta daftarkan `${DOMAIN_SERVER}/api/admin/oauth/google/callback` ke Google. Setiap penyegaran akan memeriksa kembali identitas penyedia akun, status blokir, domain email yang diizinkan, tenant, dan akses admin saat ini; kehilangan akses akan mengakhiri sesi admin.
-
-## Manajemen Konfigurasi [#configuration-management]
-
-Panel ini merender konfigurasi LibreChat sebagai formulir dinamis yang didorong oleh skema konfigurasi. Hal ini memiliki dua properti yang berguna:
-
-- **Forward-compatible**: ketika LibreChat merilis field konfigurasi baru, panel akan mengambilnya secara otomatis dari skema. Tidak diperlukan peningkatan atau redeploy panel admin.
-- **Override berlapis**: konfigurasi dasar (dari `librechat.yaml`) dapat ditimpa oleh override per-principal yang dibatasi pada peran, grup, atau pengguna. Ketika pengguna masuk, dokumen yang berlaku digabungkan dalam urutan tetap: profil Base terlebih dahulu terlepas dari prioritasnya, kemudian prioritas menaik, kemudian peran sebelum grup dan grup sebelum pengguna, lalu urutan pembuatan. Profil baru yang ditulis tanpa prioritas akan menerima default untuk jenis principal-nya (peran 10, grup 20, pengguna 100, Base 0), dan penulisan yang tidak menyertakan prioritas akan mempertahankan prioritas yang tersimpan.
-- **Kredensial terenkripsi**: Kredensial server MCP, kunci grup Azure, dan kunci pencarian web yang disimpan melalui API admin dienkripsi saat disimpan (at rest) dan hanya dikembalikan sebagai pratinjau yang disamarkan (masked). Penulisan yang mempertahankan kunci tersimpan sambil mengubah tujuan pengirimannya (seperti URL server atau base URL) harus memasukkan kembali kunci tersebut.
-- **Referensi lingkungan**: Referensi `${ENV_VAR}` dalam override dibatasi pada nama-nama yang sudah direferensikan oleh `librechat.yaml`, kredensial endpoint bawaan, dan nama-nama yang tercantum dalam `CONFIG_OVERRIDE_ENV_ALLOWLIST`. Referensi lain apa pun akan ditolak saat penulisan.
-
-<Callout type="warning" title="Server MCP berbasis proses tetap berada di YAML">
-  Server MCP yang menggunakan `type: stdio` atau field proses seperti `command`, `args`, `env`, `cwd`, atau `stderr` dikelola oleh operator. Konfigurasikan server tersebut hanya di `librechat.yaml`; API admin akan menolak upaya untuk membuat atau mengubahnya, dan override tidak dapat menggantikan atau menghapusnya. Konfigurasi server MCP remote tetap tersedia melalui sistem override yang normal.
-</Callout>
-
-<Callout type="warning" title="Header gateway Langfuse tetap di YAML">
-  Deployment-level `langfuse.headers` dapat berisi kredensial proxy dan bukan merupakan surface konfigurasi yang didukung Mongo. Konfigurasikan di `librechat.yaml`; admin API menolak seluruh map maupun setiap path header individual. Lihat [Authenticated Proxies and Gateways](/docs/configuration/langfuse#authenticated-proxies-and-gateways).
-</Callout>
-
-Ini adalah antarmuka di balik [sistem penggantian konfigurasi per-prinsipal berbasis DB](https://github.com/LibreChat-AI/LibreChat/pull/12354) LibreChat. Kasus penggunaan umum:
-
-- Berikan grup "Research" `recursionLimit` yang lebih tinggi dan endpoint tambahan
-- Izinkan peran "FinanceAdmins" untuk mengelola server MCP jarak jauh sementara pengguna biasa hanya dapat menggunakannya
-- Batasi izin `interface` yang lebih ketat untuk grup kontraktor eksternal
-
-Administrator juga dapat menggunakan dasbor [Admin Insights](/docs/features/insights) yang bersifat opt-in untuk meninjau aktivitas MongoDB dengan cakupan tenant. Atur `ENABLE_INSIGHTS=true`; siapa yang dapat meninjau Agent mana dijelaskan dalam [Admin Insights](/docs/features/insights#access-requirements).
-
-### Mengesampingkan Validasi [#override-validation]
-
-Penulisan penggantian (`PUT /api/admin/config/:principalType/:principalId` dan `PATCH .../fields`) divalidasi terhadap skema yang sama dengan `librechat.yaml`, yang diterapkan di atas konfigurasi dasar deployment. Penulisan yang akan menghasilkan konfigurasi tidak valid akan ditolak dengan HTTP 400 dan tidak ada yang disimpan:
-
-```json
-{
-  "error": "Invalid config override",
-  "code": "CONFIG_OVERRIDE_INVALID",
-  "issues": [{ "path": "interface.fileSearch", "code": "invalid_type" }]
-}
-```
-
-Setiap masalah hanya memuat dot-path dan kode stabil (kode masalah skema seperti `invalid_type`, atau `missing_merge_key`, `duplicate_merge_key`, `indexed_merge_key_write`, `union_dropped_key`, atau `invalid_document`), tidak pernah memuat nilai yang dikirimkan. Patch bidang hanya ditolak karena masalah yang disentuh atau diperkenalkannya, sehingga nilai tidak valid yang lebih lama di tempat lain dalam override yang sama tidak akan memblokirnya.
-
-Penggantian (overrides) tersimpan yang telah menjadi tidak valid, misalnya setelah peningkatan (upgrade) memperketat skema, tidak bersifat fatal. Saat konfigurasi diselesaikan, kolom yang tidak valid akan dihapus, nilai di bawahnya (biasanya nilai `librechat.yaml` dasar) akan diterapkan, dan server akan mencatat satu peringatan per kolom:
-
-```text
-[mergeConfigOverrides] Ignoring invalid override "<path>" for <principalType>/<principalId> (<code>)
-```
-
-Periksa log untuk baris-baris ini setelah melakukan peningkatan, kemudian perbaiki atau hapus kolom yang tercantum di panel. Tema pengganti (override theme) yang gagal memenuhi [aturan tema](/docs/configuration/librechat_yaml/object_structure/theme#validation) akan kembali ke tema dasar dengan cara yang sama.
-
-### Delegasi Berlingkup Bagian [#section-scoped-delegation]
-
-Pemberian konfigurasi dapat bersifat luas (`read:configs`, `manage:configs`) atau terbatas pada satu bagian tingkat atas (`read:configs:<section>`, `manage:configs:<section>`). Pembaca dengan cakupan bagian menerima respons konfigurasi yang difilter yang hanya berisi bagian yang diotorisasi, alih-alih ditolak seluruh permintaannya. Pemberian akses kelola tingkat bagian menyiratkan akses baca ke bagian yang sama; akses kelola yang luas menyiratkan akses baca yang luas.
-
-Contohnya termasuk `read:configs:interface`, `manage:configs:endpoints`, dan `manage:configs:langfuse`. Pengguna yang didelegasikan tetap memerlukan `access:admin` untuk masuk ke antarmuka admin. Setiap mutasi buat, patch, tombstone, atau hapus dari profil dasar `__base__` memerlukan `manage:configs` yang luas; manajemen berbasis bagian (section-scoped) berlaku untuk penggantian peran, grup, dan pengguna.
-
-### Stored Secrets [#stored-secrets]
-
-Saat kolom rahasia yang terdaftar ditulis melalui API konfigurasi admin, LibreChat mengenkripsi nilai literal saat disimpan (at rest) dan hanya mengembalikan pratinjau tersamar yang dibuat oleh server. Saat ini, hal ini mencakup Langfuse, OCR, speech, web-search, Assistants, Azure Assistants, dan setiap `endpoints.custom[].apiKey`. Menghilangkan rahasia selama pengeditan di kemudian hari akan mempertahankan nilai yang tersimpan.
-
-Referensi lingkungan yang didukung tetap menjadi referensi yang dapat dibaca untuk kolom yang mengizinkannya. Kunci API endpoint kustom juga tetap mempertahankan nilai `${ENV_VAR}` dan `user_provided` alih-alih mengenkripsinya. Penanganan rahasia berbasis registri: nilai arbitrer dalam peta generik seperti header kustom atau konfigurasi MCP tidak dienkripsi secara otomatis, jadi terus gunakan referensi lingkungan atau mekanisme kredensial khusus fitur tersebut di sana.
-
-## Terkait [#related]
-
-- [Access Control](/docs/features/access_control): model perizinan yang menjadi dasar pembangunan panel admin
-- [Konfigurasi Antarmuka](/docs/configuration/librechat_yaml/object_structure/interface): fitur flag yang disunting oleh panel
-- [Authentication](/docs/features/authentication): autentikasi pengguna pada LibreChat
-- [changelog v0.8.5](/changelog/v0.8.5): fondasi API admin
-- [GitHub: ClickHouse/librechat-admin-panel](https://github.com/ClickHouse/librechat-admin-panel): sumber, masalah, rilis
-
-## Membaca Konfigurasi API dan Laporan Penulisan [#configuration-read-apis-and-write-reports]
-
-Pemanggil yang berwenang dapat memeriksa kemampuan deployment dengan `GET /api/admin/config/meta`, opsi scope/model dengan `/catalog`, status referensi environment dengan `/env-status`, konfigurasi permintaan efektif dengan `/effective`, dan konfigurasi yang telah diselesaikan untuk sebuah principal dengan `/resolved/:principalType/:principalId`. Pembacaan tetap mempertahankan batas otorisasi dan penyamaran rahasia (secret-masking).
-
-`POST /api/admin/config/:principalType/:principalId/changes` mendukung perubahan atomik per profil. Periksa laporan penulisannya: lokasi yang diterapkan dan yang dilewati adalah hal yang berbeda, dan jalur khusus deployment dapat dilewati tanpa menolak seluruh batch. Pembacaan dokumen tersimpan juga dapat melaporkan kolom yang diabaikan; tidak adanya laporan tidak membuktikan bahwa tidak ada kolom yang diabaikan.
-
-Operasi koleksi berkunci yang didukung dapat menyembunyikan endpoint kustom berdasarkan nama beserta Model Specs-nya, atau mengatur ulangnya ke pewarisan. Operasi rename yang didukung dan petunjuk rename membawa secret yang terdaftar serta tombstone berkunci; mengganti nama kunci mentah tidak dapat menggantikan operasi tersebut.
-
-`POST /api/admin/config/reload` memuat ulang konfigurasi lokal dan menyiarkan invalidasi. Endpoint ini dapat mengembalikan `503` setelah reload lokal berhasil jika penyiaran lintas-instance gagal. Hasil tersebut bukan rollback dan tidak memastikan bahwa setiap replika telah memuat ulang konfigurasinya. Lihat [panduan upgrade](/docs/configuration/upgrade#admin-configuration-and-secrets) untuk batas re-derivasi endpoint yang bersifat opt-in.
-
-### Partisi Tenant dalam Pembacaan Konfigurasi [#tenant-partitions-in-configuration-reads]
-
-Pratinjau profil grup/pengguna dan konfigurasi pengguna efektif diselesaikan dalam tenant target, termasuk profil Dasar milik tenant tersebut serta profil peran/grup yang berlaku. Pemanggil yang dibatasi pada tenant tertentu tidak dapat melintasi ke tenant lain. Nama peran merujuk pada partisi pemanggil: administrator tanpa cakupan tenant hanya mengubah peran platform beserta anggotanya, profil, grant, dan entri ACL, bukan peran dengan nama yang sama di semua tenant.
+The panel ships as the `admin-panel` service in LibreChat's `docker-compose.yml` and `deploy-compose.yml`, and it will not start until you set `ADMIN_PANEL_SESSION_SECRET` in `.env`. It needs LibreChat v0.8.5 or later. Ports, hosting it on its own domain, SSO redirects, every environment variable, and the admin API used by the panel are covered in [Admin Panel configuration](/docs/configuration/admin_panel).

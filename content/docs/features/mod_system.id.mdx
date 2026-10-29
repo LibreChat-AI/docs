@@ -2,120 +2,37 @@
 title: Moderasi Otomatis
 icon: Shield
 description: >-
-  Sistem Moderasi Otomatis menggunakan mekanisme penilaian untuk melacak
-  pelanggaran pengguna. Saat pengguna melakukan tindakan seperti login,
-  pendaftaran, atau pengiriman pesan yang berlebihan, mereka akan mengumpulkan
-  skor pelanggaran. Setelah mencapai ambang batas yang ditetapkan, pengguna dan
-  IP mereka akan diblokir sementara. Sistem ini memastikan keamanan platform
-  dengan memantau dan memberikan penalti terhadap aktivitas yang cepat atau
-  mencurigakan.
+  Rate limits and violation scores that slow down abuse and temporarily ban
+  accounts and IPs that keep tripping them.
 ---
 
-## Sistem Moderasi Otomatis (opsional) [#automated-moderation-system-optional]
-Sistem Moderasi Otomatis menggunakan mekanisme penilaian untuk melacak pelanggaran pengguna. Saat pengguna melakukan tindakan seperti login, pendaftaran, atau pengiriman pesan yang berlebihan, mereka akan mengumpulkan skor pelanggaran. Setelah mencapai ambang batas yang ditetapkan, pengguna dan IP mereka akan diblokir sementara. Sistem ini memastikan keamanan platform dengan memantau dan memberikan penalti terhadap aktivitas yang cepat atau mencurigakan.
+LibreChat watches for abusive patterns, such as hammering the login form, sending messages faster than allowed, or calling the API from a script, and records each one as a violation against the user. When a user's violation score crosses a threshold, the account and its IP are banned for a while. It is meant to stop one or a few bad actors, not a flood of traffic; put a reverse proxy or DDoS protection such as Cloudflare in front of a public instance for that.
 
-Dalam lingkungan produksi, Anda sebaiknya menggunakan Cloudflare atau perlindungan DDoS lainnya untuk benar-benar melindungi server dari permintaan yang berlebihan, namun perubahan ini sebagian besar akan melindungi Anda dari satu atau beberapa aktor jahat yang menargetkan instans yang Anda deploy untuk tujuan proxy.
+## What counts as a violation [#what-counts-as-a-violation]
 
-### Catatan [#notes]
+Most violations come from rate limits. When a request goes over a limit it is rejected with a "too many requests" style error, and the attempt adds to the user's score. The limits cover:
 
-- Menggunakan caching untuk keamanan dasar dan pencatatan pelanggaran (larangan, pesan bersamaan, melebihi batas laju)
-    - Ketika `USE_REDIS=true`, skor pelanggaran dan pemblokiran disimpan di **Redis**, sehingga dapat dibagikan di antara replika. Tanpa Redis, skor dan pemblokiran menggunakan cache dalam memori.
-    - Skor pelanggaran kedaluwarsa setelah periode tenang yang ditetapkan oleh `VIOLATION_SCORE_TTL` (dalam milidetik, default satu jam; setiap pelanggaran baru memulai ulang hitungan mundur, dan nilai non-positif menonaktifkan kedaluwarsa). Lihat [Automated Moderation](/docs/configuration/mod_system)
-- Melampaui salah satu pembatas kecepatan (login/registrasi/pengiriman pesan) dianggap sebagai pelanggaran, skor default adalah 1
-- Asal non-browser adalah sebuah pelanggaran
-- Skor default untuk setiap pelanggaran dapat dikonfigurasi
-- Mengaktifkan salah satu pembatas (limiters) dan/atau pemblokiran (bans) akan mengaktifkan caching/logging
-- Log pelanggaran dapat ditemukan di folder data, yang dibuat saat pencatatan dimulai: `librechat/data`
-  - **Hanya pelanggaran yang dicatat**
-  - `violations.json` melacak jumlah total untuk setiap pelanggaran per pengguna
-  - `logs.json` mencatat setiap pelanggaran individu per pengguna
-- Log pemblokiran disimpan di MongoDB di bawah koleksi `logs`. Log ini bersifat sementara karena hanya ada selama durasi pemblokiran.
-    - Untuk menghapus larangan secara manual, hapus entri tersebut dari database dan mulai ulang server
+- Logins and registrations, per IP. Too many failed sign-ins shows "Too many login attempts in a short amount of time."
+- Messages: how many responses one user can have running at once ("Only one message can run at a time"), and how many messages can be sent per minute, per IP and optionally per user.
+- Password reset and email verification requests, and the link submissions that follow them.
+- Two-factor code attempts and passkey enrollment.
+- Conversation imports (100 per IP and 50 per user every 15 minutes), forks (30 per IP and 7 per user each minute), and shared link views, each limited per IP and per user at the same time.
+- File uploads, text-to-speech, speech-to-text, and tool calls.
 
-### Tipe Rate Limiter [#rate-limiter-types]
+A few things are violations without any rate limit involved: requests that do not come from a browser, requests for a model the endpoint does not offer (almost always a script probing the server), and attempts to open a conversation the user does not own.
 
-#### Pembatasan Laju Login dan Registrasi [#login-and-registration-rate-limiting]
-Mencegah serangan brute force dan pendaftaran spam dengan membatasi berapa banyak upaya masuk atau pendaftaran akun baru yang dapat dilakukan dari satu alamat IP dalam jangka waktu tertentu.
+Each violation type has its own score. Non-browser requests count heavily by default, and some types are set to 0 in the example `.env`, so they are blocked when they go over the limit but do not move the user toward a ban.
 
-#### Pembatasan Laju Pesan [#message-rate-limiting]
-Mengontrol seberapa sering pengguna dapat mengirim pesan untuk mencegah spam dan penyalahgunaan:
-- **Pembatasan Pesan Bersamaan**: Membatasi berapa banyak pesan yang dapat dikirim pengguna secara bersamaan (mencegah pengguna membuka beberapa tab untuk melewati batas)
-- **Pembatasan Frekuensi Pesan**: Mengontrol seberapa sering pesan dapat dikirim, dapat dikonfigurasi baik berdasarkan alamat IP maupun pengguna individu
+## Bans [#bans]
 
-#### Pembatasan Laju Impor Percakapan [#import-conversation-rate-limiting]
-Mencegah penyalahgunaan fitur impor percakapan dengan membatasi berapa banyak percakapan yang dapat diimpor dalam jangka waktu tertentu. Hal ini membantu mencegah:
-- Impor data massal yang dapat membebani server
-- Skrip otomatis yang mencoba membanjiri sistem dengan data yang diimpor
-- Kehabisan sumber daya akibat pemrosesan impor dalam jumlah besar
+A ban triggers each time a user's total score reaches another multiple of the ban interval (20 by default). The user's sessions are ended immediately, and both the account and the IP it came from are locked out for the ban duration (2 hours by default). A banned user sees "Your account is temporarily banned for violating the terms of service." Bans expire on their own. Scores decay too: a user's score resets after an hour without new violations by default, and each new violation restarts that hour.
 
-Batas default (kedua pembatas selalu diterapkan):
-- Berbasis IP: 100 impor per 15 menit
-- Berbasis pengguna: 50 impor per 15 menit
+To lift a ban early, an admin removes its entry from the `logs` collection in MongoDB. Violation scores and a per-user history of each violation are kept in `data/violations.json` and `data/logs.json` in the LibreChat directory (scores go to Redis instead when Redis is enabled, so every replica sees the same score; bans stay in MongoDB either way), which is the place to look when you want to know why someone got banned.
 
-#### Pembatasan Laju Forking Percakapan [#conversation-forking-rate-limiting]
-Mengontrol seberapa sering pengguna dapat membuat fork (salinan) dari percakapan yang sudah ada. Ini mencegah:
-- Pertumbuhan basis data yang berlebihan akibat duplikasi percakapan massal
-- Kehabisan sumber daya akibat operasi fork
-- Penyalahgunaan fitur forking untuk spam atau pengumpulan data
+## Message moderation [#message-moderation]
 
-Batas default (kedua pembatas selalu diterapkan):
-- Berbasis IP: 30 fork per 1 menit
-- Berbasis pengguna: 7 fork per 1 menit
+Separately from the scoring system, an admin can send chat messages through the OpenAI moderation API before they reach the model. This covers regular chats and agents, not the hosted Assistants endpoints. Flagged messages are not sent, and the user sees "This message was flagged by the moderation system."
 
-#### Pembatasan Laju Unggah File [#file-upload-rate-limiting]
-Dikonfigurasi melalui file librechat.yaml, ini mengontrol seberapa sering pengguna dapat mengunggah file untuk mencegah penyalahgunaan penyimpanan dan kehabisan bandwidth.
+## Pengaturan [#setup]
 
-#### Pembatasan Laju Text-to-Speech (TTS) [#text-to-speech-tts-rate-limiting]
-Mengontrol seberapa sering pengguna dapat meminta konversi teks-ke-ucapan. Ini mencegah:
-- Biaya penggunaan API yang berlebihan
-- Kehabisan sumber daya server akibat pembuatan audio
-- Penyalahgunaan fitur TTS untuk pengambilan data
-
-Dikonfigurasi melalui file librechat.yaml dengan batas yang dapat disesuaikan per IP dan per pengguna.
-
-#### Pembatasan Laju (Rate Limiting) Speech-to-Text (STT) [#speech-to-text-stt-rate-limiting]
-Mengontrol seberapa sering pengguna dapat mengirimkan audio untuk transkripsi. Ini mencegah:
-- Biaya penggunaan API yang berlebihan
-- Kelelahan sumber daya server akibat pemrosesan audio
-- Penyalahgunaan fitur STT untuk layanan transkripsi yang tidak sah
-
-Dikonfigurasi melalui file librechat.yaml dengan batas yang dapat disesuaikan per IP dan per pengguna.
-
-#### Pembatasan Laju Atur Ulang Kata Sandi [#password-reset-rate-limiting]
-Mengontrol seberapa sering pengguna dapat meminta email pengaturan ulang kata sandi. Ini mencegah:
-- Serangan email bombing
-- Penyalahgunaan sistem pengaturan ulang kata sandi
-- Penggunaan layanan email yang berlebihan
-
-#### Pembatasan Laju Verifikasi Email [#email-verification-rate-limiting]
-Mengontrol seberapa sering pengguna dapat meminta pesan verifikasi email. Hal ini mencegah:
-- Serangan spam melalui sistem verifikasi
-- Penyalahgunaan layanan email
-- Kehabisan sumber daya dari permintaan verifikasi
-
-#### Pembatasan Laju Panggilan Alat (Tool Call Rate Limiting) [#tool-call-rate-limiting]
-Mengontrol seberapa sering pengguna dapat melakukan panggilan alat/plugin. Ini mencegah:
-- Penggunaan API yang berlebihan dari alat yang terintegrasi
-- Penyalahgunaan integrasi layanan eksternal
-- Kehabisan sumber daya dari pemrosesan alat
-
-#### Pembatasan Laju Akses Percakapan [#conversation-access-rate-limiting]
-Mengontrol seberapa sering pengguna dapat mengakses atau mencoba mengakses percakapan. Ini mencegah:
-- Upaya akses tidak sah
-- Serangan scraping data
-- Kueri basis data yang berlebihan
-
-### Pembatas Laju (Rate Limiters) [#rate-limiters]
-
-Pembatas laju (rate limiters) proyek saat ini adalah sebagai berikut (lihat di bawah bagian pengaturan untuk nilai default):
-
-- Pembatasan laju login dan registrasi
-- `Optional:` Concurrent Message limiting (only X messages at a time per user)
-- `Optional:` Message limiting (how often a user can send a message, configurable by IP and User)
-- Pembatasan impor percakapan (seberapa sering pengguna dapat mengimpor percakapan, dapat dikonfigurasi berdasarkan IP dan Pengguna)
-- Pembatasan percabangan percakapan (seberapa sering pengguna dapat membuat cabang percakapan, dapat dikonfigurasi berdasarkan IP dan Pengguna)
-- `Optional:` Text-to-Speech (TTS) limiting (configurable through [`librechat.yaml` config file](/docs/configuration/librechat_yaml/object_structure/config#ratelimits))
-- `Optional:` Speech-to-Text (STT) limiting (configurable through [`librechat.yaml` config file](/docs/configuration/librechat_yaml/object_structure/config#ratelimits))
-- `Optional:` File Upload limiting (configurable through [`librechat.yaml` config file](/docs/configuration/librechat_yaml/object_structure/config#ratelimits))
-
-Untuk detail lebih lanjut, silakan merujuk ke panduan konfigurasi yang disediakan di sini: [Automated Moderation](/docs/configuration/mod_system)
+Rate limiting and banning are on by default with the values above. An admin tunes every limit, score, and the ban settings through environment variables, and turns on OpenAI moderation the same way; see [Automated Moderation configuration](/docs/configuration/mod_system). Limits for uploads, speech, and conversation imports can also be set in the [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) block of `librechat.yaml`.

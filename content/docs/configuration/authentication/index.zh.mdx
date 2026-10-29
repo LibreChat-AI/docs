@@ -1,47 +1,27 @@
 ---
 title: 身份验证系统
 icon: BookOpen
-description: 本指南介绍了如何使用 LibreChat 的用户认证系统，该系统提供安全便捷的电子邮件和社交登录功能。您将学习如何设置注册、登录、密码重置等功能。
+description: >-
+  Environment variables for sign-up, login, email verification, password reset,
+  two-factor authentication, passkeys, sessions, and the user management
+  scripts.
 ---
+
+What users see when they sign up and sign in is described on the [Authentication](/docs/features/authentication) feature page. Provider-specific setup lives in the [OAuth2 and OpenID Connect](/docs/configuration/authentication/OAuth2-OIDC), [SAML](/docs/configuration/authentication/SAML), [LDAP](/docs/configuration/authentication/ldap), [email](/docs/configuration/authentication/email), and [passkeys](/docs/configuration/authentication/passkeys) guides. Allowed email domains and the order of the login buttons are set in the [`registration`](/docs/configuration/librechat_yaml/object_structure/registration) block of `librechat.yaml`.
+
+In a single-tenant deployment, the first account registered gets the `ADMIN` role, so create it yourself before opening registration to others, and make it a local email and password account. Tenant-scoped deployments never promote their first user; provision tenant admins through a trusted administrative flow.
 
 ## 常规 [#general]
 
-如需快速概览，请参阅此处提供的用户指南：[Authentication](/docs/features/authentication)
-
-以下是常规配置的概述。
-
 <OptionTable
   options={[
-    [
-      'ALLOW_EMAIL_LOGIN',
-      'boolean',
-      '显示电子邮件登录，并允许通过身份验证 API 进行本地或 LDAP 凭据登录。',
-      'ALLOW_EMAIL_LOGIN=true',
-    ],
-    [
-      'ALLOW_EMAIL_LOGIN_OVERRIDE',
-      'boolean',
-      '当 ALLOW_EMAIL_LOGIN 为 false 时，允许直接向登录 API 发送凭据请求。默认值：false。',
-      'ALLOW_EMAIL_LOGIN_OVERRIDE=false',
-    ],
-    [
-      'ALLOW_REGISTRATION',
-      'boolean',
-      '启用或禁用新用户的电子邮件注册。',
-      'ALLOW_REGISTRATION=true',
-    ],
-    [
-      'ALLOW_SOCIAL_LOGIN',
-      'boolean',
-      '允许用户通过各种社交网络连接到 LibreChat。',
-      'ALLOW_SOCIAL_LOGIN=false',
-    ],
-    [
-      'ALLOW_SOCIAL_REGISTRATION',
-      'boolean',
-      '启用或禁用使用各种社交网络注册新用户的功能。',
-      'ALLOW_SOCIAL_REGISTRATION=false',
-    ],
+    ['ALLOW_EMAIL_LOGIN', 'boolean', 'Show the email login form and accept local or LDAP credential logins through the authentication API.','ALLOW_EMAIL_LOGIN=true'],
+    ['ALLOW_EMAIL_LOGIN_OVERRIDE', 'boolean', 'Still accept email login through the API while ALLOW_EMAIL_LOGIN is false. Each use is logged. Commented out by default.','# ALLOW_EMAIL_LOGIN_OVERRIDE=false'],
+    ['ALLOW_REGISTRATION', 'boolean', '启用或禁用新用户的电子邮件注册。','ALLOW_REGISTRATION=true'],
+    ['ALLOW_SOCIAL_LOGIN', 'boolean', '允许用户通过各种社交网络连接到 LibreChat。','ALLOW_SOCIAL_LOGIN=false'],
+    ['ALLOW_SOCIAL_REGISTRATION', 'boolean', '启用或禁用使用各种社交网络注册新用户的功能。','ALLOW_SOCIAL_REGISTRATION=false'],
+    ['ALLOW_ACCOUNT_DELETION', 'boolean', 'Show the Delete account option in Settings > Account. Enabled when unset.','# ALLOW_ACCOUNT_DELETION=true'],
+    ['ALLOW_EMAIL_CHANGE', 'boolean', 'Let email and password users change their email address from Settings > Account (needs email configured). Enabled when unset. emailChange in librechat.yaml takes precedence. See Email address change on the email setup page.','# ALLOW_EMAIL_CHANGE=true'],
   ]}
 />
 
@@ -55,78 +35,59 @@ description: 本指南介绍了如何使用 LibreChat 的用户认证系统，�
 - 要删除用户，您可以使用下文详述的 [delete-user 脚本](#delete-user-script)。
 
 <ThemeImage
-  light="https://github.com/danny-avila/LibreChat/assets/32828263/4c51dc25-31d3-4c51-8c2a-0cdfb5a25033"
-  dark="https://github.com/danny-avila/LibreChat/assets/32828263/3bc5371d-e51d-4e91-ac68-56db6e85bb2c"
-  alt="用户注册界面"
+  light="/images/features/authentication/register-light.png"
+  dark="/images/features/authentication/register-dark.png"
+  alt="The Create your account registration form with Full name, Username (optional), Email, Password, and Confirm password fields"
 />
 
-本地账户的相关登录选项：
+## Email verification and password reset [#email-verification-and-password-reset]
 
-- [Passkeys](/docs/configuration/authentication/passkeys)：使用设备屏幕锁定或安全密钥进行无密码登录 (`ALLOW_PASSKEY_LOGIN`)。
-- [更改电子邮件地址](/docs/configuration/authentication/email#email-address-change)：允许用户在 **设置 > 账户** 中更改其注册邮箱（`ALLOW_EMAIL_CHANGE`，默认开启）。
-
-## 强制双重身份验证 [#required-two-factor-authentication]
-
-用户始终可以自行在 **Settings > Account** 中开启双重身份验证 (TOTP)。若要强制执行，请设置：
-
-```bash filename=".env"
-ENFORCE_TWO_FACTOR_AUTHENTICATION=true
-```
-
-**适用对象：** 本地（电子邮件和密码）账户及 LDAP 账户。通过 OAuth、OpenID Connect 或 SAML 登录的账户不受影响，因为其身份提供商负责 MFA。如果联合账户在强制执行期间尝试使用密码登录，系统会提示其改用身份提供商进行登录。
-
-**用户看到的界面：** 未启用 2FA 的用户在登录时（通过密码、LDAP 凭据或通行密钥），在设置完成前不会获得会话。他们会进入**需要双重身份验证**页面（“您的管理员要求进行双重身份验证。请在继续前完成设置。”），使用身份验证器应用扫描二维码，输入验证码进行验证，并保存备份代码。已登录的用户在下次检查或刷新会话时会被引导至相同的设置流程，且在注册前颁发的访问令牌将失效。设置会话有效期为 10 分钟；如果过期，用户将返回登录页面并重新开始。
-
-**注册后：** **设置 > 账户** 中的 **禁用 2FA** 控件将显示 **由管理员强制要求**，且当策略开启时，服务器会拒绝禁用 2FA 的请求。用户仍然可以重新生成备份代码。
+When an [email service](/docs/configuration/authentication/email) is configured, new email and password accounts get a verification link. Without one, accounts are marked verified as soon as they are created.
 
 <OptionTable
   options={[
-    [
-      'ENFORCE_TWO_FACTOR_AUTHENTICATION',
-      'boolean',
-      '要求本地和 LDAP 账户在获得完整会话之前必须启用 2FA。默认值：false。',
-      'ENFORCE_TWO_FACTOR_AUTHENTICATION=false',
-    ],
-    [
-      'TWO_FACTOR_TEMP_MAX',
-      'integer',
-      '每个 TWO_FACTOR_TEMP_WINDOW 内的双重验证码尝试次数（登录挑战和注册确认）。默认为 LOGIN_MAX (7)。',
-      '# TWO_FACTOR_TEMP_MAX=7',
-    ],
-    [
-      'TWO_FACTOR_TEMP_WINDOW',
-      'integer',
-      'TWO_FACTOR_TEMP_MAX 的窗口期（以分钟为单位）。默认为 LOGIN_WINDOW (5)。',
-      '# TWO_FACTOR_TEMP_WINDOW=5',
-    ],
-    [
-      'TWO_FACTOR_SETUP_MAX',
-      'integer',
-      '检查不可猜测代码的注册步骤（开始设置、确认备份代码、完成）。保持独立以防止错误代码导致注册中断。默认值：20。',
-      '# TWO_FACTOR_SETUP_MAX=20',
-    ],
-    [
-      'TWO_FACTOR_SETUP_WINDOW',
-      'integer',
-      'TWO_FACTOR_SETUP_MAX 的窗口时间（以分钟为单位）。默认为 TWO_FACTOR_TEMP_WINDOW。',
-      '# TWO_FACTOR_SETUP_WINDOW=5',
-    ],
+    ['ALLOW_UNVERIFIED_EMAIL_LOGIN', 'boolean', 'Let users sign in before verifying their email. When false, unverified users cannot sign in, and accounts that are never verified are deleted after one week.','ALLOW_UNVERIFIED_EMAIL_LOGIN=true'],
+    ['ALLOW_PASSWORD_RESET', 'boolean', 'Show the Forgot Password? link and allow password resets. Reset links are valid for 15 minutes, and a successful reset ends all of the account\'s sessions. Without an email service the link is shown directly on the page to anyone who enters the address, so only enable this together with email.','ALLOW_PASSWORD_RESET=false'],
   ]}
 />
 
-<Callout type="info" title="仅限环境">
-`ENFORCE_TWO_FACTOR_AUTHENTICATION` 以及 `TWO_FACTOR_TEMP_*` 和 `TWO_FACTOR_SETUP_*` 限制是进程范围的 `.env` 设置。它们在请求或租户配置可用之前生效，因此无法在 `librechat.yaml` 或每个租户中进行设置。请在每个副本上设置相同的值。用于从设置中管理 2FA 的独立预算是 [`rateLimits.twoFactorManagement`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits)。
-</Callout>
+## Two-factor authentication [#two-factor-authentication]
+
+Email and password users and LDAP users can always turn on 2FA themselves from **Settings > Account**. Accounts that sign in through OAuth, OpenID Connect, or SAML do not get the option, because their identity provider is responsible for MFA.
+
+### Required two-factor authentication [#required-two-factor-authentication]
+
+Set `ENFORCE_TWO_FACTOR_AUTHENTICATION=true` to make 2FA mandatory for local and LDAP accounts:
+
+- A user without 2FA who signs in (with a password, LDAP credentials, or a passkey) gets no session until setup is done. They land on the **Two-Factor Authentication Required** screen, scan a QR code, confirm a code, and save their backup codes. The setup session lasts 10 minutes; if it expires, they start again from the login page.
+- Users who are already signed in are sent into the same setup the next time their session is checked or refreshed, and access tokens issued before enrollment stop working.
+- After enrollment, the **Disable 2FA** control shows **Required by administrator** and the server refuses to turn 2FA off. Users can still regenerate backup codes.
+- A federated account that tries to sign in with a password while enforcement is on is told to use its identity provider.
+
+<OptionTable
+  options={[
+    ['ENFORCE_TWO_FACTOR_AUTHENTICATION', 'boolean', '要求本地和 LDAP 账户在获得完整会话之前必须启用 2FA。默认值：false。','ENFORCE_TWO_FACTOR_AUTHENTICATION=false'],
+    ['TWO_FACTOR_BACKUP_CODE_FORMAT', 'string', 'Format of newly issued backup codes: strong (default) or legacy. See Backup-code compatibility below.','# TWO_FACTOR_BACKUP_CODE_FORMAT=strong'],
+  ]}
+/>
+
+`ENFORCE_TWO_FACTOR_AUTHENTICATION` and the 2FA attempt limits are process-wide environment settings. They apply before any request or tenant configuration is available, so they cannot be set in `librechat.yaml` or per tenant; set the same values on every replica. The code-attempt limits (`TWO_FACTOR_TEMP_*`, `TWO_FACTOR_SETUP_*`) are on the [Automated Moderation](/docs/configuration/mod_system#two-factor-and-passkey-rate-limiting) page. The separate budget for managing 2FA from Settings is [`rateLimits.twoFactorManagement`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) in `librechat.yaml`.
+
+## Passkeys [#passkeys]
+
+Passkeys (WebAuthn) let users sign in with a device screen lock or a security key. They are off by default; turn them on with `ALLOW_PASSKEY_LOGIN=true`. The relying party settings, per-user limit, and rate limits are on the [Passkeys](/docs/configuration/authentication/passkeys) page.
 
 ## 会话过期与刷新令牌 [#session-expiry-and-refresh-token]
 
-- 默认值：会话过期时间：15 分钟，刷新令牌过期时间：7 天
-  - 更多信息请参阅：**[GitHub PR #927 - Refresh Token](https://github.com/LibreChat-AI/LibreChat/pull/927)**
+`SESSION_EXPIRY` is how long an access token lasts (15 minutes by default); it is renewed automatically in the background. `REFRESH_TOKEN_EXPIRY` is how long a user stays signed in (7 days by default). Each renewal issues a new refresh token tied to the same session and its original expiry, so the window counts from login and activity does not extend it. If users are signed out sooner than you want, raise `REFRESH_TOKEN_EXPIRY`.
+
+With [`OPENID_REUSE_TOKENS=true`](/docs/configuration/authentication/OAuth2-OIDC/token-reuse), the session cookie holds the identity provider's refresh token instead, so the provider's lifetime, rotation, and revocation policy decide when the session ends; `REFRESH_TOKEN_EXPIRY` cannot extend an expired or revoked IdP token.
 
 <OptionTable
   options={[
     ['SESSION_EXPIRY', 'integer (milliseconds)', '会话过期时间。','SESSION_EXPIRY=1000 * 60 * 15'],
     ['REFRESH_TOKEN_EXPIRY', 'integer (milliseconds)', '刷新令牌过期时间。','REFRESH_TOKEN_EXPIRY=(1000 * 60 * 60 * 24) * 7'],
+    ['SESSION_COOKIE_SECURE', 'boolean', 'Force the Secure attribute on session and auth cookies on (true) or off (false). Leave unset to decide from NODE_ENV and DOMAIN_SERVER. Set false only for plain HTTP deployments where browsers drop Secure cookies.','# SESSION_COOKIE_SECURE=false'],
   ]}
 />
 
@@ -156,7 +117,8 @@ sequenceDiagram
 
 ## JWT Secret 和 Refresh Secret [#jwt-secret-and-refresh-secret]
 
-使用至少 32 字节的唯一值。使用 [Credentials Generator](/toolkit/creds_generator) 生成永久值，将其安全存储，并为每个 LibreChat 副本提供相同的值。
+- If these are left blank, LibreChat generates temporary secrets in `.env.temp`. Set your own persistent values before running a production instance. The examples given are 32-byte keys (64 characters in hex).
+  - Use this tool to generate some quickly: **[JWT Keys](/toolkit/creds_generator)**
 
 <OptionTable
   options={[
@@ -165,23 +127,19 @@ sequenceDiagram
   ]}
 />
 
-当任一值为空时，LibreChat 可以从其临时凭据文件中生成并重用一个值。默认的 Docker Compose 堆栈会持久化该文件，但这仅旨在作为引导便利。如果文件丢失或无法写入，会话可能会在重启后失效。有关优先级、持久性和生产环境指南，请参阅 [Credentials Configuration](/docs/configuration/dotenv#credentials-configuration)。
+Use unique values of at least 32 bytes, store them securely, and give every LibreChat replica the same values. When either value is blank, LibreChat can generate and reuse a value from its temporary credentials file. The default Docker Compose stacks persist that file, but this is intended only as a bootstrap convenience. If the file is lost or cannot be written, sessions can become invalid after restart. See [Credentials Configuration](/docs/configuration/dotenv#credentials-configuration) for precedence, persistence, and production guidance.
 
 ---
 
-## 自动化审核系统 (optional) [#automated-moderation-system-optional]
+## Automated Moderation [#automated-moderation]
 
-自动审核系统（Automated Moderation System）默认处于启用状态。它使用评分机制来跟踪用户的违规行为。当用户执行诸如频繁登录、注册或发送消息等操作时，他们会积累违规分数。一旦达到设定的阈值，该用户及其 IP 地址将被暂时封禁。该系统通过监控并惩罚快速或可疑的活动来确保平台安全。
-
-要设置 mod 系统，请查看[设置指南](/docs/configuration/mod_system)。
-
-> *请注意：如果您希望此功能在开发模式下正常工作，您需要在根目录下创建一个名为 `.env.development` 的文件，并将 `DOMAIN_CLIENT` 设置为 `http://localhost:3090`，或者设置为运行 `npm run frontend-dev` 时 vite 所提供的端口。*
+Login, registration, password reset, and 2FA attempts are rate limited, and repeated violations lead to temporary bans. See [Automated Moderation](/docs/configuration/mod_system).
 
 ## 用户管理脚本 [#user-management-scripts]
 
 ### 创建用户脚本 [#create-user-script]
 
-create-user 脚本允许您直接向数据库添加用户，即使在禁用了注册功能的情况下也是如此。使用方法如下：
+Use the create-user script to add users directly to the database, even when registration is disabled:
 
 1. 对于默认的 `docker-compose.yml`（如果您使用 `docker compose up` 来启动应用）：
    ```bash
@@ -221,6 +179,6 @@ create-user 脚本允许您直接向数据库添加用户，即使在禁用了�
 
 将 `email@domain.com` 替换为您想要删除的用户的电子邮件地址。
 
-## 备份码兼容性 [#backup-code-compatibility]
+## Backup-code compatibility [#backup-code-compatibility]
 
 新生成和重新生成的备份码默认采用 128 位随机值，并为每个码单独加盐哈希。现有的旧版备份码在重新生成之前仍可继续使用。`TWO_FACTOR_BACKUP_CODE_FORMAT=legacy` 会暂时签发较旧的 32 位、未加盐格式。在仍存在不兼容的后端或客户端期间，将其应用于每个副本，之后再将其移除。签发强备份码后，若不替换这些码，请勿回滚到不兼容的后端。参见 [滚动部署指南](/docs/configuration/upgrade#mixed-version-compatibility)。

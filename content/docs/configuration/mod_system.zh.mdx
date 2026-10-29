@@ -2,21 +2,13 @@
 title: 自动审核
 icon: Shield
 description: >-
-  自动化审核系统配置。该系统使用评分机制来追踪用户违规行为。当用户进行频繁登录、注册或发送消息等操作时，会累积违规分数。一旦达到设定的阈值，该用户及其 IP
-  将被暂时封禁。此系统通过监控并惩罚快速或可疑的活动来确保平台安全。
+  Environment variables for LibreChat's rate limits, violation scores, bans, and
+  OpenAI text moderation.
 ---
 
-自动审核系统使用评分机制来跟踪用户的违规行为。当用户进行诸如频繁登录、注册或发送消息等操作时，他们会积累违规分数。一旦达到设定的阈值，该用户及其 IP 地址将被暂时封禁。该系统通过监控并惩罚快速或可疑的活动，确保了平台的安全性。
-
-在生产环境中，您应该部署 Cloudflare 或其他 DDoS 防护措施，以真正保护服务器免受过量请求的影响，但这些更改将在很大程度上保护您免受针对您已部署实例进行代理的个别或少数恶意行为者的攻击。
-
-**有关更多详细信息，请参阅此处提供的用户指南：[自动审核](/docs/features/mod_system)**
+These settings control the rate limits, violation scores, and bans described on the [Automated Moderation](/docs/features/mod_system) feature page. All of them are environment variables in your `.env` file; login and registration limits always apply, and [`.env.example`](https://github.com/danny-avila/LibreChat/blob/dev/.env.example) also turns on banning and the concurrent and per-IP message limits. Upload, speech, and import limits can also be set in the [`rateLimits`](/docs/configuration/librechat_yaml/object_structure/config#ratelimits) block of `librechat.yaml`.
 
 ## 设置 [#setup]
-
-以下是用于使用和配置 mod 系统相关的所有环境变量。请注意，这些变量也可在 [/.env.example](https://github.com/LibreChat-AI/LibreChat/blob/main/.env.example) 文件中找到，需在您自己的 `.env` 文件中进行设置。
-
-**注意：** 目前，这些值大多通过 .env 文件进行配置，但它们很快可能会迁移到仅通过 [`librechat.yaml` 配置文件](/docs/configuration/librechat_yaml/object_structure/config#ratelimits)进行配置。
 
 ### 违规、间隔、持续时间 [#violation-interval-duration]
 
@@ -25,9 +17,11 @@ description: >-
     ['BAN_VIOLATIONS', 'boolean', '是否启用对违规用户的封禁（他们仍会被记录在案）。','BAN_VIOLATIONS=true'],
     ['BAN_DURATION', 'integer', '用户及关联 IP 被封禁的时长（以毫秒为单位）。','BAN_DURATION=1000 * 60 * 60 * 2'],
     ['BAN_INTERVAL', 'integer', '每当用户的分数达到或超过区间阈值时，该用户都将被封禁。','BAN_INTERVAL=20'],
-    ['VIOLATION_SCORE_TTL', 'integer', '违规分数在没有新违规情况下的存续时间（以毫秒为单位）。每次新的违规都会重置倒计时，因此分数会在一段静默期后衰减，而不是永久累积。设置为 0 则分数永不过期（旧版行为）。','VIOLATION_SCORE_TTL=1000 * 60 * 60'],
+    ['VIOLATION_SCORE_TTL', 'integer', 'How long (in milliseconds) a violation score is kept without new violations. Each new violation restarts the countdown. 0 keeps scores forever (the old behavior). Default: one hour.','VIOLATION_SCORE_TTL=1000 * 60 * 60'],
   ]}
 />
+
+A ban ends the user's sessions and blocks both the account and the IP it came from. Bans are stored in the `logs` collection in MongoDB and expire after `BAN_DURATION`; to lift one early, delete its entries there. Violation scores are kept in `data/violations.json` (in Redis when `USE_REDIS` is enabled), and every individual violation is recorded per user in `data/logs.json`.
 
 ### 每次违规的评分 [#the-score-for-each-violation]
 
@@ -38,26 +32,31 @@ description: >-
     ['CONCURRENT_VIOLATION_SCORE', 'integer', '并发违规评分。','CONCURRENT_VIOLATION_SCORE=1'],
     ['MESSAGE_VIOLATION_SCORE', 'integer', '消息违规评分。','MESSAGE_VIOLATION_SCORE=1'],
     ['NON_BROWSER_VIOLATION_SCORE', 'integer', '非浏览器违规评分','NON_BROWSER_VIOLATION_SCORE=20'],
-    ['IMPORT_VIOLATION_SCORE', 'integer', '导入对话违规的分数。未设置时默认为 1。','IMPORT_VIOLATION_SCORE=1'],
-    ['FORK_VIOLATION_SCORE', 'integer', '对会话分支违规的评分。未设置时默认为 1。','FORK_VIOLATION_SCORE=1'],
+    ['IMPORT_VIOLATION_SCORE', 'integer', '导入对话违规的评分。','IMPORT_VIOLATION_SCORE=0'],
+    ['FORK_VIOLATION_SCORE', 'integer', '对话分支违规的评分。','FORK_VIOLATION_SCORE=0'],
     ['TTS_VIOLATION_SCORE', 'integer', '文本转语音违规评分。','TTS_VIOLATION_SCORE=0'],
     ['STT_VIOLATION_SCORE', 'integer', '语音转文字违规评分。','STT_VIOLATION_SCORE=0'],
     ['FILE_UPLOAD_VIOLATION_SCORE', 'integer', '文件上传违规评分。','FILE_UPLOAD_VIOLATION_SCORE=0'],
-    ['RESET_PASSWORD_VIOLATION_SCORE', 'integer', '密码重置违规得分。','RESET_PASSWORD_VIOLATION_SCORE=1'],
-    ['VERIFY_EMAIL_VIOLATION_SCORE', 'integer', '电子邮件验证违规的评分。','VERIFY_EMAIL_VIOLATION_SCORE=1'],
+    ['SHARE_VIOLATION_SCORE', 'integer', 'Score for going over the shared link view limit. Default: 0.','SHARE_VIOLATION_SCORE=0'],
+    ['RESET_PASSWORD_VIOLATION_SCORE', 'integer', 'Score for going over the password reset request limit. Default: 1.','RESET_PASSWORD_VIOLATION_SCORE=1'],
+    ['RESET_PASSWORD_SUBMISSION_VIOLATION_SCORE', 'integer', 'Score for going over the password reset link submission limit. Default: 1.','RESET_PASSWORD_SUBMISSION_VIOLATION_SCORE=1'],
+    ['VERIFY_EMAIL_VIOLATION_SCORE', 'integer', 'Score for going over the email verification request limit. Default: 1.','VERIFY_EMAIL_VIOLATION_SCORE=1'],
+    ['VERIFY_EMAIL_SUBMISSION_VIOLATION_SCORE', 'integer', 'Score for going over the email verification link submission limit. Default: 1.','VERIFY_EMAIL_SUBMISSION_VIOLATION_SCORE=1'],
     ['TOOL_CALL_VIOLATION_SCORE', 'integer', '工具调用违规评分。','TOOL_CALL_VIOLATION_SCORE=0'],
     ['CONVO_ACCESS_VIOLATION_SCORE', 'integer', '会话访问违规的评分。','CONVO_ACCESS_VIOLATION_SCORE=0'],
   ]}
 />
 
-### 登录与注册速率限制。 [#login-and-registration-rate-limiting]
+When a score variable is unset, that violation counts as 1, except non-browser requests (20) and conversation access and shared link views (0). `.env.example` sets several of the others to 0, so going over those limits is blocked but does not move the user toward a ban.
+
+### Login and registration rate limiting [#login-and-registration-rate-limiting]
 
 <OptionTable
   options={[    
-    ['LOGIN_MAX', 'number', '每个 IP 在每个 LOGIN_WINDOW 内允许的最大登录次数。默认为 `7`。'],
-    ['LOGIN_WINDOW', 'number', '以分钟为单位，确定 LOGIN_MAX 次登录的时间窗口。默认为 `5`。'],
-    ['REGISTER_MAX', 'number', '每个 IP 在每个 REGISTER_WINDOW 内允许的最大注册次数。默认为 `5`。'],
-    ['REGISTER_WINDOW', 'number', '以分钟为单位，确定 REGISTER_MAX 注册的时间窗口。默认为 `60`。'],
+    ['LOGIN_MAX', 'number', 'The max amount of logins allowed per IP per LOGIN_WINDOW. Default: 7.'],
+    ['LOGIN_WINDOW', 'number', 'In minutes, determines the window of time for LOGIN_MAX logins. Default: 5.'],
+    ['REGISTER_MAX', 'number', 'The max amount of registrations allowed per IP per REGISTER_WINDOW. Default: 5.'],
+    ['REGISTER_WINDOW', 'number', 'In minutes, determines the window of time for REGISTER_MAX registrations. Default: 60.'],
   ]}
 />
 
@@ -108,93 +107,106 @@ description: >-
 
 <OptionTable
   options={[    
-    ['LIMIT_MESSAGE_IP', 'boolean', '是否限制每个 IP 在 `MESSAGE_IP_WINDOW` 内可以发送的消息数量。','LIMIT_MESSAGE_IP=true'],
-    ['MESSAGE_IP_MAX', 'integer', '一个 IP 在 `MESSAGE_IP_WINDOW` 内可以发送的最大消息数量。','MESSAGE_IP_MAX=40'],
-    ['MESSAGE_IP_WINDOW', 'integer', '以分钟为单位，确定 `MESSAGE_IP_MAX` 条消息的时间窗口。','MESSAGE_IP_WINDOW=1'],
+    ['LIMIT_MESSAGE_IP', 'boolean', 'Whether to limit the amount of messages an IP can send per MESSAGE_IP_WINDOW.','LIMIT_MESSAGE_IP=true'],
+    ['MESSAGE_IP_MAX', 'integer', 'The max amount of messages an IP can send per MESSAGE_IP_WINDOW.','MESSAGE_IP_MAX=40'],
+    ['MESSAGE_IP_WINDOW', 'integer', 'In minutes, determines the window of time for MESSAGE_IP_MAX messages.','MESSAGE_IP_WINDOW=1'],
   ]}
 />
 
 #### 消息速率限制（按用户） [#message-rate-limiting-per-user]
 <OptionTable
   options={[    
-    ['LIMIT_MESSAGE_USER', 'boolean', '是否限制用户在每个 `MESSAGE_USER_WINDOW` 内可以发送的消息数量。','LIMIT_MESSAGE_USER=false'],
-    ['MESSAGE_USER_MAX', 'integer', '用户在 `MESSAGE_USER_WINDOW` 时间窗口内可以发送的最大消息数量。','MESSAGE_USER_MAX=40'],
-    ['MESSAGE_USER_WINDOW', 'integer', '以分钟为单位，确定 `MESSAGE_USER_MAX` 消息的时间窗口。','MESSAGE_USER_WINDOW=1'],
+    ['LIMIT_MESSAGE_USER', 'boolean', 'Whether to limit the amount of messages a user can send per MESSAGE_USER_WINDOW.','LIMIT_MESSAGE_USER=false'],
+    ['MESSAGE_USER_MAX', 'integer', 'The max amount of messages a user can send per MESSAGE_USER_WINDOW.','MESSAGE_USER_MAX=40'],
+    ['MESSAGE_USER_WINDOW', 'integer', 'In minutes, determines the window of time for MESSAGE_USER_MAX messages.','MESSAGE_USER_WINDOW=1'],
   ]}
 />
 
 ### 导入对话速率限制 [#import-conversation-rate-limiting]
 
-限制用户导入对话的频率，以防止滥用。按 IP 和按用户的限流器始终处于启用状态；可通过以下变量进行调整。
-
-#### 导入对话速率限制（按 IP） [#import-conversation-rate-limiting-per-ip]
+Both limiters always apply; there is no switch to turn either off.
 
 <OptionTable
-  options={[    
-    ['IMPORT_IP_MAX', 'integer', '每个 IMPORT_IP_WINDOW 时间窗口内，单个 IP 可执行的最大对话导入次数。默认值为 100。','IMPORT_IP_MAX=100'],
-    ['IMPORT_IP_WINDOW', 'integer', '在 IMPORT_IP_MAX 的导入次数限制窗口内,以分钟为单位设定时间窗口。默认值为 15。','IMPORT_IP_WINDOW=15'],
-  ]}
-/>
-
-#### 导入对话速率限制（按用户） [#import-conversation-rate-limiting-per-user]
-
-<OptionTable
-  options={[    
-    ['IMPORT_USER_MAX', 'integer', '每个 IMPORT_USER_WINDOW 内用户可执行的最大对话导入次数。默认为 50。','IMPORT_USER_MAX=50'],
-    ['IMPORT_USER_WINDOW', 'integer', '在分钟内设定 IMPORT_USER_MAX 导入次数的时间窗口。默认值为 15。','IMPORT_USER_WINDOW=15'],
+  options={[
+    ['IMPORT_IP_MAX', 'integer', 'Conversation imports allowed per IP per IMPORT_IP_WINDOW. Default: 100.', 'IMPORT_IP_MAX=100'],
+    ['IMPORT_IP_WINDOW', 'integer', 'Window in minutes for IMPORT_IP_MAX. Default: 15.', 'IMPORT_IP_WINDOW=15'],
+    ['IMPORT_USER_MAX', 'integer', 'Conversation imports allowed per user per IMPORT_USER_WINDOW. Default: 50.', 'IMPORT_USER_MAX=50'],
+    ['IMPORT_USER_WINDOW', 'integer', 'Window in minutes for IMPORT_USER_MAX. Default: 15.', 'IMPORT_USER_WINDOW=15'],
   ]}
 />
 
 ### 会话分叉速率限制 [#conversation-forking-rate-limiting]
 
-限制用户分支对话的频率,以防止滥用。按 IP 和按用户的限流器始终处于启用状态;可通过以下变量进行调整。
-
-#### 对话分叉速率限制（按 IP） [#conversation-forking-rate-limiting-per-ip]
+Both limiters always apply; there is no switch to turn either off.
 
 <OptionTable
-  options={[    
-    ['FORK_IP_MAX', 'integer', '一个 IP 在 `FORK_IP_WINDOW` 时间内可以创建的最大对话分支数量。','FORK_IP_MAX=30'],
-    ['FORK_IP_WINDOW', 'integer', '以分钟为单位，确定 `FORK_IP_MAX` 分叉的时间窗口。','FORK_IP_WINDOW=1'],
+  options={[
+    ['FORK_IP_MAX', 'integer', 'Conversation forks allowed per IP per FORK_IP_WINDOW. Default: 30.', 'FORK_IP_MAX=30'],
+    ['FORK_IP_WINDOW', 'integer', 'Window in minutes for FORK_IP_MAX. Default: 1.', 'FORK_IP_WINDOW=1'],
+    ['FORK_USER_MAX', 'integer', 'Conversation forks allowed per user per FORK_USER_WINDOW. Default: 7.', 'FORK_USER_MAX=7'],
+    ['FORK_USER_WINDOW', 'integer', 'Window in minutes for FORK_USER_MAX. Default: 1.', 'FORK_USER_WINDOW=1'],
   ]}
 />
 
-#### 对话分叉速率限制（按用户） [#conversation-forking-rate-limiting-per-user]
+### Shared link rate limiting [#shared-link-rate-limiting]
+
+Viewing a shared link does not require signing in, so it is limited per IP and, for signed-in viewers, per user.
 
 <OptionTable
-  options={[    
-    ['FORK_USER_MAX', 'integer', '用户在每个 `FORK_USER_WINDOW` 内可以创建的最大对话分支数量。','FORK_USER_MAX=7'],
-    ['FORK_USER_WINDOW', 'integer', '以分钟为单位，确定 `FORK_USER_MAX` 分叉的时间窗口。','FORK_USER_WINDOW=1'],
+  options={[
+    ['SHARE_IP_MAX', 'integer', 'Shared link views allowed per IP per SHARE_IP_WINDOW. Default: 100.', 'SHARE_IP_MAX=100'],
+    ['SHARE_IP_WINDOW', 'integer', 'Window in minutes for SHARE_IP_MAX. Default: 1.', 'SHARE_IP_WINDOW=1'],
+    ['SHARE_USER_MAX', 'integer', 'Shared link views allowed per user per SHARE_USER_WINDOW. Default: 60.', 'SHARE_USER_MAX=60'],
+    ['SHARE_USER_WINDOW', 'integer', 'Window in minutes for SHARE_USER_MAX. Default: 1.', 'SHARE_USER_WINDOW=1'],
   ]}
 />
 
-### 其他限制器 [#other-limiters]
+### File usage rate limiting [#file-usage-rate-limiting]
 
-分享链接(`SHARE_*`)、文件使用(`FILE_USAGE_*`)、密码重置(`RESET_PASSWORD_*`)和邮箱验证(`VERIFY_EMAIL_*`)限制器拥有各自的变量,这些变量列在 [.env 参考](/docs/configuration/dotenv) 中。
-
-#### 非法模型请求 [#illegal-model-requests]
-
-> 注意：非法的模型请求几乎总是恶意的，这意味着第三方正试图通过自动化脚本访问服务器。为此，我建议设置一个相对较高的分数，不低于 5。
+Agent messages waiting in a queue keep their attachments alive by calling a lightweight file usage endpoint. That endpoint has its own per-user limit.
 
 <OptionTable
-  options={[    
+  options={[
+    ['FILE_USAGE_USER_MAX', 'integer', 'File usage requests allowed per user per FILE_USAGE_USER_WINDOW. Default: 120.', 'FILE_USAGE_USER_MAX=120'],
+    ['FILE_USAGE_USER_WINDOW', 'integer', 'FILE_USAGE_USER_MAX 的时间窗口（以分钟为单位）。默认值：15。', 'FILE_USAGE_USER_WINDOW=15'],
+  ]}
+/>
+
+### Password reset and email verification rate limiting [#password-reset-and-email-verification-rate-limiting]
+
+Requests for an email and submissions of the link from that email are limited separately. The submission values default to the matching request values.
+
+<OptionTable
+  options={[
+    ['RESET_PASSWORD_MAX', 'integer', 'Password reset emails that can be requested per RESET_PASSWORD_WINDOW. Default: 2.', 'RESET_PASSWORD_MAX=2'],
+    ['RESET_PASSWORD_WINDOW', 'integer', 'Window in minutes for RESET_PASSWORD_MAX. Default: 2.', 'RESET_PASSWORD_WINDOW=2'],
+    ['RESET_PASSWORD_SUBMISSION_MAX', 'integer', 'Password reset link submissions allowed per RESET_PASSWORD_SUBMISSION_WINDOW.', 'RESET_PASSWORD_SUBMISSION_MAX=2'],
+    ['RESET_PASSWORD_SUBMISSION_WINDOW', 'integer', 'Window in minutes for RESET_PASSWORD_SUBMISSION_MAX.', 'RESET_PASSWORD_SUBMISSION_WINDOW=2'],
+    ['VERIFY_EMAIL_MAX', 'integer', 'Verification emails that can be requested per VERIFY_EMAIL_WINDOW. Default: 2.', 'VERIFY_EMAIL_MAX=2'],
+    ['VERIFY_EMAIL_WINDOW', 'integer', 'Window in minutes for VERIFY_EMAIL_MAX. Default: 2.', 'VERIFY_EMAIL_WINDOW=2'],
+    ['VERIFY_EMAIL_SUBMISSION_MAX', 'integer', 'Verification link submissions allowed per VERIFY_EMAIL_SUBMISSION_WINDOW.', 'VERIFY_EMAIL_SUBMISSION_MAX=2'],
+    ['VERIFY_EMAIL_SUBMISSION_WINDOW', 'integer', 'Window in minutes for VERIFY_EMAIL_SUBMISSION_MAX.', 'VERIFY_EMAIL_SUBMISSION_WINDOW=2'],
+  ]}
+/>
+
+### Illegal model requests [#illegal-model-requests]
+
+A request for a model the endpoint does not offer almost always comes from a script rather than the UI, so give it a relatively high score, 5 or more. When unset it counts as 1.
+
+<OptionTable
+  options={[
     ['ILLEGAL_MODEL_REQ_SCORE', 'integer', '非法模型请求的评分。','ILLEGAL_MODEL_REQ_SCORE=5'],
   ]}
 />
 
 ## OpenAI 文本审核 [#openai-text-moderation]
 
-<OptionTable
-  options={[    
-    ['OPENAI_MODERATION', 'boolean', '是否在通过 agents 路由发送的聊天请求上启用 OpenAI 内容审核。','OPENAI_MODERATION=false'],
-    ['OPENAI_MODERATION_API_KEY', 'string', '您的 OpenAI API key。','OPENAI_MODERATION_API_KEY='],
-  ]}
-/>
-
-
-请注意，这可能无法在所有反向代理上正常工作：
+When enabled, chat messages sent to regular chat endpoints and agents (including quoted text) are checked with the OpenAI moderation API before they reach the model. Flagged messages are rejected and the user is told to edit the message. Conversations on the hosted Assistants endpoints are not checked.
 
 <OptionTable
-  options={[    
-    ['OPENAI_MODERATION_REVERSE_PROXY', 'string', '注意：默认情况下已注释，此功能并非适用于所有反向代理。','# OPENAI_MODERATION_REVERSE_PROXY='],
+  options={[
+    ['OPENAI_MODERATION', 'boolean', 'Check chat messages with the OpenAI moderation API before sending them.','OPENAI_MODERATION=false'],
+    ['OPENAI_MODERATION_API_KEY', 'string', 'OpenAI API key used for moderation requests.','OPENAI_MODERATION_API_KEY='],
+    ['OPENAI_MODERATION_REVERSE_PROXY', 'string', 'Full URL to send moderation requests to instead of https://api.openai.com/v1/moderations. Commented out by default; not every reverse proxy supports this endpoint.','# OPENAI_MODERATION_REVERSE_PROXY='],
   ]}
 />
