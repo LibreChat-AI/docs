@@ -1,223 +1,93 @@
 ---
 title: Subagents
 icon: Network
-description: Delegate focused work from one agent to isolated child agent runs.
+description: Let an agent hand a focused subtask to a child agent that runs in its own context window and reports back a summary.
 ---
 
-Subagents let a LibreChat Agent spawn an isolated child run for focused work. The child agent gets its own context window and tool execution flow. The parent receives the child result without absorbing every intermediate tool call, trace, or verbose file operation into its own context.
+A subagent is a child run that an agent starts in the middle of its own work. The child gets a clean context window, does the job (searching, reading files, calling tools), and returns only its result. The parent's context stays small, which matters when the intermediate work produces pages of tool output the parent never needs to see.
 
-Use subagents for:
+Reach for subagents when a task splits into pieces that each generate a lot of noise: researching several topics, reviewing a set of files, or running a tool-heavy check before the main answer.
 
-- Research subtasks that may generate long intermediate output
-- Review passes with a specialized agent
-- Tool-heavy work that should stay outside the parent context
-- Multi-agent team workflows that should execute behind one delegated task
-- Parallel-style decomposition where the parent coordinates and summarizes
+## Turn it on for an agent
 
-## How Subagents Differ from Handoffs
+<Steps>
+  <Step>
+    In the Agent Builder, click **Add** next to **Tools** and add **Subagents** from the Tool Library. Click the gear on the **Subagents** card to open its settings.
+  </Step>
+  <Step>
+    Make sure the **Subagents** switch (marked Beta) is on. **Allow self-spawn** is on by default: the agent can start a fresh copy of itself for a subtask.
+  </Step>
+  <Step>
+    Optionally, under **Additional subagents**, click **Add subagent** to let it delegate to other agents you can see. Then save.
+  </Step>
+</Steps>
 
-Handoffs transfer the conversation from a primary agent to a specialist agent, which then continues the exchange. Subagents are spawned by an agent as a tool call during a run, do their work in isolation, and return a compact result to the parent.
+<ThemeImage
+  light="/images/features/subagents/settings-light.png"
+  dark="/images/features/subagents/settings-dark.png"
+  alt="Subagents settings dialog with the Subagents switch and Allow self-spawn on and two agents listed under Additional subagents"
+/>
 
-- **Handoffs**: the conversation moves to another agent
-- **Subagents**: runtime delegation from a parent agent to isolated child runs, with the parent staying in control
+Self-spawn is enough when the agent is already set up for the job and just needs a clean slate. Add other agents when a subtask needs a different model, different instructions, or different tools, for example a cheap fast model for searches or a reviewer agent with a strict checklist. The parent chooses among them by name and description, so give each one a description that says what it is for.
 
-Both can use existing agents, but subagents are designed for scoped delegation from inside a single agent's reasoning loop. Legacy Agent Chains are deprecated; use Handoffs or Subagents for new orchestration. See [Agents](/docs/features/agents#handoffs).
+Children are only loaded when the parent actually picks them, so listing several costs nothing until one runs. An agent can list up to 10 subagents by default. If you turn off self-spawn and list no agents, there is nothing to spawn and the builder tells you so.
 
-## Enable the Capability
+### Sharing files with subagents
 
-The `subagents` capability is enabled by default. Admins can remove it from the agents endpoint capability list to disable the feature. The default capability list is:
+If your admin has enabled it, a **Share files with subagents** switch appears. With it on, files attached to the current message are available to the subagents the parent starts. Files a subagent creates in the sandbox stay private to it until it chooses which versions to hand back.
 
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    capabilities:
-      - 'deferred_tools'
-      - 'execute_code'
-      - 'file_search'
-      - 'web_search'
-      - 'artifacts'
-      - 'subagents'
-      - 'actions'
-      - 'context'
-      - 'skills'
-      - 'memory'
-      - 'ask_user_question'
-      - 'tools'
-      - 'ocr'
-```
+## What you see in the chat
 
-If you set `capabilities` yourself, list every capability you want to keep, because your list replaces the default. Background execution (`run_in_background`) is not in the default list; see [Detached Subagent Threads](#detached-subagent-threads).
+Each subagent run shows up in the parent's reply as a compact row with the child's name and status: **Running agent** while it works, then **Ran agent** when it is done. Open it to follow the child in the activity side panel, or ignore it and read the parent's answer. A cancelled run shows **Agent stopped**, and a failed one **Agent failed**. Children started in the background (see below) are grouped in an **Agent activity** block instead.
 
-## Configure an Agent
+<ThemeImage
+  light="/images/features/subagents/activity-light.png"
+  dark="/images/features/subagents/activity-dark.png"
+  alt="Agent reply with the Ran agent row of a completed subagent"
+/>
 
-In the Agent Builder, open **Add tools**, choose **Subagents** in the tool library, and turn on the enable switch (**Enable subagents**).
+## How it behaves
 
-Available settings:
+- The child starts with its own context. It does not inherit the parent's conversation history or the tools the parent discovered with tool search; it gets the task the parent writes for it.
+- Token usage from child runs counts toward your balance. Children that finish while the parent is still running are added to the parent's totals; detached children that finish later are recorded on their own.
+- A child agent you no longer have access to is skipped. You cannot add an agent you cannot see. Access and the child's saved configuration are checked again when it starts; if either changed during the run, the child does not run.
+- Each child keeps its own model, instructions, tools, MCP credentials, skills, files, and memory.
+- The step limit applies to subagents too, so a low **Max Agent Steps** value also limits how much a child can do.
+- Subagents can start their own subagents, up to 5 levels deep.
 
-- **Enable subagents**: adds the subagent spawn tool to the agent.
-- **Allow self-spawn**: lets the agent spawn a fresh copy of itself in an isolated context. This is enabled by default when subagents are enabled.
-- **Share files with subagents**: shares the message's files with authorized foreground subagents. This option appears only when `endpoints.agents.fileSharing.enabled` is true.
-- **Additional subagents**: selects specific agents the parent may spawn.
+## Saved Agent teams
 
-Saved Agent teams are embedded as `subagents.graphs` in Agent create or update payloads. The current Agent Builder preserves these definitions while you edit the self-spawn and individual-Agent settings, but it does not author graph definitions. Each team names a bounded directed acyclic graph, its entry Agent, and the Agent whose result is returned to the parent:
+A parent can also start a saved team: several agents wired together as one small workflow, such as a researcher whose findings go to a reviewer. The team runs as one isolated child, and only the result agent's answer comes back to the parent. A team can have up to 32 members. If any member is missing or you cannot see it, the whole team is skipped rather than run partly.
 
-```yaml filename="agent saved-team subagent"
-subagents:
-  enabled: true
-  allowSelf: false
-  graphs:
-    - type: 'research_team'
-      name: 'Research team'
-      description: 'Researches a topic and reviews the findings'
-      agent_ids:
-        - 'agent_researcher'
-        - 'agent_reviewer'
-      entry_agent_id: 'agent_researcher'
-      result_agent_id: 'agent_reviewer'
-      edges:
-        - from: 'agent_researcher'
-          to: 'agent_reviewer'
-          edgeType: 'direct'
-```
-
-Equivalent agent shape:
-
-```yaml filename="agent subagents"
-subagents:
-  enabled: true
-  allowSelf: true
-  agent_ids:
-    - 'agent_researcher'
-    - 'agent_reviewer'
-```
-
-## Configure a Model Spec
-
-Admins can also enable Subagents for ephemeral agents created from a model spec. This is useful when a model spec should behave like a focused agent profile without requiring users to create or select a persisted parent agent.
-
-```yaml filename="modelSpecs / subagents"
-modelSpecs:
-  list:
-    - name: 'research-assistant'
-      label: 'Research Assistant'
-      subagents:
-        enabled: true
-        allowSelf: true
-        agent_ids: []
-      preset:
-        endpoint: 'agents'
-        model: 'gpt-4o'
-```
-
-Only `enabled` and `allowSelf` are sent to clients in startup config. The `agent_ids` allowlist stays server-side and is validated against the effective Subagent limit, which defaults to 10 and is configured with [`endpoints.agents.maxSubagents`](/docs/configuration/librechat_yaml/object_structure/agents#maxsubagents). Client request payloads cannot supply or override model-spec Subagent configuration.
-
-## Runtime Behavior
-
-When subagents are enabled, the parent agent receives a `subagent` tool. The tool can spawn:
-
-- `self`, when `allowSelf` is not false
-- Any configured child agent in `agent_ids`
-- Any complete saved Agent team in `graphs`
-
-Child agents run with isolated context. Parent tool-search state and accumulated context are not copied into the child run. Foreground child model usage is included in the parent transaction and usage totals; detached child calls that finish after the parent request closes record usage independently. The compact child card opens a unified activity side panel for foreground, graph, legacy, and detached runs, showing bounded lifecycle, reasoning, tool, approval, and result details appropriate to that transport. A named Agent's configured name and avatar remain on its card and panel after streaming completes and after reload; older records without saved identity use the generic fallback.
-
-Explicit child agents are advertised to the parent as lightweight descriptors and fully initialize only when selected. Unused children do not load their model, tools, MCP servers, files, or Skills. At invocation, LibreChat rechecks view permission and the child's versioned configuration identity; if access was revoked or the saved configuration changed during the run, the child fails closed instead of executing stale settings.
-
-When parallel branches reference the same child Agent, LibreChat evaluates cycle and depth limits independently for each traversal path. A cycle on one branch therefore does not discard valid nested Agent links on another branch.
-
-Saved teams follow the same lazy resolution and access checks as individual children. When selected, every member retains its own model, instructions, tools, MCP credentials, Skills, files, memory, Code Interpreter profile, and billing identity. LibreChat executes the team as one isolated child graph, streams member-aware progress, and returns the configured result Agent's output. If any persisted member is missing, inaccessible, or invalid, LibreChat skips the whole team rather than running a partial graph.
-
-Across later turns, LibreChat keeps prior calls from reachable child and team tools in structured tool-call form, including resolved MCP server identity where needed. Tools that are no longer reachable are not added to the active run merely because they appear in history.
+Teams are defined through the API, not in the Agent Builder. The builder keeps a team intact when you edit the agent's other subagent settings. The definition format is in the [agents endpoint configuration](/docs/configuration/librechat_yaml/object_structure/agents#subagents).
 
 ## Detached Subagent Threads
 
-`run_in_background` is opt-in: add it to `endpoints.agents.capabilities` to enable it for the Agents endpoint. When it is enabled, a parent Agent can detach subagent work and continue without waiting for it. LibreChat persists each detached child with private execution lineage and a canonical transcript. Child threads stay out of normal conversation navigation and search and cannot be read directly; the authorized parent view exposes only bounded child activity.
+If your admin has enabled background execution, the parent can start a subagent and carry on without waiting for it. The child's work is saved as a view-only thread that you reach from the parent's activity panel; it does not show up in your chat list or search. Very long histories are trimmed, and the panel says so when earlier activity is not shown.
 
-Child threads are view-only execution records. A user cannot edit or delete the canonical child in place. For a completed durable direct-Agent child, **Continue in a new chat** forks the exact completed branch into a separate normal, writable Agent conversation while leaving the original child hidden and read-only. The activity panel keeps one composer mounted throughout the run and across incoming task deliveries, preserving focus and half-typed guidance while a new task view loads. Submission remains unavailable until the task can accept controls. Text entered after settlement is carried into the fork, and a failed fork restores the draft in the panel. This action is unavailable for running, graph, anonymous-Agent, and shared views. Deleting the parent cascades to its child lineage. The parent Agent can poll, steer, queue, interrupt, cancel, collect, and later continue the canonical child through its task tools; Mongo-backed leases serialize those continuations across API replicas.
+### Control a running child
 
-The activity panel presents the selected child's turns as one branch-aware history. Use **Load earlier activity** to page backward and **Show full activity** on a turn to reveal its complete bounded run detail. Tool calls, approvals, results, controls, and user-visible reasoning can appear. Reasoning text is bounded like the rest of the projection and marked when truncated; activity persisted by older servers may show only a reasoning marker. Ordinary persisted activity uses the same per-item limits as private child activity and fits a contiguous newest suffix into a 64 KB serialized activity budget, so the shortening notice appears only when meaningful content was omitted. When history is truncated or unavailable, the panel says so instead of presenting a partial view as complete. New event turns settle at the bottom of the history, running turns show elapsed time, and actor rows use fixed-position status dots so status changes do not shift the layout. A compact floating header lets the history scroll beneath it, while the composer follows main chat's dimensions. Running work is conveyed by its streaming activity rather than a separate running status chip; abnormal terminal states remain labeled.
+While a detached child is running, type in the activity panel's composer to guide it:
 
-With Redis enabled, LibreChat records the active execution owner and routes poll, list, steer, queue, interrupt, cancel, and collect requests from any API replica to that process through bounded, expiring request/reply messages. The open activity panel also receives task-scoped live updates; a two-second durable query remains the fallback for missed events, reconnects, or Redis outages. Single-process and non-Redis deployments use the in-memory fast path. A live executor is not migrated after its owner process restarts or disappears, but the MongoDB-backed child transcript, terminal state, usage, history, and later Agent-driven continuation survive independently. This does not turn detached tasks into a public background-job API.
+- **Steer** adds your guidance at the child's next safe point. This is the default.
+- **Queue** holds it for the child's next turn.
+- **Interrupt** stops the current step and applies the guidance.
+- With nothing typed, the send button becomes **Cancel task**.
 
-### Control a Running Child
+Each message shows whether it was applied. Queued guidance can be taken back with **Withdraw** before the child picks it up. Guidance is limited to 4 KB. When a direct child has finished, **Continue in a new chat** copies its conversation into a normal chat you can keep working in; the original thread stays read-only.
 
-In an authenticated parent conversation, open the Subagent activity panel and select a durable child task. While that task is running, type guidance and submit it to steer by default. On a hover-capable desktop, the send control's action menu offers **Steer**, **Queue**, and **Interrupt** and shows only shortcuts active under the user's current keyboard settings. On touch devices and in the modal panel, queue and interrupt remain available as icon controls. With no guidance entered, the send control becomes **Cancel task**.
+Shared conversations show only the activity included in the share, without any controls.
 
-- **Steer** adds guidance at the child's next safe boundary.
-- **Queue** holds guidance for a later turn in the child task.
-- **Interrupt** stops the child's current work at a safe boundary and applies new guidance.
-- **Cancel task** requests cancellation without sending guidance.
+### Automatic parent continuation
 
-Accepted controls appear in a task-specific history as sending, waiting, applied, not applied, or failed, with a reason when available. Choose **Withdraw** to remove queued guidance before the child applies it. Guidance is limited to 4 KB. Each task stores up to 64 authoritative receipts, while the activity panel displays up to 32; older completed history is omitted before active accepted controls, and the UI labels omitted history or guidance shortened for display.
+When a detached child finishes, LibreChat by default wakes the parent agent up on the same branch with the result, shown as a collapsible task card. If the parent is still busy, the wake-up waits for it. Cancelled children do not wake the parent, and this only works for saved agents, not ones created from a model spec. Your admin can turn it off, in which case the parent has to check on the child itself.
 
-Running controls close when the child settles, and the same composer switches to continuing an eligible child in a new chat. LibreChat verifies the signed-in user's access to the parent and child, their parent-child relationship, and tenant ownership on every request, and applies the configured content filters and moderation checks to guidance. Repeated delivery of the same accepted control returns its authoritative receipt instead of applying the instruction twice. Shared conversations remain read-only and do not expose these controls.
+Children that external systems drive through the [Agents API](/docs/features/agents_api#event-driven-child-agents) show up the same way, as a row under the parent message that opens the same panel.
 
-Shared conversations can display only the bounded activity already included in the share payload. Their view is read-only, omits approval controls and durable child selectors, and never opens the authenticated child-thread query path.
+## Subagents compared with handoffs
 
-### Event-Driven Child Activity
+A subagent returns control to the parent: the parent asks, the child answers, and the parent writes the reply. A [handoff](/docs/features/agents#working-with-other-agents) passes the conversation to another agent, which then replies itself. Use a subagent for a subtask, a handoff to route to a specialist.
 
-Child Agents continued through an [Agents API event binding](/docs/features/agents_api#event-driven-child-agents) do not originate from a `subagent` tool card. In the authenticated parent conversation, LibreChat instead adds one compact actor row beneath the message that owns the binding. Opening it reuses the Subagent activity panel, with selectors for the actor and its turns plus live run-step, tool, message, and reasoning-marker activity. External event triggers render as normal user-trigger rows with expandable event type, source, occurrence time, and expected-action details. When a new delivery selects another task in the same child thread, the existing turns remain visible while the new task loads and only its streaming placeholder is appended; task-specific status and controls are never borrowed from the retained view. Earlier pages and per-turn full activity use the same bounded, read-only child history.
+## Setup
 
-The parent projection is deliberately bounded: it returns at most 64 child threads, keeps up to 20 recent tasks per child from a shared bounded source window, and caps the response at 96 KB. The UI reports truncated history rather than implying that an over-limit view is complete. Starting another turn promotes an older actor into the recent-child window. These child threads remain hidden from ordinary navigation and cannot be discovered from another parent or tenant.
-
-### Automatic Parent Continuation
-
-After a detached child finishes, LibreChat persists its terminal result or error and, by default, sends an idempotent continuation to the saved parent Agent on the exact branch that launched it. Delivery waits while that parent branch is running, paused, or finalizing. The resumed parent receives a bounded manifest of relevant sibling tasks instead of busy-polling them, and the chat presents the wake-up in a collapsible task card.
-
-Automatic completion delivery is enabled when [`endpoints.agents.backgroundTasks.completionWakeups`](/docs/configuration/librechat_yaml/object_structure/agents#backgroundtasks) is omitted or `true`. Set it to `false` to keep detached children poll-only. Cancelled children are ignored, and ephemeral parent Agents are not supported because there is no saved configuration to restore. Detached child execution owns its own run context, so settling or aborting the original parent request does not cancel independently owned work. The parent can still collect durable child results through its task tools.
-
-## Limits
-
-LibreChat enforces these limits to keep subagent graphs bounded:
-
-<OptionTable
-  options={[
-    [
-      'endpoints.agents.maxSubagents',
-      'Number',
-      'Maximum entries in each parent Agent `agent_ids` or `graphs` list. Configurable from 1 to 50.',
-      '10',
-    ],
-    [
-      'MAX_GRAPH_SUBAGENT_MEMBERS',
-      'Number',
-      'Maximum members in one saved Agent team.',
-      '32',
-    ],
-    ['MAX_SUBAGENT_DEPTH', 'Number', 'Maximum explicit subagent hops from a root agent.', '5'],
-    [
-      'MAX_SUBAGENT_GRAPH_NODES',
-      'Number',
-      'Maximum unique explicit subagent targets loaded at runtime.',
-      '50',
-    ],
-    [
-      'MAX_SUBAGENT_RUN_CONFIGS',
-      'Number',
-      'Maximum expanded subagent configurations embedded into one run request.',
-      '100',
-    ],
-  ]}
-/>
-
-Only the per-agent subagent count is configurable. Set `endpoints.agents.maxSubagents` in `librechat.yaml` to raise it from the default of 10, up to a hard ceiling of 50:
-
-```yaml filename="librechat.yaml"
-endpoints:
-  agents:
-    maxSubagents: 20
-```
-
-The configured value applies to Agent create, update, and duplicate requests for both `subagents.agent_ids` and `subagents.graphs`, to model spec `subagents.agent_ids` allowlists, and to the subagent picker in the Agent Builder. See [maxSubagents](/docs/configuration/librechat_yaml/object_structure/agents#maxsubagents) for the full reference. The per-team member, depth, graph node, and run configuration limits above are fixed.
-
-## Access Control
-
-Configured child agents and every saved-team member must be visible to the user. If the user lacks view access to an individual referenced Agent, LibreChat skips that subagent. A saved team is all-or-nothing and is skipped if any member is unavailable. Create and update requests reject missing or unauthorized references, duplicate spawn types, cyclic or disconnected team graphs, invalid entry or result members, and configurations that exceed the limits above.
-
-## Design Tips
-
-- Enable self-spawn when the parent agent is already well-scoped and just needs a fresh context for a subtask.
-- Add specific child agents when the task needs a different model, instruction set, tool set, or skill allowlist.
-- Use a saved team when several Agents should run as one delegated workflow with a single result returned to the parent.
-- Keep child descriptions clear. The parent uses each child name and description to choose the right delegation target.
-- Use subagents for intermediate work that should return a compact result, not for permanent handoffs to another conversation path.
+Subagents are available by default. Admins can turn them off with the `subagents` capability, raise the per-agent limit with `maxSubagents`, enable file sharing, and allow detached children with the opt-in `run_in_background` capability, all in the [agents endpoint configuration](/docs/configuration/librechat_yaml/object_structure/agents#subagents). Automatic parent continuation is controlled by [`backgroundTasks`](/docs/configuration/librechat_yaml/object_structure/agents#backgroundtasks). They can also be enabled for a model spec without a saved parent agent; see [Model Specs](/docs/configuration/librechat_yaml/object_structure/model_specs#subagents).

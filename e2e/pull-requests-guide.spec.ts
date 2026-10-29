@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 const GUIDE = '/docs/features/pull_requests'
 const AGENTS = '/docs/configuration/librechat_yaml/object_structure/agents'
 const DOTENV = '/docs/configuration/dotenv'
+const SETUP = '/docs/configuration/pull_requests'
 
 function body(page: Page) {
   return page.locator('#nd-page')
@@ -45,8 +46,8 @@ test.describe('Conversation Pull Requests guide', () => {
       const hidden = body(page).locator(
         `.image-${colorScheme === 'dark' ? 'light' : 'dark'}-theme img[src*="/images/pull-requests/"]`,
       )
-      await expect(shown).toHaveCount(8)
-      await expect(hidden).toHaveCount(8)
+      await expect(shown).toHaveCount(2)
+      await expect(hidden).toHaveCount(2)
 
       for (const image of await shown.all()) {
         await image.scrollIntoViewIfNeeded()
@@ -66,7 +67,7 @@ test.describe('Conversation Pull Requests guide', () => {
     page,
   }) => {
     await page.goto(GUIDE)
-    const card = await sectionText(page, 'The card', 3)
+    const card = await sectionText(page, 'Reading the card', 2)
     expect(card).toMatch(/State: Open, Conflicts, Draft, Merged or Closed/)
     expect(card).toMatch(/Conflicts replaces Open/)
   })
@@ -75,7 +76,7 @@ test.describe('Conversation Pull Requests guide', () => {
     page,
   }) => {
     await page.goto(GUIDE)
-    const table = heading(page, 'Icon and dot meaning', 3).locator(
+    const table = heading(page, 'Reading the card', 2).locator(
       'xpath=following-sibling::*[.//table][1]//table',
     )
     const row = (situation: string) =>
@@ -85,15 +86,15 @@ test.describe('Conversation Pull Requests guide', () => {
     await expect(row('Closed').getByRole('cell')).toHaveText(['Closed', 'Neutral', 'None'])
     await expect(row('Open, merge conflicts').getByRole('cell')).toHaveText([
       'Open, merge conflicts',
-      'Red (cannot merge)',
-      'By checks',
+      'Red',
+      'From the checks',
     ])
     // The app shows no dot once a pull request is merged or closed, running checks or not.
     await expect(body(page).getByText('amber while checks still run')).toHaveCount(0)
 
-    const chip = await sectionText(page, 'Chat header chip', 3)
-    expect(chip).toMatch(/CI dot on its corner, then the pull request title/)
-    expect(chip).toMatch(/opens the card below it/)
+    const chip = await sectionText(page, 'In the chat header', 2)
+    expect(chip).toMatch(/a small CI dot on its corner, and the pull request title/)
+    expect(chip).toMatch(/Hover or focus the chip to open a card/)
   })
 
   test('@scenario:released-pull-request-features-carry-no-pending-label Bitbucket, per-user accounts and the shared cache read as released', async ({
@@ -101,7 +102,7 @@ test.describe('Conversation Pull Requests guide', () => {
   }) => {
     await page.goto(GUIDE)
     await expect(body(page)).not.toContainText('Pending')
-    await expect(heading(page, 'Account connection', 3)).toBeVisible()
+    await expect(heading(page, 'Connect your own account', 2)).toBeVisible()
 
     await page.goto(AGENTS)
     const reference = await sectionText(page, 'pullRequests', 2)
@@ -127,8 +128,8 @@ test.describe('Conversation Pull Requests guide', () => {
       /`?provider`?, `?host`?, `?oauth`? and `?sharedCacheSlots`? are read from/,
     )
 
-    await page.goto(GUIDE)
-    const scaling = await sectionText(page, 'Scaling with replicas', 2)
-    expect(scaling).toMatch(/sharedCacheSlots \(64-1000000, default 65536\)/)
+    // Deployment setup moved from the feature page to the configuration page.
+    await page.goto(SETUP)
+    await expect(body(page)).toContainText('sharedCacheSlots (64-1000000, default 65536)')
   })
 })
