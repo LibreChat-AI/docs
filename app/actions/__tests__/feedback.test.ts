@@ -57,6 +57,21 @@ describe('submitFeedback', () => {
     expect(result).toEqual({ success: false })
   })
 
+  it.each([
+    '/\\evil.example',
+    '/@evil.example',
+    '/%2f%2fevil.example',
+    '/∕∕evil.example',
+    '/docs?next=http:169.254.169.254',
+    '/docs\nX-Injected: 1',
+  ])('rejects page values that are not bare pathnames: %j', async (url) => {
+    const result = await submitFeedback({ opinion: 'good', message: 'x', url })
+
+    expect(result).toEqual({ success: false })
+    expect(mockIsRateLimited).not.toHaveBeenCalled()
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
   it('returns false when rate limited by page URL', async () => {
     mockIsRateLimited.mockReturnValue(true)
 
