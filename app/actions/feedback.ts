@@ -9,6 +9,8 @@ interface FeedbackPayload {
 const GITHUB_GRAPHQL = 'https://api.github.com/graphql'
 const MAX_MESSAGE_LENGTH = 2000
 const VALID_OPINIONS = new Set(['good', 'bad'])
+/** A bare site pathname: no scheme, host, query, encoding, backslashes or whitespace */
+const PATHNAME_PATTERN = /^\/[A-Za-z0-9\-._~/]*$/
 
 import { createRateLimiter } from '@/lib/rate-limit'
 
@@ -29,7 +31,7 @@ function validatePayload(
   if (typeof opinion !== 'string' || !VALID_OPINIONS.has(opinion)) return null
 
   // URL must be a relative docs path (no external URLs / open redirect)
-  if (typeof url !== 'string' || !url.startsWith('/') || url.includes('//')) return null
+  if (typeof url !== 'string' || !PATHNAME_PATTERN.test(url) || url.includes('//')) return null
 
   // Message is optional but must be a string with bounded length
   const safeMessage = typeof message === 'string' ? message.slice(0, MAX_MESSAGE_LENGTH).trim() : ''
