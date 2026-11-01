@@ -151,10 +151,20 @@ import {
   UserPlus,
   Settings2,
   GitPullRequest,
+  AppWindow,
+  ChevronsUpDown,
+  MousePointerClick,
+  TextCursorInput,
+  ToggleRight,
 } from 'lucide-react'
 
 const icons: Record<string, ReactElement> = {
   GitPullRequest: <GitPullRequest />,
+  AppWindow: <AppWindow />,
+  ChevronsUpDown: <ChevronsUpDown />,
+  MousePointerClick: <MousePointerClick />,
+  TextCursorInput: <TextCursorInput />,
+  ToggleRight: <ToggleRight />,
   Rocket: <Rocket />,
   Sparkles: <Sparkles />,
   Monitor: <Monitor />,
