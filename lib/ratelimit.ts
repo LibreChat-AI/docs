@@ -93,17 +93,20 @@ function checkMemoryFeedbackLimit(clientId: string): boolean {
 
 /** Returns true when a feedback submission from `clientId` may proceed. */
 export async function checkFeedbackRateLimit(clientId: string): Promise<boolean> {
+  // Always count in memory, so a fallback after a Redis timeout still sees the
+  // submissions this instance already accepted through Redis.
+  const memoryAllowed = checkMemoryFeedbackLimit(clientId)
   const limiters = getFeedbackLimiters()
-  if (!limiters) return checkMemoryFeedbackLimit(clientId)
+  if (!limiters) return memoryAllowed
 
   // Upstash answers success: true when Redis exceeds the timeout, so a slow
-  // Redis would lift both limits; fall back to the in-memory windows instead.
+  // Redis would lift both limits; use the in-memory verdict instead.
   // Check the client window first so one noisy caller does not drain the global budget
   const client = await limiters.client.limit(clientId)
-  if (client.reason === 'timeout') return checkMemoryFeedbackLimit(clientId)
+  if (client.reason === 'timeout') return memoryAllowed
   if (!client.success) return false
 
   const global = await limiters.global.limit('global')
-  if (global.reason === 'timeout') return checkMemoryFeedbackLimit(clientId)
+  if (global.reason === 'timeout') return memoryAllowed
   return global.success
 }

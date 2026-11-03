@@ -64,6 +64,15 @@ describe('checkFeedbackRateLimit with Upstash', () => {
     expect(results).toEqual([true, true, true, false, false])
   })
 
+  it('counts submissions accepted through Redis when a later call times out', async () => {
+    const { checkFeedbackRateLimit, client } = await load()
+
+    for (let i = 0; i < 3; i++) expect(await checkFeedbackRateLimit('203.0.113.11')).toBe(true)
+
+    client.mockResolvedValue({ success: true, reason: 'timeout' })
+    expect(await checkFeedbackRateLimit('203.0.113.11')).toBe(false)
+  })
+
   it('keeps a per-client limit when the global window times out', async () => {
     const { checkFeedbackRateLimit, global } = await load()
     global.mockResolvedValue({ success: true, reason: 'timeout' })
