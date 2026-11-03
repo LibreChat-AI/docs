@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test'
 
 /**
  * The feedback server action limits submissions per client (cf-connecting-ip),
@@ -20,6 +20,13 @@ function nextClientIp(): string {
   return `10.${octet()}.${octet()}.${octet()}`
 }
 
+/** A browser context for one client address, with the analytics prompt already answered. */
+async function newClient(browser: Browser, ip = nextClientIp()): Promise<BrowserContext> {
+  const context = await browser.newContext({ extraHTTPHeaders: { 'cf-connecting-ip': ip } })
+  await context.addInitScript(() => window.localStorage.setItem('librechat_reo_consent', 'denied'))
+  return context
+}
+
 interface ActionCall {
   success: boolean
   actionId: string
@@ -30,17 +37,28 @@ interface ActionCall {
 async function submitThroughWidget(page: Page, path: string): Promise<ActionCall> {
   await page.goto(path)
   await page.getByRole('button', { name: 'Good', exact: true }).click()
-  const responsePromise = page.waitForResponse(
-    (res) => res.request().method() === 'POST' && !!res.request().headers()['next-action'],
-  )
-  await page.getByRole('button', { name: 'Submit', exact: true }).click()
-  const response = await responsePromise
-  await expect(page.getByText('Thank you for your feedback!')).toBeVisible()
 
-  const body = await response.text()
+  // Read the action response in a route handler: the streamed body is not
+  // retrievable from the page once the client has consumed it.
+  let resolveCall: (value: { body: string; headers: Record<string, string> }) => void = () => {}
+  const captured = new Promise<{ body: string; headers: Record<string, string> }>((resolve) => {
+    resolveCall = resolve
+  })
+  await page.route(path, async (route) => {
+    const request = route.request()
+    if (request.method() !== 'POST' || !request.headers()['next-action']) return route.fallback()
+    const response = await route.fetch()
+    resolveCall({ body: await response.text(), headers: await request.allHeaders() })
+    await route.fulfill({ response })
+  })
+
+  await page.getByRole('button', { name: 'Submit', exact: true }).click()
+  const { body, headers: requestHeaders } = await captured
+  await expect(page.getByText('Thank you for your feedback!')).toBeVisible()
+  await page.unroute(path)
+
   const match = body.match(/"success":(true|false)/)
   expect(match, `unexpected action response: ${body.slice(0, 200)}`).not.toBeNull()
-  const requestHeaders = await response.request().allHeaders()
   return {
     success: match?.[1] === 'true',
     actionId: requestHeaders['next-action'] ?? '',
@@ -74,9 +92,7 @@ test.describe('Docs feedback rate limit', () => {
   test('@scenario:feedback-from-a-docs-page-is-accepted rating a docs page through the widget is accepted', async ({
     browser,
   }) => {
-    const context = await browser.newContext({
-      extraHTTPHeaders: { 'cf-connecting-ip': nextClientIp() },
-    })
+    const context = await newClient(browser)
     const page = await context.newPage()
     const call = await submitThroughWidget(page, PAGES[0])
     expect(call.success).toBe(true)
@@ -86,9 +102,7 @@ test.describe('Docs feedback rate limit', () => {
   test('@scenario:feedback-limit-follows-the-client-across-pages a fourth rating within a minute is refused even on a different page', async ({
     browser,
   }) => {
-    const context = await browser.newContext({
-      extraHTTPHeaders: { 'cf-connecting-ip': nextClientIp() },
-    })
+    const context = await newClient(browser)
     const page = await context.newPage()
     const results: boolean[] = []
     for (const path of PAGES) {
@@ -101,9 +115,7 @@ test.describe('Docs feedback rate limit', () => {
   test('@scenario:feedback-limit-does-not-block-another-client a client that hit the limit does not block a different client', async ({
     browser,
   }) => {
-    const noisy = await browser.newContext({
-      extraHTTPHeaders: { 'cf-connecting-ip': nextClientIp() },
-    })
+    const noisy = await newClient(browser)
     const noisyPage = await noisy.newPage()
     for (const path of PAGES.slice(0, 3)) {
       expect((await submitThroughWidget(noisyPage, path)).success).toBe(true)
@@ -111,9 +123,7 @@ test.describe('Docs feedback rate limit', () => {
     expect((await submitThroughWidget(noisyPage, PAGES[3])).success).toBe(false)
     await noisy.close()
 
-    const other = await browser.newContext({
-      extraHTTPHeaders: { 'cf-connecting-ip': nextClientIp() },
-    })
+    const other = await newClient(browser)
     const otherPage = await other.newPage()
     expect((await submitThroughWidget(otherPage, PAGES[0])).success).toBe(true)
     await other.close()
@@ -122,8 +132,7 @@ test.describe('Docs feedback rate limit', () => {
   test('@scenario:feedback-rejects-page-values-that-are-not-docs-pages page values other than an existing docs pathname are refused without using the budget', async ({
     browser,
   }) => {
-    const ip = nextClientIp()
-    const context = await browser.newContext({ extraHTTPHeaders: { 'cf-connecting-ip': ip } })
+    const context = await newClient(browser)
     const page = await context.newPage()
     const first = await submitThroughWidget(page, PAGES[0])
     expect(first.success).toBe(true)
