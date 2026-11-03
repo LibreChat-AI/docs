@@ -1,0 +1,108 @@
+---
+title: ctxd MCP
+icon: HardDrive
+description: Connect LibreChat to changing source content with the local ctxd MCP server.
+---
+
+[ctxd](https://github.com/ctxd-dev/ctxd) synchronizes source content into a context
+filesystem. LibreChat can inspect its paths and read files or selected line ranges.
+When a source changes, a later read can return the changed content after synchronization.
+
+This guide uses a native Linux LibreChat installation and runs ctxd in Docker.
+The connection uses standard input/output (stdio), with no remote MCP endpoint or
+ctxd account. Configure it in `librechat.yaml`; the **Add MCP** dialog only accepts
+remote servers.
+
+## Prerequisites
+
+- A running [native LibreChat installation](/docs/local/npm) on Linux.
+- Docker available to the operating-system account running LibreChat's API.
+- A source folder readable by container user UID `10001`.
+- A configured model that supports tools. See [Your First Chat](/docs/quick_start/first_chat).
+
+Run the commands below on the **Linux host running LibreChat's API**, as the
+**account running that API**. The paths refer to that host, not the web browser's
+computer. This configuration does not apply unchanged when LibreChat's API itself
+runs inside a container.
+
+## Build the server
+
+Build the [ctxd stdio container](https://github.com/ctxddev/ctxd-agent-plugin):
+
+```bash
+docker build -t ctxd-mcp-librechat https://github.com/ctxddev/ctxd-agent-plugin.git#141112d96530b2396f1d14e73c4ea30f963281ee
+```
+
+The image includes Python 3.12 and ctxd 0.1.16. Each connection starts a context
+store, synchronizes the mounted folder and starts the tracker. The store is
+rebuilt when a new container starts; the source folder stays on the host.
+
+## Configure LibreChat
+
+Add this entry under `mcpServers` in your existing `librechat.yaml`. Replace
+`/absolute/path/to/source` with the source folder on the API host. Use a path
+without commas because Docker's `--mount` option uses commas as separators.
+
+```yaml filename="librechat.yaml"
+mcpServers:
+  ctxd:
+    type: stdio
+    command: docker
+    args:
+      - run
+      - --rm
+      - -i
+      - --init
+      - --network=none
+      - --cap-drop=ALL
+      - --security-opt=no-new-privileges
+      - --mount
+      - type=bind,src=/absolute/path/to/source,dst=/sources,readonly
+      - ctxd-mcp-librechat
+    initTimeout: 120000
+    timeout: 60000
+```
+
+Restart your LibreChat API using the method for your installation, then open
+**MCP Settings** and connect **ctxd**. In the Agent Builder, click **Add** next to
+**Tools**, filter to **MCP servers**, and add ctxd. Select the tools the agent needs:
+
+- `ls`, `tree`, `glob` and `stat` inspect paths and metadata.
+- `read` and `read_lines` return source content.
+
+The package also advertises `grep`, but that tool fails in ctxd 0.1.16. Leave it
+unselected. Python and the ctxd CLI provide exact text search separately.
+
+## Read changing source content
+
+Start with a small folder containing a Markdown file, such as `guide.md`.
+
+1. Ask the agent to call ctxd's `tree` tool and find the file.
+2. Ask it to call `read` with the returned path, such as
+   `local-files/source/guide.md`. The host filesystem path is not the MCP path.
+3. Edit the source file on the API host. After the tracker synchronizes, ask for
+   a fresh tool call and compare the returned content.
+4. Remove the test file. After synchronization, confirm that `tree` no longer
+   lists it and that a fresh `read` does not return its former content.
+
+The tracker checks for changes every ten seconds plus processing time. A model's
+previous answer is not a freshness check; inspect the new tool result. The
+container mounts the source read-only, while your editor can still change it on
+the host. The local tracker supports its documented text formats, not arbitrary
+file formats.
+
+## Access and troubleshooting
+
+Servers configured in `librechat.yaml` are available to users with MCP access.
+They use the configured source folder; this setup does not create a separate
+source folder or permission boundary for each LibreChat user. Mount only material
+those users should read. Tool results can be sent to the configured model provider.
+
+- **`docker` not found or permission denied:** check Docker access as the API's
+  operating-system account. Installing Docker on the browser's computer does not
+  make it available to the API.
+- **Source folder cannot be read:** check the host path and read/traverse
+  permissions for UID `10001`. Keep the mount read-only.
+- **Server missing after editing YAML:** confirm LibreChat loaded that file and
+  restart the API. See [Configuration](/docs/configuration/librechat_yaml).
+- **Path not found:** call `tree` or `glob` first and use a returned path.
