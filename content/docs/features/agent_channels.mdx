@@ -21,11 +21,21 @@ endpoints:
     channels:
       enabled: true
       transport: socket_mode
+      nativeSessions: false
+      lifecycleReactions: false
+      signatureToleranceSeconds: 300
+      socketReconnectDelayMs: 5000
 ```
 
 Both enablement settings default to `false`. Users need both Agent use and Remote Agents use permissions. Channel setup also requires Agent sharing permission or existing administrator management access; sharing access does not require permission to edit the Agent. Configure `DOMAIN_CLIENT` for trusted owner-review and account-link URLs. Configure a strong `CHANNEL_SERVICE_TOKEN` for the gateway-to-LibreChat service boundary; keep it server-side and distribute it only to a trusted integration process over a secure channel. It is not a browser token or a general Agent API key.
 
-The `transport` option accepts `socket_mode` (default) or `webhook`. This selects the generated Slack manifest; it does not deploy a receiver. Webhook manifests require an HTTPS `gatewayUrl` without credentials, a query, or a fragment. Set the gateway's `SLACK_TRANSPORT` explicitly to match this setting: the gateway process defaults to `webhook`, not `socket_mode`.
+The `transport` option accepts `socket_mode` (default) or `webhook`. This selects the generated Slack manifest; it does not deploy a receiver. Webhook manifests require an HTTPS `gatewayUrl` without credentials, a query, or a fragment. The gateway loads this policy from LibreChat before selecting ingress. `SLACK_TRANSPORT` is an optional deployment assertion; if supplied, it must match the server-selected mode. Missing or unsupported gateway policy prevents startup.
+
+### Database requirement
+
+Durable Channels and stored background Responses require MongoDB transactions. Use a MongoDB replica set or another verified transaction-capable deployment. Standalone MongoDB and FerretDB 2.7 can run ordinary LibreChat, but cannot enable this durable feature. Unsupported channel writes return `transactions_unavailable`; the Agent builder explains the setup requirement. Transactional reads use the primary even when the connection normally prefers secondary reads.
+
+API-key authentication must remain enabled for the gateway's bound execution credential. Linking does not grant Remote Agents permissions, Agent access, new tools or offline access to connected services.
 
 See the [channel configuration reference](/docs/configuration/librechat_yaml/object_structure/agents#channels) for limits and defaults.
 
@@ -47,16 +57,19 @@ From a LibreChat source checkout containing `packages/channel-gateway`:
 
 ```sh
 npm ci
+npm run build:packages
 npm run build --workspace @librechat/channel-gateway
 node --env-file=/secure/channel-gateway.env packages/channel-gateway/dist/main.cjs
 ```
+
+`npm run backend:dev` starts only LibreChat; it does not start the gateway. Build the application using LibreChat's normal development setup and run the gateway separately. If you reuse the application's `.env`, set the gateway port explicitly: `PORT=8080 node --env-file=.env packages/channel-gateway/dist/main.cjs`. This avoids binding the gateway to the application's port.
 
 Supply the environment file through your normal secret-management process. Do not commit it. A Socket Mode configuration is:
 
 ```dotenv filename="channel-gateway.env"
 LIBRECHAT_INTERNAL_URL=http://127.0.0.1:3080
 CHANNEL_SERVICE_TOKEN=<same server-side token configured in LibreChat>
-CHANNEL_TENANT_ID=<connection tenant ID>
+CHANNEL_TENANT_ID=_
 CHANNEL_ID=<connection ID from the Agent builder>
 SLACK_TRANSPORT=socket_mode
 SLACK_APP_TOKEN=<app-level token with connections:write>
@@ -77,26 +90,55 @@ The webhook receiver verifies Slack signatures using the connection's signing se
 
 ### Docker Compose
 
-The source also includes an optional `docker-compose.channels.yml` overlay. It builds the standalone gateway from the repository root using `packages/channel-gateway/Dockerfile`; it does not pull a published gateway image or add the gateway to the default stack.
+The optional `docker-compose.channels.yml` overlay builds both LibreChat and the standalone gateway from the source checkout. The separate `docker-compose.mongo-replica.yml` overlay initializes a single local MongoDB replica member and waits for a writable primary before the application starts. The gateway waits for application health, then authenticates its channel binding and selected Slack transport. Neither service is added to the default stack automatically.
 
-With a compatible LibreChat `api` service already running in the same Compose project, run this from the LibreChat repository root:
+For a **fresh local database**, run these commands from the LibreChat repository root:
 
-```sh
-docker compose --env-file .env --env-file /secure/channel-gateway.env \
-  -f docker-compose.yml -f docker-compose.channels.yml \
-  --profile channels up -d --build channel-gateway
-```
+1. Prepare `.env` and `librechat.yaml` using the normal LibreChat setup and the channel policy above. Generate a private service token with `openssl rand -hex 32` and set `CHANNEL_SERVICE_TOKEN` in `.env`. Keep the same Compose files and project name on subsequent commands.
+2. Start the source-built application and its dependencies:
 
-The second environment file supplies the connection and Socket Mode values from the example above. Keep the same `CHANNEL_SERVICE_TOKEN` in LibreChat's own `.env`; Compose variable substitution does not update the `.env` mounted into the API container. Use the same Compose project name and any existing deployment overrides as your running stack.
+   ```sh
+   docker compose -f docker-compose.yml -f docker-compose.channels.yml \
+     -f docker-compose.mongo-replica.yml up -d --build api meilisearch
+   ```
 
-The overlay defaults to Socket Mode and points `LIBRECHAT_INTERNAL_URL` at `http://api:${PORT:-3080}` on the Compose network. It does not use the example's host-loopback URL. The gateway itself listens on container port `8080`, with no published host ports. Socket Mode needs no inbound port; for webhooks, configure your HTTPS reverse proxy to reach `channel-gateway:8080` on that network and forward only the Slack callback paths.
+3. Sign in, save an Agent, and [set up its Slack channel](#set-up-a-channel). Enter the bot token in the Agent builder. Set `CHANNEL_ID` in `.env` to the resulting connection ID. `CHANNEL_TENANT_ID` defaults to `_` for an ordinary OSS installation; supply the actual tenant ID for a tenant-scoped installation. For Socket Mode, also set `SLACK_APP_TOKEN` to the matching app-level token with `connections:write`.
+4. Start the gateway:
 
-The Compose service runs as a non-root user with a read-only filesystem, dropped capabilities, and a health check. To build just the image, the build context must still be the repository root:
+   ```sh
+   docker compose -f docker-compose.yml -f docker-compose.channels.yml \
+     -f docker-compose.mongo-replica.yml --profile channels up -d --build channel-gateway
+   ```
+
+5. Check readiness and startup errors:
+
+   ```sh
+   docker compose -f docker-compose.yml -f docker-compose.channels.yml \
+     -f docker-compose.mongo-replica.yml --profile channels ps -a
+   docker compose -f docker-compose.yml -f docker-compose.channels.yml \
+     -f docker-compose.mongo-replica.yml --profile channels logs --tail=100 api mongodb-init channel-gateway
+   ```
+
+`mongodb-init` exiting with status 0 is expected. The application and gateway should be running and healthy. A successful Slack credential activation does not prove the gateway is connected: check health and perform a real mention. Missing service/app bindings prevent gateway startup.
+
+The overlay points `LIBRECHAT_INTERNAL_URL` at `http://api:${PORT:-3080}` on the Compose network. The gateway listens on container port `8080`, with no published host ports. Socket Mode needs no inbound port; webhooks need an HTTPS reverse proxy forwarding the required callback paths to `channel-gateway:8080`. The gateway runs as a non-root user with a read-only filesystem and dropped capabilities.
+
+For an existing external transaction-capable database, omit the local MongoDB replica overlay and provide the application connection through your normal Compose override. The base Compose file sets the API service's `MONGO_URI`, so changing only `.env` does not replace that service environment entry. Never run the local initializer against an external database.
+
+A separate gateway environment file can be supplied through `--env-file .env --env-file /secure/channel-gateway.env`. Keep `CHANNEL_SERVICE_TOKEN` identical in LibreChat's own `.env`; Compose substitution does not update the file mounted into the application.
+
+To build only the gateway image, use the repository root as its build context:
 
 ```sh
 docker build -f packages/channel-gateway/Dockerfile \
   -t librechat-channel-gateway:local .
 ```
+
+#### Existing local data
+
+Back up the database, stop LibreChat and every gateway/worker that writes to it, then stop the database before applying the replica overlay. Retain the existing `data-node` directory; do not delete it or remove its volume. Start with that same data directory and the overlays above. Initialization preserves existing documents and only initializes an unconfigured local `rs0` member at `mongodb:27017`. It refuses a different replica configuration rather than silently reconfiguring it. Verify existing users/history before enabling the gateway, and retain the overlay on future restarts.
+
+A single local replica member enables transactions but does not provide high availability. The overlay follows the base development Compose authentication/network settings; it is not a production replica-set recipe. For authenticated, multi-member or production deployments, use the [MongoDB conversion procedure](https://www.mongodb.com/docs/manual/tutorial/convert-standalone-to-replica-set/) and your deployment's backup/security practices.
 
 ### Gateway settings
 
@@ -108,26 +150,75 @@ docker build -f packages/channel-gateway/Dockerfile \
 | `CHANNEL_SERVICE_TOKEN` | Required | Shared server-side service-boundary token |
 | `CHANNEL_TENANT_ID` | Required | Exact connection tenant; `_` for single-tenant deployments |
 | `CHANNEL_ID` | Required | Connection ID, not the Slack channel ID or Agent ID |
-| `SLACK_TRANSPORT` | `webhook` | `webhook` or `socket_mode`; match LibreChat's manifest setting |
+| `SLACK_TRANSPORT` | Server policy | Optional assertion: `webhook` or `socket_mode`; must match the server policy |
 | `SLACK_APP_TOKEN` | Required for Socket Mode | App-level token for the same Slack app |
-| `SLACK_NATIVE_SESSIONS` | `false` | Use Slack's native Agent loading, status, and Stop UI after app setup below |
-| `SLACK_LIFECYCLE_REACTIONS` | `false` | Add processing/completion reactions to the sender's message |
 | `APP_TITLE` | `LibreChat` | Application name in browser-review button labels, such as “Open in LibreChat” |
 | `API_CALL_TIMEOUT_MS` | `10000` | Timeout for individual service and Slack API calls |
 | `AGENT_INVOKE_TIMEOUT_MS` | `120000` | Timeout for initial background Response submission, not the full Agent run |
-| `SLACK_SIGNATURE_TOLERANCE_SECS` | `300` | Maximum webhook signature timestamp age/skew |
 
-`SLACK_API_BASE_URL` defaults to `https://slack.com/api/`; leave it unchanged outside controlled tests. Existing `SLACK_SOCKET_TENANT_ID` and `SLACK_SOCKET_CHANNEL_ID` aliases remain accepted, but conflicting old and new values are rejected. Actor-bound durable execution cannot be disabled.
+`SLACK_API_BASE_URL` defaults to `https://slack.com/api/`; leave it unchanged outside controlled tests. Ingress mode, native sessions, lifecycle reactions, signature tolerance and reconnect pacing come from `endpoints.agents.channels` in `librechat.yaml`, not process feature flags. Actor-bound durable execution cannot be disabled.
 
-The process exposes `/readyz` for liveness, `/healthz` for startup/Socket Mode readiness, and `/metrics` for Prometheus metrics. A successful connection activation confirms Slack credentials, not that a gateway is running or connected. Check gateway health and perform a real mention before treating setup as complete.
+The process exposes `/livez` for HTTP-process liveness, `/readyz` and `/healthz` for actual startup/transport readiness, and `/metrics` for Prometheus metrics. An observed ingress-mode or Socket app-binding mismatch makes the gateway unready. Restart gateway replicas after changing ingress mode or Socket app identity. A successful connection activation confirms Slack credentials, not that a gateway is running or connected. Check gateway health and perform a real mention before treating setup as complete.
 
 ### Native Agent UI and final replies
 
 By default, a stable working message provides Stop and, when needed, Review controls. Answers are posted after generation, rather than repeatedly replacing a growing reply. Formatting includes code, tables, links, file attachments, and qualified cost/time details; unavailable costs are not estimated.
 
-To opt into Slack's native Agent sessions, enable Agent mode in the Slack app, add the `assistant:write` bot scope and `agent_session_stopped` event subscription, and reinstall the app. These are additional to the basic generated manifest. Then set `SLACK_NATIVE_SESSIONS=true` and restart the gateway. Without the required permissions or Stop subscription, the gateway falls back to durable progress controls. See [Slack Agent sessions](https://docs.slack.dev/ai/agent-sessions/) for app configuration.
+To opt into Slack's native Agent sessions, enable Agent mode in the Slack app, add the `assistant:write` bot scope and `agent_session_stopped` event subscription, and reinstall the app. These are additional to the basic generated manifest. Then set `endpoints.agents.channels.nativeSessions: true` in `librechat.yaml`. Without the required permissions or Stop subscription, the gateway falls back to durable progress controls. See [Slack Agent sessions](https://docs.slack.dev/ai/agent-sessions/) for app configuration.
 
-Native sessions show processing or waiting-for-input status and return to active when the canonical run finishes. Completed answers can include Helpful/Not helpful controls. Optional lifecycle reactions are separate from native sessions and require the reaction permissions already present in the basic manifest. Neither an acknowledgement nor a reaction proves a tool completed; Stop requests cancellation of the sender's authorized work, not another participant's run.
+Native sessions show processing or waiting-for-input status and return to active when the canonical run finishes. Completed answers can include Helpful/Not helpful controls. Optional lifecycle reactions use `endpoints.agents.channels.lifecycleReactions: true`, are separate from native sessions and require the reaction permissions already present in the basic manifest. Neither an acknowledgement nor a reaction proves a tool completed; Stop requests cancellation of the sender's authorized work, not another participant's run.
+
+## Rich Agent messages
+
+An Agent can return semantic presentation data in its final answer. The gateway validates the document and converts it deterministically to Slack Block Kit; it does not accept arbitrary Slack JSON, callback IDs, approval controls, file identifiers or modal definitions. Ordinary Markdown remains unchanged. This works in both ordinary threads and native Agent sessions, without a new OAuth scope or a configuration migration.
+
+To enable this behavior for an Agent, add the following to its instructions using the existing Agent editor (or include it in a request when testing):
+
+> When a chart, table, image or card would help, write a short readable answer followed by exactly one final, top-level fenced code block named `librechat-presentation`. Its JSON must be `{ "version": 1, "blocks": [...] }`. Use only the semantic components described below; never emit raw Slack blocks or interactive callback IDs. Use ordinary Markdown for other answers. Use public HTTPS URLs for images and links. The gateway generates complete text fallbacks from the data, so do not repeat every value in the introductory answer.
+
+For example, ask the Agent to compare the following measured results and show both a chart and a table. Its final answer can be:
+
+````text
+Latency fell from 20 ms to 17 ms.
+
+```librechat-presentation
+{
+  "version": 1,
+  "blocks": [
+    {
+      "type": "chart",
+      "title": "Latency",
+      "chart": {
+        "type": "line",
+        "axis_config": { "categories": ["Mon", "Tue"], "y_label": "ms" },
+        "series": [{ "name": "p95", "data": [{ "label": "Mon", "value": 20 }, { "label": "Tue", "value": 17 }] }]
+      }
+    },
+    { "type": "table", "title": "Measurements", "columns": ["Day", "p95 (ms)"], "rows": [["Mon", 20], ["Tue", 17]] }
+  ]
+}
+```
+````
+
+| Semantic component                  | Fields and constraints                                                                                                                                                                                                                            |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `text`, `header`, `context`, `code` | `text` string; maximum 3000, 150, 2000 and 3000 Unicode characters respectively. Text components use literal text, so mentions cannot grant interaction authority. Use ordinary Markdown outside the document for formatted prose.                |
+| `divider`                           | No additional fields.                                                                                                                                                                                                                             |
+| `image`                             | `url`, `alt`, optional `title` (150 characters). HTTPS URLs only; alt text is required (2000 characters). The gateway never fetches remote media.                                                                                                 |
+| `card`                              | Required `title` (150), optional `subtitle` (150), `body` (200), `image: {url, alt}`, and up to three `links: [{label, url}]`. Labels are at most 75 characters. Links navigate only; they cannot run an Agent action.                            |
+| `carousel`                          | `cards`: 1–10 cards.                                                                                                                                                                                                                              |
+| `table`                             | `title` (150), `columns`: 1–20 labels (150 each), `rows`: 1–200 rectangular rows of strings or finite numbers. Maximum 20,000 characters across cells including headers. Numeric cells retain numeric sorting.                                    |
+| `chart`                             | `title` (50), `chart` as described below.                                                                                                                                                                                                         |
+| `container`                         | `title` (150), `blocks`: 1–10 text, header, context, code, divider or image components.                                                                                                                                                           |
+| `layout`                            | `title` (150), `rows`: 1–5 arrays of 1–3 components, including containers. Charts, tables and carousels each occupy their own row. Layouts cannot nest. The gateway makes the title visible and generates explicit compatibility fallback blocks. |
+
+Charts support `line`, `bar` and `area` with `axis_config: {categories, x_label?, y_label?}` and `series: [{name, data: [{label, value}]}]`. Categories have 1–20 distinct labels; each series must have exactly one point per category. Series names are distinct; at most 12 series are allowed. Names and labels are at most 20 characters, axis titles 50. Values must be finite; negative values are supported. Pie charts instead use `chart: {type: "pie", segments: [{label, value}]}` with 1–12 distinct labels and positive finite values.
+
+A document has at most 40 components and the final answer must fit the 128,000-byte presentation parsing boundary. Malformed, incomplete, quoted, ambiguous or unrecognized documents stay on the ordinary text path. The gateway isolates components into messages, counts nested blocks, enforces two charts and 20,000 table characters per message, and preserves every value and link in generated text. Components which exceed Slack's nested block or serialized payload limits become text. The server's existing `maxDeliveryParts` policy still applies, with an explicit shortening notice when needed.
+
+The gateway freezes versioned blocks and text together before posting. Retries replay that plan. A definitive Slack `invalid_blocks` or `invalid_attachments` rejection permits a text-only retry; ambiguous network outcomes retain the existing reconciliation behavior. Clients that cannot render layouts receive the generated stable fallback blocks.
+
+This is rich **message** support. Existing app-owned Stop, approval, question and feedback workflows remain responsible for interactions. New input forms, App Home, modals, Work Objects, plan/task execution controls and embedded video are not exposed to Agent output. Authorized file attachments continue through the existing artifact delivery path. Slack may limit newer blocks by client or app availability; automated tests cover SDK payloads and rejection fallback, while live rendering requires a configured Slack workspace.
 
 ## Identity and permissions
 
@@ -146,6 +237,39 @@ On the first mention, the gateway sends the actor a private linking prompt. Open
 Manage and revoke your links in Account settings. A link can become unavailable when the channel or account is no longer eligible; you can still withdraw that consent. Restoring eligibility does not reactivate a link you explicitly revoked.
 
 Browser endpoints under `/api/channels/links` support preview, acceptance, listing, and revocation. Mutations require the normal authenticated browser and same-origin checks. Ticket lifetime defaults to 10 minutes; accepted links default to 30 days. Never post a bearer credential or provider OAuth URL into Slack.
+
+## Delivery recovery
+
+The gateway preserves each frozen delivery operation and its receipt. A required operation whose provider result is unknown holds its actor lane: retrying blindly could post the same answer twice. Stopping a worker or requesting cancellation does not prove whether Slack accepted an earlier request.
+
+### Reconcile a verified provider result
+
+1. Pause gateway processing for the affected channel while investigating. Keep the channel enabled and preserve its actor link and source authority; disabling these is not a recovery bypass.
+2. Inspect the frozen run plan and retained receipt. Verify in the provider that the exact operation reached the intended channel or thread. Record its message key or file ID, matching the retained attempt and any upload checkpoint. If the result cannot be verified, leave the receipt unknown and the lane held.
+3. After the old lease expires, use `POST /api/channels/service/:channelId/runs/claim` with `{ "owner": "<dedicated recovery owner>" }`, normal private service authentication and tenant binding. Verify that the returned run ID is the run being investigated; claims select eligible work and do not take a target run ID. Use the returned current fence, renewing it through `POST /renew` as needed. An expired or replaced worker's fence cannot reconcile the run.
+4. Submit the confirmed receipt through the private channel API. These endpoints confirm existing attempts; they do not send messages, replace the frozen plan, reset attempts or accept a retryable outcome.
+
+All paths below are relative to `/api/channels/service/:channelId/runs/:runId`. Send the channel service bearer token and the configured tenant header, using the same internal service URL as the gateway. Preserve the complete fence returned by the claim.
+
+For a delivery operation, `POST /delivery/reconcile`:
+
+```json
+{
+  "fence": { "runId": "<run ID>", "owner": "<current recovery owner>", "epoch": 1 },
+  "receipt": {
+    "operationId": "<frozen operation ID>",
+    "outcome": "confirmed",
+    "attempts": 1,
+    "externalMessageKey": "<provider channel ID>:<provider message timestamp>"
+  }
+}
+```
+
+Replace every illustrative value with the actual current fence and retained attempt count; do not assume the example epoch is current. Supply `externalFileId` for a verified file operation as required by its frozen operation and checkpoint. Existing provider identities are immutable; reconciliation cannot replace them with a different message or file.
+
+For a progress update, `POST /progress/reconcile` with the current `fence`, the retained progress `revision`, and a `receipt` containing `outcome: "confirmed"`, the retained `attempts` and verified `externalMessageKey`. The message identity remains fixed across progress revisions.
+
+Once every required delivery operation is confirmed, `POST /commit` with the current `fence` to complete delivery and release the actor lane. Resume normal gateway processing afterward. If any required result remains uncertain, keep the run held rather than resending or recreating it. Optional exhausted effects follow the gateway's bounded recovery policy and do not justify replaying a required answer.
 
 ## Gateway protocol boundary
 
@@ -193,5 +317,7 @@ Reaction feedback maps only to confirmed delivered assistant messages. It does n
 ## Operational limits
 
 Disabling a channel or changing its credential mode retires old authority; it does not undo external tool effects. Stop can remain pending until the exact provider is drained and canonical cancellation/cleanup completes. A gateway must poll/reconcile canonical state rather than interpreting an acknowledgement as terminal completion.
+
+With the process-local job store, restarting the API while a tool approval is pending makes the review unavailable. The request stays held for reconciliation and a stale approval does not execute the tool. Durable checkpoint storage alone does not recreate the missing live execution state. Completed history and subsequent thread continuation survive restart.
 
 The gateway package is built from the LibreChat source tree; it is not published as an npm package. This integration does not promise arbitrary chat-platform support, automatic migration of legacy thread-wide identity, or restart-survival of an in-memory OAuth waiter. A restart can require a new browser sign-in; uncertain continuation must not be reported as completed or retried as new work. Legacy thread read/write bookkeeping is not a substitute for actor-scoped runs.
