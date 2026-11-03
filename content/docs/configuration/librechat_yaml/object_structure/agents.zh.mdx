@@ -1129,13 +1129,14 @@ hostFileEdits:
 
 ## linkedInstructions
 
-为解析智能体关联的提示词组指令而设置的预算与缓存配置。省略该配置块时将使用默认值。
+为解析智能体所链接提示词组指令的预算、缓存和来源设置。省略该配置块时将应用默认值。
 
 <OptionTable
   options={[
     ['timeoutMs', 'Integer', '用于解析链接指令的时间预算（毫秒，100-30000）。', '2000'],
     ['native.cacheTtlMs', 'Integer', '原生提示链接解析结果的内容缓存有效期（TTL，单位：毫秒，范围 0-3600000）。设为 0 则禁用缓存。', '300000'],
     ['native.cacheClearTimeoutMs', 'Integer', "在提示词写入时触发的缓存清除操作，其最长等待时间（超时后写入响应将继续，不再等待缓存清除完成）（1-30000 毫秒）。", '1000'],
+    ['langfuse.enabled', 'Boolean', '允许智能体将 Langfuse 提示词组链接为其指令。设置为 false 时,无法保存新的或已更改的 Langfuse 链接,且已保存的 Langfuse 链接也不会被使用。', 'false'],
   ]}
 />
 
@@ -1144,7 +1145,34 @@ linkedInstructions:
   timeoutMs: 2000
   native:
     cacheTtlMs: 300000
+  langfuse:
+    enabled: true
 ```
+
+`timeoutMs` 同时适用于两个来源。只有 `langfuse.enabled` 会发送到客户端;超时和原生缓存设置保留在服务器端。有关 Builder 步骤,请参阅 [Prompts](/docs/features/prompts#use-a-prompt-as-agent-instructions);有关设置和推广,请参阅 [Langfuse 配置](/docs/configuration/langfuse#prompts-as-agent-instructions)。
+
+### 分辨率与缓存 [#resolution-and-caching]
+
+LibreChat 会在每一轮对话中解析链接的指令。这适用于主代理、交接（handoff）与子代理、记忆代理、添加的对话（multi-convo），以及 OpenAI 兼容 API 和 Responses API。保存代理时仅验证其链接，不会复制提示词文本。
+
+| 来源 | 内容加载方式 | 生产环境更新生效时间 |
+| --- | --- | --- |
+| 原生 LibreChat 提示词 | 解析后的内容缓存 `native.cacheTtlMs` 指定的时长，默认为五分钟。 | 通常在下一轮对话时生效，前提是缓存已失效。过期内容可能会保留，直到缓存到期。 |
+| Langfuse 提示词 | 每次初始化时从 Langfuse 获取，不进行内容缓存。 | 若解析成功，则在下一轮对话时生效。 |
+
+保存新的原生 Production 版本、删除版本或删除其分组都会触发缓存清除。写入操作会等待该清除完成，最长等待时间为 `native.cacheClearTimeoutMs`。若超时，清除操作将在后台继续进行。在缓存过期之前，仍可能返回已缓存的内容。若未使用 Redis，每个服务器实例都有各自的缓存。
+
+### 解析失败 [#resolution-failures]
+
+每次解析都必须在 `timeoutMs`(默认 2000 毫秒)内完成。如果失败,代理将以**空指令**继续运行,而不会回退到其存储的内联文本。记忆代理则改用其默认指令。服务器会记录一条包含代理和分组信息的警告。
+
+请检查以下原因:
+
+- 已删除的群组或修订版本，或被策略阻止的内容。
+- 一次解析超时或 Langfuse 请求错误。
+- 禁用 Langfuse 链接或禁用租户提示词目录同步。
+- 已移除的 Langfuse 连接,或更改为其他项目的连接。
+- 在 Langfuse 中删除的提示词或版本，或将文本提示词更改为聊天提示词的情况。
 
 ## maxRetainedToolCountChars
 

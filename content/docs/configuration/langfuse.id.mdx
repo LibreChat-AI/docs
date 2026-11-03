@@ -328,12 +328,86 @@ Skor umpan balik menggunakan kredensial Langfuse dan URL dasar yang sama dengan 
 
 ## Katalog Prompt [#prompt-catalog]
 
-Akses prompt tidak bergantung pada pengaktifan trace, sampling, ketersediaan fanout, maupun sakelar darurat ekspor tenant. Untuk menawarkan sinkronisasi, operator menetapkan `LANGFUSE_PROMPT_SYNC_AVAILABLE=true`; kemudian administrator yang berwenang mengaktifkan sinkronisasi prompt di **Settings → Langfuse**. Pengaturan tersebut memerlukan akses admin dan manajemen konfigurasi Langfuse. Untuk memulai sinkronisasi katalog, diperlukan juga `manage:prompts`.
+Sinkronisasi membuat **prompt teks** Langfuse tersedia di pustaka prompt LibreChat. Fitur ini menambahkan referensi hanya-baca; isi prompt tetap berada di Langfuse.
 
-Koneksi proyek yang dapat digunakan diperlukan. Permintaan single-tenant tanpa cakupan dapat menggunakan proyek yang dikelola oleh environment. Permintaan yang dicakup tenant atau multi-tenant menggunakan koneksi tersimpan mereka sendiri, tidak pernah proyek environment pusat. Kredensial environment mencegah pengeditan koneksi, tetapi tidak dengan sendirinya menyembunyikan pengaturan prompt yang tersedia.
+![Dua alur terpisah: sinkronisasi katalog menambahkan referensi hanya-baca ke LibreChat; menggunakan prompt mengambil versi Production atau versi yang dipin dari Langfuse, lalu memberikan teksnya ke chat atau agent.](/images/features/prompts/catalog-flow.svg)
 
-Sinkronisasi mengimpor **hanya prompt teks** ke dalam katalog lokal sebagai pointer hanya-baca. Identitas yang disimpan adalah `source: langfuse`, `sourceDestination`, `sourceProjectId`, dan `sourcePromptName`; konten prompt tetap berada di Langfuse. Sinkronisasi bersifat append-only: grup yang sudah ada tidak diperbarui maupun dihapus. Hasil yang dibatasi oleh jumlah halaman tidak lengkap; mengulangi batas yang sama akan dimulai dari halaman 1, sehingga tingkatkan `langfuse.promptSync.maxPages` untuk mencapai halaman berikutnya.
+### Aktifkan sinkronisasi prompt [#enable-prompt-sync]
 
-Kartu prompt dan perintah slash me-resolve prompt `production` saat ini atau versi numerik yang dipilih dari Langfuse. Prompt chat tidak didukung. Mengubah identitas sumber yang tersimpan akan gagal dengan aman (fail closed) dengan `source_changed`, alih-alih mengarahkan ulang grup yang diimpor. Mengedit atau menghapus grup prompt eksternal beserta revisinya, atau mengubah production secara lokal, akan mengembalikan `read_only`; kelola nilai-nilai tersebut di Langfuse.
+<Steps>
+  <Step>Atur `LANGFUSE_PROMPT_SYNC_AVAILABLE=true` pada server LibreChat.</Step>
+  <Step>Konfigurasikan proyek Langfuse yang berisi prompt Anda.</Step>
+  <Step>Aktifkan sinkronisasi prompt di **Settings → Langfuse**, lalu mulai sinkronisasi.</Step>
+</Steps>
 
-`LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` secara default bernilai `10000` per permintaan upstream, dengan batas `1000`–`60000` milidetik. [Batas sinkronisasi](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization) mencakup lease per tenant dan batas jumlah halaman.
+Pengaturan ini memerlukan akses admin dan manajemen konfigurasi Langfuse. Memulai sinkronisasi juga memerlukan `manage:prompts`.
+
+Akses prompt tidak memerlukan tracing.
+
+### Gunakan prompt yang disinkronkan [#use-synced-prompts]
+
+Pilih prompt dari pustaka atau menu `/` untuk mengambil versi **Production** atau versi yang dipilih dari Langfuse. Agen juga dapat [menggunakan prompt yang disinkronkan sebagai instruksi](#prompts-as-agent-instructions).
+
+Edit content, kelola versi, dan hapus prompt di **Langfuse**. Prompt bertipe chat tidak didukung.
+
+<Accordions type="single" collapsible>
+  <Accordion title="Pengaturan koneksi lanjutan">
+
+    LibreChat dapat menggunakan kredensial Langfuse yang diatur di server atau koneksi yang disimpan di **Settings → Langfuse**. Kredensial server mencegah pengeditan koneksi, tetapi tidak menyembunyikan pengaturan prompt yang tersedia.
+
+    Untuk deployment yang dikonfigurasi dengan isolasi tenant, setiap tenant harus memiliki koneksi Langfuse tersimpan sendiri.
+  </Accordion>
+  <Accordion title="Apa yang disimpan sync dan apa yang terjadi saat prompt berubah">
+    Setiap entri pustaka menyimpan `source: langfuse`, `sourceDestination`, `sourceProjectId`, dan `sourcePromptName`. Konten tetap berada di Langfuse.
+
+    Sinkronisasi hanya menambahkan entri. Sinkronisasi tidak memperbarui atau menghapus grup yang sudah ada. Menghapus prompt di Langfuse akan membiarkan entri pustakanya tetap ada, tetapi entri tersebut tidak lagi dapat diselesaikan (di-resolve).
+
+    Mengubah identitas sumber yang tersimpan akan mengembalikan `source_changed`; tindakan ini tidak mengarahkan entri ke sumber lain. Mengedit atau menghapus grup atau revisi eksternal, atau mengubah Production di LibreChat, akan mengembalikan `read_only`. Lakukan perubahan ini di Langfuse.
+  </Accordion>
+  <Accordion title="Batas sinkronisasi dan hasil yang tidak lengkap">
+    Sinkronisasi yang mencapai batas halaman maksimum akan tidak lengkap. Jika diulang dengan batas yang sama, proses akan dimulai lagi dari halaman 1. Tingkatkan `langfuse.promptSync.maxPages` agar mencakup halaman-halaman berikutnya.
+
+    `LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` membatasi setiap permintaan ke hulu. Nilai defaultnya adalah `10000` ms; rentang yang diizinkan adalah `1000`–`60000` ms. Lihat [batas sinkronisasi](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization) untuk pengaturan lainnya.
+  </Accordion>
+</Accordions>
+
+### Prompt sebagai Instruksi Agen [#prompts-as-agent-instructions]
+
+Menautkan grup prompt Langfuse yang telah disinkronkan sebagai instruksi agen memerlukan katalog prompt di atas dan sakelar [`endpoints.agents.linkedInstructions.langfuse.enabled`](/docs/configuration/librechat_yaml/object_structure/agents#linkedinstructions), yang secara default bernilai `false`:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    linkedInstructions:
+      langfuse:
+        enabled: true
+```
+
+Gunakan [Agent Builder](/docs/features/prompts#use-a-prompt-as-agent-instructions) untuk memilih prompt dan versinya. Sinkronisasi katalog harus tetap diaktifkan agar tautan yang tersimpan dapat diselesaikan.
+
+#### Menonaktifkan atau mengaktifkan kembali tautan [#disable-or-re-enable-linking]
+
+| Switch | Perilaku simpan | Perilaku jalankan |
+| --- | --- | --- |
+| `false` (default) | Tautan Langfuse baru atau yang diubah akan ditolak. Tautan yang tidak berubah, penghapusan, dan peralihan ke instruksi inline tetap dapat diedit. | Tautan yang tersimpan dipertahankan tetapi tidak digunakan. Agen biasa berjalan dengan instruksi kosong, tanpa kembali ke teks inline. |
+| `true` | Pengguna dengan izin yang diperlukan dapat menautkan prompt teks yang disinkronkan. | Tautan yang tersimpan akan diselesaikan kembali setelah server memuat konfigurasi. Tidak diperlukan pengeditan agen. |
+
+Ketika dinonaktifkan, Builder menyembunyikan prompt Langfuse kecuali pilihan tersimpan milik agen, yang menampilkan catatan tautan dinonaktifkan. Lihat [kegagalan resolusi](/docs/configuration/librechat_yaml/object_structure/agents#resolution-failures) untuk pengecualian agen memori.
+
+#### Peluncuran dan penurunan versi [#rollout-and-downgrade]
+
+<Callout type="warning" title="Perbarui setiap server sebelum mengaktifkan linking">
+  Aktifkan sakelar hanya setelah setiap server LibreChat menjalankan `v0.8.9-rc1` atau yang lebih baru.
+  **Menurunkan versi ke build yang lebih lama tidak didukung setelah tautan Langfuse ada.**
+  Menonaktifkan sakelar berbeda dengan menurunkan versi server. Penurunan versi memerlukan migrasi yang ditinjau secara terpisah.
+</Callout>
+
+Selama peluncuran campuran, server yang lebih lama dapat berperilaku berbeda:
+
+| Server lama | Hasil |
+| --- | --- |
+| Tidak mendukung tautan Langfuse | Menolak penyimpanan dengan tautan Langfuse dan mengembalikan `400`. Saat runtime, server menggunakan instruksi inline yang tersimpan. |
+| Tidak mendukung tautan prompt sama sekali (`v0.8.8` dan sebelumnya) | Menyimpan agen tetapi menghapus tautan tersebut. |
+| Tidak memiliki rute revisions | Mengembalikan `404` untuk daftar versi Builder, baik untuk prompt native maupun Langfuse. |
+
+Biarkan penautan dinonaktifkan hingga proses peluncuran selesai. Untuk menonaktifkan fitur pada build yang didukung, atur sakelar ke `false`; tautan yang tersimpan tetap tersedia untuk diaktifkan kembali.

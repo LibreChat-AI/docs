@@ -1129,13 +1129,14 @@ hostFileEdits:
 
 ## linkedInstructions
 
-Budget- und Cache-Einstellungen zur Auflösung der verknüpften Prompt-Gruppen-Anweisungen eines Agents. Wenn der Block weggelassen wird, gelten die Standardwerte.
+Budget-, Cache- und Quelleneinstellungen für die Auflösung der verknüpften Prompt-Gruppen-Anweisungen eines Agenten. Wird der Block weggelassen, gelten die Standardwerte.
 
 <OptionTable
   options={[
     ['timeoutMs', 'Integer', 'Budget für die Auflösung verknüpfter Anweisungen in Millisekunden (100–30000).', '2000'],
     ['native.cacheTtlMs', 'Integer', 'Content-Cache-TTL für einen aufgelösten nativen Prompt-Link in Millisekunden (0–3600000). 0 deaktiviert den Cache.', '300000'],
     ['native.cacheClearTimeoutMs', 'Integer', "Maximale Wartezeit für das Leeren des Caches, das ein Prompt-Schreibvorgang auslöst, bevor die Antwort des Schreibvorgangs ohne diesen Schritt fortgesetzt wird (1–30000 ms).", '1000'],
+    ['langfuse.enabled', 'Boolean', 'Agenten erlauben, eine Langfuse-Prompt-Gruppe als ihre Anweisungen zu verknüpfen. Wenn false, kann keine neue oder geänderte Langfuse-Verknüpfung gespeichert werden, und gespeicherte Langfuse-Verknüpfungen werden nicht verwendet.', 'false'],
   ]}
 />
 
@@ -1144,7 +1145,34 @@ linkedInstructions:
   timeoutMs: 2000
   native:
     cacheTtlMs: 300000
+  langfuse:
+    enabled: true
 ```
+
+`timeoutMs` gilt für beide Quellen. Nur `langfuse.enabled` wird an den Client gesendet; Timeout- und native Cache-Einstellungen bleiben auf dem Server. Die Schritte im Builder finden Sie unter [Prompts](/docs/features/prompts#use-a-prompt-as-agent-instructions), Einrichtung und Rollout unter [Langfuse-Konfiguration](/docs/configuration/langfuse#prompts-as-agent-instructions).
+
+### Auflösung und Caching [#resolution-and-caching]
+
+LibreChat löst verknüpfte Anweisungen bei jedem Durchlauf auf. Dies gilt für den Hauptagenten, Übergaben (Handoffs) und Subagenten, den Speicher-Agenten, hinzugefügte Unterhaltungen (Multi-Convo) sowie für die OpenAI-kompatible API und die Responses API. Beim Speichern eines Agenten wird die Verknüpfung validiert, der Prompt-Text wird jedoch nicht kopiert.
+
+| Quelle | Wie Inhalte geladen werden | Wann Produktionsaktualisierungen wirksam werden |
+| --- | --- | --- |
+| Native LibreChat-Prompt | Der aufgelöste Inhalt wird für `native.cacheTtlMs` zwischengespeichert, standardmäßig fünf Minuten. | In der Regel beim nächsten Durchlauf, nach der Cache-Invalidierung. Veraltete Inhalte können bis zum Ablauf des Caches bestehen bleiben. |
+| Langfuse-Prompt | Wird bei jeder Initialisierung von Langfuse abgerufen, ohne Inhalts-Cache. | Beim nächsten Durchlauf, sofern die Auflösung erfolgreich ist. |
+
+Das Speichern einer neuen nativen Produktionsrevision, das Löschen einer Revision oder das Löschen ihrer Gruppe löst eine Cache-Leerung aus. Der Schreibvorgang wartet bis zu `native.cacheClearTimeoutMs` auf diese Leerung. Bei einem Timeout wird die Leerung im Hintergrund fortgesetzt. Zwischengespeicherte Inhalte können bis zu ihrem regulären Ablauf weiterhin ausgeliefert werden. Ohne Redis hat jede Serverinstanz ihren eigenen Cache.
+
+### Auflösungsfehler [#resolution-failures]
+
+Jede Auflösung muss innerhalb von `timeoutMs` abgeschlossen sein (standardmäßig 2000 ms). Schlägt sie fehl, fährt der Agent mit **leeren Anweisungen** fort, ohne auf seinen gespeicherten Inline-Text zurückzugreifen. Der Memory-Agent verwendet stattdessen seine Standardanweisungen. Der Server protokolliert eine Warnung mit dem Agenten und der Gruppe.
+
+Prüfen Sie diese Ursachen:
+
+- Eine gelöschte Gruppe oder Revision oder durch Richtlinien blockierter Inhalt.
+- Ein Zeitüberschreitungsfehler bei der Auflösung oder ein Anforderungsfehler bei Langfuse.
+- Langfuse-Verknüpfung oder Synchronisierung des Prompt-Katalogs für Mandanten deaktiviert.
+- Eine entfernte Langfuse-Verbindung oder eine, die zu einem anderen Projekt geändert wurde.
+- Ein in Langfuse gelöschter Prompt oder eine Version davon oder ein Text-Prompt, der in einen Chat-Prompt umgewandelt wurde.
 
 ## maxRetainedToolCountChars
 

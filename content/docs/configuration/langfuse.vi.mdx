@@ -327,12 +327,86 @@ Khi tính năng theo dõi Langfuse được cấu hình, LibreChat cũng gửi p
 
 ## Danh mục Prompt [#prompt-catalog]
 
-Quyền truy cập prompt độc lập với việc bật theo dõi (trace), lấy mẫu, tính khả dụng của fanout và công tắc khẩn cấp xuất dữ liệu tenant. Để cung cấp tính năng đồng bộ hóa, người vận hành đặt `LANGFUSE_PROMPT_SYNC_AVAILABLE=true`; sau đó, một quản trị viên được ủy quyền sẽ bật đồng bộ prompt trong **Settings → Langfuse**. Các cài đặt này yêu cầu quyền truy cập quản trị và quyền quản lý cấu hình Langfuse. Việc bắt đầu đồng bộ hóa danh mục còn yêu cầu quyền `manage:prompts`.
+Sync làm cho các **text prompt** của Langfuse có sẵn trong thư viện prompt của LibreChat. Nó chỉ thêm các tham chiếu chỉ đọc; nội dung prompt vẫn được lưu trong Langfuse.
 
-Cần có một kết nối dự án khả dụng. Các yêu cầu không có phạm vi (unscoped) trong môi trường một người thuê (single-tenant) có thể sử dụng dự án được quản lý bởi môi trường. Các yêu cầu có phạm vi người thuê (tenant-scoped) hoặc đa người thuê (multi-tenant) sử dụng kết nối đã được lưu riêng của chúng, không bao giờ sử dụng dự án môi trường trung tâm. Thông tin xác thực môi trường ngăn việc chỉnh sửa kết nối, nhưng bản thân nó không ẩn các cài đặt prompt khả dụng.
+![Hai luồng riêng biệt: đồng bộ danh mục sẽ thêm các tham chiếu chỉ đọc vào LibreChat; khi sử dụng một prompt, hệ thống sẽ lấy phiên bản Production hoặc phiên bản đã ghim của prompt đó từ Langfuse, sau đó cung cấp nội dung văn bản cho chat hoặc agent.](/images/features/prompts/catalog-flow.svg)
 
-Đồng bộ chỉ nhập **các prompt văn bản** vào danh mục cục bộ dưới dạng con trỏ chỉ đọc. Thông tin nhận dạng được lưu gồm `source: langfuse`, `sourceDestination`, `sourceProjectId` và `sourcePromptName`; nội dung prompt vẫn nằm trong Langfuse. Đồng bộ chỉ thêm mới (append-only): các nhóm hiện có không được cập nhật hay xóa. Kết quả bị giới hạn số trang là kết quả chưa đầy đủ; chạy lại với cùng giới hạn sẽ bắt đầu từ trang 1, vì vậy hãy tăng `langfuse.promptSync.maxPages` để truy cập các trang sau.
+### Bật đồng bộ prompt [#enable-prompt-sync]
 
-Prompt cards and the slash command resolve the current `production` prompt or a selected numeric version from Langfuse. Chat prompts are not supported. Changing the stored source identity fails closed with `source_changed` rather than redirecting an imported group. Editing or deleting external prompt groups or their revisions, or changing production locally, returns `read_only`; manage those values in Langfuse.
+<Steps>
+  <Step>Đặt `LANGFUSE_PROMPT_SYNC_AVAILABLE=true` trên máy chủ LibreChat.</Step>
+<Step>Cấu hình dự án Langfuse có chứa các prompt của bạn.</Step>
+<Step>Bật đồng bộ prompt trong **Cài đặt → Langfuse**, sau đó bắt đầu đồng bộ.</Step>
+</Steps>
 
-`LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` mặc định là `10000` cho mỗi yêu cầu phía upstream, được giới hạn trong khoảng `1000`–`60000` mili giây. [Giới hạn đồng bộ](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization) bao gồm thời gian giữ khóa (lease) theo từng tenant và số trang tối đa.
+Các cài đặt này yêu cầu quyền quản trị viên và quyền quản lý cấu hình Langfuse. Việc bắt đầu đồng bộ cũng yêu cầu `manage:prompts`.
+
+Truy cập prompt không yêu cầu theo dõi (tracing).
+
+### Sử dụng prompt đã đồng bộ [#use-synced-prompts]
+
+Chọn một prompt từ thư viện hoặc menu `/` để lấy phiên bản **Production** hoặc phiên bản đã chọn của prompt đó từ Langfuse. Agent cũng có thể [sử dụng prompt đã đồng bộ làm hướng dẫn](#prompts-as-agent-instructions).
+
+Chỉnh sửa nội dung, quản lý phiên bản và xóa prompt trong **Langfuse**. Prompt kiểu chat không được hỗ trợ.
+
+<Accordions type="single" collapsible>
+  <Accordion title="Cài đặt kết nối nâng cao">
+
+    LibreChat có thể sử dụng thông tin xác thực Langfuse được thiết lập trên máy chủ hoặc một kết nối được lưu trong **Settings → Langfuse**. Thông tin xác thực trên máy chủ ngăn việc chỉnh sửa kết nối nhưng không ẩn các cài đặt prompt có sẵn.
+
+    Đối với các triển khai được cấu hình cô lập tenant, mỗi tenant phải có kết nối Langfuse được lưu trữ riêng.
+  </Accordion>
+  <Accordion title="Sync lưu trữ những gì và điều gì xảy ra khi prompt thay đổi">
+    Mỗi mục thư viện lưu `source: langfuse`, `sourceDestination`, `sourceProjectId` và `sourcePromptName`. Nội dung vẫn được giữ trong Langfuse.
+
+    Sync chỉ thêm mới các mục. Sync không cập nhật hay xóa các nhóm đã tồn tại. Khi xóa một prompt trong Langfuse, mục thư viện tương ứng vẫn được giữ nguyên, nhưng mục đó không còn có thể được phân giải nữa.
+
+    Thay đổi danh tính nguồn đã lưu sẽ trả về `source_changed`; nó không chuyển hướng mục nhập sang nguồn khác. Chỉnh sửa hoặc xóa một nhóm hoặc bản sửa đổi bên ngoài, hoặc thay đổi Production trong LibreChat, sẽ trả về `read_only`. Hãy thực hiện các thay đổi này trong Langfuse.
+  </Accordion>
+  <Accordion title="Giới hạn đồng bộ và kết quả chưa đầy đủ">
+    Một đợt đồng bộ đạt đến giới hạn số trang sẽ chưa hoàn tất. Chạy lại với cùng giới hạn sẽ bắt đầu lại từ trang 1. Hãy tăng `langfuse.promptSync.maxPages` để bao gồm các trang sau.
+
+    `LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` giới hạn thời gian cho mỗi yêu cầu upstream. Giá trị mặc định là `10000` ms; phạm vi cho phép là `1000`–`60000` ms. Xem [giới hạn đồng bộ](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization) để biết thêm các cài đặt khác.
+  </Accordion>
+</Accordions>
+
+### Prompt như Hướng dẫn cho Agent [#prompts-as-agent-instructions]
+
+Để liên kết một nhóm prompt Langfuse đã đồng bộ làm chỉ dẫn cho agent, cần có danh mục prompt ở trên và công tắc [`endpoints.agents.linkedInstructions.langfuse.enabled`](/docs/configuration/librechat_yaml/object_structure/agents#linkedinstructions), mặc định là `false`:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    linkedInstructions:
+      langfuse:
+        enabled: true
+```
+
+Sử dụng [Agent Builder](/docs/features/prompts#use-a-prompt-as-agent-instructions) để chọn prompt và phiên bản của nó. Việc đồng bộ danh mục phải được bật để các liên kết đã lưu có thể được phân giải.
+
+#### Tắt hoặc bật lại liên kết [#disable-or-re-enable-linking]
+
+| Switch | Hành vi khi lưu | Hành vi khi chạy |
+| --- | --- | --- |
+| `false` (mặc định) | Các liên kết Langfuse mới hoặc đã thay đổi sẽ bị từ chối. Liên kết không thay đổi, việc xóa liên kết và chuyển sang hướng dẫn nội tuyến vẫn có thể chỉnh sửa. | Các liên kết đã lưu được giữ lại nhưng không được sử dụng. Các agent thông thường chạy với hướng dẫn trống, không quay lại dùng văn bản nội tuyến. |
+| `true` | Người dùng có đủ quyền cần thiết có thể liên kết các prompt văn bản đã đồng bộ. | Các liên kết đã lưu được phân giải lại sau khi máy chủ tải cấu hình. Không cần chỉnh sửa agent nào. |
+
+Khi bị tắt, Builder ẩn các prompt Langfuse ngoại trừ lựa chọn đã lưu của agent, lựa chọn này sẽ hiển thị ghi chú liên kết đã bị vô hiệu hóa. Xem [lỗi phân giải](/docs/configuration/librechat_yaml/object_structure/agents#resolution-failures) để biết ngoại lệ dành cho memory-agent.
+
+#### Triển khai và hạ cấp [#rollout-and-downgrade]
+
+<Callout type="warning" title="Cập nhật mọi máy chủ trước khi bật liên kết">
+  Chỉ bật công tắc sau khi mọi máy chủ LibreChat đều chạy `v0.8.9-rc1` trở lên.
+**Không hỗ trợ hạ cấp về phiên bản cũ hơn sau khi đã có liên kết Langfuse.**
+Tắt công tắc khác với hạ cấp máy chủ. Việc hạ cấp cần một quy trình di chuyển được xem xét riêng.
+</Callout>
+
+Trong quá trình triển khai hỗn hợp, các máy chủ cũ có thể hoạt động khác đi:
+
+| Máy chủ cũ | Kết quả |
+| --- | --- |
+| Không hỗ trợ liên kết Langfuse | Từ chối lưu với liên kết Langfuse, trả về `400`. Khi chạy, máy chủ sử dụng hướng dẫn nội tuyến đã lưu. |
+| Hoàn toàn không hỗ trợ liên kết prompt (`v0.8.8` trở về trước) | Lưu agent nhưng bỏ qua liên kết. |
+| Không có route revisions | Trả về `404` cho danh sách phiên bản của Builder, đối với cả prompt gốc và prompt Langfuse. |
+
+Giữ tính năng liên kết ở trạng thái tắt cho đến khi quá trình triển khai hoàn tất. Để tắt tính năng trên một bản dựng được hỗ trợ, hãy đặt công tắc thành `false`; các liên kết đã lưu vẫn còn nguyên để bật lại sau này.

@@ -1129,13 +1129,14 @@ hostFileEdits:
 
 ## linkedInstructions
 
-Impostazioni di budget e cache per la risoluzione delle istruzioni del gruppo di prompt collegato a un agente. Omettere il blocco applica i valori predefiniti.
+Impostazioni di budget, cache e sorgente per la risoluzione delle istruzioni del gruppo di prompt collegato a un agente. Omettere il blocco applica i valori predefiniti.
 
 <OptionTable
   options={[
     ['timeoutMs', 'Integer', 'Budget per la risoluzione delle istruzioni collegate in millisecondi (100-30000).', '2000'],
     ['native.cacheTtlMs', 'Integer', 'Durata di vita (TTL) della cache dei contenuti per un link di prompt nativo risolto, in millisecondi (0-3600000). 0 disabilita la cache.', '300000'],
     ['native.cacheClearTimeoutMs', 'Integer', "Tempo massimo di attesa per la cancellazione della cache che una scrittura di prompt attiva prima che la risposta della scrittura prosegua senza di essa (1-30000 ms).", '1000'],
+    ['langfuse.enabled', 'Boolean', 'Consenti agli agenti di collegare un gruppo di prompt di Langfuse come loro istruzioni. Quando è impostato su false, non è possibile salvare alcun collegamento a Langfuse nuovo o modificato, e i collegamenti a Langfuse già salvati non vengono utilizzati.', 'false'],
   ]}
 />
 
@@ -1144,7 +1145,34 @@ linkedInstructions:
   timeoutMs: 2000
   native:
     cacheTtlMs: 300000
+  langfuse:
+    enabled: true
 ```
+
+`timeoutMs` si applica a entrambe le fonti. Solo `langfuse.enabled` viene inviato al client; le impostazioni di timeout e di cache nativa restano sul server. Per i passaggi nel Builder consulta [Prompts](/docs/features/prompts#use-a-prompt-as-agent-instructions), mentre per la configurazione e l'implementazione graduale consulta [Langfuse configuration](/docs/configuration/langfuse#prompts-as-agent-instructions).
+
+### Risoluzione e caching [#resolution-and-caching]
+
+LibreChat risolve le istruzioni collegate a ogni turno. Questo vale per l'agente principale, per gli handoff e i subagenti, per l'agente di memoria, per le conversazioni aggiunte (multi-convo) e per le API compatibili con OpenAI e le API Responses. Il salvataggio di un agente convalida il collegamento, ma non copia il testo del prompt.
+
+| Fonte | Come viene caricato il contenuto | Quando gli aggiornamenti di Produzione hanno effetto |
+| --- | --- | --- |
+| Prompt nativo di LibreChat | Il contenuto risolto viene memorizzato nella cache per `native.cacheTtlMs`, cinque minuti per impostazione predefinita. | Di solito al turno successivo, dopo l'invalidazione della cache. Il contenuto obsoleto può rimanere fino alla scadenza della cache. |
+| Prompt Langfuse | Recuperato da Langfuse a ogni inizializzazione, senza cache dei contenuti. | Al turno successivo, se la risoluzione ha esito positivo. |
+
+Il salvataggio di una nuova revisione Production nativa, l'eliminazione di una revisione o l'eliminazione del relativo gruppo attiva una cancellazione della cache. La scrittura attende fino a `native.cacheClearTimeoutMs` che la cancellazione sia completata. In caso di timeout, la cancellazione prosegue in background. Il contenuto memorizzato nella cache può essere comunque servito fino alla sua normale scadenza. Senza Redis, ogni istanza del server dispone di una propria cache.
+
+### Errori di risoluzione [#resolution-failures]
+
+Ogni risoluzione deve completarsi entro `timeoutMs` (2000 ms per impostazione predefinita). In caso di errore, l'agente prosegue con **istruzioni vuote**, senza ricorrere al testo inline memorizzato. L'agente di memoria utilizza invece le sue istruzioni predefinite. Il server registra un avviso con l'agente e il gruppo.
+
+Verifica queste cause:
+
+- Un gruppo o una revisione eliminati, oppure contenuti bloccati da una policy.
+- Un timeout di risoluzione o un errore di richiesta di Langfuse.
+- Collegamento a Langfuse disabilitato o sincronizzazione del catalogo prompt del tenant disabilitata.
+- Una connessione a Langfuse rimossa, o modificata verso un progetto diverso.
+- Un prompt o una versione eliminati in Langfuse, oppure un prompt di testo modificato in un prompt di chat.
 
 ## maxRetainedToolCountChars
 

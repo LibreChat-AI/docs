@@ -1129,13 +1129,14 @@ hostFileEdits:
 
 ## linkedInstructions
 
-Configurações de orçamento e cache para resolver as instruções do grupo de prompts vinculado a um agente. Omitir o bloco aplica os valores padrão.
+Configurações de orçamento, cache e origem para resolver as instruções do grupo de prompts vinculado a um agente. Omitir o bloco aplica os valores padrão.
 
 <OptionTable
   options={[
     ['timeoutMs', 'Integer', 'Orçamento para resolver instruções vinculadas em milissegundos (100-30000).', '2000'],
     ['native.cacheTtlMs', 'Integer', 'TTL do cache de conteúdo para um link de prompt nativo resolvido, em milissegundos (0-3600000). 0 desativa o cache.', '300000'],
     ['native.cacheClearTimeoutMs', 'Integer', "Tempo máximo de espera pela limpeza do cache que uma gravação de prompt dispara, antes de a resposta da gravação continuar sem ela (1-30000 ms).", '1000'],
+    ['langfuse.enabled', 'Boolean', 'Permitir que agentes vinculem um grupo de prompts do Langfuse como suas instruções. Quando false, nenhum novo vínculo ou vínculo alterado com o Langfuse pode ser salvo, e os vínculos salvos com o Langfuse não são utilizados.', 'false'],
   ]}
 />
 
@@ -1144,7 +1145,34 @@ linkedInstructions:
   timeoutMs: 2000
   native:
     cacheTtlMs: 300000
+  langfuse:
+    enabled: true
 ```
+
+`timeoutMs` se aplica a ambas as fontes. Apenas `langfuse.enabled` é enviado ao cliente; as configurações de timeout e de cache nativo permanecem no servidor. Consulte [Prompts](/docs/features/prompts#use-a-prompt-as-agent-instructions) para as etapas do Builder e [Configuração do Langfuse](/docs/configuration/langfuse#prompts-as-agent-instructions) para a configuração e a implantação.
+
+### Resolução e cache [#resolution-and-caching]
+
+O LibreChat resolve as instruções vinculadas em cada turno. Isso se aplica ao agente principal, aos handoffs e subagentes, ao agente de memória, às conversas adicionais (multi-convo) e às APIs compatíveis com OpenAI e Responses. Salvar um agente valida o seu vínculo, mas não copia o texto do prompt.
+
+| Fonte | Como o conteúdo é carregado | Quando as atualizações de Produção entram em vigor |
+| --- | --- | --- |
+| Prompt nativo do LibreChat | O conteúdo resolvido fica em cache por `native.cacheTtlMs`, cinco minutos por padrão. | Geralmente no próximo turno, após a invalidação do cache. Conteúdo desatualizado pode permanecer até a expiração do cache. |
+| Prompt do Langfuse | Buscado no Langfuse a cada inicialização, sem cache de conteúdo. | No próximo turno, caso a resolução seja bem-sucedida. |
+
+Salvar uma nova revisão nativa de Produção, excluir uma revisão ou excluir o respectivo grupo aciona uma limpeza do cache. A gravação aguarda até `native.cacheClearTimeoutMs` por essa limpeza. Em caso de tempo esgotado, a limpeza continua em segundo plano. O conteúdo em cache ainda pode ser servido até o seu vencimento normal. Sem Redis, cada instância do servidor possui seu próprio cache.
+
+### Falhas de resolução [#resolution-failures]
+
+Cada resolução deve ser concluída dentro de `timeoutMs` (2000 ms por padrão). Se falhar, o agente continua com **instruções vazias**, sem recorrer ao texto inline armazenado. O agente de memória, por sua vez, usa suas instruções padrão. O servidor registra um aviso no log com o agente e o grupo.
+
+Verifique estas causas:
+
+- Um grupo ou revisão excluído, ou conteúdo bloqueado por política.
+- Um tempo limite de resolução ou um erro de requisição do Langfuse.
+- Desativada a vinculação com o Langfuse ou a sincronização do catálogo de prompts do locatário.
+- Uma conexão com o Langfuse removida, ou alterada para um projeto diferente.
+- Um prompt ou versão excluído no Langfuse, ou um prompt de texto alterado para um prompt de chat.
 
 ## maxRetainedToolCountChars
 

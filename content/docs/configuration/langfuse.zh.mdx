@@ -324,12 +324,86 @@ LibreChat v0.8.8-rc2 更新了 Agent 追踪塑形，现在使用 `StandardGraph`
 
 ## 提示词目录 [#prompt-catalog]
 
-提示词访问独立于追踪启用状态、采样、扇出可用性以及租户导出紧急开关。要提供同步功能,运营方需设置 `LANGFUSE_PROMPT_SYNC_AVAILABLE=true`;随后,经授权的管理员可在 **设置 → Langfuse** 中启用提示词同步。这些设置要求具备管理员权限和 Langfuse 配置管理权限。启动目录同步还需要 `manage:prompts` 权限。
+Sync 功能可将 Langfuse **文本提示词**提供给 LibreChat 的提示词库。它会添加只读引用，提示词内容仍保存在 Langfuse 中。
 
-需要有可用的项目连接。未限定作用域的单租户请求可以使用由环境管理的项目。租户限定作用域或多租户请求则使用各自存储的连接,而不会使用中央环境项目。环境凭据会禁止编辑连接,但其本身并不会隐藏可用的提示词设置。
+![两个独立的流程:目录同步会向 LibreChat 添加只读引用;使用提示词时,会从 Langfuse 获取其 Production 版本或固定版本,然后将文本提供给聊天或智能体。](/images/features/prompts/catalog-flow.svg)
 
-同步功能仅将**文本提示词**以只读指针的形式导入本地目录。存储的标识信息包括 `source: langfuse`、`sourceDestination`、`sourceProjectId` 和 `sourcePromptName`;提示词内容保留在 Langfuse 中。同步为仅追加模式:已有的分组不会被更新或删除。达到页数上限的结果并不完整;若使用相同的上限重复执行,将从第 1 页重新开始,因此需要增大 `langfuse.promptSync.maxPages` 才能获取后续页面。
+### 启用提示词同步 [#enable-prompt-sync]
 
-提示卡片和斜杠命令会从 Langfuse 中解析当前的 `production` 提示或所选的数字版本。不支持聊天提示。更改已存储的源标识会以失败关闭的方式返回 `source_changed`，而不会重定向已导入的分组。编辑或删除外部提示分组或其修订版本，或在本地更改 production，会返回 `read_only`；请在 Langfuse 中管理这些值。
+<Steps>
+  <Step>在 LibreChat 服务器上设置 `LANGFUSE_PROMPT_SYNC_AVAILABLE=true`。</Step>
+  <Step>配置包含你的提示词的 Langfuse 项目。</Step>
+  <Step>在 **Settings → Langfuse** 中启用提示词同步，然后开始同步。</Step>
+</Steps>
 
-`LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` 默认为每次上游请求 `10000`,取值范围限定为 `1000`–`60000` 毫秒。[同步限制](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization)涵盖每个租户的租约和分页上限。
+设置需要管理员权限以及 Langfuse 配置管理权限。启动同步还需要 `manage:prompts` 权限。
+
+Prompt 访问不需要追踪。
+
+### 使用同步的提示词 [#use-synced-prompts]
+
+从提示词库或 `/` 菜单中选择一个提示词，即可从 Langfuse 获取其 **Production** 版本或所选版本。智能体也可以[将同步的提示词用作指令](#prompts-as-agent-instructions)。
+
+在 **Langfuse** 中编辑内容、管理版本并删除提示词。不支持聊天类型的提示词。
+
+<Accordions type="single" collapsible>
+  <Accordion title="高级连接设置">
+
+    LibreChat 可以使用服务器上设置的 Langfuse 凭据,也可以使用在 **Settings → Langfuse** 中保存的连接。使用服务器凭据时无法编辑连接,但这并不会隐藏可用的提示词设置。
+
+    对于配置了租户隔离的部署,每个租户都必须拥有各自存储的 Langfuse 连接。
+  </Accordion>
+  <Accordion title="同步会存储什么,以及提示词变化时会发生什么">
+    每个库条目都会存储 `source: langfuse`、`sourceDestination`、`sourceProjectId` 和 `sourcePromptName`。内容仍保存在 Langfuse 中。
+
+    同步仅会新增条目,不会更新或删除已有的分组。在 Langfuse 中删除某个提示词后,其在库中的条目仍会保留,但该条目将无法再被解析。
+
+    更改已存储的源标识会返回 `source_changed`;它不会将条目重定向到另一个源。编辑或删除外部组或修订版本,或在 LibreChat 中更改 Production,会返回 `read_only`。请在 Langfuse 中进行这些更改。
+  </Accordion>
+  <Accordion title="同步限制与不完整结果">
+    一次达到页数上限的同步是不完整的。若使用相同的上限重复执行,会从第 1 页重新开始。请增大 `langfuse.promptSync.maxPages` 以包含后续页面。
+
+    `LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` 用于限制每次上游请求的超时时间。默认值为 `10000` 毫秒;允许的取值范围为 `1000`–`60000` 毫秒。更多同步限制相关设置,请参阅 [同步限制](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization)。
+  </Accordion>
+</Accordions>
+
+### 将提示词用作智能体指令 [#prompts-as-agent-instructions]
+
+将同步的 Langfuse 提示词组链接为智能体的指令，需要满足上述提示词目录的要求，并开启 [`endpoints.agents.linkedInstructions.langfuse.enabled`](/docs/configuration/librechat_yaml/object_structure/agents#linkedinstructions) 开关，该开关默认值为 `false`：
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    linkedInstructions:
+      langfuse:
+        enabled: true
+```
+
+使用 [Agent Builder](/docs/features/prompts#use-a-prompt-as-agent-instructions) 选择提示词及其版本。必须保持目录同步已启用,已保存的链接才能正常解析。
+
+#### 禁用或重新启用链接 [#disable-or-re-enable-linking]
+
+| 开关 | 保存行为 | 运行行为 |
+| --- | --- | --- |
+| `false`(默认) | 新建或修改的 Langfuse 链接会被拒绝。未更改的链接、移除链接以及切换为内联指令仍可编辑。 | 已保存的链接会被保留但不会使用。普通智能体以空指令运行,不会回退到内联文本。 |
+| `true` | 具备所需权限的用户可以关联已同步的文本提示词。 | 服务器加载配置后,已保存的链接会重新解析。无需编辑智能体。 |
+
+当禁用时,Builder 会隐藏 Langfuse 提示词,但保留智能体已保存的选择,并显示一条已禁用链接的提示。有关记忆智能体的例外情况,请参阅[解析失败](/docs/configuration/librechat_yaml/object_structure/agents#resolution-failures)。
+
+#### 发布与降级 [#rollout-and-downgrade]
+
+<Callout type="warning" title="在启用链接之前，更新每台服务器">
+  只有在所有 LibreChat 服务器都运行 `v0.8.9-rc1` 或更高版本后,才能启用该开关。
+**一旦存在 Langfuse 链接,就不支持降级到较旧的版本。**
+禁用该开关与降级服务器是两回事。降级需要单独审查并通过的迁移方案。
+</Callout>
+
+在混合部署期间,较旧的服务器可能表现出不同的行为:
+
+| 旧版服务器 | 结果 |
+| --- | --- |
+| 不支持 Langfuse 链接 | 保存带有 Langfuse 链接的内容时返回 `400` 并被拒绝。运行时,使用已存储的内联指令。 |
+| 完全不支持提示词链接(`v0.8.8` 及更早版本) | 保存智能体,但丢弃该链接。 |
+| 没有版本修订路由 | 对于原生提示词和 Langfuse 提示词,Builder 的版本列表均返回 `404`。 |
+
+在推出完成之前请保持链接功能禁用。要在受支持的版本上禁用该功能,请将开关设置为 `false`;已保存的链接仍可用于重新启用。

@@ -1129,13 +1129,14 @@ hostFileEdits:
 
 ## linkedInstructions
 
-Ustawienia budżetu i pamięci podręcznej do rozwiązywania połączonych instrukcji grupy promptów agenta. Pominięcie bloku powoduje zastosowanie wartości domyślnych.
+Ustawienia budżetu, pamięci podręcznej i źródła służące do rozwiązywania instrukcji powiązanych z grupą promptów agenta. Pominięcie bloku powoduje zastosowanie wartości domyślnych.
 
 <OptionTable
   options={[
     ['timeoutMs', 'Integer', 'Budżet na rozwiązywanie powiązanych instrukcji w milisekundach (100–30000).', '2000'],
     ['native.cacheTtlMs', 'Integer', 'Czas życia pamięci podręcznej dla rozwiązanego natywnego linku do promptu w milisekundach (0–3600000). Wartość 0 wyłącza pamięć podręczną.', '300000'],
     ['native.cacheClearTimeoutMs', 'Integer', "Maksymalny czas oczekiwania na wyczyszczenie pamięci podręcznej, które uruchamia zapis promptu, po którym odpowiedź na zapis jest kontynuowana bez tego czyszczenia (1–30000 ms).", '1000'],
+    ['langfuse.enabled', 'Boolean', 'Pozwól agentom połączyć grupę promptów Langfuse jako ich instrukcje. Gdy ustawione na false, nie można zapisać żadnego nowego ani zmienionego połączenia z Langfuse, a zapisane połączenia z Langfuse nie są używane.', 'false'],
   ]}
 />
 
@@ -1144,7 +1145,34 @@ linkedInstructions:
   timeoutMs: 2000
   native:
     cacheTtlMs: 300000
+  langfuse:
+    enabled: true
 ```
+
+`timeoutMs` dotyczy obu źródeł. Tylko `langfuse.enabled` jest wysyłane do klienta; ustawienia limitu czasu i pamięci podręcznej natywnej pozostają po stronie serwera. Kroki w Builderze znajdziesz w sekcji [Prompts](/docs/features/prompts#use-a-prompt-as-agent-instructions), a konfigurację i wdrażanie w sekcji [Langfuse configuration](/docs/configuration/langfuse#prompts-as-agent-instructions).
+
+### Rozdzielczość i buforowanie [#resolution-and-caching]
+
+LibreChat rozwiązuje powiązane instrukcje przy każdej turze rozmowy. Dotyczy to agenta głównego, przekazań (handoffs) i subagentów, agenta pamięci, dodatkowych rozmów (multi-convo) oraz interfejsów API zgodnych z OpenAI i Responses API. Zapisanie agenta weryfikuje jego powiązanie, ale nie kopiuje treści instrukcji.
+
+| Źródło | Sposób ładowania treści | Kiedy aktualizacje produkcyjne zaczynają obowiązywać |
+| --- | --- | --- |
+| Natywny prompt LibreChat | Rozwiązana treść jest buforowana przez `native.cacheTtlMs`, domyślnie pięć minut. | Zwykle przy następnej turze, po unieważnieniu pamięci podręcznej. Nieaktualna treść może pozostać do czasu wygaśnięcia bufora. |
+| Prompt Langfuse | Pobierany z Langfuse przy każdej inicjalizacji, bez bufora treści. | Przy następnej turze, jeśli rozwiązanie zakończy się powodzeniem. |
+
+Zapisanie nowej rewizji Production w natywnym trybie, usunięcie rewizji lub usunięcie jej grupy uruchamia czyszczenie pamięci podręcznej. Zapis czeka na to czyszczenie przez maksymalnie `native.cacheClearTimeoutMs`. Po upływie limitu czasu czyszczenie kontynuuje się w tle. Zbuforowana treść może nadal być serwowana do czasu jej normalnego wygaśnięcia. Bez Redis każda instancja serwera ma własną pamięć podręczną.
+
+### Błędy rozwiązywania [#resolution-failures]
+
+Każde rozwiązanie musi zakończyć się w ciągu `timeoutMs` (domyślnie 2000 ms). Jeśli się nie powiedzie, agent kontynuuje z **pustymi instrukcjami**, bez powrotu do zapisanego w nim tekstu wbudowanego. Agent pamięci zamiast tego używa swoich domyślnych instrukcji. Serwer rejestruje ostrzeżenie zawierające nazwę agenta i grupę.
+
+Sprawdź następujące przyczyny:
+
+- Usunięta grupa lub wersja albo treść zablokowana przez politykę.
+- Przekroczenie limitu czasu rozwiązywania (resolution timeout) lub błąd żądania Langfuse.
+- Wyłączone łączenie z Langfuse lub wyłączona synchronizacja katalogu promptów najemcy.
+- Usunięte połączenie z Langfuse lub połączenie zmienione na inny projekt.
+- Prompt lub wersja usunięta w Langfuse albo prompt tekstowy zmieniony na prompt czatu.
 
 ## maxRetainedToolCountChars
 

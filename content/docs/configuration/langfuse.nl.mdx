@@ -328,12 +328,86 @@ Feedback-scores gebruiken dezelfde Langfuse-inloggegevens en basis-URL als traci
 
 ## Promptcatalogus [#prompt-catalog]
 
-Prompttoegang is onafhankelijk van het inschakelen van traces, sampling, de beschikbaarheid van fanout en de noodschakelaar voor tenant-export. Om synchronisatie aan te bieden, stelt de operator `LANGFUSE_PROMPT_SYNC_AVAILABLE=true` in; een geautoriseerde beheerder schakelt vervolgens promptsynchronisatie in via **Instellingen → Langfuse**. Voor de instellingen zijn beheerderstoegang en beheer van de Langfuse-configuratie vereist. Het starten van catalogussynchronisatie vereist daarnaast `manage:prompts`.
+Sync zorgt ervoor dat **tekstprompts** uit Langfuse beschikbaar worden in de promptbibliotheek van LibreChat. Het voegt alleen-lezen verwijzingen toe; de promptinhoud blijft in Langfuse.
 
-Een bruikbare projectverbinding is vereist. Niet-gescopete verzoeken van één tenant kunnen het door de omgeving beheerde project gebruiken. Tenant-gescopete of multi-tenant verzoeken gebruiken hun eigen opgeslagen verbinding, nooit het centrale omgevingsproject. Omgevingsreferenties voorkomen het bewerken van verbindingen, maar verbergen op zichzelf niet de beschikbare promptinstellingen.
+![Twee afzonderlijke stromen: catalogussynchronisatie voegt alleen-lezen verwijzingen toe aan LibreChat; het gebruiken van een prompt haalt de Production- of vastgezette versie op uit Langfuse en levert de tekst vervolgens aan de chat of agent.](/images/features/prompts/catalog-flow.svg)
 
-Synchronisatie importeert **alleen tekstprompts** in de lokale catalogus als alleen-lezen verwijzingen. De opgeslagen identiteit bestaat uit `source: langfuse`, `sourceDestination`, `sourceProjectId` en `sourcePromptName`; de inhoud van de prompt blijft in Langfuse. Synchronisatie is alleen toevoegend: bestaande groepen worden niet bijgewerkt of verwijderd. Een resultaat dat door een paginalimiet is afgekapt, is onvolledig; het herhalen van dezelfde limiet begint opnieuw bij pagina 1, dus verhoog `langfuse.promptSync.maxPages` om latere pagina's te bereiken.
+### Prompt-synchronisatie inschakelen [#enable-prompt-sync]
 
-Promptkaarten en het schuine-streepjescommando zoeken de huidige `production`-prompt of een geselecteerde numerieke versie op in Langfuse. Chatprompts worden niet ondersteund. Het wijzigen van de opgeslagen bronidentiteit mislukt veilig met `source_changed`, in plaats van een geïmporteerde groep om te leiden. Het bewerken of verwijderen van externe promptgroepen of hun revisies, of het lokaal wijzigen van production, geeft `read_only` terug; beheer deze waarden in Langfuse.
+<Steps>
+  <Step>Stel `LANGFUSE_PROMPT_SYNC_AVAILABLE=true` in op de LibreChat-server.</Step>
+  <Step>Configureer het Langfuse-project dat je prompts bevat.</Step>
+  <Step>Schakel promptsynchronisatie in via **Instellingen → Langfuse** en start vervolgens de synchronisatie.</Step>
+</Steps>
 
-`LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` heeft standaard de waarde `10000` per upstream-verzoek en is begrensd tot `1000`–`60000` milliseconden. [Synchronisatielimieten](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization) omvatten de lease per tenant en de maximale paginagrootte.
+De instellingen vereisen beheerderstoegang en het beheer van de Langfuse-configuratie. Het starten van de synchronisatie vereist ook `manage:prompts`.
+
+Toegang tot prompts vereist geen tracering.
+
+### Gebruik gesynchroniseerde prompts [#use-synced-prompts]
+
+Kies een prompt uit de bibliotheek of het `/`-menu om de **Production**-versie of de geselecteerde versie uit Langfuse op te halen. Agents kunnen ook [een gesynchroniseerde prompt als instructies gebruiken](#prompts-as-agent-instructions).
+
+Bewerk inhoud, beheer versies en verwijder prompts in **Langfuse**. Chat-type prompts worden niet ondersteund.
+
+<Accordions type="single" collapsible>
+  <Accordion title="Geavanceerde verbindingsinstellingen">
+
+    LibreChat kan de Langfuse-inloggegevens gebruiken die op de server zijn ingesteld, of een verbinding die is opgeslagen onder **Instellingen → Langfuse**. Serverinloggegevens voorkomen het bewerken van verbindingen, maar verbergen de beschikbare prompt-instellingen niet.
+
+    Voor implementaties die zijn geconfigureerd met tenant-isolatie, moet elke tenant zijn eigen opgeslagen Langfuse-verbinding hebben.
+  </Accordion>
+  <Accordion title="Wat sync opslaat en wat er gebeurt wanneer prompts veranderen">
+    Elke bibliotheekvermelding slaat `source: langfuse`, `sourceDestination`, `sourceProjectId` en `sourcePromptName` op. De inhoud blijft in Langfuse.
+
+    Sync voegt alleen items toe. Het werkt bestaande groepen niet bij en verwijdert ze ook niet. Als je een prompt in Langfuse verwijdert, blijft het bijbehorende bibliotheekitem staan, maar dat item kan daarna niet meer worden opgelost.
+
+    Het wijzigen van de opgeslagen bronidentiteit geeft `source_changed` terug; het stuurt het item niet door naar een andere bron. Het bewerken of verwijderen van een externe groep of revisie, of het wijzigen van Production in LibreChat, geeft `read_only` terug. Doe deze wijzigingen in Langfuse.
+  </Accordion>
+  <Accordion title="Synchronisatielimieten en onvolledige resultaten">
+    Een sync die de paginalimiet bereikt, is onvolledig. Deze opnieuw uitvoeren met dezelfde limiet begint weer bij pagina 1. Verhoog `langfuse.promptSync.maxPages` om latere pagina's op te nemen.
+
+    `LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` beperkt elke upstream-aanvraag. De standaardwaarde is `10000` ms; het toegestane bereik is `1000`–`60000` ms. Zie [synchronisatielimieten](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization) voor meer instellingen.
+  </Accordion>
+</Accordions>
+
+### Prompts als Agent-instructies [#prompts-as-agent-instructions]
+
+Het koppelen van een gesynchroniseerde Langfuse-promptgroep als instructies van een agent vereist de hierboven genoemde promptcatalogus en de schakelaar [`endpoints.agents.linkedInstructions.langfuse.enabled`](/docs/configuration/librechat_yaml/object_structure/agents#linkedinstructions), die standaard op `false` staat:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    linkedInstructions:
+      langfuse:
+        enabled: true
+```
+
+Gebruik de [Agent Builder](/docs/features/prompts#use-a-prompt-as-agent-instructions) om de prompt en de bijbehorende versie te selecteren. Catalogussynchronisatie moet ingeschakeld blijven, zodat opgeslagen links correct kunnen worden omgezet.
+
+#### Koppelen uitschakelen of opnieuw inschakelen [#disable-or-re-enable-linking]
+
+| Schakelaar | Opslaggedrag | Uitvoeringsgedrag |
+| --- | --- | --- |
+| `false` (standaard) | Nieuwe of gewijzigde Langfuse-koppelingen worden geweigerd. Ongewijzigde koppelingen, verwijderen en overschakelen naar inline-instructies blijven bewerkbaar. | Opgeslagen koppelingen blijven behouden maar worden niet gebruikt. Gewone agents worden uitgevoerd met lege instructies, zonder terug te vallen op inline-tekst. |
+| `true` | Gebruikers met de vereiste rechten kunnen gesynchroniseerde tekstprompts koppelen. | Opgeslagen koppelingen worden opnieuw opgelost nadat de server de configuratie heeft geladen. Er is geen agentbewerking nodig. |
+
+Wanneer uitgeschakeld, verbergt de Builder Langfuse-prompts behalve de opgeslagen selectie van de agent, die een opmerking met een uitgeschakelde link toont. Zie [resolutiefouten](/docs/configuration/librechat_yaml/object_structure/agents#resolution-failures) voor de uitzondering voor de geheugenagent.
+
+#### Uitrol en downgrade [#rollout-and-downgrade]
+
+<Callout type="warning" title="Werk elke server bij voordat je koppelen inschakelt">
+  Schakel de schakelaar pas in nadat elke LibreChat-server `v0.8.9-rc1` of hoger draait.
+  **Terugvallen naar een oudere build wordt niet ondersteund zodra er Langfuse-koppelingen bestaan.**
+  Het uitschakelen van de schakelaar is iets anders dan het terugzetten van de server. Een downgrade vereist een apart beoordeelde migratie.
+</Callout>
+
+Tijdens een gemengde uitrol kunnen oudere servers zich anders gedragen:
+
+| Oudere server | Resultaat |
+| --- | --- |
+| Ondersteunt geen Langfuse-links | Wijst een opslag met een Langfuse-link af met `400`. Tijdens runtime worden de opgeslagen inline-instructies gebruikt. |
+| Ondersteunt helemaal geen prompt-links (`v0.8.8` en eerder) | Slaat de agent op, maar laat de link vallen. |
+| Heeft de revisieroute niet | Geeft `404` terug voor de versielijst van de Builder, voor zowel native als Langfuse-prompts. |
+
+Houd koppelen uitgeschakeld totdat de uitrol is voltooid. Om de functie op een ondersteunde build uit te schakelen, zet je de schakelaar op `false`; opgeslagen koppelingen blijven beschikbaar om later opnieuw in te schakelen.

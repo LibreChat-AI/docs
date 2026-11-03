@@ -1129,13 +1129,14 @@ hostFileEdits:
 
 ## linkedInstructions
 
-에이전트에 연결된 프롬프트 그룹 지침을 해석할 때 사용하는 예산 및 캐시 설정입니다. 이 블록을 생략하면 기본값이 적용됩니다.
+에이전트에 연결된 프롬프트 그룹 지침을 해석하기 위한 예산, 캐시 및 소스 설정입니다. 해당 블록을 생략하면 기본값이 적용됩니다.
 
 <OptionTable
   options={[
     ['timeoutMs', 'Integer', '링크된 지침을 해석하는 데 사용할 시간 예산(밀리초, 100-30000)', '2000'],
     ['native.cacheTtlMs', 'Integer', '해석된 네이티브 프롬프트 링크의 콘텐츠 캐시 TTL(밀리초, 0~3600000). 0이면 캐시를 비활성화합니다.', '300000'],
     ['native.cacheClearTimeoutMs', 'Integer', "프롬프트 쓰기로 인해 발생하는 캐시 삭제 대기의 최대 시간으로, 이 시간이 지나면 캐시 삭제 없이 쓰기 응답을 계속 진행합니다 (1-30000 ms).", '1000'],
+    ['langfuse.enabled', 'Boolean', '에이전트가 Langfuse 프롬프트 그룹을 지침으로 연결할 수 있도록 허용합니다. false로 설정하면 새로운 또는 변경된 Langfuse 연결을 저장할 수 없으며, 저장된 Langfuse 연결은 사용되지 않습니다.', 'false'],
   ]}
 />
 
@@ -1144,7 +1145,34 @@ linkedInstructions:
   timeoutMs: 2000
   native:
     cacheTtlMs: 300000
+  langfuse:
+    enabled: true
 ```
+
+`timeoutMs`는 두 소스 모두에 적용됩니다. `langfuse.enabled`만 클라이언트로 전송되며, 타임아웃과 네이티브 캐시 설정은 서버에 그대로 남습니다. Builder 단계는 [Prompts](/docs/features/prompts#use-a-prompt-as-agent-instructions)를, 설정 및 롤아웃은 [Langfuse configuration](/docs/configuration/langfuse#prompts-as-agent-instructions)를 참고하세요.
+
+### 해상도 및 캐싱 [#resolution-and-caching]
+
+LibreChat은 각 턴마다 연결된 지침(instructions)을 확인하여 적용합니다. 이는 메인 에이전트, 핸드오프 및 서브에이전트, 메모리 에이전트, 추가 대화(multi-convo), 그리고 OpenAI 호환 API와 Responses API에 모두 적용됩니다. 에이전트를 저장할 때는 해당 링크의 유효성만 검사하며, 프롬프트 텍스트를 복사하지는 않습니다.
+
+| 소스 | 콘텐츠 로드 방식 | 프로덕션 업데이트 적용 시점 |
+| --- | --- | --- |
+| 네이티브 LibreChat 프롬프트 | 확인된 콘텐츠는 기본적으로 5분인 `native.cacheTtlMs` 동안 캐시됩니다. | 일반적으로 캐시 무효화 후 다음 턴에 적용됩니다. 캐시 만료 전까지 오래된 콘텐츠가 남아 있을 수 있습니다. |
+| Langfuse 프롬프트 | 콘텐츠 캐시 없이 각 초기화 시마다 Langfuse에서 가져옵니다. | 확인이 성공하면 다음 턴에 적용됩니다. |
+
+새로운 네이티브 Production 리비전을 저장하거나, 리비전을 삭제하거나, 해당 그룹을 삭제하면 캐시 초기화가 실행됩니다. 쓰기 작업은 해당 초기화가 끝날 때까지 최대 `native.cacheClearTimeoutMs` 동안 기다립니다. 시간이 초과되면 캐시 초기화는 백그라운드에서 계속 진행됩니다. 이 경우에도 캐시된 콘텐츠는 일반 만료 시점까지 계속 제공될 수 있습니다. Redis를 사용하지 않으면 각 서버 인스턴스가 자체 캐시를 갖습니다.
+
+### 해결 실패 [#resolution-failures]
+
+각 해석(resolution)은 `timeoutMs`(기본값 2000 ms) 안에 완료되어야 합니다. 실패하면 에이전트는 저장된 인라인 텍스트로 대체하지 않고 **빈 지침(empty instructions)**으로 계속 진행합니다. 메모리 에이전트는 대신 기본 지침을 사용합니다. 서버는 에이전트와 그룹 정보를 포함한 경고를 로그에 기록합니다.
+
+다음 원인을 확인하세요:
+
+- 삭제된 그룹 또는 리비전, 또는 정책에 의해 차단된 콘텐츠.
+- 해결 시간 초과(resolution timeout) 또는 Langfuse 요청 오류입니다.
+- Langfuse 연동 또는 테넌트 프롬프트 카탈로그 동기화가 비활성화되었습니다.
+- 제거된 Langfuse 연결, 또는 다른 프로젝트로 변경된 연결.
+- Langfuse에서 프롬프트 또는 버전을 삭제하거나, 텍스트 프롬프트를 채팅 프롬프트로 변경한 경우.
 
 ## maxRetainedToolCountChars
 

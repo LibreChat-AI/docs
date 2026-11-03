@@ -1129,13 +1129,14 @@ hostFileEdits:
 
 ## linkedInstructions
 
-Paramètres de budget et de cache pour la résolution des instructions de groupe de prompts liées à un agent. Omettre ce bloc applique les valeurs par défaut.
+Paramètres de budget, de cache et de source pour résoudre les instructions du groupe de prompts lié à un agent. Omettre le bloc applique les valeurs par défaut.
 
 <OptionTable
   options={[
     ['timeoutMs', 'Integer', 'Budget pour la résolution des instructions liées en millisecondes (100-30000).', '2000'],
     ['native.cacheTtlMs', 'Integer', 'Durée de vie (TTL) du cache de contenu pour un lien de prompt natif résolu, en millisecondes (0 à 3600000). 0 désactive le cache.', '300000'],
     ['native.cacheClearTimeoutMs', 'Integer', "Délai maximal d'attente pour la purge du cache déclenchée par une écriture de prompt, au-delà duquel la réponse de l'écriture continue sans cette purge (1-30000 ms).", '1000'],
+    ['langfuse.enabled', 'Boolean', 'Autoriser les agents à lier un groupe de prompts Langfuse comme leurs instructions. Lorsque cette option est désactivée (false), aucun nouveau lien Langfuse ni aucune modification de lien Langfuse ne peut être enregistré, et les liens Langfuse déjà enregistrés ne sont pas utilisés.', 'false'],
   ]}
 />
 
@@ -1144,7 +1145,34 @@ linkedInstructions:
   timeoutMs: 2000
   native:
     cacheTtlMs: 300000
+  langfuse:
+    enabled: true
 ```
+
+`timeoutMs` s'applique aux deux sources. Seul `langfuse.enabled` est envoyé au client ; les paramètres de délai d'expiration et de cache natif restent sur le serveur. Voir [Prompts](/docs/features/prompts#use-a-prompt-as-agent-instructions) pour les étapes du Builder et [Langfuse configuration](/docs/configuration/langfuse#prompts-as-agent-instructions) pour la configuration et le déploiement.
+
+### Résolution et mise en cache [#resolution-and-caching]
+
+LibreChat résout les instructions liées à chaque tour. Cela s'applique à l'agent principal, aux transferts et sous-agents, à l'agent de mémoire, aux conversations ajoutées (multi-convo), ainsi qu'aux API compatibles OpenAI et Responses. L'enregistrement d'un agent valide son lien, mais ne copie pas le texte de l'invite.
+
+| Source | Mode de chargement du contenu | Quand les mises à jour de production prennent effet |
+| --- | --- | --- |
+| Prompt natif LibreChat | Le contenu résolu est mis en cache pendant `native.cacheTtlMs`, soit cinq minutes par défaut. | En général au tour suivant, après invalidation du cache. Un contenu obsolète peut subsister jusqu'à l'expiration du cache. |
+| Prompt Langfuse | Récupéré depuis Langfuse à chaque initialisation, sans cache de contenu. | Au tour suivant, si la résolution réussit. |
+
+L'enregistrement d'une nouvelle révision Production native, la suppression d'une révision ou la suppression de son groupe déclenche une purge du cache. L'écriture attend jusqu'à `native.cacheClearTimeoutMs` que cette purge se termine. En cas de dépassement du délai, la purge se poursuit en arrière-plan. Le contenu mis en cache peut encore être servi jusqu'à son expiration normale. Sans Redis, chaque instance du serveur dispose de son propre cache.
+
+### Échecs de résolution [#resolution-failures]
+
+Chaque résolution doit se terminer dans un délai de `timeoutMs` (2000 ms par défaut). En cas d'échec, l'agent continue avec **des instructions vides**, sans revenir à son texte en ligne stocké. L'agent de mémoire utilise à la place ses instructions par défaut. Le serveur consigne un avertissement avec l'agent et le groupe.
+
+Vérifiez ces causes possibles :
+
+- Un groupe ou une révision supprimé(e), ou un contenu bloqué par une politique.
+- Un délai d'attente de résolution ou une erreur de requête Langfuse.
+- Désactivation du lien Langfuse ou de la synchronisation du catalogue de prompts du locataire.
+- Une connexion Langfuse supprimée, ou modifiée pour pointer vers un autre projet.
+- Un prompt ou une version supprimé dans Langfuse, ou un prompt textuel transformé en prompt de chat.
 
 ## maxRetainedToolCountChars
 

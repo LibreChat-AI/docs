@@ -326,12 +326,86 @@ I punteggi di feedback utilizzano le stesse credenziali Langfuse e lo stesso URL
 
 ## Catalogo dei prompt [#prompt-catalog]
 
-L'accesso ai prompt è indipendente dall'abilitazione delle tracce, dal campionamento, dalla disponibilità del fanout e dall'interruttore di emergenza per l'esportazione dei dati del tenant. Per offrire la sincronizzazione, l'operatore imposta `LANGFUSE_PROMPT_SYNC_AVAILABLE=true`; un amministratore autorizzato abilita quindi la sincronizzazione dei prompt in **Impostazioni → Langfuse**. Le impostazioni richiedono l'accesso di amministratore e la gestione della configurazione di Langfuse. L'avvio della sincronizzazione del catalogo richiede inoltre `manage:prompts`.
+Sync rende disponibili i **prompt di testo** di Langfuse nella libreria dei prompt di LibreChat. Vengono aggiunti riferimenti di sola lettura; il contenuto del prompt rimane in Langfuse.
 
-Per la richiesta è necessaria una connessione di progetto utilizzabile. Le richieste non associate a un tenant in un'installazione single-tenant possono usare il progetto gestito tramite l'ambiente. Le richieste associate a un tenant o multi-tenant usano la propria connessione memorizzata, mai il progetto centrale dell'ambiente. Le credenziali dell'ambiente impediscono la modifica della connessione, ma di per sé non nascondono le impostazioni dei prompt disponibili.
+![Due flussi separati: la sincronizzazione del catalogo aggiunge riferimenti in sola lettura a LibreChat; l'utilizzo di un prompt recupera da Langfuse la sua versione Production o fissata (pinned), quindi fornisce il testo alla chat o all'agente.](/images/features/prompts/catalog-flow.svg)
 
-La sincronizzazione importa **solo prompt di testo** nel catalogo locale come puntatori di sola lettura. L'identità memorizzata è composta da `source: langfuse`, `sourceDestination`, `sourceProjectId` e `sourcePromptName`; il contenuto dei prompt rimane in Langfuse. La sincronizzazione è solo in aggiunta (append-only): i gruppi esistenti non vengono aggiornati né eliminati. Un risultato limitato dal numero massimo di pagine è incompleto; ripetere la stessa limitazione riparte dalla pagina 1, quindi per raggiungere le pagine successive occorre aumentare `langfuse.promptSync.maxPages`.
+### Abilita la sincronizzazione dei prompt [#enable-prompt-sync]
 
-Prompt cards and the slash command resolve the current `production` prompt or a selected numeric version from Langfuse. Chat prompts are not supported. Changing the stored source identity fails closed with `source_changed` rather than redirecting an imported group. Editing or deleting external prompt groups or their revisions, or changing production locally, returns `read_only`; manage those values in Langfuse.
+<Steps>
+  <Step>Imposta `LANGFUSE_PROMPT_SYNC_AVAILABLE=true` sul server LibreChat.</Step>
+<Step>Configura il progetto Langfuse che contiene i tuoi prompt.</Step>
+<Step>Abilita la sincronizzazione dei prompt in **Impostazioni → Langfuse**, quindi avvia la sincronizzazione.</Step>
+</Steps>
 
-`LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` ha come valore predefinito `10000` per richiesta upstream, con limiti compresi tra `1000` e `60000` millisecondi. [Limiti di sincronizzazione](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization) riguardano il lease per tenant e il limite di pagine.
+Le impostazioni richiedono l'accesso come amministratore e la gestione della configurazione di Langfuse. Avviare la sincronizzazione richiede anche `manage:prompts`.
+
+L'accesso ai prompt non richiede il tracciamento.
+
+### Usa i prompt sincronizzati [#use-synced-prompts]
+
+Scegli un prompt dalla libreria o dal menu `/` per recuperare la sua versione **Production** o una versione selezionata da Langfuse. Gli agenti possono anche [usare un prompt sincronizzato come istruzioni](#prompts-as-agent-instructions).
+
+Modifica i contenuti, gestisci le versioni ed elimina i prompt in **Langfuse**. I prompt di tipo chat non sono supportati.
+
+<Accordions type="single" collapsible>
+  <Accordion title="Impostazioni avanzate di connessione">
+
+    LibreChat può utilizzare le credenziali di Langfuse impostate sul server oppure una connessione salvata in **Impostazioni → Langfuse**. Le credenziali del server impediscono la modifica della connessione, ma non nascondono le impostazioni dei prompt disponibili.
+
+    Per le distribuzioni configurate con l'isolamento dei tenant, ogni tenant deve disporre di una propria connessione Langfuse memorizzata.
+  </Accordion>
+  <Accordion title="Cosa memorizza la sincronizzazione e cosa succede quando i prompt cambiano">
+    Ogni voce della libreria memorizza `source: langfuse`, `sourceDestination`, `sourceProjectId` e `sourcePromptName`. Il contenuto rimane in Langfuse.
+
+    La sincronizzazione aggiunge solo nuove voci. Non aggiorna né elimina i gruppi esistenti. Eliminare un prompt in Langfuse lascia invariata la sua voce nella libreria, ma quella voce non può più essere risolta.
+
+    Modificare l'identità della sorgente memorizzata restituisce `source_changed`; non reindirizza la voce verso un'altra sorgente. La modifica o l'eliminazione di un gruppo o di una revisione esterna, oppure la modifica di Production in LibreChat, restituisce `read_only`. Apporta queste modifiche in Langfuse.
+  </Accordion>
+  <Accordion title="Limiti di sincronizzazione e risultati incompleti">
+    Una sincronizzazione che raggiunge il limite di pagine è incompleta. Ripeterla con lo stesso limite ricomincia da capo, dalla pagina 1. Aumenta `langfuse.promptSync.maxPages` per includere le pagine successive.
+
+    `LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` limita ogni richiesta upstream. Il valore predefinito è `10000` ms; l'intervallo consentito va da `1000` a `60000` ms. Consulta i [limiti di sincronizzazione](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization) per ulteriori impostazioni.
+  </Accordion>
+</Accordions>
+
+### Prompt come istruzioni per l'agente [#prompts-as-agent-instructions]
+
+Per collegare un gruppo di prompt Langfuse sincronizzato come istruzioni di un agente sono necessari il catalogo dei prompt sopra indicato e l'interruttore [`endpoints.agents.linkedInstructions.langfuse.enabled`](/docs/configuration/librechat_yaml/object_structure/agents#linkedinstructions), il cui valore predefinito è `false`:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    linkedInstructions:
+      langfuse:
+        enabled: true
+```
+
+Usa l'[Agent Builder](/docs/features/prompts#use-a-prompt-as-agent-instructions) per selezionare il prompt e la sua versione. La sincronizzazione del catalogo deve rimanere abilitata affinché i link salvati vengano risolti.
+
+#### Disabilitare o riabilitare il collegamento [#disable-or-re-enable-linking]
+
+| Switch | Comportamento al salvataggio | Comportamento in esecuzione |
+| --- | --- | --- |
+| `false` (predefinito) | I link Langfuse nuovi o modificati vengono rifiutati. I link invariati, la rimozione e il passaggio alle istruzioni inline restano modificabili. | I link salvati vengono conservati ma non utilizzati. Gli agenti ordinari vengono eseguiti con istruzioni vuote, senza ricorrere al testo inline. |
+| `true` | Gli utenti con i permessi richiesti possono collegare i prompt di testo sincronizzati. | I link salvati vengono risolti di nuovo dopo che il server ha caricato la configurazione. Non è necessaria alcuna modifica dell'agente. |
+
+Quando disabilitato, il Builder nasconde i prompt di Langfuse, ad eccezione della selezione salvata dell'agente, che mostra una nota di collegamento disabilitato. Vedi [errori di risoluzione](/docs/configuration/librechat_yaml/object_structure/agents#resolution-failures) per l'eccezione relativa all'agente di memoria.
+
+#### Rollout e downgrade [#rollout-and-downgrade]
+
+<Callout type="warning" title="Aggiorna ogni server prima di abilitare il collegamento">
+  Attiva l'opzione solo dopo che ogni server LibreChat esegue la versione `v0.8.9-rc1` o successiva.
+  **Il downgrade a una build precedente non è supportato una volta che esistono collegamenti Langfuse.**
+  Disattivare l'opzione è diverso dal fare il downgrade del server. Un downgrade richiede una migrazione separatamente revisionata.
+</Callout>
+
+Durante un rollout misto, i server meno recenti possono comportarsi in modo diverso:
+
+| Server precedente | Risultato |
+| --- | --- |
+| Non supporta i link di Langfuse | Rifiuta un salvataggio con un link di Langfuse con `400`. In fase di esecuzione, utilizza le istruzioni inline memorizzate. |
+| Non supporta affatto i link ai prompt (`v0.8.8` e precedenti) | Salva l'agente ma elimina il link. |
+| Non dispone della route delle revisioni | Restituisce `404` per l'elenco delle versioni del Builder, sia per i prompt nativi che per quelli di Langfuse. |
+
+Mantieni disattivati i collegamenti fino al completamento del rollout. Per disattivare la funzionalità su una build supportata, imposta l'interruttore su `false`; i collegamenti salvati rimangono disponibili per la riattivazione.

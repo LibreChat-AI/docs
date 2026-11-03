@@ -1129,13 +1129,14 @@ hostFileEdits:
 
 ## linkedInstructions
 
-Pengaturan anggaran dan cache untuk menyelesaikan instruksi prompt-group yang ditautkan ke agen. Jika blok ini dihilangkan, nilai default akan diterapkan.
+Pengaturan anggaran, cache, dan sumber untuk menyelesaikan instruksi prompt-group yang tertaut pada agen. Jika blok ini dihilangkan, nilai default akan diterapkan.
 
 <OptionTable
   options={[
     ['timeoutMs', 'Integer', 'Anggaran waktu untuk menyelesaikan instruksi yang ditautkan dalam milidetik (100-30000).', '2000'],
     ['native.cacheTtlMs', 'Integer', 'Durasi cache TTL konten untuk tautan prompt native yang telah diselesaikan, dalam milidetik (0-3600000). 0 menonaktifkan cache.', '300000'],
     ['native.cacheClearTimeoutMs', 'Integer', "Waktu tunggu maksimum untuk pembersihan cache yang dipicu oleh penulisan prompt sebelum respons penulisan dilanjutkan tanpa menunggu pembersihan tersebut (1-30000 ms).", '1000'],
+    ['langfuse.enabled', 'Boolean', 'Izinkan agen untuk menautkan grup prompt Langfuse sebagai instruksi mereka. Jika false, tidak ada tautan Langfuse baru atau yang diubah yang dapat disimpan, dan tautan Langfuse yang sudah tersimpan tidak akan digunakan.', 'false'],
   ]}
 />
 
@@ -1144,7 +1145,34 @@ linkedInstructions:
   timeoutMs: 2000
   native:
     cacheTtlMs: 300000
+  langfuse:
+    enabled: true
 ```
+
+`timeoutMs` berlaku untuk kedua sumber. Hanya `langfuse.enabled` yang dikirim ke klien; pengaturan timeout dan cache native tetap berada di server. Lihat [Prompts](/docs/features/prompts#use-a-prompt-as-agent-instructions) untuk langkah-langkah di Builder dan [Langfuse configuration](/docs/configuration/langfuse#prompts-as-agent-instructions) untuk pengaturan dan penerapan.
+
+### Resolusi dan caching [#resolution-and-caching]
+
+LibreChat menyelesaikan instruksi yang ditautkan pada setiap giliran. Hal ini berlaku untuk agen utama, handoff dan subagen, agen memori, percakapan tambahan (multi-convo), serta API yang kompatibel dengan OpenAI dan Responses API. Menyimpan agen akan memvalidasi tautannya, tetapi tidak menyalin teks prompt.
+
+| Sumber | Cara konten dimuat | Kapan pembaruan Production berlaku |
+| --- | --- | --- |
+| Prompt native LibreChat | Konten yang telah diselesaikan di-cache selama `native.cacheTtlMs`, secara default lima menit. | Biasanya pada giliran berikutnya, setelah invalidasi cache. Konten yang sudah usang dapat tetap ada hingga cache kedaluwarsa. |
+| Prompt Langfuse | Diambil dari Langfuse pada setiap inisialisasi, tanpa cache konten. | Pada giliran berikutnya, jika resolusi berhasil. |
+
+Menyimpan revisi Production native baru, menghapus revisi, atau menghapus grupnya akan memicu penghapusan cache. Operasi penulisan akan menunggu hingga `native.cacheClearTimeoutMs` untuk penghapusan tersebut. Jika waktu tunggu habis, penghapusan cache tetap berjalan di latar belakang. Konten yang di-cache masih dapat disajikan hingga masa berlakunya berakhir secara normal. Tanpa Redis, setiap instance server memiliki cache-nya sendiri.
+
+### Kegagalan resolusi [#resolution-failures]
+
+Setiap resolusi harus selesai dalam `timeoutMs` (2000 ms secara default). Jika gagal, agen melanjutkan dengan **instruksi kosong**, tanpa kembali ke teks inline yang tersimpan. Agen memori sebagai gantinya menggunakan instruksi default-nya. Server mencatat peringatan dengan agen dan grup.
+
+Periksa penyebab-penyebab berikut:
+
+- Grup atau revisi yang dihapus, atau konten yang diblokir oleh kebijakan.
+- Timeout resolusi atau kesalahan permintaan Langfuse.
+- Menonaktifkan tautan Langfuse atau menonaktifkan sinkronisasi katalog prompt tenant.
+- Koneksi Langfuse yang dihapus, atau koneksi yang diubah ke proyek lain.
+- Prompt atau versi yang dihapus di Langfuse, atau prompt teks yang diubah menjadi prompt chat.
 
 ## maxRetainedToolCountChars
 

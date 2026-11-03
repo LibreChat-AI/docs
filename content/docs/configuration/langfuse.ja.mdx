@@ -324,12 +324,86 @@ Langfuseトレーシングが設定されている場合、LibreChatはメッセ
 
 ## プロンプトカタログ [#prompt-catalog]
 
-プロンプトへのアクセスは、トレースの有効化、サンプリング、ファンアウトの利用可否、テナントエクスポートの緊急停止スイッチとは独立しています。プロンプト同期を提供するには、オペレーターが `LANGFUSE_PROMPT_SYNC_AVAILABLE=true` を設定します。その後、権限を持つ管理者が **Settings → Langfuse** でプロンプト同期を有効にします。これらの設定には管理者アクセスと Langfuse 設定の管理権限が必要です。カタログの同期を開始するには、さらに `manage:prompts` が必要です。
+Sync は Langfuse の**テキストプロンプト**を LibreChat のプロンプトライブラリで利用できるようにします。読み取り専用の参照を追加するもので、プロンプトの内容は Langfuse に保持されたままです。
 
-有効なプロジェクト接続が必要です。テナントに紐づかない単一テナントのリクエストでは、環境で管理されているプロジェクトを使用できます。テナントに紐づくリクエストやマルチテナントのリクエストでは、中央の環境プロジェクトではなく、それぞれに保存された接続を使用します。環境の認証情報があると接続の編集はできなくなりますが、それだけで利用可能なプロンプト設定が非表示になるわけではありません。
+. ![2つの独立したフロー:カタログ同期はLibreChatに読み取り専用の参照を追加し、プロンプトを使用すると、Langfuseから本番版または固定バージョンを取得してから、そのテキストをチャットまたはエージェントに渡します。](/images/features/prompts/catalog-flow.svg)
 
-同期では、**テキストプロンプトのみ**をローカルカタログに読み取り専用のポインターとしてインポートします。保存される識別情報は `source: langfuse`、`sourceDestination`、`sourceProjectId`、`sourcePromptName` で、プロンプトの内容は Langfuse に残ります。同期は追記専用であり、既存のグループは更新も削除もされません。ページ数の上限に達した結果は不完全です。同じ上限のまま再実行すると 1 ページ目から始まるため、後続のページに到達するには `langfuse.promptSync.maxPages` を増やしてください。
+### プロンプト同期を有効にする [#enable-prompt-sync]
 
-Prompt cards and the slash command resolve the current `production` prompt or a selected numeric version from Langfuse. Chat prompts are not supported. Changing the stored source identity fails closed with `source_changed` rather than redirecting an imported group. Editing or deleting external prompt groups or their revisions, or changing production locally, returns `read_only`; manage those values in Langfuse.
+<Steps>
+  <Step>LibreChat サーバーで `LANGFUSE_PROMPT_SYNC_AVAILABLE=true` を設定します。</Step>
+  <Step>プロンプトを含む Langfuse プロジェクトを構成します。</Step>
+  <Step>**設定 → Langfuse** でプロンプト同期を有効にしてから、同期を開始します。</Step>
+</Steps>
 
-`LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` は、アップストリームへのリクエストごとにデフォルトで `10000` が設定されます。値は `1000`～`60000` ミリ秒の範囲に制限されます。テナントごとのリース（lease）とページ数の上限については、[同期制限](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization)を参照してください。
+設定にはadmin権限とLangfuseの設定管理へのアクセスが必要です。同期の開始には`manage:prompts`も必要です。
+
+プロンプトへのアクセスには、トレースは必要ありません。
+
+### 同期されたプロンプトを使用する [#use-synced-prompts]
+
+ライブラリまたは `/` メニューからプロンプトを選択すると、Langfuse から **Production** バージョンまたは選択したバージョンを取得できます。エージェントは、同期されたプロンプトを[エージェントの指示として使用](#prompts-as-agent-instructions)することもできます。
+
+Langfuse で プロンプト を編集し、バージョンを管理し、削除します。チャット形式のプロンプトはサポートされていません。
+
+<Accordions type="single" collapsible>
+  <Accordion title="詳細な接続設定">
+
+    LibreChat は、サーバーに設定された Langfuse の認証情報、または **Settings → Langfuse** に保存された接続を使用できます。サーバーの認証情報を設定すると接続の編集はできなくなりますが、利用可能なプロンプト設定は引き続き表示されます。
+
+    テナント分離が設定されたデプロイでは、各テナントが独自に保存された Langfuse 接続を持つ必要があります。
+  </Accordion>
+  <Accordion title="同期が保存する内容と、プロンプトが変更されたときの動作">
+    各ライブラリエントリには `source: langfuse`、`sourceDestination`、`sourceProjectId`、`sourcePromptName` が保存されます。コンテンツは Langfuse に残ります。
+
+    同期は項目を追加するだけです。既存のグループを更新したり削除したりはしません。Langfuseでプロンプトを削除しても、ライブラリ内の対応するエントリは残りますが、そのエントリはもう解決できなくなります。
+
+    保存されたソースの識別情報を変更すると `source_changed` が返されます。これによってエントリが別のソースへリダイレクトされることはありません。外部グループやリビジョンの編集または削除、あるいは LibreChat における Production の変更を行うと、`read_only` が返されます。これらの変更は Langfuse で行ってください。
+  </Accordion>
+  <Accordion title="同期の制限と不完全な結果">
+    同期がページ上限に達した場合、その同期は未完了です。同じ上限で再実行すると、再び1ページ目から開始されます。後続のページを含めるには、`langfuse.promptSync.maxPages`を増やしてください。
+
+    `LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` は、アップストリームへのリクエストごとの上限時間を指定します。デフォルトは `10000` ms で、設定可能な範囲は `1000`〜`60000` ms です。その他の同期制限については、[同期制限](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization)を参照してください。
+  </Accordion>
+</Accordions>
+
+### エージェントへの指示としてのプロンプト [#prompts-as-agent-instructions]
+
+Langfuse の同期済みプロンプトグループをエージェントの instructions としてリンクするには、上記のプロンプトカタログと、[`endpoints.agents.linkedInstructions.langfuse.enabled`](/docs/configuration/librechat_yaml/object_structure/agents#linkedinstructions) スイッチが必要です。このスイッチのデフォルト値は `false` です。
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    linkedInstructions:
+      langfuse:
+        enabled: true
+```
+
+[Agent Builder](/docs/features/prompts#use-a-prompt-as-agent-instructions) を使用して、プロンプトとそのバージョンを選択してください。保存されたリンクを解決するには、カタログの同期が有効になっている必要があります。
+
+#### リンクの無効化または再有効化 [#disable-or-re-enable-linking]
+
+| スイッチ | 保存時の動作 | 実行時の動作 |
+| --- | --- | --- |
+| `false`(デフォルト) | 新規または変更された Langfuse リンクは拒否されます。変更のないリンク、削除、インラインの指示への切り替えは引き続き編集可能です。 | 保存済みのリンクは保持されますが使用されません。通常のエージェントは、インラインのテキストにフォールバックせず、空の指示で実行されます。 | 
+| `true` | 必要な権限を持つユーザーは、同期済みのテキストプロンプトをリンクできます。 | サーバーが設定を読み込んだ後、保存済みのリンクが再び解決されます。エージェントの編集は不要です。 |
+
+無効にすると、ビルダーは Langfuse プロンプトを非表示にしますが、エージェントに保存された選択は例外で、無効化されたリンクの注記とともに表示されます。メモリエージェントの例外については、[解決の失敗](/docs/configuration/librechat_yaml/object_structure/agents#resolution-failures)を参照してください。
+
+#### ロールアウトとダウングレード [#rollout-and-downgrade]
+
+<Callout type="warning" title="リンクを有効にする前に、すべてのサーバーを更新する">
+  LibreChat のすべてのサーバーが `v0.8.9-rc1` 以降で動作している場合にのみ、このスイッチを有効にしてください。
+  **Langfuse のリンクが存在する場合、古いビルドへのダウングレードはサポートされていません。**
+  スイッチを無効にすることと、サーバーをダウングレードすることは別物です。ダウングレードには、別途レビューされた移行作業が必要です。
+</Callout>
+
+混在ロールアウト中は、古いサーバーが異なる動作をする場合があります:
+
+| 古いサーバー | 結果 |
+| --- | --- |
+| Langfuse リンクをサポートしていない | `400` で Langfuse リンクを含む保存を拒否します。実行時には、保存済みのインライン指示を使用します。 |
+| プロンプトリンクをまったくサポートしていない(`v0.8.8` 以前) | エージェントは保存されますが、リンクは削除されます。 |
+| リビジョンルートがない | ネイティブ プロンプトと Langfuse プロンプトの両方で、ビルダーのバージョン一覧に対して `404` を返します。 |
+
+ロールアウトが完了するまで、リンク機能は無効のままにしてください。サポートされているビルドでこの機能を無効にするには、スイッチを`false`に設定します。保存済みのリンクは残るため、後で再度有効にすることができます。

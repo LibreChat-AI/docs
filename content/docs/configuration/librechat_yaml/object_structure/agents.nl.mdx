@@ -1129,13 +1129,14 @@ hostFileEdits:
 
 ## linkedInstructions
 
-Budget- en cache-instellingen voor het oplossen van de gekoppelde promptgroep-instructies van een agent. Als het blok wordt weggelaten, worden de standaardwaarden toegepast.
+Budget-, cache- en bronninstellingen voor het ophalen van de gekoppelde prompt-groep-instructies van een agent. Als het blok wordt weggelaten, worden de standaardwaarden toegepast.
 
 <OptionTable
   options={[
     ['timeoutMs', 'Integer', 'Budget voor het oplossen van gekoppelde instructies in milliseconden (100-30000).', '2000'],
     ['native.cacheTtlMs', 'Integer', 'Cachelevensduur (TTL) voor een opgelost native promptlink in milliseconden (0-3600000). 0 schakelt de cache uit.', '300000'],
     ['native.cacheClearTimeoutMs', 'Integer', "Maximale wachttijd voor het wissen van de cache, die een promptschrijfactie activeert, voordat de respons van de schrijfactie zonder deze wissing doorgaat (1-30000 ms).", '1000'],
+    ['langfuse.enabled', 'Boolean', 'Laat agents een Langfuse-promptgroep koppelen als hun instructies. Wanneer false, kan er geen nieuwe of gewijzigde Langfuse-koppeling worden opgeslagen, en opgeslagen Langfuse-koppelingen worden niet gebruikt.', 'false'],
   ]}
 />
 
@@ -1144,7 +1145,34 @@ linkedInstructions:
   timeoutMs: 2000
   native:
     cacheTtlMs: 300000
+  langfuse:
+    enabled: true
 ```
+
+`timeoutMs` geldt voor beide bronnen. Alleen `langfuse.enabled` wordt naar de client verzonden; timeout- en native cache-instellingen blijven op de server. Zie [Prompts](/docs/features/prompts#use-a-prompt-as-agent-instructions) voor de stappen in de Builder en [Langfuse-configuratie](/docs/configuration/langfuse#prompts-as-agent-instructions) voor installatie en uitrol.
+
+### Resolutie en caching [#resolution-and-caching]
+
+LibreChat lost de gekoppelde instructies bij elke beurt op. Dit geldt voor de hoofdagent, handoffs en subagents, de geheugenagent, toegevoegde gesprekken (multi-convo), en de OpenAI-compatibele en Responses API's. Het opslaan van een agent valideert de koppeling, maar kopieert de prompttekst niet.
+
+| Bron | Hoe inhoud wordt geladen | Wanneer productie-updates van kracht worden |
+| --- | --- | --- |
+| Native LibreChat-prompt | Opgeloste inhoud wordt gecacht gedurende `native.cacheTtlMs`, standaard vijf minuten. | Meestal bij de volgende beurt, na cache-invalidatie. Verouderde inhoud kan blijven bestaan tot de cache verloopt. |
+| Langfuse-prompt | Wordt bij elke initialisatie van Langfuse opgehaald, zonder inhoudscache. | Bij de volgende beurt, als de resolutie slaagt. |
+
+Het opslaan van een nieuwe native Production-revisie, het verwijderen van een revisie of het verwijderen van de bijbehorende groep activeert een cache-leegmaking. De schrijfbewerking wacht maximaal `native.cacheClearTimeoutMs` op die leegmaking. Bij een time-out gaat de leegmaking op de achtergrond door. Gecachete inhoud kan nog steeds worden weergegeven tot de normale vervaldatum. Zonder Redis heeft elke serverinstantie zijn eigen cache.
+
+### Oplossingsfouten [#resolution-failures]
+
+Elke resolutie moet binnen `timeoutMs` worden voltooid (standaard 2000 ms). Als dit mislukt, gaat de agent verder met **lege instructies**, zonder terug te vallen op de opgeslagen inline tekst. De geheugenagent gebruikt in plaats daarvan zijn standaardinstructies. De server schrijft een waarschuwing naar het logboek met de agent en de groep.
+
+Controleer op deze oorzaken:
+
+- Een verwijderde groep of revisie, of inhoud die door beleid is geblokkeerd.
+- Een time-out bij het oplossen of een Langfuse-verzoekfout.
+- Uitgeschakelde Langfuse-koppeling of uitgeschakelde synchronisatie van de tenant-promptcatalogus.
+- Een verwijderde Langfuse-verbinding, of een verbinding die is gewijzigd naar een ander project.
+- Een prompt of versie die in Langfuse is verwijderd, of een tekstprompt die is gewijzigd in een chatprompt.
 
 ## maxRetainedToolCountChars
 

@@ -326,12 +326,86 @@ Feedback-Scores verwenden dieselben Langfuse-Anmeldedaten und dieselbe Basis-URL
 
 ## Prompt-Katalog [#prompt-catalog]
 
-Der Zugriff auf Prompts ist unabhängig von der Aktivierung von Traces, dem Sampling, der Verfügbarkeit von Fanout und dem Notfallschalter für den Mandanten-Export. Um die Synchronisierung anzubieten, setzt der Betreiber `LANGFUSE_PROMPT_SYNC_AVAILABLE=true`; anschließend aktiviert ein berechtigter Administrator die Prompt-Synchronisierung unter **Einstellungen → Langfuse**. Für die Einstellungen sind Administratorzugriff und die Verwaltung der Langfuse-Konfiguration erforderlich. Der Start der Katalogsynchronisierung erfordert zusätzlich `manage:prompts`.
+Sync macht Langfuse-**Textprompts** in der Prompt-Bibliothek von LibreChat verfügbar. Dabei werden nur schreibgeschützte Verweise hinzugefügt; der Prompt-Inhalt bleibt in Langfuse.
 
-Eine nutzbare Projektverbindung ist erforderlich. Nicht gescopte Single-Tenant-Anfragen können das umgebungsverwaltete Projekt verwenden. Tenant-gescopte oder Multi-Tenant-Anfragen verwenden ihre eigene gespeicherte Verbindung, niemals das zentrale Umgebungsprojekt. Umgebungsanmeldedaten verhindern die Bearbeitung der Verbindung, verbergen aber allein nicht die verfügbaren Prompt-Einstellungen.
+![Zwei getrennte Abläufe: Die Katalogsynchronisierung fügt schreibgeschützte Verweise zu LibreChat hinzu; bei der Verwendung eines Prompts wird dessen Production- oder angeheftete Version aus Langfuse abgerufen und der Text anschließend an den Chat oder Agenten übergeben.](/images/features/prompts/catalog-flow.svg)
 
-Die Synchronisation importiert **nur Textprompts** als schreibgeschützte Verweise in den lokalen Katalog. Die gespeicherte Identität besteht aus `source: langfuse`, `sourceDestination`, `sourceProjectId` und `sourcePromptName`; der Prompt-Inhalt verbleibt in Langfuse. Die Synchronisation ist nur anhängend: Vorhandene Gruppen werden weder aktualisiert noch gelöscht. Ein Ergebnis, das durch eine Seitenbegrenzung abgeschnitten wurde, ist unvollständig; wird dieselbe Begrenzung erneut verwendet, beginnt die Abfrage wieder auf Seite 1. Um spätere Seiten zu erreichen, muss daher `langfuse.promptSync.maxPages` erhöht werden.
+### Prompt-Synchronisierung aktivieren [#enable-prompt-sync]
 
-Prompt cards and the slash command resolve the current `production` prompt or a selected numeric version from Langfuse. Chat prompts are not supported. Changing the stored source identity fails closed with `source_changed` rather than redirecting an imported group. Editing or deleting external prompt groups or their revisions, or changing production locally, returns `read_only`; manage those values in Langfuse.
+<Steps>
+  <Step>Setze `LANGFUSE_PROMPT_SYNC_AVAILABLE=true` auf dem LibreChat-Server.</Step>
+  <Step>Konfiguriere das Langfuse-Projekt, das deine Prompts enthält.</Step>
+  <Step>Aktiviere die Prompt-Synchronisierung unter **Einstellungen → Langfuse** und starte anschließend die Synchronisierung.</Step>
+</Steps>
 
-`LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` ist pro Upstream-Anfrage standardmäßig auf `10000` gesetzt und auf `1000`–`60000` Millisekunden begrenzt. [Synchronisierungsgrenzen](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization) regeln die Lease pro Mandant und die Seitenobergrenze.
+Die Einstellungen erfordern Administratorzugriff und die Verwaltung der Langfuse-Konfiguration. Das Starten der Synchronisierung erfordert außerdem `manage:prompts`.
+
+Der Zugriff auf Prompts erfordert kein Tracing.
+
+### Synchronisierte Prompts verwenden [#use-synced-prompts]
+
+Wähle einen Prompt aus der Bibliothek oder dem `/`-Menü, um dessen **Production**-Version oder eine ausgewählte Version von Langfuse abzurufen. Agents können außerdem [einen synchronisierten Prompt als Instructions verwenden](#prompts-as-agent-instructions).
+
+Inhalte bearbeiten, Versionen verwalten und Prompts in **Langfuse** löschen. Chat-Prompts werden nicht unterstützt.
+
+<Accordions type="single" collapsible>
+  <Accordion title="Erweiterte Verbindungseinstellungen">
+
+    LibreChat kann die auf dem Server hinterlegten Langfuse-Zugangsdaten verwenden oder eine unter **Einstellungen → Langfuse** gespeicherte Verbindung. Serverseitige Zugangsdaten verhindern die Bearbeitung der Verbindung, blenden die verfügbaren Prompt-Einstellungen jedoch nicht aus.
+
+    Bei Bereitstellungen mit konfigurierter Mandantenisolation muss jeder Mandant seine eigene gespeicherte Langfuse-Verbindung haben.
+  </Accordion>
+  <Accordion title="Was Sync speichert und was passiert, wenn sich Prompts ändern">
+    Jeder Bibliothekseintrag speichert `source: langfuse`, `sourceDestination`, `sourceProjectId` und `sourcePromptName`. Der Inhalt verbleibt in Langfuse.
+
+    Sync fügt nur Einträge hinzu. Es aktualisiert oder löscht keine bestehenden Gruppen. Wenn du einen Prompt in Langfuse löschst, bleibt sein Bibliothekseintrag erhalten, dieser Eintrag kann jedoch nicht mehr aufgelöst werden.
+
+    Das Ändern der gespeicherten Quellenidentität gibt `source_changed` zurück; dadurch wird der Eintrag nicht zu einer anderen Quelle umgeleitet. Das Bearbeiten oder Löschen einer externen Gruppe oder Revision sowie das Ändern von Production in LibreChat gibt `read_only` zurück. Nehmen Sie diese Änderungen in Langfuse vor.
+  </Accordion>
+  <Accordion title="Synchronisierungsgrenzen und unvollständige Ergebnisse">
+    Ein Sync, der sein Seitenlimit erreicht, ist unvollständig. Wenn du ihn mit demselben Limit erneut ausführst, beginnt er wieder bei Seite 1. Erhöhe `langfuse.promptSync.maxPages`, um auch spätere Seiten einzuschließen.
+
+    `LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` begrenzt jede vorgelagerte Anfrage. Der Standardwert ist `10000` ms; der zulässige Bereich liegt bei `1000`–`60000` ms. Weitere Einstellungen finden Sie unter [Synchronisierungslimits](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization).
+  </Accordion>
+</Accordions>
+
+### Prompts als Agenten-Anweisungen [#prompts-as-agent-instructions]
+
+Das Verknüpfen einer synchronisierten Langfuse-Prompt-Gruppe als Anweisungen eines Agenten erfordert den oben genannten Prompt-Katalog sowie den Schalter [`endpoints.agents.linkedInstructions.langfuse.enabled`](/docs/configuration/librechat_yaml/object_structure/agents#linkedinstructions), der standardmäßig auf `false` steht:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    linkedInstructions:
+      langfuse:
+        enabled: true
+```
+
+Verwende den [Agent Builder](/docs/features/prompts#use-a-prompt-as-agent-instructions), um den Prompt und dessen Version auszuwählen. Die Katalogsynchronisierung muss aktiviert bleiben, damit gespeicherte Links aufgelöst werden können.
+
+#### Verknüpfung deaktivieren oder erneut aktivieren [#disable-or-re-enable-linking]
+
+| Schalter | Speicherverhalten | Ausführungsverhalten |
+| --- | --- | --- |
+| `false` (Standard) | Neue oder geänderte Langfuse-Verknüpfungen werden abgelehnt. Unveränderte Verknüpfungen, das Entfernen sowie der Wechsel zu Inline-Anweisungen bleiben bearbeitbar. | Gespeicherte Verknüpfungen bleiben erhalten, werden jedoch nicht verwendet. Gewöhnliche Agenten laufen mit leeren Anweisungen, ohne auf Inline-Text zurückzufallen. |
+| `true` | Benutzer mit den erforderlichen Berechtigungen können synchronisierte Text-Prompts verknüpfen. | Gespeicherte Verknüpfungen werden wieder aufgelöst, nachdem der Server die Konfiguration geladen hat. Eine Bearbeitung des Agenten ist nicht erforderlich. |
+
+Wenn deaktiviert, blendet der Builder Langfuse-Prompts aus, mit Ausnahme der gespeicherten Auswahl des Agenten, die einen Hinweis zu einem deaktivierten Link anzeigt. Siehe [Auflösungsfehler](/docs/configuration/librechat_yaml/object_structure/agents#resolution-failures) für die Ausnahme beim Memory-Agenten.
+
+#### Rollout und Downgrade [#rollout-and-downgrade]
+
+<Callout type="warning" title="Aktualisieren Sie jeden Server, bevor Sie die Verknüpfung aktivieren">
+  Aktiviere den Schalter erst, wenn alle LibreChat-Server `v0.8.9-rc1` oder eine neuere Version ausführen.
+  **Ein Downgrade auf eine ältere Build-Version wird nicht unterstützt, sobald Langfuse-Verknüpfungen bestehen.**
+  Das Deaktivieren des Schalters ist etwas anderes als ein Downgrade des Servers. Für ein Downgrade ist eine separat geprüfte Migration erforderlich.
+</Callout>
+
+Während einer gemischten Einführung können ältere Server sich unterschiedlich verhalten:
+
+| Älterer Server | Ergebnis |
+| --- | --- |
+| Unterstützt keine Langfuse-Links | Lehnt ein Speichern mit einem Langfuse-Link mit `400` ab. Zur Laufzeit werden die gespeicherten Inline-Anweisungen verwendet. |
+| Unterstützt Prompt-Links überhaupt nicht (`v0.8.8` und früher) | Speichert den Agenten, verwirft aber den Link. |
+| Hat die Revisions-Route nicht | Gibt für die Versionsliste des Builders `404` zurück, sowohl für native als auch für Langfuse-Prompts. |
+
+Halten Sie die Verlinkung deaktiviert, bis der Rollout abgeschlossen ist. Um die Funktion auf einem unterstützten Build zu deaktivieren, setzen Sie den Schalter auf `false`; gespeicherte Links bleiben für eine erneute Aktivierung verfügbar.

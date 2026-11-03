@@ -1129,13 +1129,14 @@ hostFileEdits:
 
 ## linkedInstructions
 
-Cài đặt ngân sách và bộ nhớ đệm để phân giải các hướng dẫn nhóm prompt được liên kết của một agent. Bỏ qua khối này sẽ áp dụng các giá trị mặc định.
+Cài đặt ngân sách, bộ nhớ đệm và nguồn để phân giải các chỉ dẫn của nhóm prompt được liên kết với một agent. Bỏ qua khối này sẽ áp dụng các giá trị mặc định.
 
 <OptionTable
   options={[
     ['timeoutMs', 'Integer', 'Ngân sách thời gian để xử lý các hướng dẫn được liên kết tính bằng mili giây (100-30000).', '2000'],
     ['native.cacheTtlMs', 'Integer', 'Thời gian sống (TTL) của bộ nhớ đệm nội dung cho liên kết prompt gốc đã được phân giải, tính bằng mili giây (0-3600000). 0 sẽ tắt bộ nhớ đệm.', '300000'],
     ['native.cacheClearTimeoutMs', 'Integer', "Thời gian chờ tối đa để xóa bộ nhớ đệm mà thao tác ghi prompt kích hoạt; sau thời gian này, phản hồi của thao tác ghi sẽ tiếp tục mà không chờ việc xóa bộ nhớ đệm (1-30000 ms).", '1000'],
+    ['langfuse.enabled', 'Boolean', 'Cho phép các agent liên kết một nhóm prompt Langfuse làm hướng dẫn của chúng. Khi đặt thành false, không thể lưu liên kết Langfuse mới hoặc đã thay đổi, và các liên kết Langfuse đã lưu sẽ không được sử dụng.', 'false'],
   ]}
 />
 
@@ -1144,7 +1145,34 @@ linkedInstructions:
   timeoutMs: 2000
   native:
     cacheTtlMs: 300000
+  langfuse:
+    enabled: true
 ```
+
+`timeoutMs` áp dụng cho cả hai nguồn. Chỉ `langfuse.enabled` được gửi đến client; các cài đặt timeout và cache gốc vẫn được giữ trên server. Xem [Prompts](/docs/features/prompts#use-a-prompt-as-agent-instructions) để biết các bước trong Builder và [Langfuse configuration](/docs/configuration/langfuse#prompts-as-agent-instructions) để biết cách thiết lập và triển khai.
+
+### Phân giải và bộ nhớ đệm [#resolution-and-caching]
+
+LibreChat xử lý các hướng dẫn được liên kết tại mỗi lượt trò chuyện. Điều này áp dụng cho tác nhân chính, các lượt chuyển giao (handoffs) và tác nhân con (subagents), tác nhân bộ nhớ (memory agent), các cuộc trò chuyện bổ sung (multi-convo), cũng như các API tương thích với OpenAI và Responses API. Việc lưu một tác nhân chỉ kiểm tra liên kết của nó chứ không sao chép nội dung prompt.
+
+| Nguồn | Cách nội dung được tải | Khi nào cập nhật Production có hiệu lực |
+| --- | --- | --- |
+| Prompt LibreChat gốc | Nội dung đã phân giải được lưu cache trong `native.cacheTtlMs`, mặc định là năm phút. | Thường là ở lượt tiếp theo, sau khi cache được vô hiệu hóa. Nội dung cũ có thể còn tồn tại cho đến khi cache hết hạn. |
+| Prompt Langfuse | Được lấy từ Langfuse mỗi lần khởi tạo, không có cache nội dung. | Ở lượt tiếp theo, nếu quá trình phân giải thành công. |
+
+Việc lưu một bản sửa đổi Production gốc mới, xóa một bản sửa đổi hoặc xóa nhóm của nó sẽ kích hoạt việc xóa bộ nhớ đệm. Thao tác ghi sẽ chờ tối đa `native.cacheClearTimeoutMs` để việc xóa hoàn tất. Nếu hết thời gian chờ, quá trình xóa sẽ tiếp tục chạy ở chế độ nền. Nội dung đã được lưu trong bộ nhớ đệm vẫn có thể được phục vụ cho đến khi hết hạn theo thời gian thông thường. Khi không sử dụng Redis, mỗi phiên bản máy chủ sẽ có bộ nhớ đệm riêng.
+
+### Lỗi phân giải [#resolution-failures]
+
+Mỗi lần giải quyết phải hoàn thành trong `timeoutMs` (mặc định là 2000 ms). Nếu thất bại, agent tiếp tục với **chỉ dẫn trống**, mà không quay lại văn bản nội tuyến đã lưu. Thay vào đó, agent bộ nhớ sử dụng chỉ dẫn mặc định của nó. Máy chủ ghi một cảnh báo vào nhật ký kèm theo agent và nhóm.
+
+Kiểm tra các nguyên nhân sau:
+
+- Một nhóm hoặc bản sửa đổi đã bị xóa, hoặc nội dung bị chặn bởi chính sách.
+- Một lỗi hết thời gian phân giải (resolution timeout) hoặc một lỗi yêu cầu Langfuse.
+- Đã tắt liên kết Langfuse hoặc đồng bộ danh mục prompt của tenant.
+- Một kết nối Langfuse đã bị gỡ bỏ, hoặc được chuyển sang một dự án khác.
+- Một prompt hoặc phiên bản đã bị xóa trong Langfuse, hoặc một prompt dạng văn bản đã được chuyển thành prompt dạng chat.
 
 ## maxRetainedToolCountChars
 
