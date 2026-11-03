@@ -86,17 +86,24 @@ function getFeedbackLimiters(): { client: Ratelimit; global: Ratelimit } | null 
 const memoryFeedbackClient = createRateLimiter(FEEDBACK_PER_CLIENT, 60_000)
 const memoryFeedbackGlobal = createRateLimiter(FEEDBACK_GLOBAL, 60_000)
 
+function checkMemoryFeedbackLimit(clientId: string): boolean {
+  if (memoryFeedbackClient(clientId)) return false
+  return !memoryFeedbackGlobal('global')
+}
+
 /** Returns true when a feedback submission from `clientId` may proceed. */
 export async function checkFeedbackRateLimit(clientId: string): Promise<boolean> {
   const limiters = getFeedbackLimiters()
+  if (!limiters) return checkMemoryFeedbackLimit(clientId)
 
-  if (!limiters) {
-    if (memoryFeedbackClient(clientId)) return false
-    return !memoryFeedbackGlobal('global')
-  }
-
+  // Upstash answers success: true when Redis exceeds the timeout, so a slow
+  // Redis would lift both limits; fall back to the in-memory windows instead.
   // Check the client window first so one noisy caller does not drain the global budget
-  const { success } = await limiters.client.limit(clientId)
-  if (!success) return false
-  return (await limiters.global.limit('global')).success
+  const client = await limiters.client.limit(clientId)
+  if (client.reason === 'timeout') return checkMemoryFeedbackLimit(clientId)
+  if (!client.success) return false
+
+  const global = await limiters.global.limit('global')
+  if (global.reason === 'timeout') return checkMemoryFeedbackLimit(clientId)
+  return global.success
 }
