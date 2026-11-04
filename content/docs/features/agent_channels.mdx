@@ -187,13 +187,31 @@ channelGateway:
   existingSecretName: librechat-credentials-env
 ```
 
-For branding, `channelGateway.appTitle` defaults to `librechat.configEnv.APP_TITLE`, then `LibreChat`. Set it explicitly to the same application title when the API obtains `APP_TITLE` through a Secret or `global.librechat.env`.
+For branding, `channelGateway.appTitle` defaults to `librechat.configEnv.APP_TITLE`, then `LibreChat`. Set it explicitly when the API obtains `APP_TITLE` through a Secret or `global.librechat.env`, or choose a shorter gateway title if the application name is not compatible. Gateway titles must be nonempty after trimming, at most 40 UTF-16 characters, and contain no `<`, `>`, `|` or control characters. Helm rejects incompatible inherited titles before deployment; the application can keep its existing longer name.
 
 The existing Secret must contain `CHANNEL_SERVICE_TOKEN` matching LibreChat's server configuration and `SLACK_APP_TOKEN` for the matching Socket Mode app. By default, the application's existing Secret supplies the same service token to LibreChat. The gateway references only these individual keys, not all provider/database credentials. If you choose a separate gateway Secret, keep its service token identical to the API's. Rotate through your normal secret-management process and restart the API and gateway after rotation; changing an existing Secret does not automatically restart pods.
 
 The gateway derives the API URL from the chart's internal Service and port. Override `channelGateway.internalUrl` for a deliberately different service boundary. Configure gateway resources and annotations through `channelGateway`. Pod identity, `enableServiceLinks`, DNS, host aliases, image pull secrets, node selectors, tolerations and affinity follow the chart's shared platform settings. The configured ServiceAccount is reused while the gateway keeps its Kubernetes API token automount disabled. This installs a single gateway with replacement updates, so an upgrade may briefly interrupt Slack connectivity; it does not create another channel or Slack app.
 
-For webhook transport, set the server policy to `webhook`, configure its public HTTPS gateway URL and set `channelGateway.slackAppTokenKey: ""`. Route the required Slack callback paths through your existing HTTPS ingress to `<release>-librechat-channel-gateway:8080` (use the rendered Service name when overriding chart names). The chart creates a ClusterIP Service, not a public Ingress. Keep readiness, liveness and metrics private. Socket Mode needs no public ingress.
+For webhook transport, set the server policy to `webhook`, configure its public HTTPS gateway URL and clear `channelGateway.slackAppTokenKey`. Enable the dedicated gateway Ingress using your installed ingress controller and a trusted TLS certificate:
+
+```yaml filename="channel-values.yaml"
+channelGateway:
+  slackAppTokenKey: ""
+  ingress:
+    enabled: true
+    host: gateway.example.com
+    # Empty inherits ingress.className; set this for a different controller.
+    className: nginx
+    annotations: {}
+    tls:
+      - hosts: [gateway.example.com]
+        secretName: gateway-tls
+```
+
+Combine these settings with the enabled gateway and explicit application release above. Set the server's `gatewayUrl` to `https://gateway.example.com`, with no path prefix. The new Ingress routes only `/slack/events` and `/slack/interactions` to the gateway Service on port 8080; its health and metrics routes remain private. It can share the application's hostname: the more specific Slack paths route to the gateway while the existing application Ingress keeps its own backend. Gateway annotations are separate so application rewrite rules cannot silently change callback paths. The gateway Ingress requires Kubernetes 1.19+.
+
+The chart does not install an ingress controller or issue a TLS certificate. Configure TLS through the example Secret, your normal certificate controller/annotations, or an existing HTTPS termination layer. Slack needs a publicly trusted HTTPS endpoint. If you manage a separate external Ingress or need a custom base-path rewrite, leave `channelGateway.ingress.enabled: false` and route the callback paths to the rendered gateway Service yourself; do not add them as paths on the main application Ingress, whose backend is LibreChat. Socket Mode needs no public ingress.
 
 By default, the gateway runs without an automatically mounted Kubernetes API token, as a non-root user with a read-only filesystem and dropped capabilities. The chart's global pod/container security contexts are honored for platform-specific overrides. Gateway version labels follow its selected image tag. `/livez` drives liveness and `/readyz` drives readiness. Startup before the API or channel is available fails closed; Kubernetes retries the process, and it becomes ready after validating its active connection and transport.
 
