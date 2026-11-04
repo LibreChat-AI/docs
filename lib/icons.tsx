@@ -52,6 +52,7 @@ import {
   VultrIcon,
   WolframIcon,
   XAIIcon,
+  ZeroLimitAIIcon,
 } from '../components/icons/providers'
 import {
   Rocket,
@@ -306,6 +307,7 @@ const icons: Record<string, ReactElement> = {
   Vultr: <VultrIcon />,
   Wolfram: <WolframIcon />,
   XAI: <XAIIcon />,
+  ZeroLimitAI: <ZeroLimitAIIcon />,
 }
 
 export function resolveIcon(icon: string | undefined): ReactElement | undefined {
