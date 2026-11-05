@@ -166,6 +166,7 @@ test('reduced motion shows every provider without clipping on mobile', async ({ 
 test('mobile navigation, search, and banner dismissal remain usable', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 })
   await page.goto('/')
+  await page.getByRole('button', { name: 'Reject non-essential' }).click()
   const banner = page.locator('#clickhouse-agentic-data-stack')
   await expect(banner).toBeVisible()
   const text = await banner.locator('p').boundingBox()

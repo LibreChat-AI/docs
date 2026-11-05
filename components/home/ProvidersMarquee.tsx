@@ -18,6 +18,7 @@ import DatabricksIcon from '@/components/icons/providers/databricks'
 import FireworksIcon from '@/components/icons/providers/fireworks'
 import HeliconeIcon from '@/components/icons/providers/helicone'
 import HuggingFaceIcon from '@/components/icons/providers/huggingface'
+import LemonadeIcon from '@/components/icons/providers/lemonade'
 import LiteLLMIcon from '@/components/icons/providers/litellm'
 import MLXIcon from '@/components/icons/providers/mlx'
 import MoonshotIcon from '@/components/icons/providers/moonshot'
@@ -52,6 +53,7 @@ const providers = [
   { id: 'fireworks', name: 'Fireworks AI', icon: FireworksIcon },
   { id: 'helicone', name: 'Helicone', icon: HeliconeIcon },
   { id: 'huggingface', name: 'Hugging Face', icon: HuggingFaceIcon },
+  { id: 'lemonade', name: 'Lemonade', icon: LemonadeIcon },
   { id: 'litellm', name: 'LiteLLM', icon: LiteLLMIcon },
   { id: 'mlx', name: 'Apple MLX', icon: MLXIcon },
   { id: 'moonshot', name: 'Moonshot AI', icon: MoonshotIcon },
