@@ -277,28 +277,29 @@ export const ja: UIStrings = {
     mobileDarkAlt: 'ダークモードの LibreChat モバイルインターフェース',
     trustedBy: '世界中の企業に信頼されています',
     featuresHeading: '必要なものすべて',
-    featuresSubtitle: 'AI を活用した会話のための総合的なプラットフォーム',
+    featuresSubtitle: '日々の質問から大きなプロジェクトまで、すべてをひとつのワークスペースで。',
     primaryActionsAria: '主要なアクション',
     features: {
       agents: {
         title: 'エージェント',
-        description: 'ファイル処理、コード解釈、API アクションを備えた高度なエージェント',
+        description:
+          'ファイル、ツール、再利用可能なスキル、サブタスクの委任を活用して、専門エージェントを構築。',
       },
       codeInterpreter: {
         title: 'コードインタープリター',
-        description: '複数の言語のコードをセットアップ不要で安全に実行',
+        description: '隔離された環境で複数の言語のコードを実行',
       },
       models: {
         title: 'モデル',
-        description: 'Anthropic、AWS、OpenAI、Azure などを含む AI モデルの選択',
+        description: '主要なAIプロバイダーとローカルモデルをひとつのワークスペースに。',
       },
       artifacts: {
         title: 'アーティファクト',
-        description: 'React、HTML コード、Mermaid 図をチャット内で作成',
+        description: '会話からインタラクティブなアプリ、図表、ドキュメントを作成。',
       },
       search: {
-        title: '検索',
-        description: 'メッセージ、ファイル、コードスニペットを瞬時に検索',
+        title: 'メッセージ検索',
+        description: '会話履歴全体からメッセージやトピックを検索。',
       },
       mcp: {
         title: 'MCP',
@@ -317,12 +318,24 @@ export const ja: UIStrings = {
         title: '認証',
         description: 'OAuth、SAML、LDAP、二要素認証に対応したエンタープライズ向け SSO',
       },
+      projects: {
+        title: 'プロジェクト',
+        description: '関連する会話を個人用のプロジェクトワークスペースに整理。',
+      },
+      skills: {
+        title: 'スキル',
+        description: '再利用可能な指示、参考資料、ワークフローをエージェントに提供。',
+      },
+      subagents: {
+        title: 'サブエージェント',
+        description: '独自のコンテキストを持つ専門エージェントに、特定のタスクを委任。',
+      },
     },
     learnMore: '詳しく見る',
     communityHeading: 'オープンソース、コミュニティ主導',
     communitySubtitle: 'LibreChat で構築する何千もの開発者や組織に参加しましょう',
     githubStars: 'GitHub スター',
-    dockerPulls: 'Docker プル',
+    dockerPulls: 'コンテナのダウンロード数',
     contributors: '貢献者',
     communityLinksAria: 'コミュニティリンク',
     githubAria: 'GitHub の LibreChat',

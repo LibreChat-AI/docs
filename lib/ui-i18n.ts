@@ -299,28 +299,29 @@ const en = {
     mobileDarkAlt: 'LibreChat mobile interface in dark mode',
     trustedBy: 'Trusted by companies worldwide',
     featuresHeading: 'Everything you need',
-    featuresSubtitle: 'A comprehensive platform for AI-powered conversations',
+    featuresSubtitle: 'From everyday questions to ambitious projects, all in one workspace.',
     primaryActionsAria: 'Primary actions',
     features: {
       agents: {
         title: 'Agents',
-        description: 'Advanced agents with file handling, code interpretation, and API actions',
+        description:
+          'Build specialized agents with your files, tools, reusable skills, and delegated subtasks.',
       },
       codeInterpreter: {
         title: 'Code Interpreter',
-        description: 'Execute code in multiple languages securely with zero setup',
+        description: 'Execute code in multiple languages in an isolated environment',
       },
       models: {
         title: 'Models',
-        description: 'AI model selection including Anthropic, AWS, OpenAI, Azure, and more',
+        description: 'Bring leading AI providers and local models together in one workspace.',
       },
       artifacts: {
         title: 'Artifacts',
-        description: 'Create React, HTML code, and Mermaid diagrams in chat',
+        description: 'Turn conversations into interactive apps, diagrams, and documents.',
       },
       search: {
-        title: 'Search',
-        description: 'Search for messages, files, and code snippets in an instant',
+        title: 'Message Search',
+        description: 'Find messages and topics across your conversation history.',
       },
       mcp: {
         title: 'MCP',
@@ -338,12 +339,24 @@ const en = {
         title: 'Authentication',
         description: 'Enterprise-ready SSO with OAuth, SAML, LDAP, and two-factor auth',
       },
+      projects: {
+        title: 'Projects',
+        description: 'Keep related conversations organized in personal project workspaces.',
+      },
+      skills: {
+        title: 'Skills',
+        description: 'Give agents reusable instructions, references, and workflows.',
+      },
+      subagents: {
+        title: 'Subagents',
+        description: 'Delegate focused work to specialized agents with their own context.',
+      },
     },
     learnMore: 'Learn more',
     communityHeading: 'Open source, community driven',
     communitySubtitle: 'Join thousands of developers and organizations building with LibreChat',
     githubStars: 'GitHub Stars',
-    dockerPulls: 'Docker Pulls',
+    dockerPulls: 'Container Downloads',
     contributors: 'Contributors',
     communityLinksAria: 'Community links',
     githubAria: 'LibreChat on GitHub',

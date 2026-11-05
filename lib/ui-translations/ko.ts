@@ -271,28 +271,29 @@ export const ko: UIStrings = {
     mobileDarkAlt: '다크 모드의 LibreChat 모바일 인터페이스',
     trustedBy: '전 세계 기업들이 신뢰합니다',
     featuresHeading: '필요한 모든 것',
-    featuresSubtitle: 'AI 기반 대화를 위한 종합 플랫폼',
+    featuresSubtitle: '일상적인 질문부터 큰 프로젝트까지, 하나의 작업 공간에서.',
     primaryActionsAria: '주요 작업',
     features: {
       agents: {
         title: '에이전트',
-        description: '파일 처리, 코드 해석, API 작업을 갖춘 고급 에이전트',
+        description:
+          '파일, 도구, 재사용 가능한 기술과 하위 작업 위임으로 전문 에이전트를 만드세요.',
       },
       codeInterpreter: {
         title: 'Code Interpreter',
-        description: '여러 언어의 코드를 안전하게 설정 없이 실행',
+        description: '격리된 환경에서 여러 언어의 코드 실행',
       },
       models: {
         title: '모델',
-        description: 'Anthropic, AWS, OpenAI, Azure 등을 포함한 AI 모델 선택',
+        description: '주요 AI 제공업체와 로컬 모델을 하나의 작업 공간에서 사용하세요.',
       },
       artifacts: {
         title: '아티팩트',
-        description: '채팅에서 React, HTML 코드와 Mermaid 다이어그램 생성',
+        description: '대화를 대화형 앱, 다이어그램, 문서로 바꾸세요.',
       },
       search: {
-        title: '검색',
-        description: '메시지, 파일, 코드 조각을 즉시 검색',
+        title: '메시지 검색',
+        description: '전체 대화 기록에서 메시지와 주제를 찾으세요.',
       },
       mcp: {
         title: 'MCP',
@@ -310,12 +311,24 @@ export const ko: UIStrings = {
         title: '인증',
         description: 'OAuth, SAML, LDAP 및 2단계 인증을 갖춘 기업용 SSO',
       },
+      projects: {
+        title: '프로젝트',
+        description: '관련 대화를 개인 프로젝트 작업 공간에 정리하세요.',
+      },
+      skills: {
+        title: '기술',
+        description: '에이전트에 재사용 가능한 지침, 참고 자료, 워크플로를 제공하세요.',
+      },
+      subagents: {
+        title: '하위 에이전트',
+        description: '독립적인 컨텍스트를 가진 전문 에이전트에 특정 작업을 위임하세요.',
+      },
     },
     learnMore: '자세히 알아보기',
     communityHeading: '오픈소스, 커뮤니티 중심',
     communitySubtitle: 'LibreChat으로 구축하는 수천 명의 개발자와 조직에 합류하세요',
     githubStars: 'GitHub 스타',
-    dockerPulls: 'Docker Pull',
+    dockerPulls: '컨테이너 다운로드',
     contributors: '기여자',
     communityLinksAria: '커뮤니티 링크',
     githubAria: 'GitHub의 LibreChat',

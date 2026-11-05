@@ -274,28 +274,30 @@ export const nl: UIStrings = {
     mobileDarkAlt: 'LibreChat mobiele interface in donkere modus',
     trustedBy: 'Vertrouwd door bedrijven wereldwijd',
     featuresHeading: 'Alles wat je nodig hebt',
-    featuresSubtitle: 'Een compleet platform voor AI-gestuurde gesprekken',
+    featuresSubtitle: 'Van alledaagse vragen tot ambitieuze projecten, alles in één werkruimte.',
     primaryActionsAria: 'Primaire acties',
     features: {
       agents: {
         title: 'Agents',
-        description: 'Geavanceerde agents met bestandsverwerking, code-interpretatie en API-acties',
+        description:
+          'Bouw gespecialiseerde agents met je bestanden, tools, herbruikbare vaardigheden en gedelegeerde subtaken.',
       },
       codeInterpreter: {
         title: 'Code Interpreter',
-        description: 'Voer code in meerdere talen veilig uit zonder installatie',
+        description: 'Voer code in meerdere talen uit in een geïsoleerde omgeving',
       },
       models: {
         title: 'Modellen',
-        description: 'AI-modelselectie met Anthropic, AWS, OpenAI, Azure en meer',
+        description:
+          'Breng toonaangevende AI-aanbieders en lokale modellen samen in één werkruimte.',
       },
       artifacts: {
         title: 'Artefacten',
-        description: 'Maak React-code, HTML en Mermaid-diagrammen in de chat',
+        description: 'Zet gesprekken om in interactieve apps, diagrammen en documenten.',
       },
       search: {
-        title: 'Zoeken',
-        description: 'Zoek direct naar berichten, bestanden en codefragmenten',
+        title: 'Berichten zoeken',
+        description: 'Vind berichten en onderwerpen in je gespreksgeschiedenis.',
       },
       mcp: {
         title: 'MCP',
@@ -314,13 +316,25 @@ export const nl: UIStrings = {
         title: 'Authenticatie',
         description: 'Enterprise-ready SSO met OAuth, SAML, LDAP en tweefactorauthenticatie',
       },
+      projects: {
+        title: 'Projecten',
+        description: 'Organiseer gerelateerde gesprekken in persoonlijke projectwerkruimtes.',
+      },
+      skills: {
+        title: 'Vaardigheden',
+        description: 'Geef agents herbruikbare instructies, referenties en workflows.',
+      },
+      subagents: {
+        title: 'Subagents',
+        description: 'Delegeer gerichte taken aan gespecialiseerde agents met hun eigen context.',
+      },
     },
     learnMore: 'Meer informatie',
     communityHeading: 'Open source, community-gedreven',
     communitySubtitle:
       'Sluit je aan bij duizenden ontwikkelaars en organisaties die bouwen met LibreChat',
     githubStars: 'GitHub-sterren',
-    dockerPulls: 'Docker-pulls',
+    dockerPulls: 'Containerdownloads',
     contributors: 'Bijdragers',
     communityLinksAria: 'Communitylinks',
     githubAria: 'LibreChat op GitHub',

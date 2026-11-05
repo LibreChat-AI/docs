@@ -285,31 +285,32 @@ export const fr: UIStrings = {
     mobileDarkAlt: 'Interface mobile de LibreChat en mode sombre',
     trustedBy: 'Approuvé par des entreprises du monde entier',
     featuresHeading: 'Tout ce dont vous avez besoin',
-    featuresSubtitle: "Une plateforme complète pour des conversations propulsées par l'IA",
+    featuresSubtitle:
+      'Des questions du quotidien aux projets ambitieux, tout dans un même espace de travail.',
     primaryActionsAria: 'Actions principales',
     features: {
       agents: {
         title: 'Agents',
         description:
-          'Agents avancés avec gestion de fichiers, interprétation de code et actions API',
+          'Créez des agents spécialisés avec vos fichiers, outils, compétences réutilisables et sous-tâches déléguées.',
       },
       codeInterpreter: {
         title: 'Interpréteur de code',
-        description:
-          'Exécutez du code dans plusieurs langages en toute sécurité, sans configuration',
+        description: 'Exécutez du code dans plusieurs langages dans un environnement isolé',
       },
       models: {
         title: 'Modèles',
         description:
-          'Sélection de modèles IA incluant Anthropic, AWS, OpenAI, Azure et plus encore',
+          'Réunissez les principaux fournisseurs d’IA et les modèles locaux dans un même espace de travail.',
       },
       artifacts: {
         title: 'Artefacts',
-        description: 'Créez du code React, HTML et des diagrammes Mermaid dans le chat',
+        description:
+          'Transformez vos conversations en applications interactives, diagrammes et documents.',
       },
       search: {
-        title: 'Recherche',
-        description: 'Recherchez des messages, des fichiers et des extraits de code en un instant',
+        title: 'Recherche de messages',
+        description: 'Retrouvez des messages et des sujets dans votre historique de conversations.',
       },
       mcp: {
         title: 'MCP',
@@ -331,13 +332,27 @@ export const fr: UIStrings = {
         description:
           "SSO prêt pour l'entreprise avec OAuth, SAML, LDAP et authentification à deux facteurs",
       },
+      projects: {
+        title: 'Projets',
+        description: 'Organisez les conversations liées dans des espaces de projet personnels.',
+      },
+      skills: {
+        title: 'Compétences',
+        description:
+          'Donnez aux agents des instructions, des références et des procédures réutilisables.',
+      },
+      subagents: {
+        title: 'Sous-agents',
+        description:
+          'Déléguez des tâches ciblées à des agents spécialisés disposant de leur propre contexte.',
+      },
     },
     learnMore: 'En savoir plus',
     communityHeading: 'Open source, porté par la communauté',
     communitySubtitle:
       "Rejoignez des milliers de développeurs et d'organisations qui construisent avec LibreChat",
     githubStars: 'Étoiles GitHub',
-    dockerPulls: 'Téléchargements Docker',
+    dockerPulls: 'Téléchargements de conteneurs',
     contributors: 'Contributeurs',
     communityLinksAria: 'Liens de la communauté',
     githubAria: 'LibreChat sur GitHub',
