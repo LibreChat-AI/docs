@@ -211,6 +211,8 @@ const config = {
   // Tree-shake large barrel-file packages so only the icons/animations actually
   // used are bundled, instead of the entire module.
   experimental: {
+    // Keep static page generation within the preview deployment's memory limit.
+    cpus: 3,
     optimizePackageImports: ['lucide-react', 'framer-motion'],
   },
   turbopack: {},
