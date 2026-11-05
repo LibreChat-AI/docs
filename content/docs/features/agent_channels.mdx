@@ -48,8 +48,8 @@ A deployment operator enables the shared gateway once, without creating Slack ap
 ### One-time operator setup
 
 1. Configure transaction-capable MongoDB and a private `CHANNEL_SERVICE_TOKEN` shared by the API and gateway. Keep API-key authentication enabled for bound execution and retain normal Agent and Remote Agents permission controls.
-2. Configure public HTTPS `DOMAIN_SERVER` and `DOMAIN_CLIENT`, replacing the localhost defaults in `.env`. Include the application base path when present. Set `SLACK_GATEWAY_URL` to the public gateway origin; it must also use public HTTPS. The shared deployment opt-in rejects local addresses.
-3. Route `/slack/events/` and `/slack/interactions/`, including their organization/app suffixes, to the gateway on port 8080. Route the application and OAuth callback to LibreChat. Keep gateway health and metrics private. No Slack dashboard access, app credentials or per-organization infrastructure settings are required.
+2. Configure public HTTPS `DOMAIN_SERVER` and `DOMAIN_CLIENT`, replacing the localhost defaults in `.env`. Both are required and must have no surrounding whitespace. Include the application base path when present. Set `SLACK_GATEWAY_URL` to the public gateway origin; it must also use public HTTPS. The shared deployment opt-in rejects local addresses.
+3. Route `/slack/events/` and `/slack/interactions/`, including their organization/app suffixes, to the gateway. Its container listens on port 8080; the shared Compose overlay publishes it at `127.0.0.1:3081` for a host-level HTTPS proxy. Route the application and OAuth callback to LibreChat. Keep gateway health and metrics private. No Slack dashboard access, app credentials or per-organization infrastructure settings are required.
 
 For Docker Compose, use the normal uncommitted `.env`:
 
@@ -69,7 +69,7 @@ docker compose -f docker-compose.yml -f docker-compose.channels.yml \
   --profile channels up -d api meilisearch channel-gateway
 ```
 
-The replica overlay is for a **fresh local database**; read [Existing local data](#existing-local-data) before converting an existing installation. Omit that overlay when you already use a verified transaction-capable external database and supply its normal connection configuration. Use the same Compose project and files for subsequent commands. This does not configure a public reverse proxy or a trusted certificate; route the two Slack paths to the gateway on port 8080 through your normal ingress.
+The replica overlay is for a **fresh local database**; read [Existing local data](#existing-local-data) before converting an existing installation. Omit that overlay when you already use a verified transaction-capable external database and supply its normal connection configuration. Use the same Compose project and files for subsequent commands. This does not configure a public reverse proxy or a trusted certificate. A host-level proxy forwards the two Slack paths to `http://127.0.0.1:3081`, preserving the organization/app suffixes. Set `CHANNEL_GATEWAY_PORT` in `.env` to change that loopback port. A proxy in the same Compose network can instead forward to `http://channel-gateway:8080`.
 
 The shared overlay supplies `SLACK_WORKSPACES_ENABLED=true`, which enables webhook Channels, shared app installation and stored background Responses while retaining unrelated YAML policy, limits and explicit API authentication settings. Slack app credentials are entered by organization admins through the UI and stored encrypted; they are not deployment environment variables or YAML fields. With the flag unset or false, YAML continues to control the feature. Choosing shared setup changes the deployment's channel transport to webhook; existing bound connections must use matching webhook configuration. Manual Socket Mode remains available when using the manual setup instead.
 
@@ -239,9 +239,13 @@ Enabling the gateway requires an explicit `image.tag` selecting a published Libr
 
 Select a release containing organization workspaces and provide an existing Secret with `CHANNEL_SERVICE_TOKEN`. The service token is shared with LibreChat. No Slack app credentials belong in this Secret: organization admins register their apps in the UI after deployment. Existing explicit API environment entries take precedence over the generated service-token reference.
 
+The example below selects a replica set for a **fresh bundled MongoDB**. For an existing standalone database, plan and complete its data migration before changing topology; a Helm value does not migrate existing data. To use an external transaction-capable database, set `mongodb.enabled: false` and supply its connection through your normal application configuration. Shared mode refuses to render with a bundled standalone MongoDB.
+
 ```yaml filename="shared-workspace-values.yaml"
 image:
   tag: <published-release-containing-organization-workspaces>
+mongodb:
+  architecture: replicaset
 channelGateway:
   enabled: true
   mode: shared
