@@ -32,7 +32,7 @@ interface MarqueeProps extends ComponentPropsWithoutRef<'div'> {
   repeat?: number
 }
 
-/** Horizontal Magic UI marquee, adapted for accessible repeated content. */
+/** Marquee for non-interactive content, with hoverable copies hidden from assistive technology. */
 export function Marquee({
   className,
   pauseOnHover = false,
@@ -47,12 +47,7 @@ export function Marquee({
       data-pause-on-hover={pauseOnHover || undefined}
     >
       {Array.from({ length: repeat }, (_, index) => (
-        <div
-          key={index}
-          className="marquee-track"
-          aria-hidden={index > 0 || undefined}
-          inert={index > 0 || undefined}
-        >
+        <div key={index} className="marquee-track" aria-hidden={index > 0 || undefined}>
           {children}
         </div>
       ))}

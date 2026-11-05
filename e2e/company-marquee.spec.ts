@@ -1,32 +1,33 @@
 import { test, expect } from '@playwright/test'
+import { getUI } from '../lib/ui-i18n'
 
 const companies = [
-  'ClickHouse',
-  'NASA',
-  'BeiGene',
-  'Shopify',
-  'Stripe',
-  'Daimler Truck',
-  'Boston University',
-  'UC Berkeley',
-  'Harvard University',
-  'Strategy',
-  'SIXT',
-  'Opendoor',
-  'UMass Amherst',
-  'Hinge Health',
-  'Stanford University',
-  'Université de Montréal',
-  'Coinbase',
-  'TDK',
-  'cBioPortal',
-  'Lennar',
   'Tekion',
+  'cBioPortal',
+  'NASA',
   'Visa',
+  'Harvard University',
+  'Stanford University',
+  'Stripe',
+  'Shopify',
+  'Coinbase',
+  'UC Berkeley',
+  'Daimler Truck',
+  'TDK',
+  'ClickHouse',
+  'SIXT',
+  'Lennar',
+  'Strategy',
+  'Boston University',
+  'UMass Amherst',
+  'Université de Montréal',
+  'BeiGene',
+  'Opendoor',
+  'Hinge Health',
 ]
 
 for (const colorScheme of ['light', 'dark'] as const) {
-  test(`loads all community logos once for assistive technology in ${colorScheme} mode`, async ({
+  test(`@scenario:company-assets-${colorScheme} loads all community logos once for assistive technology in ${colorScheme} mode`, async ({
     page,
   }) => {
     await page.emulateMedia({ colorScheme, reducedMotion: 'no-preference' })
@@ -69,9 +70,52 @@ for (const colorScheme of ['light', 'dark'] as const) {
       ),
     ).toBe(true)
   })
+
+  test(`@scenario:company-hover-boundary-${colorScheme} logos highlight before, across, and after the loop boundary in ${colorScheme} mode`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ colorScheme, reducedMotion: 'no-preference' })
+    await page.goto('/')
+    const section = page.getByRole('region', { name: 'Trusted by companies worldwide' })
+    await section.scrollIntoViewIfNeeded()
+    const tracks = section.locator('.marquee-track')
+
+    for (const trackIndex of [0, 1, 0]) {
+      await page.mouse.move(0, 0)
+      await tracks.evaluateAll((elements, visibleTrack) => {
+        const container = elements[0].parentElement!
+        const gap = parseFloat(getComputedStyle(container).columnGap)
+        const distance = elements[0].getBoundingClientRect().width + gap
+        const progress =
+          visibleTrack === 0 ? 0 : 1 - container.getBoundingClientRect().width / 3 / distance
+        for (const element of elements) {
+          const animation = element.getAnimations()[0]
+          animation.pause()
+          animation.currentTime = Number(animation.effect!.getComputedTiming().duration) * progress
+        }
+      }, trackIndex)
+
+      for (const name of ['NASA', 'Visa']) {
+        const logo = tracks.nth(trackIndex).locator(`img[alt="${name} logo"]:visible`)
+        const bounds = await logo.boundingBox()
+        expect(bounds).not.toBeNull()
+        await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2)
+        await expect(logo, `${name} in track ${trackIndex} responds to hover`).toHaveCSS(
+          'opacity',
+          '1',
+          { timeout: 2000 },
+        )
+        await page.mouse.move(0, 0)
+        await expect(logo).toHaveCSS('opacity', '0.6')
+      }
+    }
+    await expect(section.getByRole('img')).toHaveCount(companies.length)
+  })
 }
 
-test('pauses on hover without displaying playback controls', async ({ page }) => {
+test('@scenario:company-pause-hover pauses on hover without displaying playback controls', async ({
+  page,
+}) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await page.goto('/')
   const section = page.getByRole('region', { name: 'Trusted by companies worldwide' })
@@ -84,7 +128,9 @@ test('pauses on hover without displaying playback controls', async ({ page }) =>
   await expect(track).toHaveCSS('animation-play-state', 'running')
 })
 
-test('the repeated row joins without a gap or a jump at the loop boundary', async ({ page }) => {
+test('@scenario:company-continuous-loop the repeated row joins without a gap or a jump at the loop boundary', async ({
+  page,
+}) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await page.goto('/')
   const tracks = page.locator('.landing-trust .marquee-track')
@@ -107,7 +153,9 @@ test('the repeated row joins without a gap or a jump at the loop boundary', asyn
   expect(Math.abs(positions.end - positions.start)).toBeLessThan(1)
 })
 
-test('reduced motion exposes every logo in a static mobile layout', async ({ page }) => {
+test('@scenario:company-reduced-motion-mobile reduced motion exposes every logo in a static mobile layout', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 320, height: 844 })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/')
@@ -128,4 +176,17 @@ test('reduced motion exposes every logo in a static mobile layout', async ({ pag
       }),
     ),
   ).toBe(true)
+})
+
+test('@scenario:company-localized-section the localized homepage exposes every company in the same order', async ({
+  page,
+}) => {
+  await page.goto('/de')
+  const section = page.getByRole('region', { name: getUI('de').home.trustedBy })
+  await expect(section.getByRole('img')).toHaveCount(companies.length)
+  expect(
+    await section
+      .getByRole('img')
+      .evaluateAll((images) => images.map((image) => image.getAttribute('alt'))),
+  ).toEqual(companies.map((name) => `${name} logo`))
 })
