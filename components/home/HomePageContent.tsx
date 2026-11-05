@@ -488,7 +488,7 @@ function TrustedBySection({ t }: { t: HomeStrings }) {
         <h2 id="trusted-by-heading" className="landing-shell landing-trust-heading">
           {t.trustedBy}
         </h2>
-        <Marquee pauseOnHover repeat={2} tabIndex={0} role="group" aria-label={t.trustedBy}>
+        <Marquee pauseOnHover repeat={2}>
           {companies.map((company) => (
             <figure
               key={company.name}

@@ -204,6 +204,7 @@ test('@scenario:mobile-navigation-search-banner-usable mobile navigation, search
 test('@scenario:keyboard-focus-visible primary actions and feature links have visible keyboard focus', async ({
   page,
 }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
   await page.goto('/')
   const t = getUI('en').home
   await page.getByRole('link', { name: t.getStartedAria, exact: true }).focus()
@@ -213,10 +214,23 @@ test('@scenario:keyboard-focus-visible primary actions and feature links have vi
   await expect(demo).toHaveCSS('outline-style', 'solid')
   await expect(demo).toHaveCSS('outline-width', '2px')
 
+  await page.keyboard.press('Tab')
+  const companies = page.getByRole('region', { name: t.trustedBy })
+  await expect(companies).toBeFocused()
+  await expect(companies).toHaveCSS('outline-style', 'solid')
+  await expect(companies).toHaveCSS('outline-width', '2px')
+  for (const track of await companies.locator('.marquee-track').all()) {
+    await expect(track).toHaveCSS('animation-play-state', 'paused')
+  }
+
+  await page.keyboard.press('Tab')
   const agents = page.getByRole('link', { name: 'Learn more: Agents', exact: true })
-  await agents.focus()
+  await expect(agents).toBeFocused()
   await expect(agents).toHaveCSS('outline-style', 'solid')
   await expect(agents).toHaveCSS('outline-width', '2px')
+  for (const track of await companies.locator('.marquee-track').all()) {
+    await expect(track).toHaveCSS('animation-play-state', 'running')
+  }
 })
 
 for (const colorScheme of ['light', 'dark'] as const) {
