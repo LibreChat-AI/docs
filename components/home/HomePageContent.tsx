@@ -24,6 +24,7 @@ import DemoImageLight from '@/components/home/img/demo_light.png'
 import DemoImageMobileDark from '@/components/home/img/demo_mobile_dark.png'
 import DemoImageMobileLight from '@/components/home/img/demo_mobile_light.png'
 import FooterMenu from '@/components/FooterMenu'
+import { Marquee } from '@/components/ui/marquee'
 import { JsonLd } from '@/components/JsonLd'
 import { HomeI18nProvider } from '@/components/HomeI18nProvider'
 import { organizationSchema, websiteSchema, softwareApplicationSchema } from '@/lib/structured-data'
@@ -164,44 +165,180 @@ function formatNumber(num: number): string {
 
 const companies = [
   {
-    name: 'Shopify',
-    logoLight: '/images/logos/Shopify_light.svg',
-    logoDark: '/images/logos/Shopify_dark.svg',
-    isSvg: true,
-    height: 'h-12',
-    imgHeight: 48,
-  },
-  {
-    name: 'Daimler Truck',
-    logoLight: '/images/logos/DaimlerTruck_light.svg',
-    logoDark: '/images/logos/DaimlerTruck_dark.svg',
-    isSvg: true,
-    height: 'h-6',
-    imgHeight: 24,
-  },
-  {
-    name: 'Boston University',
-    logoLight: '/images/logos/BostonUniversity_light.png',
-    logoDark: '/images/logos/BostonUniversity_dark.png',
-    isSvg: false,
-    height: 'h-12',
-    imgHeight: 48,
-  },
-  {
     name: 'ClickHouse',
     logoLight: '/images/logos/ClickHouse_light.svg',
     logoDark: '/images/logos/ClickHouse_dark.svg',
     isSvg: true,
-    height: 'h-14',
     imgHeight: 56,
+    imgWidth: 421,
+  },
+  {
+    name: 'NASA',
+    logoLight: '/images/logos/NASA.svg',
+    logoDark: '/images/logos/NASA.svg',
+    isSvg: true,
+    imgHeight: 64,
+    imgWidth: 77,
+  },
+  {
+    name: 'BeiGene',
+    logoLight: '/images/logos/BeiGene_light.png',
+    logoDark: '/images/logos/BeiGene_dark.png',
+    isSvg: false,
+    imgHeight: 36,
+    imgWidth: 192,
+  },
+  {
+    name: 'Shopify',
+    logoLight: '/images/logos/Shopify_light.svg',
+    logoDark: '/images/logos/Shopify_dark.svg',
+    isSvg: true,
+    imgHeight: 48,
+    imgWidth: 153,
   },
   {
     name: 'Stripe',
     logoLight: '/images/logos/Stripe wordmark - Slate.svg',
     logoDark: '/images/logos/Stripe wordmark - White.svg',
     isSvg: true,
-    height: 'h-10',
     imgHeight: 40,
+    imgWidth: 95,
+  },
+  {
+    name: 'Daimler Truck',
+    logoLight: '/images/logos/DaimlerTruck_light.svg',
+    logoDark: '/images/logos/DaimlerTruck_dark.svg',
+    isSvg: true,
+    imgHeight: 24,
+    imgWidth: 318,
+  },
+  {
+    name: 'Boston University',
+    logoLight: '/images/logos/BostonUniversity_light.png',
+    logoDark: '/images/logos/BostonUniversity_dark.png',
+    isSvg: false,
+    imgHeight: 48,
+    imgWidth: 107,
+  },
+  {
+    name: 'UC Berkeley',
+    logoLight: '/images/logos/UCBerkeley_light.svg',
+    logoDark: '/images/logos/UCBerkeley_dark.svg',
+    isSvg: true,
+    imgHeight: 32,
+    imgWidth: 171,
+  },
+  {
+    name: 'Harvard University',
+    logoLight: '/images/logos/Harvard_light.svg',
+    logoDark: '/images/logos/Harvard_dark.svg',
+    isSvg: true,
+    imgHeight: 40,
+    imgWidth: 159,
+  },
+  {
+    name: 'Strategy',
+    logoLight: '/images/logos/Strategy_light.svg',
+    logoDark: '/images/logos/Strategy_dark.svg',
+    isSvg: true,
+    imgHeight: 40,
+    imgWidth: 148,
+  },
+  {
+    name: 'SIXT',
+    logoLight: '/images/logos/SIXT_light.svg',
+    logoDark: '/images/logos/SIXT_dark.svg',
+    isSvg: true,
+    imgHeight: 44,
+    imgWidth: 107,
+  },
+  {
+    name: 'Opendoor',
+    logoLight: '/images/logos/Opendoor_light.svg',
+    logoDark: '/images/logos/Opendoor_dark.svg',
+    isSvg: true,
+    imgHeight: 32,
+    imgWidth: 146,
+  },
+  {
+    name: 'UMass Amherst',
+    logoLight: '/images/logos/UMassAmherst_light.svg',
+    logoDark: '/images/logos/UMassAmherst_dark.svg',
+    isSvg: true,
+    imgHeight: 56,
+    imgWidth: 108,
+  },
+  {
+    name: 'Hinge Health',
+    logoLight: '/images/logos/HingeHealth_light.svg',
+    logoDark: '/images/logos/HingeHealth_dark.svg',
+    isSvg: true,
+    imgHeight: 56,
+    imgWidth: 131,
+  },
+  {
+    name: 'Stanford University',
+    logoLight: '/images/logos/Stanford.svg',
+    logoDark: '/images/logos/Stanford.svg',
+    isSvg: true,
+    imgHeight: 64,
+    imgWidth: 42,
+  },
+  {
+    name: 'Université de Montréal',
+    logoLight: '/images/logos/UniversiteMontreal_light.svg',
+    logoDark: '/images/logos/UniversiteMontreal_dark.svg',
+    isSvg: true,
+    imgHeight: 48,
+    imgWidth: 126,
+  },
+  {
+    name: 'Coinbase',
+    logoLight: '/images/logos/Coinbase_light.svg',
+    logoDark: '/images/logos/Coinbase_dark.svg',
+    isSvg: true,
+    imgHeight: 32,
+    imgWidth: 179,
+  },
+  {
+    name: 'TDK',
+    logoLight: '/images/logos/TDK_light.svg',
+    logoDark: '/images/logos/TDK_dark.svg',
+    isSvg: true,
+    imgHeight: 36,
+    imgWidth: 172,
+  },
+  {
+    name: 'cBioPortal',
+    logoLight: '/images/logos/cBioPortal.svg',
+    logoDark: '/images/logos/cBioPortal.svg',
+    isSvg: true,
+    imgHeight: 60,
+    imgWidth: 213,
+  },
+  {
+    name: 'Lennar',
+    logoLight: '/images/logos/Lennar_light.svg',
+    logoDark: '/images/logos/Lennar_dark.svg',
+    isSvg: true,
+    imgHeight: 20,
+    imgWidth: 216,
+  },
+  {
+    name: 'Tekion',
+    logoLight: '/images/logos/Tekion.svg',
+    logoDark: '/images/logos/Tekion.svg',
+    isSvg: true,
+    imgHeight: 32,
+    imgWidth: 178,
+  },
+  {
+    name: 'Visa',
+    logoLight: '/images/logos/Visa_light.svg',
+    logoDark: '/images/logos/Visa_dark.svg',
+    isSvg: true,
+    imgHeight: 42,
+    imgWidth: 128,
   },
 ]
 
@@ -337,37 +474,44 @@ function HeroSection({ stars, t, lang }: { stars: number; t: HomeStrings; lang: 
 
 function TrustedBySection({ t }: { t: HomeStrings }) {
   return (
-    <section className="border-y border-border px-4 py-24 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-5xl">
-        <p className="mb-12 text-center text-sm font-medium uppercase tracking-widest text-muted-foreground">
+    <section aria-labelledby="trusted-by-heading" className="landing-trust">
+      <div className="w-full">
+        <h2 id="trusted-by-heading" className="landing-shell landing-trust-heading">
           {t.trustedBy}
-        </p>
-        <div className="flex flex-wrap items-center justify-center gap-x-12 gap-y-8">
+        </h2>
+        <Marquee pauseOnHover repeat={2}>
           {companies.map((company) => (
-            <figure key={company.name} className="flex items-center justify-center px-4">
+            <figure
+              key={company.name}
+              className="flex h-20 shrink-0 items-center justify-center px-4"
+            >
               {/* Light mode logo */}
               <Image
                 src={company.logoLight}
                 alt={`${company.name} logo`}
-                className={`block ${company.height} w-auto object-contain opacity-60 transition-opacity hover:opacity-100 dark:hidden`}
-                width={160}
+                className="block h-auto max-w-56 object-contain opacity-60 transition-opacity hover:opacity-100 dark:hidden"
+                style={{ width: company.imgWidth }}
+                width={company.imgWidth}
                 height={company.imgHeight}
-                sizes="160px"
+                sizes="224px"
+                loading="eager"
                 unoptimized={company.isSvg}
               />
               {/* Dark mode logo */}
               <Image
                 src={company.logoDark}
                 alt={`${company.name} logo`}
-                className={`hidden ${company.height} w-auto object-contain opacity-60 transition-opacity hover:opacity-100 dark:block`}
-                width={160}
+                className="hidden h-auto max-w-56 object-contain opacity-60 transition-opacity hover:opacity-100 dark:block"
+                style={{ width: company.imgWidth }}
+                width={company.imgWidth}
                 height={company.imgHeight}
-                sizes="160px"
+                sizes="224px"
+                loading="eager"
                 unoptimized={company.isSvg}
               />
             </figure>
           ))}
-        </div>
+        </Marquee>
       </div>
     </section>
   )
