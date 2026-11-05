@@ -12,7 +12,7 @@ Agent Channels connect external messaging events to [background Agent Responses]
 
 ## Configuration and prerequisites
 
-Choose organization workspaces for one centrally configured Slack app and UI-managed workspace installations. The YAML example below is the manual single-connection setup; the shared-workspace deployment options also enable Channels and background Responses automatically.
+Choose organization workspaces for UI-managed, organization-owned Slack apps and workspace installations. The YAML example below is the manual single-connection setup; the shared-workspace deployment options also enable Channels and background Responses automatically.
 
 ```yaml filename="endpoints / agents"
 endpoints:
@@ -43,30 +43,17 @@ See the [channel configuration reference](/docs/configuration/librechat_yaml/obj
 
 ## Organization workspaces
 
-A deployment operator configures one Slack app once. Organization administrators then connect workspaces in LibreChat; members link their personal accounts in Slack. Installing an app does not give members access to an Agent or its tools. In a tenant-aware deployment, installations and routing belong to the active tenant. One app/workspace installation has one tenant owner; another tenant cannot claim an active installation.
+A deployment operator enables the shared gateway once, without creating Slack apps or handling customer credentials. Organization administrators register their own Slack apps and connect workspaces in LibreChat; members link their personal accounts in Slack. Installing an app does not give members access to an Agent or its tools. In a tenant-aware deployment, installations and routing belong to the active tenant. One app/workspace installation has one tenant owner; another tenant cannot claim an active installation.
 
 ### One-time operator setup
 
-1. Create a Slack app, or use your deployment's existing app. Enable HTTP Events API delivery and interactivity, rather than Socket Mode. Configure these public HTTPS URLs:
+1. Configure transaction-capable MongoDB and a private `CHANNEL_SERVICE_TOKEN` shared by the API and gateway. Keep API-key authentication enabled for bound execution and retain normal Agent and Remote Agents permission controls.
+2. Configure public HTTPS `DOMAIN_SERVER` and `DOMAIN_CLIENT`, replacing the localhost defaults in `.env`. Include the application base path when present. Set `SLACK_GATEWAY_URL` to the public gateway origin; it must also use public HTTPS. The shared deployment opt-in rejects local addresses.
+3. Route `/slack/events/` and `/slack/interactions/`, including their organization/app suffixes, to the gateway on port 8080. Route the application and OAuth callback to LibreChat. Keep gateway health and metrics private. No Slack dashboard access, app credentials or per-organization infrastructure settings are required.
 
-   | Setting | URL |
-   | --- | --- |
-   | OAuth redirect | `https://chat.example.com/api/channels/workspaces/oauth/callback` |
-   | Events API | `https://slack.example.com/slack/events` |
-   | Interactivity | `https://slack.example.com/slack/interactions` |
-
-   Use your configured `DOMAIN_SERVER`, including its application base path, for the OAuth URL. `DOMAIN_CLIENT` is the browser landing origin. Replace the localhost defaults in `.env` with public HTTPS addresses for both; the shared deployment opt-in rejects local addresses and does not infer the API URL from the gateway hostname. Any configured `SLACK_GATEWAY_URL` must also be public HTTPS. The gateway callback URLs have no tenant or connection suffix. Expose only its Slack callback paths; keep gateway health and metrics private.
-2. Request bot scopes `app_mentions:read`, `chat:write`, `reactions:read`, `reactions:write`, `files:write`, `im:write` and `im:history`. Subscribe to `app_mention`, `message.im`, `reaction_added`, `reaction_removed` and `agent_session_stopped`. Enable the app's messages tab. Keep token rotation and organization-wide installation disabled: this implementation accepts workspace bot grants, including individual workspaces in Enterprise Grid, and rejects rotating or organization-wide grants.
-3. To install into other workspaces, complete Slack's [distribution setup](https://docs.slack.dev/app-management/distribution/). Slack workspace approval policies still apply. Store the app's ID, client ID, client secret and signing secret in the deployment's secret manager. Organization administrators never need these values or access to deployment environment variables.
-4. Configure a transaction-capable database and a private `CHANNEL_SERVICE_TOKEN` shared by the API and gateway. Keep API-key authentication enabled for bound execution; retain normal Agent and Remote Agents permission controls.
-
-For Docker Compose, put the four app settings in the normal uncommitted `.env`:
+For Docker Compose, use the normal uncommitted `.env`:
 
 ```dotenv
-SLACK_APP_ID=<app ID>
-SLACK_CLIENT_ID=<client ID>
-SLACK_CLIENT_SECRET=<client secret>
-SLACK_SIGNING_SECRET=<signing secret>
 SLACK_GATEWAY_URL=https://slack.example.com
 CHANNEL_SERVICE_TOKEN=<private random token, at least 32 characters>
 DOMAIN_SERVER=https://chat.example.com
@@ -84,13 +71,20 @@ docker compose -f docker-compose.yml -f docker-compose.channels.yml \
 
 The replica overlay is for a **fresh local database**; read [Existing local data](#existing-local-data) before converting an existing installation. Omit that overlay when you already use a verified transaction-capable external database and supply its normal connection configuration. Use the same Compose project and files for subsequent commands. This does not configure a public reverse proxy or a trusted certificate; route the two Slack paths to the gateway on port 8080 through your normal ingress.
 
-The shared overlay supplies `SLACK_WORKSPACES_ENABLED=true`, which enables webhook Channels, shared app installation and stored background Responses while retaining unrelated YAML policy, limits and explicit API authentication settings. Supplied nonempty app environment values override the corresponding app fields in YAML. With the flag unset or false, YAML continues to control the feature. Choosing shared setup changes the deployment's channel transport to webhook; existing bound connections must use matching webhook configuration. Manual Socket Mode remains available when using the manual setup instead.
+The shared overlay supplies `SLACK_WORKSPACES_ENABLED=true`, which enables webhook Channels, shared app installation and stored background Responses while retaining unrelated YAML policy, limits and explicit API authentication settings. Slack app credentials are entered by organization admins through the UI and stored encrypted; they are not deployment environment variables or YAML fields. With the flag unset or false, YAML continues to control the feature. Choosing shared setup changes the deployment's channel transport to webhook; existing bound connections must use matching webhook configuration. Manual Socket Mode remains available when using the manual setup instead.
 
 No `CHANNEL_ID`, `CHANNEL_TENANT_ID` or app-level `SLACK_APP_TOKEN` is needed in shared mode. The gateway receives its service token and private runtime policy; app client credentials stay in LibreChat, and installed bot tokens are encrypted in the database. For an unreleased source checkout, add `docker-compose.channels-build.yml` and use `up -d --build` rather than expecting an unpublished release image. `npm run backend:dev` still starts only the application; for a source gateway process, omit the bound IDs and app-level token and provide the internal API URL and service token.
 
+### Register an organization’s Slack app
+
+1. As an organization administrator, open **Settings → Account → Organization Slack workspaces → Add Slack app**. Create an app from scratch in Slack, or open an existing app your organization controls. Copy its app ID, client ID, client secret and signing secret from **Basic Information → App Credentials**, then save them in LibreChat. Credentials are write-only and encrypted; other members cannot read them back.
+2. Expand **Configure these URLs in your Slack app**. Apply the displayed manifest under Slack’s **App Manifest**, including its scopes and event subscriptions. Turn Socket Mode off and configure the displayed OAuth redirect, Events API and Interactivity URLs. Copy the exact URLs: event and interaction callbacks contain your organization and app IDs. Saving the app first lets Slack verify the event URL before workspace installation.
+3. Keep token rotation and organization-wide installation disabled. Workspace bot grants, including individual workspaces in Enterprise Grid, are supported. To install into other workspaces, complete Slack’s [distribution setup](https://docs.slack.dev/app-management/distribution/). Slack workspace approval policies still apply.
+4. Each organization may register multiple apps and install each app into multiple workspaces. Use **Replace credentials** after a Slack credential rotation. A stale edit or pending authorization cannot overwrite a newer registration; refresh before retrying a conflicted edit.
+
 ### Connect and use a workspace
 
-1. As an organization administrator, open **Settings → Account → Organization Slack workspaces → Connect a Slack workspace**. Approve installation in Slack. Cancel from LibreChat if you do not want to finish; closing Account settings retires an unfinished attempt.
+1. Under the registered app, select **Connect a Slack workspace**. Approve installation in Slack. Cancel from LibreChat if you do not want to finish; closing Account settings retires an unfinished attempt.
 2. Save the Agent, then open **Channels → Add → Organization workspace** and choose the connected workspace. Routing changes require organization administration and permission to share the Agent.
 3. Choose **Workspace default** for new direct messages and mentions without a channel-specific assignment, or enter a **Specific Slack channel** ID. If another Agent is already assigned, confirm **Use this agent instead**. Existing conversations keep their original Agent.
 4. Activate the connection, invite the bot to the Slack channel and mention it, or send it a direct message. Each member follows **Link your account**, signs into LibreChat, accepts there, then confirms from the same Slack account. Requests use that member's current Agent and tool permissions; installation does not authorize tools or grant offline access to connected services.
@@ -100,6 +94,7 @@ No `CHANNEL_ID`, `CHANNEL_TENANT_ID` or app-level `SLACK_APP_TOKEN` is needed in
 - **Agent Builder → Channels → Manage connection → Remove** removes an assignment for new conversations. Deleting the connection also removes its assignments atomically; existing threads retain their original identity and cannot silently move to another Agent. Disabling a connection stops execution without replacing its routing choices.
 - **Settings → Account → Your channel account links** lets a member revoke their own identity link.
 - **Settings → Account → Organization Slack workspaces → Disconnect workspace** retires the installation's access in LibreChat. It does not uninstall the app in Slack. A later installation gets a fresh identity, so old connections do not resume automatically. Reconnect an active installation to update its grant; disconnect it first if you want to retire existing connections.
+- After disconnecting an app’s active workspaces, select **Remove app** and confirm to delete its saved app credentials. This does not delete the Slack app itself.
 - Removing the configuring person does not delete the organization's installation. Their personal links and credentials are cleaned up, and their Agent connections are retired through the normal channel cleanup.
 - To stop the optional service, run the same Compose file list and project with `stop channel-gateway`, or set `channelGateway.enabled: false` and remove the shared opt-in from Helm/API configuration. Ordinary LibreChat can continue. Database topology is independent: do not remove an external replica configuration or convert existing data merely to stop the gateway.
 
@@ -242,7 +237,7 @@ Enabling the gateway requires an explicit `image.tag` selecting a published Libr
 
 ### Shared workspace deployment
 
-Select a release containing organization workspaces and provide an existing Secret with `CHANNEL_SERVICE_TOKEN`, `SLACK_APP_ID`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` and `SLACK_SIGNING_SECRET`. The service token is shared with LibreChat; the four app settings are referenced only by its API pod. You may use separate gateway-service and app Secrets. Existing explicit API environment entries take precedence over generated Secret references.
+Select a release containing organization workspaces and provide an existing Secret with `CHANNEL_SERVICE_TOKEN`. The service token is shared with LibreChat. No Slack app credentials belong in this Secret: organization admins register their apps in the UI after deployment. Existing explicit API environment entries take precedence over the generated service-token reference.
 
 ```yaml filename="shared-workspace-values.yaml"
 image:
@@ -252,7 +247,6 @@ channelGateway:
   mode: shared
   replicaCount: 2
   existingSecretName: gateway-service-credentials
-  slackAppSecretName: slack-app-credentials
   ingress:
     enabled: true
     host: slack.example.com
@@ -261,7 +255,7 @@ channelGateway:
         secretName: slack-gateway-tls
 ```
 
-Set `DOMAIN_SERVER` and `DOMAIN_CLIENT` through the application's normal environment settings. Use a transaction-capable database; the chart does not convert MongoDB topology. Shared mode supplies the app enablement flag and derives `SLACK_GATEWAY_URL` from its ingress host unless explicitly configured in `librechat.configEnv`. It omits connection IDs, tenant IDs and the Socket Mode token. Shared replicas use rolling updates and the existing durable claims; `mode: single` requires one replica and uses replacement updates. Configure the Slack app's public URLs as above, then use Account settings and Agent Builder; no per-workspace Helm values or pods are required.
+Set `DOMAIN_SERVER` and `DOMAIN_CLIENT` through the application's normal environment settings. Use a transaction-capable database; the chart does not convert MongoDB topology. Shared mode supplies the app enablement flag and derives `SLACK_GATEWAY_URL` from its ingress host unless explicitly configured in `librechat.configEnv`. It omits connection IDs, tenant IDs and the Socket Mode token. Shared replicas use rolling updates and the existing durable claims; `mode: single` requires one replica and uses replacement updates. After deployment, organization admins register their apps and configure the displayed Slack URLs through Account settings, then use Agent Builder; no per-workspace Helm values or pods are required.
 
 ### Manual connection deployment
 
