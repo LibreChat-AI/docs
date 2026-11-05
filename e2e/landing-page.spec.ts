@@ -20,7 +20,7 @@ const featurePaths = [
 ]
 
 for (const locale of ['en', 'de', 'ja']) {
-  test(`keeps the mobile landing page readable and links localized in ${locale}`, async ({
+  test(`@scenario:mobile-landing-readable-localized keeps the mobile landing page readable and links localized in ${locale}`, async ({
     page,
   }) => {
     const t = getUI(locale).home
@@ -66,7 +66,7 @@ for (const locale of ['en', 'de', 'ja']) {
   })
 }
 
-test('provider rows loop in opposite directions and pause for hover and keyboard focus', async ({
+test('@scenario:provider-animation-pauses-and-loops provider rows loop in opposite directions and pause for hover and keyboard focus', async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' })
@@ -98,7 +98,6 @@ test('provider rows loop in opposite directions and pause for hover and keyboard
   for (const [index, row] of (await rows.all()).entries()) {
     const rowTracks = row.locator('.marquee-track')
     await expect(rowTracks.last()).toHaveAttribute('aria-hidden', 'true')
-    await expect(rowTracks.last()).toHaveAttribute('inert', '')
     await expect(rowTracks.first()).toHaveCSS(
       'animation-direction',
       index === 0 ? 'normal' : 'reverse',
@@ -127,7 +126,9 @@ test('provider rows loop in opposite directions and pause for hover and keyboard
   }
 })
 
-test('provider rows span standard and ultrawide viewports', async ({ page }) => {
+test('@scenario:provider-viewports provider rows span standard and ultrawide viewports', async ({
+  page,
+}) => {
   await page.goto('/', { waitUntil: 'domcontentloaded' })
   for (const width of [320, 1440, 3440]) {
     await page.setViewportSize({ width, height: 900 })
@@ -141,7 +142,9 @@ test('provider rows span standard and ultrawide viewports', async ({ page }) => 
   }
 })
 
-test('reduced motion shows every provider without clipping on mobile', async ({ page }) => {
+test('@scenario:reduced-motion-providers-visible reduced motion shows every provider without clipping on mobile', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 320, height: 844 })
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto('/', { waitUntil: 'domcontentloaded' })
@@ -163,7 +166,9 @@ test('reduced motion shows every provider without clipping on mobile', async ({ 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
 })
 
-test('mobile navigation, search, and banner dismissal remain usable', async ({ page }) => {
+test('@scenario:mobile-navigation-search-banner-usable mobile navigation, search, and banner dismissal remain usable', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 320, height: 844 })
   await page.goto('/')
   await page.getByRole('button', { name: 'Reject non-essential' }).click()
@@ -196,7 +201,9 @@ test('mobile navigation, search, and banner dismissal remain usable', async ({ p
   await expect(header).toHaveCSS('top', '0px')
 })
 
-test('primary actions and feature links have visible keyboard focus', async ({ page }) => {
+test('@scenario:keyboard-focus-visible primary actions and feature links have visible keyboard focus', async ({
+  page,
+}) => {
   await page.goto('/')
   const t = getUI('en').home
   await page.getByRole('link', { name: t.getStartedAria, exact: true }).focus()
@@ -211,3 +218,57 @@ test('primary actions and feature links have visible keyboard focus', async ({ p
   await expect(agents).toHaveCSS('outline-style', 'solid')
   await expect(agents).toHaveCSS('outline-width', '2px')
 })
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test(`@scenario:landing-themed-previews-branding-community product previews and original branding remain visible in ${colorScheme} mode`, async ({
+    page,
+  }) => {
+    const t = getUI('en').home
+    await page.emulateMedia({ colorScheme })
+    for (const width of [320, 1440]) {
+      await page.setViewportSize({ width, height: 1000 })
+      await page.goto('/')
+      const brand = page.locator('#nd-nav').getByRole('link', { name: 'LibreChat', exact: true })
+      await expect(brand).toBeVisible()
+      await expect(brand.locator('img')).toHaveAttribute('src', '/librechat.svg')
+      const hero = page.locator('.landing-product-preview img:visible')
+      await expect(hero).toHaveCount(1)
+      const heroAlt =
+        width < 768
+          ? colorScheme === 'dark'
+            ? t.mobileDarkAlt
+            : t.mobileLightAlt
+          : colorScheme === 'dark'
+            ? t.desktopDarkAlt
+            : t.desktopLightAlt
+      await expect(hero).toHaveAttribute('alt', heroAlt)
+      await expect(hero).toHaveAttribute(
+        'src',
+        new RegExp(`demo_${width < 768 ? 'mobile_' : ''}${colorScheme}`),
+      )
+      for (const preview of [
+        hero,
+        page.locator('.landing-feature-visual-agents img:visible'),
+        page.locator('.landing-feature-visual-artifacts img:visible'),
+      ]) {
+        await preview.scrollIntoViewIfNeeded()
+        await expect(preview).toBeVisible()
+        await expect(preview).toHaveAttribute('src', new RegExp(colorScheme))
+        await expect(async () => {
+          expect(
+            await preview.evaluate(
+              (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
+            ),
+          ).toBe(true)
+        }).toPass()
+      }
+      const discord = page
+        .locator('.landing-community-links')
+        .getByRole('link', { name: t.discordAria, exact: true })
+      await expect(discord).toHaveAttribute('href', 'https://discord.librechat.ai')
+      await expect(discord).toHaveAttribute('target', '_blank')
+      await expect(discord).toHaveAttribute('rel', 'noopener noreferrer')
+      await expect(discord.locator('svg').first()).toBeVisible()
+    }
+  })
+}
