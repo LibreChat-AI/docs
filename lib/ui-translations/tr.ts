@@ -273,28 +273,30 @@ export const tr: UIStrings = {
     mobileDarkAlt: 'Koyu modda LibreChat mobil arayüzü',
     trustedBy: 'Dünya genelindeki şirketler tarafından güveniliyor',
     featuresHeading: 'İhtiyacınız olan her şey',
-    featuresSubtitle: 'AI destekli konuşmalar için kapsamlı bir platform',
+    featuresSubtitle: 'Günlük sorulardan iddialı projelere, hepsi tek bir çalışma alanında.',
     primaryActionsAria: 'Birincil eylemler',
     features: {
       agents: {
         title: 'Ajanlar',
-        description: 'Dosya işleme, kod yorumlama ve API aksiyonlarıyla gelişmiş ajanlar',
+        description:
+          'Dosyalarınız, araçlarınız, yeniden kullanılabilir yetenekleriniz ve devredilen alt görevlerle uzman temsilciler oluşturun.',
       },
       codeInterpreter: {
         title: 'Code Interpreter',
-        description: 'Kodu birden fazla dilde güvenli biçimde, kurulum olmadan çalıştırın',
+        description: 'Yalıtılmış bir ortamda birden fazla dilde kod çalıştırın',
       },
       models: {
         title: 'Modeller',
-        description: 'Anthropic, AWS, OpenAI, Azure ve daha fazlasını içeren AI model seçimi',
+        description:
+          'Önde gelen yapay zekâ sağlayıcılarını ve yerel modelleri tek bir çalışma alanında birleştirin.',
       },
       artifacts: {
         title: 'Artifactler',
-        description: 'Sohbette React, HTML kodu ve Mermaid diyagramları oluşturun',
+        description: 'Sohbetleri etkileşimli uygulamalara, diyagramlara ve belgelere dönüştürün.',
       },
       search: {
-        title: 'Arama',
-        description: 'Mesajları, dosyaları ve kod parçalarını anında arayın',
+        title: 'Mesaj Arama',
+        description: 'Sohbet geçmişinizdeki mesajları ve konuları bulun.',
       },
       mcp: {
         title: 'MCP',
@@ -313,12 +315,25 @@ export const tr: UIStrings = {
         title: 'Kimlik doğrulama',
         description: 'OAuth, SAML, LDAP ve iki faktörlü kimlik doğrulama ile kurumsal SSO',
       },
+      projects: {
+        title: 'Projeler',
+        description: 'İlgili sohbetleri kişisel proje çalışma alanlarında düzenleyin.',
+      },
+      skills: {
+        title: 'Yetenekler',
+        description:
+          'Temsilcilere yeniden kullanılabilir talimatlar, referanslar ve iş akışları sağlayın.',
+      },
+      subagents: {
+        title: 'Alt Temsilciler',
+        description: 'Belirli görevleri kendi bağlamına sahip uzman temsilcilere devredin.',
+      },
     },
     learnMore: 'Daha fazla bilgi',
     communityHeading: 'Open source, topluluk odaklı',
     communitySubtitle: 'LibreChat ile geliştiren binlerce geliştirici ve kuruluşa katılın',
     githubStars: 'GitHub yıldızları',
-    dockerPulls: 'Docker indirmeleri',
+    dockerPulls: 'Konteyner İndirmeleri',
     contributors: 'Katkıda bulunanlar',
     communityLinksAria: 'Topluluk bağlantıları',
     githubAria: "GitHub'da LibreChat",
