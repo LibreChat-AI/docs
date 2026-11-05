@@ -85,22 +85,31 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       className={`${GeistSans.variable} ${GeistMono.variable}`}
       suppressHydrationWarning
     >
-      <body className="flex min-h-screen flex-col">
+      <body className="flex min-h-screen flex-col antialiased">
         <a href="#main-content" className="skip-to-content">
           Skip to main content
         </a>
         {/* Site announcement / release notice. Update the id when the message
             changes so previously-dismissed visitors see the new banner. */}
-        <Banner id="clickhouse-agentic-data-stack" className="text-sm font-medium">
-          LibreChat is joining ClickHouse to power the open-source Agentic Data Stack 🎉{' '}
-          <a
-            href="https://clickhouse.com/blog/librechat-open-source-agentic-data-stack"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ms-1 font-semibold underline underline-offset-2"
-          >
-            Learn more
-          </a>
+        <Banner
+          id="clickhouse-agentic-data-stack"
+          className="site-announcement"
+          height="var(--announcement-height)"
+        >
+          <p>
+            LibreChat is joining ClickHouse
+            <span className="hidden md:inline">
+              {' '}
+              to power the open-source Agentic Data Stack
+            </span>.{' '}
+            <a
+              href="https://clickhouse.com/blog/librechat-open-source-agentic-data-stack"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Learn more <span aria-hidden="true">↗</span>
+            </a>
+          </p>
         </Banner>
         <Provider>{children}</Provider>
         <WebMCPRegistration />

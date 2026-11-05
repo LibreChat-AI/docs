@@ -10,10 +10,13 @@ import {
   Brain,
   Globe,
   ShieldCheck,
+  FolderKanban,
+  BookOpen,
+  Network,
   ArrowRight,
+  ArrowUpRight,
   Github,
   Star,
-  MessageSquare,
   type LucideIcon,
 } from 'lucide-react'
 import { HomeLayout } from 'fumadocs-ui/layouts/home'
@@ -23,8 +26,16 @@ import DemoImageDark from '@/components/home/img/demo_dark.png'
 import DemoImageLight from '@/components/home/img/demo_light.png'
 import DemoImageMobileDark from '@/components/home/img/demo_mobile_dark.png'
 import DemoImageMobileLight from '@/components/home/img/demo_mobile_light.png'
+import AgentsImageDark from '@/components/home/img/agents-research-dark.webp'
+import AgentsImageLight from '@/components/home/img/agents-research-light.webp'
+import ArtifactsImageDark from '@/components/home/img/artifacts-project-dark.webp'
+import ArtifactsImageLight from '@/components/home/img/artifacts-project-light.webp'
 import FooterMenu from '@/components/FooterMenu'
+import { Button } from '@/components/ui/button'
 import { Marquee } from '@/components/ui/marquee'
+import GitHubIcon from '@/components/icons/github'
+import Discord from '@/components/icons/discord'
+import ProvidersMarquee from '@/components/home/ProvidersMarquee'
 import { JsonLd } from '@/components/JsonLd'
 import { HomeI18nProvider } from '@/components/HomeI18nProvider'
 import { organizationSchema, websiteSchema, softwareApplicationSchema } from '@/lib/structured-data'
@@ -347,16 +358,25 @@ const companies = [
  * --------------------------------------------------------------------------- */
 
 type FeatureKey = keyof HomeStrings['features']
+type FeatureVisual = 'agents' | 'models' | 'artifacts'
 
-const features: { icon: LucideIcon; key: FeatureKey; href: string }[] = [
-  { icon: Bot, key: 'agents', href: '/docs/features/agents' },
+const features: { icon: LucideIcon; key: FeatureKey; href: string; visual?: FeatureVisual }[] = [
+  { icon: Bot, key: 'agents', href: '/docs/features/agents', visual: 'agents' },
+  {
+    icon: Settings2,
+    key: 'models',
+    href: '/docs/configuration/pre_configured_ai',
+    visual: 'models',
+  },
+  { icon: Code, key: 'artifacts', href: '/docs/features/artifacts', visual: 'artifacts' },
+  { icon: FolderKanban, key: 'projects', href: '/docs/features/projects' },
+  { icon: BookOpen, key: 'skills', href: '/docs/features/skills' },
+  { icon: Network, key: 'subagents', href: '/docs/features/subagents' },
   { icon: Terminal, key: 'codeInterpreter', href: '/docs/features/code_interpreter' },
-  { icon: Settings2, key: 'models', href: '/docs/configuration/pre_configured_ai' },
-  { icon: Code, key: 'artifacts', href: '/docs/features/artifacts' },
-  { icon: Search, key: 'search', href: '/docs/configuration/meilisearch' },
   { icon: Plug, key: 'mcp', href: '/docs/features/mcp' },
   { icon: Brain, key: 'memory', href: '/docs/features/memory' },
   { icon: Globe, key: 'webSearch', href: '/docs/features/web_search' },
+  { icon: Search, key: 'search', href: '/docs/features/search' },
   { icon: ShieldCheck, key: 'authentication', href: '/docs/configuration/authentication' },
 ]
 
@@ -366,81 +386,70 @@ const features: { icon: LucideIcon; key: FeatureKey; href: string }[] = [
 
 function HeroSection({ stars, t, lang }: { stars: number; t: HomeStrings; lang: string }) {
   return (
-    <section className="px-4 pb-24 pt-16 sm:px-6 md:pt-24 lg:px-8 lg:pt-32">
-      <div className="mx-auto max-w-4xl text-center">
+    <section className="landing-hero" aria-labelledby="hero-heading">
+      <div className="landing-shell landing-hero-copy">
         {/* GitHub stars badge */}
         {stars > 0 && (
           <Link
             href="https://github.com/LibreChat-AI/LibreChat"
             target="_blank"
             rel="noopener noreferrer"
-            className="mb-8 inline-flex items-center rounded-full border border-border text-sm transition-colors hover:bg-accent"
+            className="landing-github-link"
             aria-label={fmt(t.starAria, { count: formatNumber(stars) })}
           >
-            <span className="inline-flex items-center gap-2 px-4 py-2 text-foreground">
-              <Github className="size-4" aria-hidden="true" />
-              {t.starOnGitHub}
-            </span>
-            <span className="inline-flex items-center gap-1.5 border-l border-border px-3 py-2 text-muted-foreground">
-              <Star className="size-3.5" aria-hidden="true" />
-              {formatNumber(stars)}
-            </span>
+            <Star className="size-3.5" aria-hidden="true" />
+            <span>{t.starOnGitHub}</span>
+            <span className="landing-github-count">{formatNumber(stars)}</span>
+            <ArrowUpRight className="size-3.5" aria-hidden="true" />
           </Link>
         )}
 
-        <h1 className="text-5xl font-bold tracking-tight text-foreground sm:text-6xl lg:text-7xl">
-          {t.heroTitleTop}
-          <br />
-          {t.heroTitleBottom}
+        <h1 id="hero-heading" className="landing-hero-title">
+          <span>{t.heroTitleTop}</span> <span>{t.heroTitleBottom}</span>
         </h1>
 
-        <p className="mx-auto mt-6 max-w-2xl text-lg text-muted-foreground sm:text-xl">
-          {t.heroSubtitle}
-        </p>
+        <p className="landing-hero-description">{t.heroSubtitle}</p>
 
         {/* CTAs */}
-        <nav
-          className="mt-10 flex items-center justify-center gap-4"
-          aria-label={t.primaryActionsAria}
-        >
-          <Link
-            href={localizedDocsHref('/docs', lang)}
-            className="inline-flex items-center rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-            aria-label={t.getStartedAria}
-          >
-            {t.getStarted}
-            <ArrowRight className="ml-2 size-4" aria-hidden="true" />
-          </Link>
-          <Link
-            href="https://chat.librechat.ai"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center rounded-lg border border-border bg-background px-6 py-3 text-sm font-medium text-foreground transition-colors hover:bg-muted"
-            aria-label={t.tryDemoAria}
-          >
-            {t.tryDemo}
-          </Link>
+        <nav className="landing-hero-actions" aria-label={t.primaryActionsAria}>
+          <Button asChild className="landing-action">
+            <Link href={localizedDocsHref('/docs', lang)} aria-label={t.getStartedAria}>
+              {t.getStarted}
+              <ArrowRight className="size-4" aria-hidden="true" />
+            </Link>
+          </Button>
+          <Button asChild variant="outline" className="landing-action">
+            <Link
+              href="https://chat.librechat.ai"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={t.tryDemoAria}
+            >
+              {t.tryDemo}
+              <ArrowUpRight className="size-4" aria-hidden="true" />
+            </Link>
+          </Button>
         </nav>
       </div>
 
       {/* Demo screenshot */}
-      <div className="mx-auto mt-16 max-w-5xl">
+      <div className="landing-shell landing-product-preview">
         {/* Desktop */}
         <div className="hidden md:block">
           <Image
             src={DemoImageLight}
             alt={t.desktopLightAlt}
-            className="block rounded-xl border border-border shadow-sm dark:hidden"
+            className="landing-product-image block dark:hidden"
             priority
-            sizes="(max-width: 1280px) 90vw, 1120px"
+            sizes="(max-width: 1280px) 90vw, 1152px"
             placeholder="blur"
           />
           <Image
             src={DemoImageDark}
             alt={t.desktopDarkAlt}
-            className="hidden rounded-xl border border-border shadow-sm dark:block"
+            className="landing-product-image hidden dark:block"
             priority
-            sizes="(max-width: 1280px) 90vw, 1120px"
+            sizes="(max-width: 1280px) 90vw, 1152px"
             placeholder="blur"
           />
         </div>
@@ -449,7 +458,7 @@ function HeroSection({ stars, t, lang }: { stars: number; t: HomeStrings; lang: 
           <Image
             src={DemoImageMobileLight}
             alt={t.mobileLightAlt}
-            className="mx-auto block w-full max-w-sm rounded-xl border border-border shadow-sm dark:hidden"
+            className="landing-product-image mx-auto block w-full max-w-sm dark:hidden"
             priority
             sizes="(max-width: 640px) 90vw, 384px"
             placeholder="blur"
@@ -457,7 +466,7 @@ function HeroSection({ stars, t, lang }: { stars: number; t: HomeStrings; lang: 
           <Image
             src={DemoImageMobileDark}
             alt={t.mobileDarkAlt}
-            className="mx-auto hidden w-full max-w-sm rounded-xl border border-border shadow-sm dark:block"
+            className="landing-product-image mx-auto hidden w-full max-w-sm dark:block"
             priority
             sizes="(max-width: 640px) 90vw, 384px"
             placeholder="blur"
@@ -479,7 +488,7 @@ function TrustedBySection({ t }: { t: HomeStrings }) {
         <h2 id="trusted-by-heading" className="landing-shell landing-trust-heading">
           {t.trustedBy}
         </h2>
-        <Marquee pauseOnHover repeat={2}>
+        <Marquee pauseOnHover repeat={2} tabIndex={0} role="group" aria-label={t.trustedBy}>
           {companies.map((company) => (
             <figure
               key={company.name}
@@ -521,45 +530,107 @@ function TrustedBySection({ t }: { t: HomeStrings }) {
  * Features Section
  * --------------------------------------------------------------------------- */
 
+function FeaturePreview({ kind, t }: { kind: FeatureVisual; t: HomeStrings }) {
+  if (kind === 'models') {
+    return <ProvidersMarquee description={t.features.models.description} />
+  }
+
+  const images =
+    kind === 'agents'
+      ? { light: AgentsImageLight, dark: AgentsImageDark }
+      : { light: ArtifactsImageLight, dark: ArtifactsImageDark }
+
+  return (
+    <>
+      <Image
+        src={images.light}
+        alt={t.features[kind].title}
+        className="landing-feature-image block dark:hidden"
+        sizes={
+          kind === 'agents' ? '(max-width: 640px) 85vw, 384px' : '(max-width: 768px) 85vw, 600px'
+        }
+        placeholder="blur"
+        unoptimized
+      />
+      <Image
+        src={images.dark}
+        alt={t.features[kind].title}
+        className="landing-feature-image hidden dark:block"
+        sizes={
+          kind === 'agents' ? '(max-width: 640px) 85vw, 384px' : '(max-width: 768px) 85vw, 600px'
+        }
+        placeholder="blur"
+        unoptimized
+      />
+    </>
+  )
+}
+
 function FeaturesSection({ t, lang }: { t: HomeStrings; lang: string }) {
   return (
-    <section className="px-4 py-24 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-6xl">
-        <header className="mb-16 text-center">
-          <h2 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-            {t.featuresHeading}
-          </h2>
-          <p className="mt-4 text-lg text-muted-foreground">{t.featuresSubtitle}</p>
-        </header>
+    <section className="landing-features" aria-labelledby="features-heading">
+      <header className="landing-section-header landing-shell">
+        <h2 id="features-heading" className="landing-section-title">
+          {t.featuresHeading}
+        </h2>
+        <p className="landing-section-description">{t.featuresSubtitle}</p>
+      </header>
 
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {features.map((feature) => {
+      <div className="landing-showcases">
+        {features
+          .filter((feature) => feature.visual)
+          .map((feature, index) => {
+            const text = t.features[feature.key]
+            return (
+              <article
+                key={feature.key}
+                className={`landing-showcase landing-showcase-${feature.visual}${feature.visual === 'models' ? '' : ' landing-shell'}`}
+                aria-labelledby={`feature-${feature.key}`}
+              >
+                <div
+                  className={`landing-showcase-copy${feature.visual === 'models' ? ' landing-shell' : ''}`}
+                >
+                  <span className="landing-feature-index" aria-hidden="true">
+                    {String(index + 1).padStart(2, '0')}
+                  </span>
+                  <h3 id={`feature-${feature.key}`}>{text.title}</h3>
+                  <p>{text.description}</p>
+                  <Link
+                    href={localizedDocsHref(feature.href, lang)}
+                    className="landing-text-link"
+                    aria-label={`${t.learnMore}: ${text.title}`}
+                  >
+                    {t.learnMore}
+                    <ArrowUpRight className="size-4" aria-hidden="true" />
+                  </Link>
+                </div>
+                <div className={`landing-feature-visual landing-feature-visual-${feature.visual}`}>
+                  <FeaturePreview kind={feature.visual!} t={t} />
+                </div>
+              </article>
+            )
+          })}
+      </div>
+
+      <div className="landing-capabilities landing-shell">
+        {features
+          .filter((feature) => !feature.visual)
+          .map((feature) => {
             const Icon = feature.icon
             const text = t.features[feature.key]
             return (
               <article key={feature.key}>
-                <Link
-                  href={localizedDocsHref(feature.href, lang)}
-                  className="group flex h-full flex-col rounded-xl border border-border bg-card p-6 transition-colors hover:bg-muted"
-                >
-                  <Icon
-                    className="mb-4 size-6 text-muted-foreground transition-colors group-hover:text-foreground"
-                    aria-hidden="true"
-                  />
-                  <h3 className="mb-2 text-base font-semibold text-foreground">{text.title}</h3>
-                  <p className="flex-1 text-sm text-muted-foreground">{text.description}</p>
-                  <span
-                    className="mt-4 inline-flex items-center text-sm font-medium text-foreground opacity-0 transition-opacity group-hover:opacity-100"
-                    aria-hidden="true"
-                  >
-                    {t.learnMore}
-                    <ArrowRight className="ml-1 size-3.5" />
-                  </span>
+                <Link href={localizedDocsHref(feature.href, lang)} className="landing-capability">
+                  <div className="landing-capability-icons" aria-hidden="true">
+                    <Icon className="size-5" />
+                    <ArrowUpRight className="size-4" />
+                  </div>
+                  <h3>{text.title}</h3>
+                  <p>{text.description}</p>
                 </Link>
               </article>
             )
           })}
-        </div>
       </div>
     </section>
   )
@@ -581,87 +652,56 @@ function CommunitySection({
   t: HomeStrings
 }) {
   return (
-    <section className="border-y border-border px-4 py-24 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-4xl">
-        <header className="mb-16 text-center">
-          <h2 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+    <section className="landing-community" aria-labelledby="community-heading">
+      <div className="landing-shell">
+        <header className="landing-section-header">
+          <h2 id="community-heading" className="landing-section-title">
             {t.communityHeading}
           </h2>
-          <p className="mt-4 text-lg text-muted-foreground">{t.communitySubtitle}</p>
+          <div>
+            <p className="landing-section-description">{t.communitySubtitle}</p>
+            <nav className="landing-community-links" aria-label={t.communityLinksAria}>
+              <Link
+                href="https://github.com/LibreChat-AI/LibreChat"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="landing-text-link"
+                aria-label={t.githubAria}
+              >
+                <Github className="size-4" aria-hidden="true" />
+                GitHub
+                <ArrowUpRight className="size-4" aria-hidden="true" />
+              </Link>
+              <Link
+                href="https://discord.librechat.ai"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="landing-text-link"
+                aria-label={t.discordAria}
+              >
+                <Discord className="size-4" aria-hidden="true" />
+                Discord
+                <ArrowUpRight className="size-4" aria-hidden="true" />
+              </Link>
+            </nav>
+          </div>
         </header>
 
         {/* Stats */}
-        <div className="mb-16 grid grid-cols-3 gap-8">
-          <div className="text-center">
-            <p className="text-4xl font-bold tracking-tight text-foreground sm:text-5xl">
-              {stars > 0 ? formatNumber(stars) : '--'}
-            </p>
-            <p className="mt-2 text-sm text-muted-foreground">{t.githubStars}</p>
+        <dl className="landing-stats">
+          <div>
+            <dt>{t.githubStars}</dt>
+            <dd>{stars > 0 ? formatNumber(stars) : '--'}</dd>
           </div>
-          <div className="text-center">
-            <p className="text-4xl font-bold tracking-tight text-foreground sm:text-5xl">
-              {pulls > 0 ? formatNumber(pulls) : '--'}
-            </p>
-            <p className="mt-2 text-sm text-muted-foreground">{t.dockerPulls}</p>
+          <div>
+            <dt>{t.dockerPulls}</dt>
+            <dd>{pulls > 0 ? formatNumber(pulls) : '--'}</dd>
           </div>
-          <div className="text-center">
-            <p className="text-4xl font-bold tracking-tight text-foreground sm:text-5xl">
-              {contributors > 0 ? formatNumber(contributors) : '--'}
-            </p>
-            <p className="mt-2 text-sm text-muted-foreground">{t.contributors}</p>
+          <div>
+            <dt>{t.contributors}</dt>
+            <dd>{contributors > 0 ? formatNumber(contributors) : '--'}</dd>
           </div>
-        </div>
-
-        {/* Links */}
-        <nav className="flex items-center justify-center gap-4" aria-label={t.communityLinksAria}>
-          <Link
-            href="https://github.com/LibreChat-AI/LibreChat"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-5 py-3 text-sm font-medium text-foreground transition-colors hover:bg-muted"
-            aria-label={t.githubAria}
-          >
-            <Github className="size-4" aria-hidden="true" />
-            GitHub
-          </Link>
-          <Link
-            href="https://discord.librechat.ai"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-5 py-3 text-sm font-medium text-foreground transition-colors hover:bg-muted"
-            aria-label={t.discordAria}
-          >
-            <MessageSquare className="size-4" aria-hidden="true" />
-            Discord
-          </Link>
-        </nav>
-      </div>
-    </section>
-  )
-}
-
-/* ---------------------------------------------------------------------------
- * CTA Section
- * --------------------------------------------------------------------------- */
-
-function CTASection({ t, lang }: { t: HomeStrings; lang: string }) {
-  return (
-    <section className="px-4 py-24 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-3xl text-center">
-        <h2 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-          {t.ctaHeading}
-        </h2>
-        <p className="mt-4 text-lg text-muted-foreground">{t.ctaSubtitle}</p>
-        <div className="mt-10">
-          <Link
-            href={localizedDocsHref('/docs', lang)}
-            className="inline-flex items-center rounded-lg bg-primary px-8 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-            aria-label={t.quickstartAria}
-          >
-            {t.quickstartGuide}
-            <ArrowRight className="ml-2 size-4" aria-hidden="true" />
-          </Link>
-        </div>
+        </dl>
       </div>
     </section>
   )
@@ -681,29 +721,34 @@ export async function HomePageContent({ lang }: { lang: string }) {
     { text: ui.nav.docs, url: localizedDocsHref('/docs', lang), active: 'nested-url' as const },
     { text: ui.nav.blog, url: '/blog' },
     { text: ui.nav.changelog, url: '/changelog' },
+    {
+      type: 'icon' as const,
+      text: 'GitHub',
+      label: 'GitHub',
+      url: 'https://github.com/LibreChat-AI/LibreChat',
+      icon: <GitHubIcon aria-hidden="true" />,
+      external: true,
+    },
   ]
 
   return (
     <HomeI18nProvider locale={lang}>
       <HomeLayout
         {...baseOptions}
+        className="landing-page"
         i18n
         links={navLinks}
+        githubUrl={undefined}
         nav={{ ...baseOptions.nav, url: localizedHomeHref(lang), transparentMode: 'top' }}
       >
         <JsonLd data={[organizationSchema, websiteSchema, softwareApplicationSchema]} />
-        <main id="main-content" tabIndex={-1} className="min-h-screen">
+        <div id="main-content" tabIndex={-1}>
           <HeroSection stars={stars} t={t} lang={lang} />
           <TrustedBySection t={t} />
           <FeaturesSection t={t} lang={lang} />
           <CommunitySection stars={stars} pulls={pulls} contributors={contributors} t={t} />
-          <CTASection t={t} lang={lang} />
-        </main>
-        <div className="border-t border-border px-4 py-16 sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-6xl">
-            <FooterMenu lang={lang} />
-          </div>
         </div>
+        <FooterMenu lang={lang} />
       </HomeLayout>
     </HomeI18nProvider>
   )
