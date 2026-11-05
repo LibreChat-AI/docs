@@ -474,7 +474,7 @@ function HeroSection({ stars, t, lang }: { stars: number; t: HomeStrings; lang: 
 
 function TrustedBySection({ t }: { t: HomeStrings }) {
   return (
-    <section aria-labelledby="trusted-by-heading" className="landing-trust">
+    <section aria-labelledby="trusted-by-heading" className="landing-trust" tabIndex={0}>
       <div className="w-full">
         <h2 id="trusted-by-heading" className="landing-shell landing-trust-heading">
           {t.trustedBy}

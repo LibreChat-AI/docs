@@ -190,3 +190,25 @@ test('@scenario:company-localized-section the localized homepage exposes every c
       .evaluateAll((images) => images.map((image) => image.getAttribute('alt'))),
   ).toEqual(companies.map((name) => `${name} logo`))
 })
+
+test('@scenario:company-keyboard-pause keyboard focus pauses the company logos without adding controls', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/')
+  const section = page.getByRole('region', { name: 'Trusted by companies worldwide' })
+  await section.focus()
+  await page.keyboard.press('Shift+Tab')
+  await page.keyboard.press('Tab')
+  await expect(section).toBeFocused()
+  await expect(section).toHaveCSS('outline-style', 'solid')
+  await expect(section).toHaveCSS('outline-width', '2px')
+  for (const track of await section.locator('.marquee-track').all()) {
+    await expect(track).toHaveCSS('animation-play-state', 'paused')
+  }
+  await expect(section.getByRole('button')).toHaveCount(0)
+  await page.keyboard.press('Tab')
+  for (const track of await section.locator('.marquee-track').all()) {
+    await expect(track).toHaveCSS('animation-play-state', 'running')
+  }
+})
