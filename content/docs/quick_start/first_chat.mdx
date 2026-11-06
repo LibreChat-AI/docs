@@ -59,11 +59,11 @@ ANTHROPIC_API_KEY=user_provided
 GOOGLE_KEY=user_provided
 ```
 
-With that value, every user supplies their own key from the web UI: select the endpoint, open the gear icon next to it, and fill in the **Set API Key** dialog.
+With that value, every user supplies their own key from the web UI. Select the endpoint, open the gear icon next to it, and fill in the **Set API Key** dialog.
 
-That value is a default only where the install starts from `.env.example`, which means Docker and npm. A Helm release, a Railway service or a Hugging Face Space carries only the variables you set, so an endpoint whose credential you never set does not load at all, and no key dialog appears for it. Set the variable to `user_provided` there before expecting users to bring their own keys, and roll the workload so running pods or containers pick it up. The same dialog is reachable from **Settings → Data & Privacy → API keys**, which is also where keys are reviewed and rotated later.
+That value is a default only where the install starts from `.env.example`, which means Docker and npm. A Helm release, a Railway service or a Hugging Face Space carries only the variables you set, so an endpoint whose credential you never set does not load at all, and no key dialog appears for it. Set the variable to `user_provided` there before expecting users to bring their own keys, and roll the workload so running pods or containers pick it up. You can also set or replace a key through **Settings → Data & Privacy → API keys → Provider API keys → Manage**.
 
-If you see no endpoint dropdown and no gear icon, this instance keeps the selector hidden, through [model specs](/docs/configuration/librechat_yaml/object_structure/model_specs) or its `interface` settings. Set your first key from **Settings → Data & Privacy → API keys**, which lists the endpoints configured to take a user-provided key.
+The settings path also works when discovery returns an empty model list and hides a provider. It works when [model specs](/docs/configuration/librechat_yaml/object_structure/model_specs) or `interface.modelSelect: false` hide the selector. It lists providers configured to take a personal key, within the configured provider scope and your permissions. See [Personal Settings](/docs/features/settings#data--privacy).
 
 To configure a key once for everyone instead, set the real key in place of `user_provided` and restart LibreChat. On Docker, recreate the containers with `docker compose up -d`, adding `-f ./deploy-compose.yml` if that is the file your stack runs from: `docker compose restart` keeps the environment the container already has, so the old value survives. No user is prompted, and the key stays on the server. Where you set it depends on how you installed: `.env` for Docker and npm, a Kubernetes Secret for [Helm](/docs/local/helm_chart#configuration), the service's variables in the Railway dashboard, Space Secrets on [Hugging Face](/docs/remote/huggingface). Provider-by-provider steps live in [AI Setup](/docs/configuration/pre_configured_ai).
 
@@ -84,7 +84,7 @@ Run a model on your own hardware with [Ollama](/docs/configuration/librechat_yam
 
 ### Send your first message
 
-Pick an endpoint and model from the selector at the top of the chat, type your prompt, and send it. Where the instance hides the selector, it has already chosen for you: type and send. The reply streams in, and the conversation is saved so you can return to it from the sidebar.
+Pick an endpoint and model from the selector at the top of the chat, type your prompt, and send it. Where the instance hides the selector, use its configured selection. If you see **Select a model to continue**, follow the [recovery steps](#if-no-model-answers) below. The reply streams in, and the conversation is saved so you can return to it from the sidebar.
 
   </Step>
 </Steps>
@@ -100,9 +100,21 @@ A page that never appears is an install problem, and the check depends on how yo
 
 ## If no model answers
 
-- **The endpoint itself is missing from the selector.** Three separate settings can hide it, so check each. `ENDPOINTS` in `.env`: when it is set, only the endpoints named there load at all. [Model specs](/docs/configuration/librechat_yaml/object_structure/model_specs) in `librechat.yaml`: where they limit the selector, only the specs you listed and anything in `modelSpecs.addedEndpoints` is reachable. And the provider's own key: a key-based endpoint with no value configured does not load, so set its key (or `user_provided`) wherever your install keeps its environment, then restart, recreating the containers with `docker compose up -d` on Docker. An endpoint that takes credentials from its environment instead, [Bedrock](/docs/configuration/pre_configured_ai/bedrock) from the AWS credential chain for example, needs its region set and a working chain rather than a key.
-- **The endpoint is there, but the model you want is not.** Where the list comes from decides what to check. With a `user_provided` key, LibreChat cannot ask the provider which models exist, so it offers a built-in list: name the models you want with the provider's `_MODELS` variable, for example [`OPENAI_MODELS`](/docs/configuration/pre_configured_ai/openai). With a real server-side key and `_MODELS` left unset, some providers are asked for their list, so a restricted or failing key can shorten it; others, [Google](/docs/configuration/pre_configured_ai/google) among them, never fetch and need `_MODELS` set whatever the key is. Check that provider's own page in [AI Setup](/docs/configuration/pre_configured_ai) before changing anything else. A [custom endpoint](/docs/configuration/librechat_yaml/object_structure/custom_endpoint) such as Ollama or OpenRouter ignores `_MODELS` entirely: its list comes from `models.default` and `models.fetch` in its own `librechat.yaml` block. And if your `librechat.yaml` defines [model specs](/docs/configuration/librechat_yaml/object_structure/model_specs), you pick from that list instead of the endpoint's own models.
+- **The endpoint itself is missing from the selector.** Check `ENDPOINTS` in `.env`: when it is set, only the endpoints named there load. [Model specs](/docs/configuration/librechat_yaml/object_structure/model_specs) can also limit the selector. Neither a spec nor `modelSpecs.addedEndpoints` overrides model availability. A provider with an empty final model list is hidden. A key-based endpoint with no credential configured does not load, so set its key or `user_provided` and restart. On Docker, recreate the containers with `docker compose up -d`. For personal keys, use the [Settings path above](#give-a-model-an-api-key), even if discovery hides the provider. Providers such as [Bedrock](/docs/configuration/pre_configured_ai/bedrock) can use credentials from their environment instead of a key.
+- **The endpoint is there, but the model you want is not.** Check the provider's page in [AI Setup](/docs/configuration/pre_configured_ai). Built-in providers such as OpenAI use a configured or built-in list with `user_provided` keys; see [`OPENAI_MODELS`](/docs/configuration/pre_configured_ai/openai). Some built-in providers can discover models with a server-side key. Others, such as [Google](/docs/configuration/pre_configured_ai/google), use configured lists. A [custom endpoint](/docs/configuration/librechat_yaml/object_structure/custom_endpoint#models) uses `models.default` and `models.fetch`, not `_MODELS`. Custom endpoint discovery can use a stored personal key. Successful discovery replaces defaults, even with an empty list. Discovery failure uses configured defaults, or an empty list if there are none. Model specs can further limit which models appear.
 - **The reply fails with an authentication or invalid-key error.** The key is wrong, expired, or has no access to the selected model. Re-enter it in the **Set API Key** dialog, or fix the value in your install's environment and restart.
+
+### Continue a chat after model access changes
+
+Your chat history remains available when a model becomes unavailable. When you chat directly with a provider, the loaded model list must include your selected model. Otherwise, sending is blocked and the chat shows **Select a model to continue**. Choose an available model, or restore access and reload the page. If the selector is hidden, ask your administrator to update the configured selection or restore access.
+
+When a refreshed list includes the model again, it becomes selectable and usable. Choose it again if needed.
+
+Before the browser has fetched a model list, an otherwise valid selection can still send. Server access checks still apply. If a later browser request for the list fails, the browser keeps its last fetched list. This differs from provider discovery failure: the server can return configured fallback models in a successful response to the browser.
+
+### Model list cache
+
+Where server caching is allowed, successful discovery results, including empty lists, use the existing two-minute cache. A failed refresh of token metadata can keep a cached model list without extending its lifetime. This metadata describes model token limits and costs. The cache does not make the browser poll every two minutes. After you restore access, reload the page to fetch the list again.
 
 ## Next steps
 
