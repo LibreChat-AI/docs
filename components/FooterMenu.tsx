@@ -1,7 +1,8 @@
 import Link from 'next/link'
-import { Github, Linkedin, Youtube, Mail } from 'lucide-react'
+import { ArrowUpRight, Github, Linkedin, Youtube, Mail } from 'lucide-react'
 import Discord from './icons/discord'
 import X from './icons/x'
+import FooterWordmark from './FooterWordmark'
 import { localizedDocsHref } from '@/lib/i18n'
 import { getUI, type UIStrings } from '@/lib/ui-i18n'
 
@@ -96,45 +97,63 @@ const socialLinks = [
 
 /** Site footer with navigation link columns and social media icon links. */
 const FooterMenu = ({ lang }: { lang?: string }) => {
-  const t = getUI(lang).footer
+  const { footer: t, home } = getUI(lang)
   return (
-    <footer className="w-full" role="contentinfo">
-      <nav
-        aria-label="Footer"
-        className="grid grid-cols-2 md:grid-cols-6 text-base gap-y-8 gap-x-2"
-      >
-        {menuItems.map((menu) => (
-          <div key={menu.heading}>
-            <p className="pb-2 font-mono font-bold text-primary">{t.headings[menu.heading]}</p>
-            <ul className="flex flex-col gap-2">
-              {menu.items.map((item) => (
-                <li key={item.key}>
-                  <Link
-                    href={localizedDocsHref(item.href, lang)}
-                    className="text-sm leading-tight hover:text-primary/80"
-                  >
-                    {t.items[item.key]}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </nav>
-      <div className="flex items-center justify-between mt-8">
-        <div className="font-sans text-sm">&copy; {new Date().getFullYear()} LibreChat</div>
-        <nav aria-label="Social media" className="flex items-center gap-1">
-          {socialLinks.map((link) => (
+    <footer className="site-footer" role="contentinfo">
+      <div className="footer-shell">
+        <div className="footer-invitation">
+          <h2 className="footer-invitation-title">{home.ctaHeading}</h2>
+          <div className="footer-invitation-action">
+            <p className="text-sm leading-relaxed text-muted-foreground">{home.ctaSubtitle}</p>
             <Link
-              key={link.title}
-              href={link.href}
-              aria-label={link.title}
-              className="flex items-center justify-center size-9 rounded-full text-neutral-500 dark:text-neutral-300 transition-colors duration-200 hover:text-primary hover:bg-neutral-100 dark:hover:bg-neutral-800"
+              href={localizedDocsHref('/docs', lang)}
+              className="footer-cta"
+              aria-label={home.quickstartAria}
             >
-              {link.icon}
+              {home.quickstartGuide}
+              <span className="footer-cta-icon" aria-hidden="true">
+                <ArrowUpRight className="size-5" />
+              </span>
             </Link>
+          </div>
+        </div>
+        <nav
+          aria-label="Footer"
+          className="grid grid-cols-2 gap-x-6 gap-y-10 py-12 sm:grid-cols-3 lg:grid-cols-6 lg:py-16"
+        >
+          {menuItems.map((menu) => (
+            <div key={menu.heading}>
+              <h3 className="footer-nav-heading">{t.headings[menu.heading]}</h3>
+              <ul>
+                {menu.items.map((item) => (
+                  <li key={item.key}>
+                    <Link href={localizedDocsHref(item.href, lang)} className="footer-nav-link">
+                      {t.items[item.key]}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ))}
         </nav>
+        <FooterWordmark />
+        <div className="footer-colophon">
+          <p className="font-mono text-xs text-muted-foreground">
+            &copy; {new Date().getFullYear()} LibreChat
+          </p>
+          <nav aria-label="Social media" className="flex flex-wrap items-center gap-1">
+            {socialLinks.map((link) => (
+              <Link
+                key={link.title}
+                href={link.href}
+                aria-label={link.title}
+                className="footer-social-link"
+              >
+                {link.icon}
+              </Link>
+            ))}
+          </nav>
+        </div>
       </div>
     </footer>
   )

@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test'
 
-const STAT_LABELS = ['GitHub Stars', 'Docker Pulls', 'Contributors']
+const STAT_LABELS = ['GitHub Stars', 'Container Downloads', 'Contributors']
 
-test.describe('Homepage — open source stats section', () => {
+test.describe('Homepage: open source stats section', () => {
   test('shows the three stat labels', async ({ page }) => {
     await page.goto('/')
 

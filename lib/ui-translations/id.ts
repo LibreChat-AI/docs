@@ -273,28 +273,30 @@ export const id: UIStrings = {
     mobileDarkAlt: 'Antarmuka mobile LibreChat dalam mode gelap',
     trustedBy: 'Dipercaya oleh perusahaan di seluruh dunia',
     featuresHeading: 'Semua yang Anda butuhkan',
-    featuresSubtitle: 'Platform lengkap untuk percakapan bertenaga AI',
+    featuresSubtitle:
+      'Dari pertanyaan sehari-hari hingga proyek ambisius, semua dalam satu ruang kerja.',
     primaryActionsAria: 'Aksi utama',
     features: {
       agents: {
         title: 'Agen',
-        description: 'Agen lanjutan dengan penanganan file, interpretasi kode, dan aksi API',
+        description:
+          'Buat agen khusus dengan file, alat, keterampilan yang dapat digunakan kembali, dan subtugas yang didelegasikan.',
       },
       codeInterpreter: {
         title: 'Code Interpreter',
-        description: 'Jalankan kode dalam berbagai bahasa dengan aman tanpa pengaturan',
+        description: 'Jalankan kode dalam berbagai bahasa di lingkungan terisolasi',
       },
       models: {
         title: 'Model',
-        description: 'Pilihan model AI termasuk Anthropic, AWS, OpenAI, Azure, dan lainnya',
+        description: 'Satukan penyedia AI terkemuka dan model lokal dalam satu ruang kerja.',
       },
       artifacts: {
         title: 'Artefak',
-        description: 'Buat kode React, HTML, dan diagram Mermaid di chat',
+        description: 'Ubah percakapan menjadi aplikasi interaktif, diagram, dan dokumen.',
       },
       search: {
-        title: 'Pencarian',
-        description: 'Cari pesan, file, dan potongan kode seketika',
+        title: 'Pencarian Pesan',
+        description: 'Temukan pesan dan topik di seluruh riwayat percakapan Anda.',
       },
       mcp: {
         title: 'MCP',
@@ -314,13 +316,26 @@ export const id: UIStrings = {
         title: 'Autentikasi',
         description: 'SSO siap perusahaan dengan OAuth, SAML, LDAP, dan autentikasi dua faktor',
       },
+      projects: {
+        title: 'Proyek',
+        description: 'Atur percakapan terkait dalam ruang kerja proyek pribadi.',
+      },
+      skills: {
+        title: 'Keterampilan',
+        description:
+          'Bekali agen dengan instruksi, referensi, dan alur kerja yang dapat digunakan kembali.',
+      },
+      subagents: {
+        title: 'Subagen',
+        description: 'Delegasikan tugas terarah kepada agen khusus dengan konteksnya sendiri.',
+      },
     },
     learnMore: 'Pelajari lebih lanjut',
     communityHeading: 'Open source, digerakkan komunitas',
     communitySubtitle:
       'Bergabunglah dengan ribuan pengembang dan organisasi yang membangun dengan LibreChat',
     githubStars: 'Bintang GitHub',
-    dockerPulls: 'Tarikan Docker',
+    dockerPulls: 'Unduhan Kontainer',
     contributors: 'Kontributor',
     communityLinksAria: 'Tautan komunitas',
     githubAria: 'LibreChat di GitHub',

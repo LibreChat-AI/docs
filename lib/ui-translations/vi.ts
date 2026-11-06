@@ -271,28 +271,31 @@ export const vi: UIStrings = {
     mobileDarkAlt: 'Giao diện mobile LibreChat ở chế độ tối',
     trustedBy: 'Được các công ty trên toàn thế giới tin dùng',
     featuresHeading: 'Mọi thứ bạn cần',
-    featuresSubtitle: 'Một nền tảng toàn diện cho các cuộc trò chuyện dùng AI',
+    featuresSubtitle:
+      'Từ câu hỏi hằng ngày đến dự án đầy tham vọng, tất cả trong một không gian làm việc.',
     primaryActionsAria: 'Hành động chính',
     features: {
       agents: {
         title: 'Tác nhân',
-        description: 'Tác nhân nâng cao với xử lý tệp, diễn giải mã và hành động API',
+        description:
+          'Tạo tác nhân chuyên biệt với tệp, công cụ, kỹ năng tái sử dụng và các nhiệm vụ con được giao.',
       },
       codeInterpreter: {
         title: 'Code Interpreter',
-        description: 'Thực thi mã trong nhiều ngôn ngữ một cách an toàn, không cần thiết lập',
+        description: 'Thực thi mã bằng nhiều ngôn ngữ trong môi trường cô lập',
       },
       models: {
         title: 'Mô hình',
-        description: 'Lựa chọn mô hình AI gồm Anthropic, AWS, OpenAI, Azure và hơn thế nữa',
+        description:
+          'Kết hợp các nhà cung cấp AI hàng đầu và mô hình cục bộ trong một không gian làm việc.',
       },
       artifacts: {
         title: 'Artifact',
-        description: 'Tạo mã React, HTML và sơ đồ Mermaid trong chat',
+        description: 'Biến cuộc trò chuyện thành ứng dụng tương tác, sơ đồ và tài liệu.',
       },
       search: {
-        title: 'Tìm kiếm',
-        description: 'Tìm tin nhắn, tệp và đoạn mã ngay lập tức',
+        title: 'Tìm kiếm tin nhắn',
+        description: 'Tìm tin nhắn và chủ đề trong toàn bộ lịch sử trò chuyện.',
       },
       mcp: {
         title: 'MCP',
@@ -311,13 +314,26 @@ export const vi: UIStrings = {
         title: 'Xác thực',
         description: 'SSO sẵn sàng cho doanh nghiệp với OAuth, SAML, LDAP và xác thực hai yếu tố',
       },
+      projects: {
+        title: 'Dự án',
+        description: 'Sắp xếp các cuộc trò chuyện liên quan trong không gian dự án cá nhân.',
+      },
+      skills: {
+        title: 'Kỹ năng',
+        description:
+          'Cung cấp cho tác nhân các hướng dẫn, tài liệu tham khảo và quy trình có thể tái sử dụng.',
+      },
+      subagents: {
+        title: 'Tác nhân phụ',
+        description: 'Giao nhiệm vụ cụ thể cho các tác nhân chuyên biệt có ngữ cảnh riêng.',
+      },
     },
     learnMore: 'Tìm hiểu thêm',
     communityHeading: 'Open source, do cộng đồng dẫn dắt',
     communitySubtitle:
       'Tham gia cùng hàng nghìn nhà phát triển và tổ chức đang xây dựng với LibreChat',
     githubStars: 'Sao GitHub',
-    dockerPulls: 'Lượt kéo Docker',
+    dockerPulls: 'Lượt tải xuống container',
     contributors: 'Người đóng góp',
     communityLinksAria: 'Liên kết cộng đồng',
     githubAria: 'LibreChat trên GitHub',

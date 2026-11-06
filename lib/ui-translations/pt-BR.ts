@@ -278,29 +278,31 @@ export const ptBR: UIStrings = {
     mobileDarkAlt: 'Interface mobile do LibreChat no modo escuro',
     trustedBy: 'Confiado por empresas no mundo todo',
     featuresHeading: 'Tudo de que você precisa',
-    featuresSubtitle: 'Uma plataforma completa para conversas com IA',
+    featuresSubtitle:
+      'Das perguntas do dia a dia aos projetos ambiciosos, tudo em um só espaço de trabalho.',
     primaryActionsAria: 'Ações principais',
     features: {
       agents: {
         title: 'Agentes',
         description:
-          'Agentes avançados com manipulação de arquivos, interpretação de código e ações de API',
+          'Crie agentes especializados com seus arquivos, ferramentas, habilidades reutilizáveis e subtarefas delegadas.',
       },
       codeInterpreter: {
         title: 'Code Interpreter',
-        description: 'Execute código em várias linguagens com segurança e sem configuração',
+        description: 'Execute código em várias linguagens em um ambiente isolado',
       },
       models: {
         title: 'Modelos',
-        description: 'Seleção de modelos de IA incluindo Anthropic, AWS, OpenAI, Azure e mais',
+        description:
+          'Reúna os principais provedores de IA e modelos locais em um só espaço de trabalho.',
       },
       artifacts: {
         title: 'Artefatos',
-        description: 'Crie código React, HTML e diagramas Mermaid no chat',
+        description: 'Transforme conversas em aplicativos interativos, diagramas e documentos.',
       },
       search: {
-        title: 'Busca',
-        description: 'Pesquise mensagens, arquivos e trechos de código instantaneamente',
+        title: 'Busca de mensagens',
+        description: 'Encontre mensagens e assuntos em todo o seu histórico de conversas.',
       },
       mcp: {
         title: 'MCP',
@@ -321,13 +323,27 @@ export const ptBR: UIStrings = {
         description:
           'SSO pronto para empresas com OAuth, SAML, LDAP e autenticação de dois fatores',
       },
+      projects: {
+        title: 'Projetos',
+        description: 'Organize conversas relacionadas em espaços de projeto pessoais.',
+      },
+      skills: {
+        title: 'Habilidades',
+        description:
+          'Forneça aos agentes instruções, referências e fluxos de trabalho reutilizáveis.',
+      },
+      subagents: {
+        title: 'Subagentes',
+        description:
+          'Delegue tarefas específicas a agentes especializados com seu próprio contexto.',
+      },
     },
     learnMore: 'Saiba mais',
     communityHeading: 'Open source, movido pela comunidade',
     communitySubtitle:
       'Junte-se a milhares de desenvolvedores e organizações criando com LibreChat',
     githubStars: 'Estrelas no GitHub',
-    dockerPulls: 'Downloads Docker',
+    dockerPulls: 'Downloads de contêineres',
     contributors: 'Colaboradores',
     communityLinksAria: 'Links da comunidade',
     githubAria: 'LibreChat no GitHub',
