@@ -117,7 +117,7 @@ export const nl: UIStrings = {
           'Voer npm run backend uit',
           'Open localhost:3080 en registreer',
         ],
-        prereqs: ['Node.js v24.16.0', 'MongoDB-instantie'],
+        prereqs: ['Node.js v24.22.1', 'MongoDB-instantie'],
       },
       railway: {
         tag: 'Eén klik',
@@ -146,123 +146,6 @@ export const nl: UIStrings = {
   featuresHub: {
     ariaLabel: 'Functienavigatie',
     featuredHeading: 'Uitgelicht',
-    coreFeaturesHeading: 'Kernfuncties',
-    hero: {
-      title: 'Model Context Protocol',
-      description:
-        'Verbind AI-modellen met elke externe tool of service via MCP — de open standaard voor AI-toolintegratie',
-    },
-    highlights: {
-      agents: {
-        title: 'Agents',
-        description:
-          'Bouw aangepaste AI-assistenten met tools, bestandsverwerking, code-uitvoering en API-acties — zonder te programmeren.',
-      },
-      codeInterpreter: {
-        title: 'Code Interpreter',
-        description:
-          'Voer Python, JavaScript, Go, Rust en meer uit — veilig in een sandbox en zonder installatie.',
-      },
-      artifacts: {
-        title: 'Artefacten',
-        description:
-          'Genereer React-componenten, HTML-pagina’s en Mermaid-diagrammen direct in de chat.',
-      },
-      memory: {
-        title: 'Geheugen',
-        description:
-          'Persistente context tussen gesprekken, zodat je AI voorkeuren en geschiedenis onthoudt.',
-      },
-      webSearch: {
-        title: 'Webzoekfunctie',
-        description: 'Geef elk model live internettoegang met ingebouwde zoekfunctie en reranking.',
-      },
-      authentication: {
-        title: 'Authenticatie',
-        description: 'Enterprise-ready SSO met OAuth2, SAML, LDAP en tweefactorauthenticatie.',
-      },
-    },
-    categories: {
-      searchKnowledge: {
-        title: 'Zoeken en kennis',
-        items: {
-          webSearch: {
-            title: 'Webzoekfunctie',
-            description: 'Live internettoegang met ingebouwde zoekfunctie en reranking',
-          },
-          search: {
-            title: 'Zoeken',
-            description: 'Vind berichten en gesprekken met Meilisearch',
-          },
-          ragApi: {
-            title: 'RAG API',
-            description: 'Chat met bestanden via retrieval-augmented generation',
-          },
-          memory: { title: 'Geheugen', description: 'Persistente context tussen gesprekken' },
-          ocr: { title: 'OCR', description: 'Extraheer tekst uit afbeeldingen en documenten' },
-        },
-      },
-      media: {
-        title: 'Media',
-        items: {
-          imageGen: {
-            title: 'Beeldgeneratie',
-            description: 'Maak afbeeldingen met GPT Image, Stable Diffusion en Flux',
-          },
-          uploadAsText: {
-            title: 'Uploaden als tekst',
-            description: 'Upload en verwerk bestanden als tekstinvoer',
-          },
-        },
-      },
-      chat: {
-        title: 'Chat',
-        items: {
-          fork: { title: 'Fork', description: 'Splits gesprekken in meerdere threads' },
-          importConvos: {
-            title: 'Gesprekken importeren',
-            description: 'Importeer chats uit ChatGPT en andere platforms',
-          },
-          shareableLinks: {
-            title: 'Deelbare links',
-            description: 'Deel gesprekken via openbare links',
-          },
-          temporaryChat: {
-            title: 'Tijdelijke chat',
-            description: 'Privégesprekken die niet in de geschiedenis worden opgeslagen',
-          },
-          urlQuery: {
-            title: 'URL-queryparameters',
-            description: 'Configureer chats dynamisch via de URL',
-          },
-          resumableStreams: {
-            title: 'Hervatbare streams',
-            description: 'Automatisch opnieuw verbinden en onderbroken antwoorden hervatten',
-          },
-        },
-      },
-      security: {
-        title: 'Beveiliging',
-        items: {
-          authentication: {
-            title: 'Authenticatie',
-            description: 'Multi-user authenticatie met OAuth2, SAML, LDAP en meer',
-          },
-          adminPanel: {
-            title: 'Beheerpaneel',
-            description: 'Browser-UI voor gebruikers, rollen en configuratie-overschrijvingen',
-          },
-          passwordReset: {
-            title: 'Wachtwoord resetten',
-            description: 'Wachtwoordherstel via e-mail',
-          },
-          moderation: {
-            title: 'Moderatiesysteem',
-            description: 'Contentmoderatie en veiligheidscontroles',
-          },
-        },
-      },
-    },
   },
   localInstallHub: {
     bundledHeading: 'Meegeleverd met Docker',
@@ -391,28 +274,30 @@ export const nl: UIStrings = {
     mobileDarkAlt: 'LibreChat mobiele interface in donkere modus',
     trustedBy: 'Vertrouwd door bedrijven wereldwijd',
     featuresHeading: 'Alles wat je nodig hebt',
-    featuresSubtitle: 'Een compleet platform voor AI-gestuurde gesprekken',
+    featuresSubtitle: 'Van alledaagse vragen tot ambitieuze projecten, alles in één werkruimte.',
     primaryActionsAria: 'Primaire acties',
     features: {
       agents: {
         title: 'Agents',
-        description: 'Geavanceerde agents met bestandsverwerking, code-interpretatie en API-acties',
+        description:
+          'Bouw gespecialiseerde agents met je bestanden, tools, herbruikbare vaardigheden en gedelegeerde subtaken.',
       },
       codeInterpreter: {
         title: 'Code Interpreter',
-        description: 'Voer code in meerdere talen veilig uit zonder installatie',
+        description: 'Voer code in meerdere talen uit in een geïsoleerde omgeving',
       },
       models: {
         title: 'Modellen',
-        description: 'AI-modelselectie met Anthropic, AWS, OpenAI, Azure en meer',
+        description:
+          'Breng toonaangevende AI-aanbieders en lokale modellen samen in één werkruimte.',
       },
       artifacts: {
         title: 'Artefacten',
-        description: 'Maak React-code, HTML en Mermaid-diagrammen in de chat',
+        description: 'Zet gesprekken om in interactieve apps, diagrammen en documenten.',
       },
       search: {
-        title: 'Zoeken',
-        description: 'Zoek direct naar berichten, bestanden en codefragmenten',
+        title: 'Berichten zoeken',
+        description: 'Vind berichten en onderwerpen in je gespreksgeschiedenis.',
       },
       mcp: {
         title: 'MCP',
@@ -431,13 +316,25 @@ export const nl: UIStrings = {
         title: 'Authenticatie',
         description: 'Enterprise-ready SSO met OAuth, SAML, LDAP en tweefactorauthenticatie',
       },
+      projects: {
+        title: 'Projecten',
+        description: 'Organiseer gerelateerde gesprekken in persoonlijke projectwerkruimtes.',
+      },
+      skills: {
+        title: 'Vaardigheden',
+        description: 'Geef agents herbruikbare instructies, referenties en workflows.',
+      },
+      subagents: {
+        title: 'Subagents',
+        description: 'Delegeer gerichte taken aan gespecialiseerde agents met hun eigen context.',
+      },
     },
     learnMore: 'Meer informatie',
     communityHeading: 'Open source, community-gedreven',
     communitySubtitle:
       'Sluit je aan bij duizenden ontwikkelaars en organisaties die bouwen met LibreChat',
     githubStars: 'GitHub-sterren',
-    dockerPulls: 'Docker-pulls',
+    dockerPulls: 'Containerdownloads',
     contributors: 'Bijdragers',
     communityLinksAria: 'Communitylinks',
     githubAria: 'LibreChat op GitHub',

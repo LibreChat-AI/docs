@@ -116,7 +116,7 @@ export const tr: UIStrings = {
           'npm run backend çalıştır',
           'localhost:3080 adresini açın ve kaydolun',
         ],
-        prereqs: ['Node.js v24.16.0', 'MongoDB örneği'],
+        prereqs: ['Node.js v24.22.1', 'MongoDB örneği'],
       },
       railway: {
         tag: 'Tek tık',
@@ -145,124 +145,6 @@ export const tr: UIStrings = {
   featuresHub: {
     ariaLabel: 'Özellik navigasyonu',
     featuredHeading: 'Öne çıkan',
-    coreFeaturesHeading: 'Temel özellikler',
-    hero: {
-      title: 'Model Context Protocol',
-      description:
-        'AI modellerini MCP üzerinden herhangi bir harici araç veya servise bağlayın — AI araç entegrasyonu için açık standart',
-    },
-    highlights: {
-      agents: {
-        title: 'Ajanlar',
-        description:
-          'Araçlar, dosya işleme, kod yürütme ve API aksiyonlarıyla özel AI asistanları oluşturun — kodlama gerekmez.',
-      },
-      codeInterpreter: {
-        title: 'Code Interpreter',
-        description:
-          'Python, JavaScript, Go, Rust ve daha fazlasını güvenli sandbox içinde kurulum yapmadan çalıştırın.',
-      },
-      artifacts: {
-        title: 'Artifactler',
-        description:
-          'React bileşenleri, HTML sayfaları ve Mermaid diyagramlarını doğrudan sohbet içinde üretin.',
-      },
-      memory: {
-        title: 'Bellek',
-        description:
-          "AI'nızın tercihleri ve geçmişi hatırlaması için konuşmalar arasında kalıcı bağlam.",
-      },
-      webSearch: {
-        title: 'Web arama',
-        description:
-          'Yerleşik arama ve reranking ile herhangi bir modele canlı internet erişimi verin.',
-      },
-      authentication: {
-        title: 'Kimlik doğrulama',
-        description: 'OAuth2, SAML, LDAP ve iki faktörlü kimlik doğrulama ile kurumsal SSO.',
-      },
-    },
-    categories: {
-      searchKnowledge: {
-        title: 'Arama ve bilgi',
-        items: {
-          webSearch: {
-            title: 'Web arama',
-            description: 'Yerleşik arama ve reranking ile canlı internet erişimi',
-          },
-          search: {
-            title: 'Arama',
-            description: 'Meilisearch ile mesajları ve konuşmaları bulun',
-          },
-          ragApi: {
-            title: 'RAG API',
-            description: 'retrieval-augmented generation ile dosyalarla sohbet edin',
-          },
-          memory: { title: 'Bellek', description: 'Konuşmalar arasında kalıcı bağlam' },
-          ocr: { title: 'OCR', description: 'Görsellerden ve belgelerden metin çıkarın' },
-        },
-      },
-      media: {
-        title: 'Medya',
-        items: {
-          imageGen: {
-            title: 'Görsel üretimi',
-            description: 'GPT Image, Stable Diffusion ve Flux ile görseller oluşturun',
-          },
-          uploadAsText: {
-            title: 'Metin olarak yükle',
-            description: 'Dosyaları metin girdisi olarak yükleyin ve işleyin',
-          },
-        },
-      },
-      chat: {
-        title: 'Sohbet',
-        items: {
-          fork: { title: 'Fork', description: 'Konuşmaları birden fazla iş parçacığına ayırın' },
-          importConvos: {
-            title: 'Konuşmaları içe aktar',
-            description: "ChatGPT'den ve diğer platformlardan sohbetleri içe aktarın",
-          },
-          shareableLinks: {
-            title: 'Paylaşılabilir bağlantılar',
-            description: 'Konuşmaları herkese açık bağlantılarla paylaşın',
-          },
-          temporaryChat: {
-            title: 'Geçici sohbet',
-            description: 'Geçmişe kaydedilmeyen özel konuşmalar',
-          },
-          urlQuery: {
-            title: 'URL sorgu parametreleri',
-            description: 'Sohbetleri URL üzerinden dinamik olarak yapılandırın',
-          },
-          resumableStreams: {
-            title: 'Sürdürülebilir akışlar',
-            description: 'Otomatik yeniden bağlanma ve kesilen yanıtları sürdürme',
-          },
-        },
-      },
-      security: {
-        title: 'Güvenlik',
-        items: {
-          authentication: {
-            title: 'Kimlik doğrulama',
-            description: 'OAuth2, SAML, LDAP ve daha fazlasıyla çok kullanıcılı kimlik doğrulama',
-          },
-          adminPanel: {
-            title: 'Yönetici paneli',
-            description: 'Kullanıcılar, roller ve yapılandırma geçersiz kılmaları için tarayıcı UI',
-          },
-          passwordReset: {
-            title: 'Parola sıfırlama',
-            description: 'E-posta tabanlı parola kurtarma',
-          },
-          moderation: {
-            title: 'Moderasyon sistemi',
-            description: 'İçerik moderasyonu ve güvenlik kontrolleri',
-          },
-        },
-      },
-    },
   },
   localInstallHub: {
     bundledHeading: 'Docker ile birlikte',
@@ -391,28 +273,30 @@ export const tr: UIStrings = {
     mobileDarkAlt: 'Koyu modda LibreChat mobil arayüzü',
     trustedBy: 'Dünya genelindeki şirketler tarafından güveniliyor',
     featuresHeading: 'İhtiyacınız olan her şey',
-    featuresSubtitle: 'AI destekli konuşmalar için kapsamlı bir platform',
+    featuresSubtitle: 'Günlük sorulardan iddialı projelere, hepsi tek bir çalışma alanında.',
     primaryActionsAria: 'Birincil eylemler',
     features: {
       agents: {
         title: 'Ajanlar',
-        description: 'Dosya işleme, kod yorumlama ve API aksiyonlarıyla gelişmiş ajanlar',
+        description:
+          'Dosyalarınız, araçlarınız, yeniden kullanılabilir yetenekleriniz ve devredilen alt görevlerle uzman temsilciler oluşturun.',
       },
       codeInterpreter: {
         title: 'Code Interpreter',
-        description: 'Kodu birden fazla dilde güvenli biçimde, kurulum olmadan çalıştırın',
+        description: 'Yalıtılmış bir ortamda birden fazla dilde kod çalıştırın',
       },
       models: {
         title: 'Modeller',
-        description: 'Anthropic, AWS, OpenAI, Azure ve daha fazlasını içeren AI model seçimi',
+        description:
+          'Önde gelen yapay zekâ sağlayıcılarını ve yerel modelleri tek bir çalışma alanında birleştirin.',
       },
       artifacts: {
         title: 'Artifactler',
-        description: 'Sohbette React, HTML kodu ve Mermaid diyagramları oluşturun',
+        description: 'Sohbetleri etkileşimli uygulamalara, diyagramlara ve belgelere dönüştürün.',
       },
       search: {
-        title: 'Arama',
-        description: 'Mesajları, dosyaları ve kod parçalarını anında arayın',
+        title: 'Mesaj Arama',
+        description: 'Sohbet geçmişinizdeki mesajları ve konuları bulun.',
       },
       mcp: {
         title: 'MCP',
@@ -431,12 +315,25 @@ export const tr: UIStrings = {
         title: 'Kimlik doğrulama',
         description: 'OAuth, SAML, LDAP ve iki faktörlü kimlik doğrulama ile kurumsal SSO',
       },
+      projects: {
+        title: 'Projeler',
+        description: 'İlgili sohbetleri kişisel proje çalışma alanlarında düzenleyin.',
+      },
+      skills: {
+        title: 'Yetenekler',
+        description:
+          'Temsilcilere yeniden kullanılabilir talimatlar, referanslar ve iş akışları sağlayın.',
+      },
+      subagents: {
+        title: 'Alt Temsilciler',
+        description: 'Belirli görevleri kendi bağlamına sahip uzman temsilcilere devredin.',
+      },
     },
     learnMore: 'Daha fazla bilgi',
     communityHeading: 'Open source, topluluk odaklı',
     communitySubtitle: 'LibreChat ile geliştiren binlerce geliştirici ve kuruluşa katılın',
     githubStars: 'GitHub yıldızları',
-    dockerPulls: 'Docker indirmeleri',
+    dockerPulls: 'Konteyner İndirmeleri',
     contributors: 'Katkıda bulunanlar',
     communityLinksAria: 'Topluluk bağlantıları',
     githubAria: "GitHub'da LibreChat",

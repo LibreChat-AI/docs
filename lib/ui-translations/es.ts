@@ -121,7 +121,7 @@ export const es: UIStrings = {
           'Ejecutar npm run backend',
           'Abre localhost:3080 y regístrate',
         ],
-        prereqs: ['Node.js v24.16.0', 'Instancia de MongoDB'],
+        prereqs: ['Node.js v24.22.1', 'Instancia de MongoDB'],
       },
       railway: {
         tag: 'Un clic',
@@ -155,126 +155,6 @@ export const es: UIStrings = {
   featuresHub: {
     ariaLabel: 'Navegación de funciones',
     featuredHeading: 'Destacado',
-    coreFeaturesHeading: 'Funciones principales',
-    hero: {
-      title: 'Model Context Protocol',
-      description:
-        'Conecta modelos de IA a cualquier herramienta o servicio externo mediante MCP — el estándar abierto para la integración de herramientas de IA',
-    },
-    highlights: {
-      agents: {
-        title: 'Agentes',
-        description:
-          'Crea asistentes de IA personalizados con herramientas, gestión de archivos, ejecución de código y acciones de API — sin necesidad de programar.',
-      },
-      codeInterpreter: {
-        title: 'Intérprete de código',
-        description:
-          'Ejecuta Python, JavaScript, Go, Rust y más — de forma segura en un entorno aislado y sin configuración.',
-      },
-      artifacts: {
-        title: 'Artefactos',
-        description:
-          'Genera componentes de React, páginas HTML y diagramas de Mermaid directamente en el chat.',
-      },
-      memory: {
-        title: 'Memoria',
-        description:
-          'Contexto persistente entre conversaciones para que tu IA recuerde tus preferencias y tu historial.',
-      },
-      webSearch: {
-        title: 'Búsqueda web',
-        description:
-          'Dale a cualquier modelo acceso a internet en tiempo real con búsqueda y reordenamiento integrados.',
-      },
-      authentication: {
-        title: 'Autenticación',
-        description:
-          'SSO listo para empresas con OAuth2, SAML, LDAP y autenticación de dos factores.',
-      },
-    },
-    categories: {
-      searchKnowledge: {
-        title: 'Búsqueda y conocimiento',
-        items: {
-          webSearch: {
-            title: 'Búsqueda web',
-            description:
-              'Acceso a internet en tiempo real con búsqueda y reordenamiento integrados',
-          },
-          search: {
-            title: 'Búsqueda',
-            description: 'Encuentra mensajes y conversaciones con Meilisearch',
-          },
-          ragApi: {
-            title: 'RAG API',
-            description: 'Chatea con archivos usando generación aumentada por recuperación',
-          },
-          memory: { title: 'Memoria', description: 'Contexto persistente entre conversaciones' },
-          ocr: { title: 'OCR', description: 'Extrae texto de imágenes y documentos' },
-        },
-      },
-      media: {
-        title: 'Multimedia',
-        items: {
-          imageGen: {
-            title: 'Generación de imágenes',
-            description: 'Crea imágenes con GPT Image, Stable Diffusion y Flux',
-          },
-          uploadAsText: {
-            title: 'Subir como texto',
-            description: 'Sube y procesa archivos como entrada de texto',
-          },
-        },
-      },
-      chat: {
-        title: 'Chat',
-        items: {
-          fork: { title: 'Bifurcar', description: 'Divide las conversaciones en varios hilos' },
-          importConvos: {
-            title: 'Importar conversaciones',
-            description: 'Importa chats de ChatGPT y otras plataformas',
-          },
-          shareableLinks: {
-            title: 'Enlaces para compartir',
-            description: 'Comparte conversaciones mediante enlaces públicos',
-          },
-          temporaryChat: {
-            title: 'Chat temporal',
-            description: 'Conversaciones privadas que no se guardan en el historial',
-          },
-          urlQuery: {
-            title: 'Parámetros de consulta de URL',
-            description: 'Configura los chats dinámicamente mediante la URL',
-          },
-          resumableStreams: {
-            title: 'Transmisiones reanudables',
-            description: 'Reconexión automática y reanudación de respuestas interrumpidas',
-          },
-        },
-      },
-      security: {
-        title: 'Seguridad',
-        items: {
-          authentication: {
-            title: 'Autenticación',
-            description: 'Autenticación multiusuario con OAuth2, SAML, LDAP y más',
-          },
-          adminPanel: {
-            title: 'Panel de administración',
-            description: 'Interfaz web para usuarios, roles y anulaciones de configuración',
-          },
-          passwordReset: {
-            title: 'Restablecimiento de contraseña',
-            description: 'Recuperación de contraseña por correo electrónico',
-          },
-          moderation: {
-            title: 'Sistema de moderación',
-            description: 'Moderación de contenido y controles de seguridad',
-          },
-        },
-      },
-    },
   },
   localInstallHub: {
     bundledHeading: 'Incluido con Docker',
@@ -403,29 +283,32 @@ export const es: UIStrings = {
     mobileDarkAlt: 'Interfaz móvil de LibreChat en modo oscuro',
     trustedBy: 'Con la confianza de empresas de todo el mundo',
     featuresHeading: 'Todo lo que necesitas',
-    featuresSubtitle: 'Una plataforma completa para conversaciones impulsadas por IA',
+    featuresSubtitle:
+      'De las preguntas cotidianas a los proyectos ambiciosos, todo en un solo espacio de trabajo.',
     primaryActionsAria: 'Acciones principales',
     features: {
       agents: {
         title: 'Agentes',
         description:
-          'Agentes avanzados con gestión de archivos, interpretación de código y acciones de API',
+          'Crea agentes especializados con tus archivos, herramientas, habilidades reutilizables y subtareas delegadas.',
       },
       codeInterpreter: {
         title: 'Intérprete de código',
-        description: 'Ejecuta código en varios lenguajes de forma segura y sin configuración',
+        description: 'Ejecuta código en varios lenguajes en un entorno aislado',
       },
       models: {
         title: 'Modelos',
-        description: 'Selección de modelos de IA incluyendo Anthropic, AWS, OpenAI, Azure y más',
+        description:
+          'Reúne a los principales proveedores de IA y modelos locales en un solo espacio de trabajo.',
       },
       artifacts: {
         title: 'Artefactos',
-        description: 'Crea código React, HTML y diagramas de Mermaid en el chat',
+        description:
+          'Convierte conversaciones en aplicaciones interactivas, diagramas y documentos.',
       },
       search: {
-        title: 'Búsqueda',
-        description: 'Busca mensajes, archivos y fragmentos de código al instante',
+        title: 'Búsqueda de mensajes',
+        description: 'Encuentra mensajes y temas en tu historial de conversaciones.',
       },
       mcp: {
         title: 'MCP',
@@ -446,13 +329,26 @@ export const es: UIStrings = {
         description:
           'SSO listo para empresas con OAuth, SAML, LDAP y autenticación de dos factores',
       },
+      projects: {
+        title: 'Proyectos',
+        description: 'Organiza conversaciones relacionadas en espacios de proyecto personales.',
+      },
+      skills: {
+        title: 'Habilidades',
+        description:
+          'Proporciona a los agentes instrucciones, referencias y flujos de trabajo reutilizables.',
+      },
+      subagents: {
+        title: 'Subagentes',
+        description: 'Delega tareas concretas a agentes especializados con su propio contexto.',
+      },
     },
     learnMore: 'Más información',
     communityHeading: 'Código abierto, impulsado por la comunidad',
     communitySubtitle:
       'Únete a miles de desarrolladores y organizaciones que construyen con LibreChat',
     githubStars: 'Estrellas en GitHub',
-    dockerPulls: 'Descargas de Docker',
+    dockerPulls: 'Descargas de contenedores',
     contributors: 'Colaboradores',
     communityLinksAria: 'Enlaces de la comunidad',
     githubAria: 'LibreChat en GitHub',

@@ -20,12 +20,13 @@ test.describe('Image generation docs', () => {
   test('@scenario:image-gen-default-model-matches-code the documented default is gpt-image-2.5-flare', async ({
     page,
   }) => {
-    await page.goto('/docs/features/image_gen')
+    // The model default, size rules and resize setting live on the tool's config page.
+    await page.goto('/docs/configuration/tools/openai_image_gen')
     const main = page.locator('main')
-    await expect(main).toContainText('defaults to gpt-image-2.5-flare')
+    await expect(main).toContainText('Default: gpt-image-2.5-flare.')
     await expect(main).not.toContainText('IMAGE_GEN_OAI_MODEL=gpt-image-1')
     await expect(main).not.toContainText(/defaults? to \**gpt-image-1/i)
-    await expect(main).toContainText('accept any WIDTHxHEIGHT')
+    await expect(main).toContainText('accept others like 2048x1152 or 3840x2160')
     await expect(main).toContainText('stored at 1365x768')
     const resizeLink = main.getByRole('link', { name: 'fileConfig.imageGeneration' })
     await expect(resizeLink).toHaveAttribute('href', /file_config#imagegeneration$/)
@@ -37,18 +38,20 @@ test.describe('Image generation docs', () => {
     page,
   }) => {
     const anchors = new Set<string>()
+    let linked = 0
     for (const path of ['/docs/features', '/docs/configuration/tools', '/docs/features/agents']) {
       await page.goto(path)
       const main = page.locator('main')
       await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible()
       await expect(main).not.toContainText(/DALL-?E/i)
       const hrefs = await main
-        .locator('a[href*="/docs/features/image_gen#"]')
+        .locator('a[href*="/docs/features/image_gen"]')
         .evaluateAll((links) => links.map((link) => link.getAttribute('href') ?? ''))
-      for (const href of hrefs) anchors.add(href.split('#')[1])
+      linked += hrefs.length
+      for (const href of hrefs) if (href.includes('#')) anchors.add(href.split('#')[1])
     }
 
-    expect(anchors.size).toBeGreaterThan(0)
+    expect(linked).toBeGreaterThan(0)
     await page.goto('/docs/features/image_gen')
     for (const anchor of anchors) {
       await expect(page.locator(`[id="${anchor}"]`)).toHaveCount(1)

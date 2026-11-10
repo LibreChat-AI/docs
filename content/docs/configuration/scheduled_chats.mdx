@@ -1,0 +1,74 @@
+---
+title: Scheduled Chats
+icon: CalendarClock
+description: Turn on Scheduled Chats, set limits and project rules, allow unattended MCP access, and meet the Redis and checkpointer requirements.
+---
+
+[Scheduled Chats](/docs/features/scheduled_chats) are experimental and off until you opt in. Scheduled runs use model, tool, and Code Interpreter resources without anyone watching, so check the deployment requirements below before enabling them.
+
+## Enable
+
+Add `interface.schedules` to `librechat.yaml` and restart LibreChat:
+
+```yaml filename="librechat.yaml"
+interface:
+  schedules:
+    use: true
+    create: true
+    maxPerUser: 10
+    minIntervalMinutes: 60
+    autoDisableAfterFailures: 5
+    fireConcurrency: 5
+    requireProject: false
+    # projectId: '000000000000000000000000'
+```
+
+`use` and `create` seed the `SCHEDULES` permissions for the built-in `USER` role at startup; after that, manage them per role in the [Admin Panel](/docs/features/admin_panel). `use` lets a user see their schedules. `create` also lets them create, edit, enable, run, and delete them. The other keys are runtime limits:
+
+<OptionTable
+  options={[
+    ['maxPerUser', 'Number', 'Maximum schedules each user can own, counting disabled ones. Set to 0 to prevent creation.', '10'],
+    ['minIntervalMinutes', 'Number', 'Shortest allowed gap between two runs of one schedule. Applies to every cadence, including custom cron.', '60'],
+    ['autoDisableAfterFailures', 'Number', 'Consecutive failed runs before a schedule disables itself.', '5'],
+    ['fireConcurrency', 'Number', 'Maximum scheduled runs admitted at the same time across the deployment.', '5'],
+    ['requireProject', 'Boolean', 'Every schedule must resolve to a Chat Project, checked when it is saved and before each run.', 'false'],
+    ['projectId', 'String', 'Pins every scheduled conversation to one Chat Project and implies requireProject.', ''],
+  ]}
+/>
+
+`schedules: true` enables the feature with these defaults. `schedules: false`, or `use: false`, is a deployment-wide stop that role, group, and user overrides cannot lift.
+
+Project rules are rechecked at every run. A schedule that no longer satisfies `requireProject`, or whose project was deleted, disables itself instead of starting an unscoped conversation. Chat Projects belong to one user, so a deployment-wide `projectId` only works for that project's owner; set it in role or user overrides when owners need different destinations.
+
+The full field list, including `admissionConcurrency`, `mcpPreflightConcurrency`, and `mcpPreflightTimeoutMs` for bounding admission and MCP readiness checks separately from generation, is in [`interface.schedules`](/docs/configuration/librechat_yaml/object_structure/interface#schedules).
+
+## Unattended MCP access
+
+Before a run starts, LibreChat checks every MCP tool the scheduled agent and its subagents need. A run that would need an interactive login does not start; the schedule shows which agent needs attention.
+
+To let users authorize MCP tools for unattended runs, turn on `interface.schedules.mcpConsent`:
+
+- `mcpConsent.enabled` turns the feature on.
+- `mcpConsent.maxLifetimeHours` caps how long an authorization lasts, from 1 to 8760 hours.
+- `mcpConsent.resources` lists the MCP resources that may be authorized.
+- `mcpConsent.readOnlyPolicy` lists trusted read-only tool declarations, keyed by server and upstream tool name.
+- `mcpReceiptRetry.baseMs` and `mcpReceiptRetry.maxMs` set the backoff for retrying consent receipts.
+
+Users then see a **Scheduled MCP authorization** section in the schedule editor. An authorization covers only the listed agent and resources until its deadline and never permits writes.
+
+## Deployment requirements
+
+Scheduled Chats coordinate through MongoDB leases, so several replicas can share the work. They also need:
+
+- **Redis streams in multi-replica deployments.** Set `USE_REDIS_STREAMS=true`. Without shared streams, saving a schedule fails rather than starting work another replica could not resume or stop.
+- **A durable checkpointer for agents that can pause.** If the scheduled agent can use Ask User or needs tool approval, it needs Redis streams and a shared checkpointer even on a single process. The default MongoDB [`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) works; `type: memory` does not. LibreChat rejects such a run before any model call when either is missing.
+- **The standard server entrypoint.** The legacy experimental clustered entrypoint does not start the schedule engine.
+
+Two environment variables control the engine (also listed in [dotenv](/docs/configuration/dotenv#scheduled-chats)):
+
+<OptionTable
+  options={[
+    ['SCHEDULES_SINGLE_PROCESS', 'Boolean', 'Allows Scheduled Chats without Redis. Set it only when the deployment truly runs one LibreChat process.', '# SCHEDULES_SINGLE_PROCESS=true'],
+    ['SCHEDULES_DISABLED', 'Boolean', 'Emergency stop for both automatic runs and Run now. Schedules are kept, not deleted.', '# SCHEDULES_DISABLED=true'],
+  ]}
+/>

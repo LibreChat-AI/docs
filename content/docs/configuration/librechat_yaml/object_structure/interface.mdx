@@ -35,9 +35,11 @@ These are fields under `interface`:
 - `retentionMode`
 - `retainAgentFiles`
 - `autoSubmitFromUrl`
+- `colorModeFromUrl`
 - `customWelcome`
 - `codeHighlightThrottleMs`
 - `artifactUndocking`
+- `analyticsConsent`
 - `runCode`
 - `webSearch`
 - `fileSearch`
@@ -51,6 +53,16 @@ These are fields under `interface`:
 - `queuedSendLockTimeoutMs`
 - `peoplePicker`
 - `marketplace`
+- `landingHeading`
+- `landingFooter`
+- `messageAuthor`
+- `runningChatRename`
+- `historyCacheTtlMs`
+- `historyCacheRecent`
+- `historyCacheMaxBytes`
+- `buildInfo`
+- `mascot`
+- `traceViewer`
 
 **Notes:**
 
@@ -79,6 +91,8 @@ interface:
     share: false
     public: false
     configureObo: false
+    toolsRefreshInterval: 300000
+    statusRefreshInterval: 30000
     trustCheckbox:
       label: 'I trust this server'
       subLabel: 'Only enable servers you trust'
@@ -136,6 +150,7 @@ interface:
   customWelcome: 'Hey {{user.name}}! Welcome to LibreChat'
   codeHighlightThrottleMs: 300
   artifactUndocking: true
+  analyticsConsent: true
   runCode: true
   webSearch: true
   fileSearch: true
@@ -236,14 +251,14 @@ See [Theme](/docs/configuration/librechat_yaml/object_structure/theme) for the i
     [
       'toolsRefreshInterval',
       'Number',
-      'Polling interval in milliseconds for refreshing MCP tool catalogs while MCP controls are visible. Set to 0 to disable polling.',
-      '300000',
+      'How often, in milliseconds, the client re-fetches MCP tools while a screen that lists them is visible. Set to 0 to disable polling.',
+      '300000 (5 minutes)',
     ],
     [
       'statusRefreshInterval',
       'Number',
-      'Polling interval in milliseconds for refreshing MCP connection status while MCP controls are visible. Set to 0 to disable polling.',
-      '30000',
+      'How often, in milliseconds, the client re-checks MCP server connection status while a screen that shows it is visible. Set to 0 to disable polling.',
+      '30000 (30 seconds)',
     ],
     [
       'trustCheckbox',
@@ -959,7 +974,7 @@ Enables the experimental [Scheduled Chats](/docs/features/scheduled_chats) panel
 <Callout type="warning" title="Experimental and default-off">
   The `schedules` field is absent from LibreChat's default interface configuration. Scheduled runs
   can consume model and tool resources, so add this field only after reviewing the deployment
-  requirements in [Scheduled Chats](/docs/features/scheduled_chats#deployment-safety).
+  requirements in [Scheduled Chats](/docs/configuration/scheduled_chats#deployment-requirements).
 </Callout>
 
 **Key:**
@@ -1036,6 +1051,18 @@ Enables the experimental [Scheduled Chats](/docs/features/scheduled_chats) panel
       'Pins every scheduled conversation to one Chat Project, overriding the stored choice and implying `requireProject`.',
       '',
     ],
+    [
+      'mcpConsent',
+      'Object',
+      'Controls the stored consent that lets scheduled runs use MCP tools. Sub-keys: enabled (Boolean), maxLifetimeHours (1-8760), resources (record of resource bindings), and readOnlyPolicy (record of trusted read-only tool declarations keyed by server and upstream tool name).',
+      '',
+    ],
+    [
+      'mcpReceiptRetry',
+      'Object',
+      'Bounded exponential retry interval for MCP consent receipts, with jitter. Sub-keys: baseMs (100-60000, default 250) and maxMs (100-600000, default 30000). maxMs must be at least baseMs.',
+      '',
+    ],
   ]}
 />
 
@@ -1089,6 +1116,8 @@ interface:
   temporaryChat: true
 ```
 
+For what users see, see [Temporary Chat](/docs/features/temporary_chat).
+
 ## temporaryChatRetention
 
 The `temporaryChatRetention` configuration allows you to customize how long temporary chats are retained before being automatically deleted. Under `retentionMode: "ephemeral"`, every chat is temporary, so this value is the lifetime of every chat.
@@ -1137,31 +1166,39 @@ interface:
 
 ## generalChatRetention
 
-Controls how long regular chats are retained when `retentionMode` is set to `"all"`. It is ignored by the other modes; under `"ephemeral"` every chat is temporary and uses `temporaryChatRetention`.
+Sets how long regular (non-temporary) chats are kept, in hours, when `retentionMode` is `"all"`. Without it, regular chats under `"all"` use the `temporaryChatRetention` value.
+
+**Key:**
 
 <OptionTable
   options={[
     [
       'generalChatRetention',
       'Number',
-      'Sets the retention period for regular chats in hours under all-data retention.',
-      'Defaults to temporaryChatRetention when omitted',
+      'Retention period in hours for regular chats when retentionMode is "all". Minimum 1, maximum 8760. Temporary chats keep using temporaryChatRetention.',
+      'generalChatRetention: 2160',
     ],
   ]}
 />
 
-The value must be between `1` and `8760` hours. This setting lets regular and temporary chats use different lifetimes. Changing either retention value affects deadlines assigned to new or updated records; LibreChat does not rewrite existing stored deadlines automatically.
+**Default:** not set (falls back to `temporaryChatRetention`)
+
+It is ignored under `"temporary"` and `"ephemeral"`. Changing a retention value only affects records saved afterwards; existing deadlines are not rewritten.
+
+**Example:**
 
 ```yaml filename="interface / generalChatRetention"
 interface:
-  temporaryChatRetention: 168 # 7 days for temporary chats
-  generalChatRetention: 2160 # 90 days for regular chats
   retentionMode: 'all'
+  temporaryChatRetention: 24 # temporary chats: 1 day
+  generalChatRetention: 2160 # regular chats: 90 days
 ```
 
 ## retentionMode
 
 Controls which data receives retention deadlines, and whether every chat is forced to be temporary.
+
+For how deletion works, what happens to existing chats when you switch modes, and full examples, see [Data Retention](/docs/configuration/data_retention).
 
 **Key:**
 
@@ -1170,7 +1207,7 @@ Controls which data receives retention deadlines, and whether every chat is forc
     [
       'retentionMode',
       'String',
-      'Retention policy. "temporary" applies retention only to chats users mark temporary; "all" applies retention to every conversation and message while keeping them visible; "ephemeral" forces every chat to be temporary (hidden from history and search, toggle locked on).',
+      'Set to "temporary" to apply retention only to temporary chats, "all" to apply retention to all supported retained data (including persistent agent resource files unless retainAgentFiles is true), or "ephemeral" to do the same as "all" and also make every new chat temporary.',
       'retentionMode: "temporary"',
     ],
   ]}
@@ -1178,18 +1215,16 @@ Controls which data receives retention deadlines, and whether every chat is forc
 
 **Default:** `temporary`
 
-**Modes:**
-
-- **`temporary`** _(default)_: only chats a user marks temporary expire. Normal chats never expire.
-- **`all`**: every chat and message gets an `expiredAt` but stays visible and searchable until it expires.
-- **`ephemeral`**: every chat is forced temporary, hidden from history and search, and the toggle is locked on. Enforcement is server-authoritative.
-
-See the [Temporary Chat & Data Retention](/docs/features/temporary_chat#data-retention) feature page for the full behavior matrix and migration guidance.
+| Value | Temporary chats | Regular chats and other data | Temporary Chat toggle |
+| --- | --- | --- | --- |
+| `temporary` | Expire after `temporaryChatRetention` | Kept | Users choose per chat |
+| `all` | Expire after `temporaryChatRetention` | Expire after `generalChatRetention` (or `temporaryChatRetention` if unset) | Users choose per chat |
+| `ephemeral` | Every chat is temporary and expires after `temporaryChatRetention` | No regular chats; other retained data gets deadlines as with `all` | Shown locked on, with "Temporary Chat is enabled for all chats by your administrator" |
 
 <Callout type="warning">
-  `retentionMode: "all"` and `"ephemeral"` apply retention deadlines beyond temporary chats,
-  including persistent agent resource files unless `retainAgentFiles: true` is configured. Confirm
-  your retention policy before enabling either.
+  `retentionMode: "all"` and `"ephemeral"` apply retention deadlines beyond temporary chats, including persistent
+  agent resource files unless `retainAgentFiles: true` is configured. Confirm your retention policy
+  before enabling it.
 </Callout>
 
 **Example:**
@@ -1248,7 +1283,7 @@ Controls whether a prompt supplied via URL query parameters on `/c/new` is auto-
 
 When `/c/new?prompt=…&submit=true` is opened by an authenticated user, LibreChat normally pre-fills the composer with the URL-supplied prompt and submits it immediately. This is a convenience feature for crafted deeplinks and shared chat URLs.
 
-For deployments where users may receive crafted links from external sources — and where memory- or tool-enabled models could leak sensitive context if a prompt-injection payload reaches the model — operators can disable auto-submission. With the flag set to `false`, the prompt is still pre-filled in the composer but the user must press **Send** explicitly.
+For deployments where users may receive crafted links from external sources, and where memory- or tool-enabled models could leak sensitive context if a prompt-injection payload reaches the model, operators can disable auto-submission. With the flag set to `false`, the prompt is still pre-filled in the composer but the user must press **Send** explicitly.
 
 **Key:**
 
@@ -1267,7 +1302,7 @@ For deployments where users may receive crafted links from external sources — 
 
 **Notes:**
 
-- This setting does not affect URL-driven model spec selection or other URL-driven settings — only the auto-submission step.
+- This setting only affects the auto-submission step. URL-driven model spec selection and other URL-driven settings still apply.
 - The query parameter accepts both `prompt` and `q` as the prompt source, with `prompt` taking precedence. `submit=true` is the trigger.
 - Recommended for instances handling sensitive memory or tool data, where a 1-click prompt-injection vector should require explicit user confirmation.
 
@@ -1276,6 +1311,34 @@ For deployments where users may receive crafted links from external sources — 
 ```yaml filename="interface / autoSubmitFromUrl"
 interface:
   autoSubmitFromUrl: false
+```
+
+For the user-facing URL parameters, see [Query Parameters](/docs/features/url_query).
+
+## colorModeFromUrl
+
+Lets a link set the user's color mode with a `theme` query parameter (`?theme=light`, `?theme=dark`, or `?theme=system`). Use it when another app links into LibreChat and should hand over its own light or dark mode. The value is saved as the user's theme preference, which they can change later in settings, and the parameter is removed from the address bar. A user who picked the high-contrast variant of the same mode keeps it.
+
+**Key:**
+
+<OptionTable
+  options={[
+    [
+      'colorModeFromUrl',
+      'Boolean',
+      'Accept ?theme=light, ?theme=dark, or ?theme=system on an entry link and save it as the user color mode.',
+      'colorModeFromUrl: true',
+    ],
+  ]}
+/>
+
+**Default:** `false`
+
+**Example:**
+
+```yaml filename="interface / colorModeFromUrl"
+interface:
+  colorModeFromUrl: true
 ```
 
 ## customWelcome
@@ -1344,6 +1407,34 @@ interface:
   artifactUndocking: false
 ```
 
+## analyticsConsent
+
+Controls whether users are asked for consent before [Google Tag Manager](/docs/configuration/dotenv#google-tag-manager) loads. Only applies when `ANALYTICS_GTM_ID` is set.
+
+**Key:**
+
+<OptionTable
+  options={[
+    [
+      'analyticsConsent',
+      'Boolean',
+      'Shows the analytics consent banner and the matching toggle in Settings > Data. Google Tag Manager loads only after the user accepts.',
+      'analyticsConsent: true',
+    ],
+  ]}
+/>
+
+**Default:** `true`
+
+Setting it to `false` loads Google Tag Manager for every user without asking: the banner and the Settings toggle are hidden, and any answer a browser stored earlier is ignored. Shared conversation pages follow the same setting. Use it only when your deployment handles analytics consent itself, for example an internal installation covered by your organization's own policy.
+
+**Example:**
+
+```yaml filename="interface / analyticsConsent"
+interface:
+  analyticsConsent: false
+```
+
 ## runCode
 
 Enables/disables the "Run Code" button for Markdown Code Blocks. More info on the [LibreChat Code Interpreter API](/docs/features/code_interpreter)
@@ -1373,7 +1464,7 @@ interface:
 
 Enables/disables the **Web Search** tool in the [composer](/docs/features/composer) palette. More info on [Web Search Configuration](/docs/configuration/librechat_yaml/object_structure/web_search)
 
-**Note:** This setting does not disable the [Agents Web Search capability](/docs/features/agents#agent-capabilities). To disable the Agents capability, see the [Agents endpoint configuration](/docs/configuration/librechat_yaml/object_structure/agents#capabilities) instead.
+**Note:** This setting does not disable the [Agents Web Search capability](/docs/features/agents#web-search). To disable the Agents capability, see the [Agents endpoint configuration](/docs/configuration/librechat_yaml/object_structure/agents#capabilities) instead.
 
 > **Deprecated for permission management.** Seeds the `WEB_SEARCH` role permission at startup for the default `USER` role only. Prefer the [Admin Panel](/docs/features/admin_panel).
 
@@ -1686,7 +1777,10 @@ Enables/disables access to the Agent Marketplace.
 **Sub-keys:**
 
 <OptionTable
-  options={[['use', 'Boolean', 'Enables or disables marketplace access. Default: false']]}
+  options={[
+    ['use', 'Boolean', 'Enables or disables marketplace access. Default: false'],
+    ['retryDelaysMs', 'Array of Integers', 'Backoff steps in milliseconds before each automatic retry of a failed marketplace request; the number of entries is also the number of automatic attempts. Up to 20 entries, each 0-600000. An empty array leaves only the manual Retry. Omit to use LibreChat\'s default sequence.'],
+  ]}
 />
 
 **Default:**
@@ -1702,4 +1796,123 @@ marketplace:
 interface:
   marketplace:
     use: true # Enable marketplace access
+```
+
+## landingHeading
+
+Chooses what heads the welcome screen when an agent, assistant, or branded model spec is selected: its name (`entity`) or the time-of-day greeting with the user's name (`greeting`). Use `greeting` when your header selector already names the entity.
+
+**Default:** `entity`
+
+```yaml filename="interface / landingHeading"
+interface:
+  landingHeading: greeting
+```
+
+## landingFooter
+
+Shows the generic disclaimer and policy links on the welcome screen: at the bottom of the page (`true`), directly under the composer (`composer`), or not at all (`false`). A configured custom footer still renders when this is `false`.
+
+**Default:** `true`
+
+```yaml filename="interface / landingFooter"
+interface:
+  landingFooter: composer
+```
+
+## messageAuthor
+
+Chooses which responses show the author's avatar and name above their content: all of them (`always`), or only those from an agent other than the one the header's model selector shows (`whenDifferent`). With `whenDifferent`, the selected agent's responses start directly with their content, and screen readers still announce the author. Responses keep their author when no selector is shown, such as with `modelSelect: false` and no model specs, and in read-only subagent threads.
+
+**Default:** `always`
+
+```yaml filename="interface / messageAuthor"
+interface:
+  messageAuthor: whenDifferent
+```
+
+## runningChatRename
+
+Allows renaming a conversation while it is running. Set to `false` during a rolling upgrade, until every API replica supports title ownership and old title jobs have drained.
+
+**Default:** `true`
+
+```yaml filename="interface / runningChatRename"
+interface:
+  runningChatRename: false
+```
+
+## historyCacheTtlMs
+
+Milliseconds a conversation's message history stays cached in the browser after the user leaves it, so returning soon renders without refetching. Long agent transcripts can run to tens of megabytes, so keep this short for mobile browsers.
+
+**Default:** `60000`. Valid values range from `0` to `3600000`.
+
+## historyCacheRecent
+
+How many of the most recently left conversations keep that grace period. Older ones are released at the next conversation switch.
+
+**Default:** `1`. Valid values range from `0` to `20`.
+
+## historyCacheMaxBytes
+
+Aggregate estimated payload budget, in bytes, for histories kept during the grace period. Oversized histories reload on return; histories that are being observed, running, or belong to Assistants stay. `0` disables the grace period. This is not a browser heap limit.
+
+**Default:** `8388608` (8 MiB)
+
+```yaml filename="interface / history cache"
+interface:
+  historyCacheTtlMs: 60000
+  historyCacheRecent: 1
+  historyCacheMaxBytes: 8388608
+```
+
+## buildInfo
+
+Controls whether build information (such as the commit and version) is shown in Settings > About and returned by the configuration endpoint. Set to `false` to hide it.
+
+**Default:** `true`
+
+```yaml filename="interface / buildInfo"
+interface:
+  buildInfo: false
+```
+
+## mascot
+
+Allows Lia, the welcome screen mascot. Users still opt in from Settings.
+
+**Default:** `true`
+
+```yaml filename="interface / mascot"
+interface:
+  mascot: false
+```
+
+## traceViewer
+
+Shows a conversation trace control for traces this deployment exported to Langfuse, with a record inspector. It depends on Langfuse tracing being set up; see [Langfuse](/docs/configuration/langfuse).
+
+<OptionTable
+  options={[
+    ['enabled', 'Boolean', 'Shows the conversation trace control for traces this deployment exported.', 'false'],
+    ['showInputOutput', 'Boolean', 'Returns observation input, output, and metadata in the record inspector.', 'false'],
+    ['showToolNames', 'Boolean', 'Names the tools of each tool round from the tracing backend\'s own record, at the cost of further backend reads per listed page. When off, a round is named only when the chat messages can be matched to the trace.', 'false'],
+    ['maxRecords', 'Integer', 'Observations read from the tracing backend per request (1-10000).', '1000'],
+    ['maxContentLength', 'Integer', 'Characters kept from each input, output, and metadata value before truncation (1-1000000).', '50000'],
+    ['requestsPerMinute', 'Integer', 'Trace reads one user may start per minute (1-1000).', '30'],
+    ['requestTimeoutMs', 'Integer', 'Budget for each round trip to the tracing backend, in milliseconds (1000-300000).', '10000'],
+  ]}
+/>
+
+```yaml filename="interface / traceViewer"
+interface:
+  traceViewer:
+    enabled: true
+    showInputOutput: false
+    showToolNames: false
+    maxRecords: 1000
+    maxContentLength: 50000
+    requestsPerMinute: 30
+    requestTimeoutMs: 10000
 ```

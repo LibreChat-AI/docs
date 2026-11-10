@@ -121,7 +121,7 @@ export const ja: UIStrings = {
           'npm run backend を実行',
           'localhost:3080 を開いてアカウント登録',
         ],
-        prereqs: ['Node.js v24.16.0', 'MongoDB インスタンス'],
+        prereqs: ['Node.js v24.22.1', 'MongoDB インスタンス'],
       },
       railway: {
         tag: 'ワンクリック',
@@ -149,122 +149,6 @@ export const ja: UIStrings = {
   featuresHub: {
     ariaLabel: '機能ナビゲーション',
     featuredHeading: '注目',
-    coreFeaturesHeading: '主要機能',
-    hero: {
-      title: 'Model Context Protocol',
-      description:
-        'MCP（AI ツール連携のためのオープン標準）を通じて、AI モデルをあらゆる外部ツールやサービスに接続',
-    },
-    highlights: {
-      agents: {
-        title: 'エージェント',
-        description:
-          'ツール、ファイル処理、コード実行、API アクションを備えたカスタム AI アシスタントを構築 — コーディング不要。',
-      },
-      codeInterpreter: {
-        title: 'コードインタープリター',
-        description:
-          'Python、JavaScript、Go、Rust などを実行 — 安全にサンドボックス化され、セットアップ不要。',
-      },
-      artifacts: {
-        title: 'アーティファクト',
-        description: 'React コンポーネント、HTML ページ、Mermaid 図をチャット内で直接生成。',
-      },
-      memory: {
-        title: 'メモリ',
-        description: '会話をまたいで持続するコンテキストにより、AI が好みや履歴を記憶します。',
-      },
-      webSearch: {
-        title: 'Web 検索',
-        description:
-          '組み込みの検索と再ランク付けで、あらゆるモデルにリアルタイムのインターネットアクセスを提供。',
-      },
-      authentication: {
-        title: '認証',
-        description: 'OAuth2、SAML、LDAP、二要素認証に対応したエンタープライズ向け SSO。',
-      },
-    },
-    categories: {
-      searchKnowledge: {
-        title: '検索とナレッジ',
-        items: {
-          webSearch: {
-            title: 'Web 検索',
-            description: '組み込みの検索と再ランク付けによるリアルタイムのインターネットアクセス',
-          },
-          search: {
-            title: '検索',
-            description: 'Meilisearch でメッセージや会話を検索',
-          },
-          ragApi: {
-            title: 'RAG API',
-            description: '検索拡張生成を使ってファイルとチャット',
-          },
-          memory: { title: 'メモリ', description: '会話をまたいで持続するコンテキスト' },
-          ocr: { title: 'OCR', description: '画像やドキュメントからテキストを抽出' },
-        },
-      },
-      media: {
-        title: 'メディア',
-        items: {
-          imageGen: {
-            title: '画像生成',
-            description: 'GPT Image、Stable Diffusion、Flux で画像を作成',
-          },
-          uploadAsText: {
-            title: 'テキストとしてアップロード',
-            description: 'ファイルをテキスト入力としてアップロードして処理',
-          },
-        },
-      },
-      chat: {
-        title: 'チャット',
-        items: {
-          fork: { title: 'フォーク', description: '会話を複数のスレッドに分割' },
-          importConvos: {
-            title: '会話のインポート',
-            description: 'ChatGPT やその他のプラットフォームからチャットをインポート',
-          },
-          shareableLinks: {
-            title: '共有リンク',
-            description: '公開リンクで会話を共有',
-          },
-          temporaryChat: {
-            title: '一時的なチャット',
-            description: '履歴に保存されないプライベートな会話',
-          },
-          urlQuery: {
-            title: 'URL クエリパラメータ',
-            description: 'URL を通じてチャットを動的に設定',
-          },
-          resumableStreams: {
-            title: '再開可能なストリーム',
-            description: '中断された応答を自動的に再接続して再開',
-          },
-        },
-      },
-      security: {
-        title: 'セキュリティ',
-        items: {
-          authentication: {
-            title: '認証',
-            description: 'OAuth2、SAML、LDAP などによるマルチユーザー認証',
-          },
-          adminPanel: {
-            title: '管理パネル',
-            description: 'ユーザー、ロール、設定オーバーライドを管理するブラウザ UI',
-          },
-          passwordReset: {
-            title: 'パスワードのリセット',
-            description: 'メールによるパスワード復旧',
-          },
-          moderation: {
-            title: 'モデレーションシステム',
-            description: 'コンテンツのモデレーションと安全管理',
-          },
-        },
-      },
-    },
   },
   localInstallHub: {
     bundledHeading: 'Docker に同梱',
@@ -393,28 +277,29 @@ export const ja: UIStrings = {
     mobileDarkAlt: 'ダークモードの LibreChat モバイルインターフェース',
     trustedBy: '世界中の企業に信頼されています',
     featuresHeading: '必要なものすべて',
-    featuresSubtitle: 'AI を活用した会話のための総合的なプラットフォーム',
+    featuresSubtitle: '日々の質問から大きなプロジェクトまで、すべてをひとつのワークスペースで。',
     primaryActionsAria: '主要なアクション',
     features: {
       agents: {
         title: 'エージェント',
-        description: 'ファイル処理、コード解釈、API アクションを備えた高度なエージェント',
+        description:
+          'ファイル、ツール、再利用可能なスキル、サブタスクの委任を活用して、専門エージェントを構築。',
       },
       codeInterpreter: {
         title: 'コードインタープリター',
-        description: '複数の言語のコードをセットアップ不要で安全に実行',
+        description: '隔離された環境で複数の言語のコードを実行',
       },
       models: {
         title: 'モデル',
-        description: 'Anthropic、AWS、OpenAI、Azure などを含む AI モデルの選択',
+        description: '主要なAIプロバイダーとローカルモデルをひとつのワークスペースに。',
       },
       artifacts: {
         title: 'アーティファクト',
-        description: 'React、HTML コード、Mermaid 図をチャット内で作成',
+        description: '会話からインタラクティブなアプリ、図表、ドキュメントを作成。',
       },
       search: {
-        title: '検索',
-        description: 'メッセージ、ファイル、コードスニペットを瞬時に検索',
+        title: 'メッセージ検索',
+        description: '会話履歴全体からメッセージやトピックを検索。',
       },
       mcp: {
         title: 'MCP',
@@ -433,12 +318,24 @@ export const ja: UIStrings = {
         title: '認証',
         description: 'OAuth、SAML、LDAP、二要素認証に対応したエンタープライズ向け SSO',
       },
+      projects: {
+        title: 'プロジェクト',
+        description: '関連する会話を個人用のプロジェクトワークスペースに整理。',
+      },
+      skills: {
+        title: 'スキル',
+        description: '再利用可能な指示、参考資料、ワークフローをエージェントに提供。',
+      },
+      subagents: {
+        title: 'サブエージェント',
+        description: '独自のコンテキストを持つ専門エージェントに、特定のタスクを委任。',
+      },
     },
     learnMore: '詳しく見る',
     communityHeading: 'オープンソース、コミュニティ主導',
     communitySubtitle: 'LibreChat で構築する何千もの開発者や組織に参加しましょう',
     githubStars: 'GitHub スター',
-    dockerPulls: 'Docker プル',
+    dockerPulls: 'コンテナのダウンロード数',
     contributors: '貢献者',
     communityLinksAria: 'コミュニティリンク',
     githubAria: 'GitHub の LibreChat',

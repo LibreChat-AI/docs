@@ -1,5 +1,6 @@
 import 'server-only'
 
+import { submitFeedback } from '@/app/actions/feedback'
 import { ArchivedVersionBanner } from '@/components/ArchivedVersionBanner'
 import { DocsHub } from '@/components/DocsHub'
 import { FeaturesHub } from '@/components/FeaturesHub'
@@ -154,7 +155,7 @@ export async function renderDocsPage(params: DocsRouteParams) {
         )}
         <MDX components={components} />
       </DocsBody>
-      <Feedback lang={params.lang} />
+      <Feedback lang={params.lang} onSubmit={submitFeedback} />
     </DocsPage>
   )
 }

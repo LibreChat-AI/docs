@@ -16,7 +16,7 @@ Before you begin, ensure you have:
 
 ## Setup
 
-Choose either an in-app connection or environment-managed credentials for a single-tenant deployment. Complete environment credentials take precedence.
+Choose either an in-app connection or environment-managed credentials for a single-tenant deployment. Complete environment credentials take precedence for connection editing. Prompt settings can remain available independently when the deployment offers prompt sync.
 
 ### In-App Connection
 
@@ -62,6 +62,12 @@ Add the following values to your `.env` file when deployment operators should ow
       'number',
       'Deterministic trace-level sample rate from 0 to 1. Default: 1.',
       'LANGFUSE_SAMPLE_RATE=1',
+    ],
+    [
+      'LANGFUSE_TRACING_ENVIRONMENT',
+      'string',
+      'Optional Langfuse environment name attached to feedback scores, so they match the environment of their traces. When unset, scores are sent without an environment.',
+      'LANGFUSE_TRACING_ENVIRONMENT=production',
     ],
   ]}
 />
@@ -293,7 +299,7 @@ docker compose up -d
 
 ### Conversation Trace Viewer
 
-Enable `interface.traceViewer.enabled: true` in `librechat.yaml` to let users inspect a sampled
+Enable [`interface.traceViewer.enabled: true`](/docs/configuration/librechat_yaml/object_structure/interface#traceviewer) in `librechat.yaml` to let users inspect a sampled
 Langfuse trace for their own conversation as a model-and-tool waterfall. It requires a Langfuse
 release with the v2 Observations API. The viewer does not appear for another user's conversation,
 unsampled traces, or traces whose user identity does not use LibreChat's internal user ID.
@@ -321,3 +327,89 @@ Feedback scores include message context metadata when available, including the m
 Feedback scores are only produced when the feedback buttons are available. Setting [`interface.feedback`](/docs/configuration/librechat_yaml/object_structure/interface#feedback) to `false` hides the buttons and rejects feedback writes, so no scores reach Langfuse.
 
 Feedback scores use the same Langfuse credentials and base URL as tracing. They also respect `LANGFUSE_TRACING_ENABLED=false`, `LANGFUSE_SAMPLE_RATE=0`, and `LANGFUSE_TRACING_ENVIRONMENT`. Score delivery is best-effort, so the feedback UI does not block if Langfuse is temporarily unavailable.
+
+## Prompt Catalog
+
+Sync makes Langfuse **text prompts** available in LibreChat's prompt library. It adds read-only references; the prompt content stays in Langfuse.
+
+![Two separate flows: catalog sync adds read-only references to LibreChat; using a prompt fetches its Production or pinned version from Langfuse, then supplies the text to the chat or agent.](/images/features/prompts/catalog-flow.svg)
+
+### Enable prompt sync
+
+<Steps>
+  <Step>Set `LANGFUSE_PROMPT_SYNC_AVAILABLE=true` on the LibreChat server.</Step>
+  <Step>Configure the Langfuse project that contains your prompts.</Step>
+  <Step>Enable prompt sync in **Settings → Langfuse**, then start synchronization.</Step>
+</Steps>
+
+The settings require admin access and Langfuse configuration management. Starting sync also requires `manage:prompts`.
+
+Prompt access does not require tracing.
+
+### Use synced prompts
+
+Choose a prompt from the library or `/` menu to fetch its **Production** or selected version from Langfuse. Agents can also [use a synced prompt as instructions](#prompts-as-agent-instructions).
+
+Edit content, manage versions, and delete prompts in **Langfuse**. Chat-type prompts are not supported.
+
+<Accordions type="single" collapsible>
+  <Accordion title="Advanced connection settings">
+
+    LibreChat can use the Langfuse credentials set on the server or a connection saved in **Settings → Langfuse**. Server credentials prevent connection editing but do not hide available prompt settings.
+
+    For deployments configured with tenant isolation, each tenant must have its own stored Langfuse connection.
+  </Accordion>
+  <Accordion title="What sync stores and what happens when prompts change">
+    Each library entry stores `source: langfuse`, `sourceDestination`, `sourceProjectId`, and `sourcePromptName`. Content remains in Langfuse.
+
+    Sync only adds entries. It does not update or delete existing groups. Deleting a prompt in Langfuse leaves its library entry in place, but that entry can no longer resolve.
+
+    Changing the stored source identity returns `source_changed`; it does not redirect the entry to another source. Editing or deleting an external group or revision, or changing Production in LibreChat, returns `read_only`. Make these changes in Langfuse.
+  </Accordion>
+  <Accordion title="Sync limits and incomplete results">
+    A sync that reaches its page cap is incomplete. Repeating it with the same cap starts again at page 1. Increase `langfuse.promptSync.maxPages` to include later pages.
+
+    `LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` limits each upstream request. The default is `10000` ms; the allowed range is `1000`–`60000` ms. See [sync limits](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization) for more settings.
+  </Accordion>
+</Accordions>
+
+### Prompts as Agent Instructions
+
+Linking a synced Langfuse prompt group as an agent's instructions requires the prompt catalog above and the [`endpoints.agents.linkedInstructions.langfuse.enabled`](/docs/configuration/librechat_yaml/object_structure/agents#linkedinstructions) switch, which defaults to `false`:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    linkedInstructions:
+      langfuse:
+        enabled: true
+```
+
+Use the [Agent Builder](/docs/features/prompts#use-a-prompt-as-agent-instructions) to select the prompt and its version. Catalog sync must stay enabled for saved links to resolve.
+
+#### Disable or re-enable linking
+
+| Switch | Save behavior | Run behavior |
+| --- | --- | --- |
+| `false` (default) | New or changed Langfuse links are rejected. Unchanged links, removal, and switching to inline instructions remain editable. | Saved links are retained but unused. Ordinary agents run with empty instructions, without falling back to inline text. |
+| `true` | Users with the required permissions can link synced text prompts. | Saved links resolve again after the server loads the configuration. No agent edit is needed. |
+
+When disabled, the Builder hides Langfuse prompts except for the agent's saved selection, which shows a disabled-link note. See [resolution failures](/docs/configuration/librechat_yaml/object_structure/agents#resolution-failures) for the memory-agent exception.
+
+#### Rollout and downgrade
+
+<Callout type="warning" title="Update every server before enabling linking">
+  Enable the switch only after every LibreChat server runs `v0.8.9-rc1` or later.
+  **Downgrading to an older build is not supported once Langfuse links exist.**
+  Disabling the switch is different from downgrading the server. A downgrade needs a separately reviewed migration.
+</Callout>
+
+During a mixed rollout, older servers can behave differently:
+
+| Older server | Result |
+| --- | --- |
+| Does not support Langfuse links | Rejects a save with a Langfuse link with `400`. At run time, it uses the stored inline instructions. |
+| Does not support prompt links at all (`v0.8.8` and earlier) | Saves the agent but drops the link. |
+| Does not have the revisions route | Returns `404` for the Builder's version list, for both native and Langfuse prompts. |
+
+Keep linking disabled until the rollout is complete. To disable the feature on a supported build, set the switch to `false`; saved links remain available for re-enabling.

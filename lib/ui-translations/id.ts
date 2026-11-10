@@ -118,7 +118,7 @@ export const id: UIStrings = {
           'Jalankan npm run backend',
           'Buka localhost:3080 dan daftar',
         ],
-        prereqs: ['Node.js v24.16.0', 'Instance MongoDB'],
+        prereqs: ['Node.js v24.22.1', 'Instance MongoDB'],
       },
       railway: {
         tag: 'Sekali klik',
@@ -147,123 +147,6 @@ export const id: UIStrings = {
   featuresHub: {
     ariaLabel: 'Navigasi fitur',
     featuredHeading: 'Unggulan',
-    coreFeaturesHeading: 'Fitur inti',
-    hero: {
-      title: 'Model Context Protocol',
-      description:
-        'Hubungkan model AI ke alat atau layanan eksternal apa pun melalui MCP — standar terbuka untuk integrasi alat AI',
-    },
-    highlights: {
-      agents: {
-        title: 'Agen',
-        description:
-          'Buat asisten AI kustom dengan alat, penanganan file, eksekusi kode, dan aksi API — tanpa perlu coding.',
-      },
-      codeInterpreter: {
-        title: 'Code Interpreter',
-        description:
-          'Jalankan Python, JavaScript, Go, Rust, dan lainnya — aman dalam sandbox tanpa pengaturan.',
-      },
-      artifacts: {
-        title: 'Artefak',
-        description:
-          'Buat komponen React, halaman HTML, dan diagram Mermaid langsung di dalam chat.',
-      },
-      memory: {
-        title: 'Memori',
-        description: 'Konteks persisten antar percakapan agar AI mengingat preferensi dan riwayat.',
-      },
-      webSearch: {
-        title: 'Pencarian web',
-        description:
-          'Beri model apa pun akses internet langsung dengan pencarian dan reranking bawaan.',
-      },
-      authentication: {
-        title: 'Autentikasi',
-        description: 'SSO siap perusahaan dengan OAuth2, SAML, LDAP, dan autentikasi dua faktor.',
-      },
-    },
-    categories: {
-      searchKnowledge: {
-        title: 'Pencarian dan pengetahuan',
-        items: {
-          webSearch: {
-            title: 'Pencarian web',
-            description: 'Akses internet langsung dengan pencarian dan reranking bawaan',
-          },
-          search: {
-            title: 'Pencarian',
-            description: 'Temukan pesan dan percakapan dengan Meilisearch',
-          },
-          ragApi: {
-            title: 'RAG API',
-            description: 'Chat dengan file menggunakan retrieval-augmented generation',
-          },
-          memory: { title: 'Memori', description: 'Konteks persisten antar percakapan' },
-          ocr: { title: 'OCR', description: 'Ekstrak teks dari gambar dan dokumen' },
-        },
-      },
-      media: {
-        title: 'Media',
-        items: {
-          imageGen: {
-            title: 'Pembuatan gambar',
-            description: 'Buat gambar dengan GPT Image, Stable Diffusion, dan Flux',
-          },
-          uploadAsText: {
-            title: 'Unggah sebagai teks',
-            description: 'Unggah dan proses file sebagai input teks',
-          },
-        },
-      },
-      chat: {
-        title: 'Chat',
-        items: {
-          fork: { title: 'Fork', description: 'Pisahkan percakapan menjadi beberapa thread' },
-          importConvos: {
-            title: 'Impor percakapan',
-            description: 'Impor chat dari ChatGPT dan platform lain',
-          },
-          shareableLinks: {
-            title: 'Tautan yang dapat dibagikan',
-            description: 'Bagikan percakapan melalui tautan publik',
-          },
-          temporaryChat: {
-            title: 'Chat sementara',
-            description: 'Percakapan privat yang tidak disimpan ke riwayat',
-          },
-          urlQuery: {
-            title: 'Parameter query URL',
-            description: 'Konfigurasi chat secara dinamis melalui URL',
-          },
-          resumableStreams: {
-            title: 'Stream yang dapat dilanjutkan',
-            description: 'Sambung ulang otomatis dan lanjutkan respons yang terputus',
-          },
-        },
-      },
-      security: {
-        title: 'Keamanan',
-        items: {
-          authentication: {
-            title: 'Autentikasi',
-            description: 'Autentikasi multi-pengguna dengan OAuth2, SAML, LDAP, dan lainnya',
-          },
-          adminPanel: {
-            title: 'Panel admin',
-            description: 'UI browser untuk pengguna, peran, dan override konfigurasi',
-          },
-          passwordReset: {
-            title: 'Reset kata sandi',
-            description: 'Pemulihan kata sandi berbasis email',
-          },
-          moderation: {
-            title: 'Sistem moderasi',
-            description: 'Moderasi konten dan kontrol keamanan',
-          },
-        },
-      },
-    },
   },
   localInstallHub: {
     bundledHeading: 'Disertakan dengan Docker',
@@ -390,28 +273,30 @@ export const id: UIStrings = {
     mobileDarkAlt: 'Antarmuka mobile LibreChat dalam mode gelap',
     trustedBy: 'Dipercaya oleh perusahaan di seluruh dunia',
     featuresHeading: 'Semua yang Anda butuhkan',
-    featuresSubtitle: 'Platform lengkap untuk percakapan bertenaga AI',
+    featuresSubtitle:
+      'Dari pertanyaan sehari-hari hingga proyek ambisius, semua dalam satu ruang kerja.',
     primaryActionsAria: 'Aksi utama',
     features: {
       agents: {
         title: 'Agen',
-        description: 'Agen lanjutan dengan penanganan file, interpretasi kode, dan aksi API',
+        description:
+          'Buat agen khusus dengan file, alat, keterampilan yang dapat digunakan kembali, dan subtugas yang didelegasikan.',
       },
       codeInterpreter: {
         title: 'Code Interpreter',
-        description: 'Jalankan kode dalam berbagai bahasa dengan aman tanpa pengaturan',
+        description: 'Jalankan kode dalam berbagai bahasa di lingkungan terisolasi',
       },
       models: {
         title: 'Model',
-        description: 'Pilihan model AI termasuk Anthropic, AWS, OpenAI, Azure, dan lainnya',
+        description: 'Satukan penyedia AI terkemuka dan model lokal dalam satu ruang kerja.',
       },
       artifacts: {
         title: 'Artefak',
-        description: 'Buat kode React, HTML, dan diagram Mermaid di chat',
+        description: 'Ubah percakapan menjadi aplikasi interaktif, diagram, dan dokumen.',
       },
       search: {
-        title: 'Pencarian',
-        description: 'Cari pesan, file, dan potongan kode seketika',
+        title: 'Pencarian Pesan',
+        description: 'Temukan pesan dan topik di seluruh riwayat percakapan Anda.',
       },
       mcp: {
         title: 'MCP',
@@ -431,13 +316,26 @@ export const id: UIStrings = {
         title: 'Autentikasi',
         description: 'SSO siap perusahaan dengan OAuth, SAML, LDAP, dan autentikasi dua faktor',
       },
+      projects: {
+        title: 'Proyek',
+        description: 'Atur percakapan terkait dalam ruang kerja proyek pribadi.',
+      },
+      skills: {
+        title: 'Keterampilan',
+        description:
+          'Bekali agen dengan instruksi, referensi, dan alur kerja yang dapat digunakan kembali.',
+      },
+      subagents: {
+        title: 'Subagen',
+        description: 'Delegasikan tugas terarah kepada agen khusus dengan konteksnya sendiri.',
+      },
     },
     learnMore: 'Pelajari lebih lanjut',
     communityHeading: 'Open source, digerakkan komunitas',
     communitySubtitle:
       'Bergabunglah dengan ribuan pengembang dan organisasi yang membangun dengan LibreChat',
     githubStars: 'Bintang GitHub',
-    dockerPulls: 'Tarikan Docker',
+    dockerPulls: 'Unduhan Kontainer',
     contributors: 'Kontributor',
     communityLinksAria: 'Tautan komunitas',
     githubAria: 'LibreChat di GitHub',

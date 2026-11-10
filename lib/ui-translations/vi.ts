@@ -117,7 +117,7 @@ export const vi: UIStrings = {
           'Chạy npm run backend',
           'Mở localhost:3080 và đăng ký',
         ],
-        prereqs: ['Node.js v24.16.0', 'Phiên bản MongoDB'],
+        prereqs: ['Node.js v24.22.1', 'Phiên bản MongoDB'],
       },
       railway: {
         tag: 'Một cú nhấp',
@@ -145,123 +145,6 @@ export const vi: UIStrings = {
   featuresHub: {
     ariaLabel: 'Điều hướng tính năng',
     featuredHeading: 'Nổi bật',
-    coreFeaturesHeading: 'Tính năng cốt lõi',
-    hero: {
-      title: 'Model Context Protocol',
-      description:
-        'Kết nối mô hình AI với bất kỳ công cụ hoặc dịch vụ bên ngoài nào qua MCP — tiêu chuẩn mở cho tích hợp công cụ AI',
-    },
-    highlights: {
-      agents: {
-        title: 'Tác nhân',
-        description:
-          'Tạo trợ lý AI tùy chỉnh với công cụ, xử lý tệp, thực thi mã và hành động API — không cần lập trình.',
-      },
-      codeInterpreter: {
-        title: 'Code Interpreter',
-        description:
-          'Chạy Python, JavaScript, Go, Rust và hơn thế nữa — an toàn trong sandbox và không cần thiết lập.',
-      },
-      artifacts: {
-        title: 'Artifact',
-        description: 'Tạo component React, trang HTML và sơ đồ Mermaid trực tiếp trong chat.',
-      },
-      memory: {
-        title: 'Bộ nhớ',
-        description:
-          'Ngữ cảnh bền vững giữa các cuộc trò chuyện để AI ghi nhớ tùy chọn và lịch sử.',
-      },
-      webSearch: {
-        title: 'Tìm kiếm web',
-        description:
-          'Cho bất kỳ mô hình nào truy cập internet trực tiếp với tìm kiếm và reranking tích hợp.',
-      },
-      authentication: {
-        title: 'Xác thực',
-        description: 'SSO sẵn sàng cho doanh nghiệp với OAuth2, SAML, LDAP và xác thực hai yếu tố.',
-      },
-    },
-    categories: {
-      searchKnowledge: {
-        title: 'Tìm kiếm và tri thức',
-        items: {
-          webSearch: {
-            title: 'Tìm kiếm web',
-            description: 'Truy cập internet trực tiếp với tìm kiếm và reranking tích hợp',
-          },
-          search: {
-            title: 'Tìm kiếm',
-            description: 'Tìm tin nhắn và cuộc trò chuyện bằng Meilisearch',
-          },
-          ragApi: {
-            title: 'RAG API',
-            description: 'Chat với tệp bằng retrieval-augmented generation',
-          },
-          memory: { title: 'Bộ nhớ', description: 'Ngữ cảnh bền vững giữa các cuộc trò chuyện' },
-          ocr: { title: 'OCR', description: 'Trích xuất văn bản từ hình ảnh và tài liệu' },
-        },
-      },
-      media: {
-        title: 'Đa phương tiện',
-        items: {
-          imageGen: {
-            title: 'Tạo ảnh',
-            description: 'Tạo ảnh với GPT Image, Stable Diffusion và Flux',
-          },
-          uploadAsText: {
-            title: 'Tải lên dưới dạng văn bản',
-            description: 'Tải lên và xử lý tệp làm đầu vào văn bản',
-          },
-        },
-      },
-      chat: {
-        title: 'Chat',
-        items: {
-          fork: { title: 'Fork', description: 'Tách cuộc trò chuyện thành nhiều luồng' },
-          importConvos: {
-            title: 'Nhập cuộc trò chuyện',
-            description: 'Nhập chat từ ChatGPT và các nền tảng khác',
-          },
-          shareableLinks: {
-            title: 'Liên kết chia sẻ',
-            description: 'Chia sẻ cuộc trò chuyện qua liên kết công khai',
-          },
-          temporaryChat: {
-            title: 'Chat tạm thời',
-            description: 'Cuộc trò chuyện riêng tư không được lưu vào lịch sử',
-          },
-          urlQuery: {
-            title: 'Tham số truy vấn URL',
-            description: 'Cấu hình chat động qua URL',
-          },
-          resumableStreams: {
-            title: 'Luồng có thể tiếp tục',
-            description: 'Tự động kết nối lại và tiếp tục phản hồi bị gián đoạn',
-          },
-        },
-      },
-      security: {
-        title: 'Bảo mật',
-        items: {
-          authentication: {
-            title: 'Xác thực',
-            description: 'Xác thực nhiều người dùng với OAuth2, SAML, LDAP và hơn thế nữa',
-          },
-          adminPanel: {
-            title: 'Bảng quản trị',
-            description: 'UI trình duyệt cho người dùng, vai trò và ghi đè cấu hình',
-          },
-          passwordReset: {
-            title: 'Đặt lại mật khẩu',
-            description: 'Khôi phục mật khẩu qua email',
-          },
-          moderation: {
-            title: 'Hệ thống kiểm duyệt',
-            description: 'Kiểm duyệt nội dung và kiểm soát an toàn',
-          },
-        },
-      },
-    },
   },
   localInstallHub: {
     bundledHeading: 'Đi kèm với Docker',
@@ -388,28 +271,31 @@ export const vi: UIStrings = {
     mobileDarkAlt: 'Giao diện mobile LibreChat ở chế độ tối',
     trustedBy: 'Được các công ty trên toàn thế giới tin dùng',
     featuresHeading: 'Mọi thứ bạn cần',
-    featuresSubtitle: 'Một nền tảng toàn diện cho các cuộc trò chuyện dùng AI',
+    featuresSubtitle:
+      'Từ câu hỏi hằng ngày đến dự án đầy tham vọng, tất cả trong một không gian làm việc.',
     primaryActionsAria: 'Hành động chính',
     features: {
       agents: {
         title: 'Tác nhân',
-        description: 'Tác nhân nâng cao với xử lý tệp, diễn giải mã và hành động API',
+        description:
+          'Tạo tác nhân chuyên biệt với tệp, công cụ, kỹ năng tái sử dụng và các nhiệm vụ con được giao.',
       },
       codeInterpreter: {
         title: 'Code Interpreter',
-        description: 'Thực thi mã trong nhiều ngôn ngữ một cách an toàn, không cần thiết lập',
+        description: 'Thực thi mã bằng nhiều ngôn ngữ trong môi trường cô lập',
       },
       models: {
         title: 'Mô hình',
-        description: 'Lựa chọn mô hình AI gồm Anthropic, AWS, OpenAI, Azure và hơn thế nữa',
+        description:
+          'Kết hợp các nhà cung cấp AI hàng đầu và mô hình cục bộ trong một không gian làm việc.',
       },
       artifacts: {
         title: 'Artifact',
-        description: 'Tạo mã React, HTML và sơ đồ Mermaid trong chat',
+        description: 'Biến cuộc trò chuyện thành ứng dụng tương tác, sơ đồ và tài liệu.',
       },
       search: {
-        title: 'Tìm kiếm',
-        description: 'Tìm tin nhắn, tệp và đoạn mã ngay lập tức',
+        title: 'Tìm kiếm tin nhắn',
+        description: 'Tìm tin nhắn và chủ đề trong toàn bộ lịch sử trò chuyện.',
       },
       mcp: {
         title: 'MCP',
@@ -428,13 +314,26 @@ export const vi: UIStrings = {
         title: 'Xác thực',
         description: 'SSO sẵn sàng cho doanh nghiệp với OAuth, SAML, LDAP và xác thực hai yếu tố',
       },
+      projects: {
+        title: 'Dự án',
+        description: 'Sắp xếp các cuộc trò chuyện liên quan trong không gian dự án cá nhân.',
+      },
+      skills: {
+        title: 'Kỹ năng',
+        description:
+          'Cung cấp cho tác nhân các hướng dẫn, tài liệu tham khảo và quy trình có thể tái sử dụng.',
+      },
+      subagents: {
+        title: 'Tác nhân phụ',
+        description: 'Giao nhiệm vụ cụ thể cho các tác nhân chuyên biệt có ngữ cảnh riêng.',
+      },
     },
     learnMore: 'Tìm hiểu thêm',
     communityHeading: 'Open source, do cộng đồng dẫn dắt',
     communitySubtitle:
       'Tham gia cùng hàng nghìn nhà phát triển và tổ chức đang xây dựng với LibreChat',
     githubStars: 'Sao GitHub',
-    dockerPulls: 'Lượt kéo Docker',
+    dockerPulls: 'Lượt tải xuống container',
     contributors: 'Người đóng góp',
     communityLinksAria: 'Liên kết cộng đồng',
     githubAria: 'LibreChat trên GitHub',

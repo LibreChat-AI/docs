@@ -114,7 +114,7 @@ export const zh: UIStrings = {
           '运行 npm run backend',
           '打开 localhost:3080 并注册',
         ],
-        prereqs: ['Node.js v24.16.0', 'MongoDB 实例'],
+        prereqs: ['Node.js v24.22.1', 'MongoDB 实例'],
       },
       railway: {
         tag: '一键部署',
@@ -141,118 +141,6 @@ export const zh: UIStrings = {
   featuresHub: {
     ariaLabel: '功能导航',
     featuredHeading: '精选',
-    coreFeaturesHeading: '核心功能',
-    hero: {
-      title: 'Model Context Protocol',
-      description: '通过 MCP——AI 工具集成的开放标准——将 AI 模型连接到任何外部工具或服务',
-    },
-    highlights: {
-      agents: {
-        title: '智能体',
-        description: '构建自定义 AI 助手，支持工具、文件处理、代码执行和 API 操作——无需编写代码。',
-      },
-      codeInterpreter: {
-        title: '代码解释器',
-        description: '执行 Python、JavaScript、Go、Rust 等代码——安全沙箱隔离，无需任何配置。',
-      },
-      artifacts: {
-        title: 'Artifacts',
-        description: '直接在聊天中生成 React 组件、HTML 页面和 Mermaid 图表。',
-      },
-      memory: {
-        title: '记忆',
-        description: '跨对话的持久上下文，让你的 AI 记住偏好与历史记录。',
-      },
-      webSearch: {
-        title: '网络搜索',
-        description: '通过内置搜索和重排序，为任何模型提供实时互联网访问能力。',
-      },
-      authentication: {
-        title: '身份认证',
-        description: '面向企业的 SSO，支持 OAuth2、SAML、LDAP 和双因素认证。',
-      },
-    },
-    categories: {
-      searchKnowledge: {
-        title: '搜索与知识',
-        items: {
-          webSearch: {
-            title: '网络搜索',
-            description: '通过内置搜索和重排序实现实时互联网访问',
-          },
-          search: {
-            title: '搜索',
-            description: '使用 Meilisearch 查找消息和对话',
-          },
-          ragApi: {
-            title: 'RAG API',
-            description: '使用检索增强生成与文件对话',
-          },
-          memory: { title: '记忆', description: '跨对话的持久上下文' },
-          ocr: { title: 'OCR', description: '从图像和文档中提取文本' },
-        },
-      },
-      media: {
-        title: '媒体',
-        items: {
-          imageGen: {
-            title: '图像生成',
-            description: '使用 GPT Image、Stable Diffusion 和 Flux 创建图像',
-          },
-          uploadAsText: {
-            title: '以文本形式上传',
-            description: '将文件作为文本输入进行上传和处理',
-          },
-        },
-      },
-      chat: {
-        title: '聊天',
-        items: {
-          fork: { title: '分叉', description: '将对话拆分为多个分支' },
-          importConvos: {
-            title: '导入对话',
-            description: '从 ChatGPT 和其他平台导入聊天记录',
-          },
-          shareableLinks: {
-            title: '可分享链接',
-            description: '通过公开链接分享对话',
-          },
-          temporaryChat: {
-            title: '临时聊天',
-            description: '不会保存到历史记录的私密对话',
-          },
-          urlQuery: {
-            title: 'URL 查询参数',
-            description: '通过 URL 动态配置聊天',
-          },
-          resumableStreams: {
-            title: '可恢复的流',
-            description: '自动重连并恢复中断的回复',
-          },
-        },
-      },
-      security: {
-        title: '安全',
-        items: {
-          authentication: {
-            title: '身份认证',
-            description: '支持 OAuth2、SAML、LDAP 等的多用户认证',
-          },
-          adminPanel: {
-            title: '管理面板',
-            description: '用于管理用户、角色和配置覆盖的网页界面',
-          },
-          passwordReset: {
-            title: '密码重置',
-            description: '基于邮件的密码找回',
-          },
-          moderation: {
-            title: '审核系统',
-            description: '内容审核与安全控制',
-          },
-        },
-      },
-    },
   },
   localInstallHub: {
     bundledHeading: 'Docker 内置组件',
@@ -375,28 +263,28 @@ export const zh: UIStrings = {
     mobileDarkAlt: '深色模式下的 LibreChat 移动端界面',
     trustedBy: '深受全球企业信赖',
     featuresHeading: '你所需要的一切',
-    featuresSubtitle: '一个面向 AI 驱动对话的综合性平台',
+    featuresSubtitle: '从日常问题到宏大项目，一个工作空间，满足多种需求。',
     primaryActionsAria: '主要操作',
     features: {
       agents: {
         title: '智能体',
-        description: '具备文件处理、代码解释和 API 操作能力的高级智能体',
+        description: '结合文件、工具、可复用技能和子任务委派，构建专业代理。',
       },
       codeInterpreter: {
         title: '代码解释器',
-        description: '安全地执行多种语言的代码，无需任何配置',
+        description: '在隔离环境中执行多种语言的代码',
       },
       models: {
         title: '模型',
-        description: '可选用 Anthropic、AWS、OpenAI、Azure 等多种 AI 模型',
+        description: '将主流 AI 服务商与本地模型汇聚于同一工作空间。',
       },
       artifacts: {
         title: 'Artifacts',
-        description: '在聊天中创建 React、HTML 代码和 Mermaid 图表',
+        description: '将对话转化为交互式应用、图表和文档。',
       },
       search: {
-        title: '搜索',
-        description: '即时搜索消息、文件和代码片段',
+        title: '消息搜索',
+        description: '在全部对话历史中查找消息和话题。',
       },
       mcp: {
         title: 'MCP',
@@ -414,12 +302,15 @@ export const zh: UIStrings = {
         title: '身份认证',
         description: '面向企业的 SSO，支持 OAuth、SAML、LDAP 和双因素认证',
       },
+      projects: { title: '项目', description: '在个人项目工作空间中整理相关对话。' },
+      skills: { title: '技能', description: '为代理提供可复用的指令、参考资料和工作流程。' },
+      subagents: { title: '子代理', description: '将特定任务委派给拥有独立上下文的专业代理。' },
     },
     learnMore: '了解更多',
     communityHeading: '开源，社区驱动',
     communitySubtitle: '加入数以千计的开发者和组织，一起用 LibreChat 进行构建',
     githubStars: 'GitHub 星标',
-    dockerPulls: 'Docker 拉取次数',
+    dockerPulls: '容器下载量',
     contributors: '贡献者',
     communityLinksAria: '社区链接',
     githubAria: 'GitHub 上的 LibreChat',

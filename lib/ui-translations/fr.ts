@@ -122,7 +122,7 @@ export const fr: UIStrings = {
           'Exécuter npm run backend',
           'Ouvrez localhost:3080 et inscrivez-vous',
         ],
-        prereqs: ['Node.js v24.16.0', 'Instance MongoDB'],
+        prereqs: ['Node.js v24.22.1', 'Instance MongoDB'],
       },
       railway: {
         tag: 'En un clic',
@@ -156,128 +156,6 @@ export const fr: UIStrings = {
   featuresHub: {
     ariaLabel: 'Navigation des fonctionnalités',
     featuredHeading: 'À la une',
-    coreFeaturesHeading: 'Fonctionnalités principales',
-    hero: {
-      title: 'Model Context Protocol',
-      description:
-        "Connectez des modèles IA à n'importe quel outil ou service externe via MCP — la norme ouverte pour l'intégration d'outils IA",
-    },
-    highlights: {
-      agents: {
-        title: 'Agents',
-        description:
-          'Créez des assistants IA personnalisés avec outils, gestion de fichiers, exécution de code et actions API — sans aucun code requis.',
-      },
-      codeInterpreter: {
-        title: 'Interpréteur de code',
-        description:
-          'Exécutez du Python, JavaScript, Go, Rust et plus encore — dans un bac à sable sécurisé, sans aucune configuration.',
-      },
-      artifacts: {
-        title: 'Artefacts',
-        description:
-          'Générez des composants React, des pages HTML et des diagrammes Mermaid directement dans le chat.',
-      },
-      memory: {
-        title: 'Mémoire',
-        description:
-          'Contexte persistant entre les conversations pour que votre IA se souvienne de vos préférences et de votre historique.',
-      },
-      webSearch: {
-        title: 'Recherche web',
-        description:
-          "Donnez à n'importe quel modèle un accès à Internet en temps réel grâce à la recherche et au reclassement intégrés.",
-      },
-      authentication: {
-        title: 'Authentification',
-        description:
-          "SSO prêt pour l'entreprise avec OAuth2, SAML, LDAP et authentification à deux facteurs.",
-      },
-    },
-    categories: {
-      searchKnowledge: {
-        title: 'Recherche et connaissances',
-        items: {
-          webSearch: {
-            title: 'Recherche web',
-            description: 'Accès à Internet en temps réel avec recherche et reclassement intégrés',
-          },
-          search: {
-            title: 'Recherche',
-            description: 'Trouvez des messages et des conversations avec Meilisearch',
-          },
-          ragApi: {
-            title: 'RAG API',
-            description:
-              'Discutez avec vos fichiers grâce à la génération augmentée par récupération',
-          },
-          memory: { title: 'Mémoire', description: 'Contexte persistant entre les conversations' },
-          ocr: { title: 'OCR', description: "Extrayez du texte à partir d'images et de documents" },
-        },
-      },
-      media: {
-        title: 'Médias',
-        items: {
-          imageGen: {
-            title: "Génération d'images",
-            description: 'Créez des images avec GPT Image, Stable Diffusion et Flux',
-          },
-          uploadAsText: {
-            title: 'Importer en tant que texte',
-            description: 'Importez et traitez des fichiers comme entrée textuelle',
-          },
-        },
-      },
-      chat: {
-        title: 'Chat',
-        items: {
-          fork: { title: 'Bifurquer', description: 'Divisez les conversations en plusieurs fils' },
-          importConvos: {
-            title: 'Importer des conversations',
-            description: "Importez des conversations depuis ChatGPT et d'autres plateformes",
-          },
-          shareableLinks: {
-            title: 'Liens partageables',
-            description: 'Partagez des conversations via des liens publics',
-          },
-          temporaryChat: {
-            title: 'Chat temporaire',
-            description: "Conversations privées qui ne sont pas enregistrées dans l'historique",
-          },
-          urlQuery: {
-            title: "Paramètres de requête d'URL",
-            description: 'Configurez les conversations dynamiquement via une URL',
-          },
-          resumableStreams: {
-            title: 'Flux reprenables',
-            description: 'Reconnexion automatique et reprise des réponses interrompues',
-          },
-        },
-      },
-      security: {
-        title: 'Sécurité',
-        items: {
-          authentication: {
-            title: 'Authentification',
-            description:
-              'Authentification multi-utilisateurs avec OAuth2, SAML, LDAP et plus encore',
-          },
-          adminPanel: {
-            title: 'Panneau d’administration',
-            description:
-              'Interface web pour les utilisateurs, les rôles et les remplacements de configuration',
-          },
-          passwordReset: {
-            title: 'Réinitialisation du mot de passe',
-            description: 'Récupération du mot de passe par e-mail',
-          },
-          moderation: {
-            title: 'Système de modération',
-            description: 'Modération du contenu et contrôles de sécurité',
-          },
-        },
-      },
-    },
   },
   localInstallHub: {
     bundledHeading: 'Inclus avec Docker',
@@ -407,31 +285,32 @@ export const fr: UIStrings = {
     mobileDarkAlt: 'Interface mobile de LibreChat en mode sombre',
     trustedBy: 'Approuvé par des entreprises du monde entier',
     featuresHeading: 'Tout ce dont vous avez besoin',
-    featuresSubtitle: "Une plateforme complète pour des conversations propulsées par l'IA",
+    featuresSubtitle:
+      'Des questions du quotidien aux projets ambitieux, tout dans un même espace de travail.',
     primaryActionsAria: 'Actions principales',
     features: {
       agents: {
         title: 'Agents',
         description:
-          'Agents avancés avec gestion de fichiers, interprétation de code et actions API',
+          'Créez des agents spécialisés avec vos fichiers, outils, compétences réutilisables et sous-tâches déléguées.',
       },
       codeInterpreter: {
         title: 'Interpréteur de code',
-        description:
-          'Exécutez du code dans plusieurs langages en toute sécurité, sans configuration',
+        description: 'Exécutez du code dans plusieurs langages dans un environnement isolé',
       },
       models: {
         title: 'Modèles',
         description:
-          'Sélection de modèles IA incluant Anthropic, AWS, OpenAI, Azure et plus encore',
+          'Réunissez les principaux fournisseurs d’IA et les modèles locaux dans un même espace de travail.',
       },
       artifacts: {
         title: 'Artefacts',
-        description: 'Créez du code React, HTML et des diagrammes Mermaid dans le chat',
+        description:
+          'Transformez vos conversations en applications interactives, diagrammes et documents.',
       },
       search: {
-        title: 'Recherche',
-        description: 'Recherchez des messages, des fichiers et des extraits de code en un instant',
+        title: 'Recherche de messages',
+        description: 'Retrouvez des messages et des sujets dans votre historique de conversations.',
       },
       mcp: {
         title: 'MCP',
@@ -453,13 +332,27 @@ export const fr: UIStrings = {
         description:
           "SSO prêt pour l'entreprise avec OAuth, SAML, LDAP et authentification à deux facteurs",
       },
+      projects: {
+        title: 'Projets',
+        description: 'Organisez les conversations liées dans des espaces de projet personnels.',
+      },
+      skills: {
+        title: 'Compétences',
+        description:
+          'Donnez aux agents des instructions, des références et des procédures réutilisables.',
+      },
+      subagents: {
+        title: 'Sous-agents',
+        description:
+          'Déléguez des tâches ciblées à des agents spécialisés disposant de leur propre contexte.',
+      },
     },
     learnMore: 'En savoir plus',
     communityHeading: 'Open source, porté par la communauté',
     communitySubtitle:
       "Rejoignez des milliers de développeurs et d'organisations qui construisent avec LibreChat",
     githubStars: 'Étoiles GitHub',
-    dockerPulls: 'Téléchargements Docker',
+    dockerPulls: 'Téléchargements de conteneurs',
     contributors: 'Contributeurs',
     communityLinksAria: 'Liens de la communauté',
     githubAria: 'LibreChat sur GitHub',

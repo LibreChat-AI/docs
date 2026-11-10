@@ -118,7 +118,7 @@ export const ko: UIStrings = {
           'npm run backend 실행',
           'localhost:3080을 열고 계정 등록',
         ],
-        prereqs: ['Node.js v24.16.0', 'MongoDB 인스턴스'],
+        prereqs: ['Node.js v24.22.1', 'MongoDB 인스턴스'],
       },
       railway: {
         tag: '원클릭',
@@ -145,121 +145,6 @@ export const ko: UIStrings = {
   featuresHub: {
     ariaLabel: '기능 탐색',
     featuredHeading: '추천',
-    coreFeaturesHeading: '핵심 기능',
-    hero: {
-      title: 'Model Context Protocol',
-      description:
-        'MCP를 통해 AI 모델을 외부 도구나 서비스에 연결합니다 — AI 도구 통합을 위한 개방형 표준',
-    },
-    highlights: {
-      agents: {
-        title: '에이전트',
-        description:
-          '도구, 파일 처리, 코드 실행, API 작업을 갖춘 사용자 지정 AI 어시스턴트를 코딩 없이 만듭니다.',
-      },
-      codeInterpreter: {
-        title: 'Code Interpreter',
-        description: 'Python, JavaScript, Go, Rust 등을 안전한 샌드박스에서 설정 없이 실행합니다.',
-      },
-      artifacts: {
-        title: '아티팩트',
-        description:
-          'React 컴포넌트, HTML 페이지, Mermaid 다이어그램을 채팅 안에서 바로 생성합니다.',
-      },
-      memory: {
-        title: '메모리',
-        description: '대화 간 지속 컨텍스트로 AI가 선호도와 기록을 기억합니다.',
-      },
-      webSearch: {
-        title: '웹 검색',
-        description: '내장 검색과 reranking으로 모든 모델에 실시간 인터넷 접근을 제공합니다.',
-      },
-      authentication: {
-        title: '인증',
-        description: 'OAuth2, SAML, LDAP 및 2단계 인증을 갖춘 기업용 SSO.',
-      },
-    },
-    categories: {
-      searchKnowledge: {
-        title: '검색 및 지식',
-        items: {
-          webSearch: {
-            title: '웹 검색',
-            description: '내장 검색과 reranking을 통한 실시간 인터넷 접근',
-          },
-          search: {
-            title: '검색',
-            description: 'Meilisearch로 메시지와 대화를 찾기',
-          },
-          ragApi: {
-            title: 'RAG API',
-            description: 'retrieval-augmented generation으로 파일과 채팅',
-          },
-          memory: { title: '메모리', description: '대화 간 지속 컨텍스트' },
-          ocr: { title: 'OCR', description: '이미지와 문서에서 텍스트 추출' },
-        },
-      },
-      media: {
-        title: '미디어',
-        items: {
-          imageGen: {
-            title: '이미지 생성',
-            description: 'GPT Image, Stable Diffusion, Flux로 이미지 생성',
-          },
-          uploadAsText: {
-            title: '텍스트로 업로드',
-            description: '파일을 텍스트 입력으로 업로드하고 처리',
-          },
-        },
-      },
-      chat: {
-        title: '채팅',
-        items: {
-          fork: { title: 'Fork', description: '대화를 여러 스레드로 분할' },
-          importConvos: {
-            title: '대화 가져오기',
-            description: 'ChatGPT 및 다른 플랫폼의 채팅 가져오기',
-          },
-          shareableLinks: {
-            title: '공유 가능한 링크',
-            description: '공개 링크로 대화 공유',
-          },
-          temporaryChat: {
-            title: '임시 채팅',
-            description: '기록에 저장되지 않는 비공개 대화',
-          },
-          urlQuery: {
-            title: 'URL 쿼리 매개변수',
-            description: 'URL을 통해 채팅을 동적으로 구성',
-          },
-          resumableStreams: {
-            title: '재개 가능한 스트림',
-            description: '자동 재연결 및 중단된 응답 재개',
-          },
-        },
-      },
-      security: {
-        title: '보안',
-        items: {
-          authentication: {
-            title: '인증',
-            description: 'OAuth2, SAML, LDAP 등을 사용한 다중 사용자 인증',
-          },
-          adminPanel: {
-            title: '관리자 패널',
-            description: '사용자, 역할, 구성 오버라이드를 위한 브라우저 UI',
-          },
-          passwordReset: {
-            title: '비밀번호 재설정',
-            description: '이메일 기반 비밀번호 복구',
-          },
-          moderation: {
-            title: '모더레이션 시스템',
-            description: '콘텐츠 모더레이션 및 안전 제어',
-          },
-        },
-      },
-    },
   },
   localInstallHub: {
     bundledHeading: 'Docker에 포함',
@@ -386,28 +271,29 @@ export const ko: UIStrings = {
     mobileDarkAlt: '다크 모드의 LibreChat 모바일 인터페이스',
     trustedBy: '전 세계 기업들이 신뢰합니다',
     featuresHeading: '필요한 모든 것',
-    featuresSubtitle: 'AI 기반 대화를 위한 종합 플랫폼',
+    featuresSubtitle: '일상적인 질문부터 큰 프로젝트까지, 하나의 작업 공간에서.',
     primaryActionsAria: '주요 작업',
     features: {
       agents: {
         title: '에이전트',
-        description: '파일 처리, 코드 해석, API 작업을 갖춘 고급 에이전트',
+        description:
+          '파일, 도구, 재사용 가능한 기술과 하위 작업 위임으로 전문 에이전트를 만드세요.',
       },
       codeInterpreter: {
         title: 'Code Interpreter',
-        description: '여러 언어의 코드를 안전하게 설정 없이 실행',
+        description: '격리된 환경에서 여러 언어의 코드 실행',
       },
       models: {
         title: '모델',
-        description: 'Anthropic, AWS, OpenAI, Azure 등을 포함한 AI 모델 선택',
+        description: '주요 AI 제공업체와 로컬 모델을 하나의 작업 공간에서 사용하세요.',
       },
       artifacts: {
         title: '아티팩트',
-        description: '채팅에서 React, HTML 코드와 Mermaid 다이어그램 생성',
+        description: '대화를 대화형 앱, 다이어그램, 문서로 바꾸세요.',
       },
       search: {
-        title: '검색',
-        description: '메시지, 파일, 코드 조각을 즉시 검색',
+        title: '메시지 검색',
+        description: '전체 대화 기록에서 메시지와 주제를 찾으세요.',
       },
       mcp: {
         title: 'MCP',
@@ -425,12 +311,24 @@ export const ko: UIStrings = {
         title: '인증',
         description: 'OAuth, SAML, LDAP 및 2단계 인증을 갖춘 기업용 SSO',
       },
+      projects: {
+        title: '프로젝트',
+        description: '관련 대화를 개인 프로젝트 작업 공간에 정리하세요.',
+      },
+      skills: {
+        title: '기술',
+        description: '에이전트에 재사용 가능한 지침, 참고 자료, 워크플로를 제공하세요.',
+      },
+      subagents: {
+        title: '하위 에이전트',
+        description: '독립적인 컨텍스트를 가진 전문 에이전트에 특정 작업을 위임하세요.',
+      },
     },
     learnMore: '자세히 알아보기',
     communityHeading: '오픈소스, 커뮤니티 중심',
     communitySubtitle: 'LibreChat으로 구축하는 수천 명의 개발자와 조직에 합류하세요',
     githubStars: 'GitHub 스타',
-    dockerPulls: 'Docker Pull',
+    dockerPulls: '컨테이너 다운로드',
     contributors: '기여자',
     communityLinksAria: '커뮤니티 링크',
     githubAria: 'GitHub의 LibreChat',

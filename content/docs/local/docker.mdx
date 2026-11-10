@@ -23,11 +23,11 @@ If you use Docker Desktop, it runs containers inside its own virtual machine, so
 
 If you connect LibreChat to models running on the same machine, such as [Ollama](/docs/configuration/librechat_yaml/ai_endpoints/ollama), size the hardware for the model you choose. That model runtime needs far more memory, and often a GPU, than LibreChat does.
 
-<Callout type="warn" title="Apple Silicon (M-series) Macs">
+<Callout type="warn" title="CPUs without AVX support">
 
-Mac computers with Apple Silicon (M1, M2, M3, M4) processors do not support AVX instructions, which are required by the default MongoDB image used in LibreChat's Docker Compose setup. If you're on an M-series Mac, MongoDB will crash on startup.
+The MongoDB image used by LibreChat's default Docker Compose setup requires a CPU with AVX instructions. On older x86 CPUs without AVX (and on some virtual machines that do not expose AVX to the guest), MongoDB crashes on startup.
 
-**Fix:** Create a `docker-compose.override.yml` to use an older, compatible MongoDB image:
+**Fix:** Create a `docker-compose.override.yml` to use an older MongoDB image that does not require AVX:
 
 ```yaml filename="docker-compose.override.yml"
 services:
@@ -88,11 +88,11 @@ Open your browser and visit [http://localhost:3080](http://localhost:3080). You 
 
 <Callout type="info" title="First Account = Admin in Single-Tenant Deployments">
 
-In an unscoped single-tenant deployment, the first account you register becomes the admin account. There are no default credentials -- you create your own username and password during registration. Tenant-scoped deployments do not auto-promote the first user in each tenant; provision tenant administrators through a trusted administrative flow.
+In an unscoped single-tenant deployment, the first account you register becomes the admin account. There are no default credentials; you create your own username and password during registration. Tenant-scoped deployments do not auto-promote the first user in each tenant; provision tenant administrators through a trusted administrative flow.
 
 </Callout>
 
-Click **Register** to create your account, then follow [Your First Chat](/docs/quick_start/first_chat) to add a model API key and send your first message.
+Click **Sign up** to create your account, then follow [Your First Chat](/docs/quick_start/first_chat) to add a model API key and send your first message.
 
   </Step>
 </Steps>
@@ -136,6 +136,12 @@ You may need to prefix commands with `sudo` according to your environment permis
 
 </Callout>
 
+<Callout type="info" title="Update script">
+
+The repository's `npm run update:docker` script rebuilds locally built images but does not pull the prebuilt images that the default `docker-compose.yml` uses, so follow the manual steps below to update a default install.
+
+</Callout>
+
 ```bash filename="Stop the running container(s)"
 docker compose down
 ```
@@ -167,16 +173,24 @@ docker compose up
 
 If you see an error like `bind: address already in use` for port 3080, another application is using that port.
 
-Either stop the conflicting application, or change the port in `docker-compose.override.yml`:
+Either stop the conflicting application, or change the port LibreChat uses. The default `docker-compose.yml` publishes `"${PORT}:${PORT}"`, and ports added in an override file are appended to that list instead of replacing it, so an override alone does not free port 3080.
+
+The simplest fix is to set `PORT` in your `.env` file, which changes both the port LibreChat listens on and the published port:
+
+```bash filename=".env"
+PORT=3081
+```
+
+Alternatively, with Docker Compose 2.24.4 or later, replace the published port in `docker-compose.override.yml` with the `!override` tag (the container keeps listening on 3080):
 
 ```yaml filename="docker-compose.override.yml"
 services:
   api:
-    ports:
+    ports: !override
       - "3081:3080"
 ```
 
-Then visit `http://localhost:3081` instead.
+Restart with `docker compose down && docker compose up -d`, then visit `http://localhost:3081` instead.
 
 ### Container Crashes on Startup
 
@@ -188,7 +202,7 @@ docker compose logs api
 
 Common causes:
 
-- Invalid `librechat.yaml` syntax -- validate with the [YAML Validator](/toolkit/yaml_checker)
+- Invalid `librechat.yaml` syntax: validate with the [YAML Validator](/toolkit/yaml_checker)
 - Missing `.env` file -- ensure `.env` exists in the project root
 - Docker not running -- ensure Docker Desktop is open and running
 

@@ -45,7 +45,7 @@ test.describe('Quick Start install steps', () => {
     }
 
     // The npm card must match the Node.js version the npm guide pins.
-    await expect(body(page).getByText('Node.js v24.16.0', { exact: true })).toBeVisible()
+    await expect(body(page).getByText('Node.js v24.22.1', { exact: true })).toBeVisible()
     await expect(body(page).getByText('Node.js v20.19+')).toHaveCount(0)
   })
 
@@ -60,7 +60,7 @@ test.describe('Quick Start install steps', () => {
         expect(steps, `${locale} ${method}`).toHaveLength(4)
         expect(steps[3].trim(), `${locale} ${method}`).toBe(step)
       }
-      await expect(body(page).getByText('Node.js v24.16.0', { exact: true })).toBeVisible()
+      await expect(body(page).getByText('Node.js v24.22.1', { exact: true })).toBeVisible()
     }
   })
 

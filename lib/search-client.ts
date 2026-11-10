@@ -1,6 +1,7 @@
-import { create, type AnyOrama } from '@orama/orama'
-import { oramaStaticClient } from 'fumadocs-core/search/client/orama-static'
+import { create, load, type AnyOrama } from '@orama/orama'
+import type { SearchClient } from 'fumadocs-core/search/client'
 import { SEARCH_LANGUAGE_BY_LOCALE } from '@/lib/search-languages'
+import { searchRanked } from '@/lib/search-ranking'
 
 /**
  * Build the same locale-specific tokenizer used by the static search route.
@@ -37,10 +38,39 @@ export async function initOrama(locale?: string): Promise<AnyOrama> {
   })
 }
 
-export function createDocsSearchClient(locale: string) {
-  return oramaStaticClient({
-    from: `/api/search/${encodeURIComponent(locale)}`,
-    initOrama,
-    locale,
-  })
+// One download per locale per page load, shared by every client. A failed
+// download is evicted so the next query can retry.
+const dbCache = new Map<string, Promise<AnyOrama | undefined>>()
+
+function getLocaleDB(locale: string): Promise<AnyOrama | undefined> {
+  let cached = dbCache.get(locale)
+  if (!cached) {
+    cached = (async () => {
+      const res = await fetch(`/api/search/${encodeURIComponent(locale)}`)
+      if (!res.ok) throw new Error(`failed to fetch search index for "${locale}": ${res.status}`)
+      const exported = (await res.json()) as { data: Record<string, unknown> }
+      const data = exported.data[locale]
+      if (!data) return undefined
+      const db = await initOrama(locale)
+      load(db, data as Parameters<typeof load>[1])
+      return db
+    })()
+    cached.catch(() => dbCache.delete(locale))
+    dbCache.set(locale, cached)
+  }
+  return cached
+}
+
+/**
+ * Static search over the per-locale index, ranked by page (see
+ * lib/search-ranking.ts) instead of fumadocs' per-fragment ordering.
+ */
+export function createDocsSearchClient(locale: string): SearchClient {
+  return {
+    deps: [locale],
+    async search(query) {
+      const db = await getLocaleDB(locale)
+      return db ? searchRanked(db, query) : []
+    },
+  }
 }
