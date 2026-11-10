@@ -31,11 +31,11 @@ endpoints:
 
 Both enablement settings default to `false`. Users need both Agent use and Remote Agents use permissions. Channel setup also requires Agent sharing permission or existing administrator management access; sharing access does not require permission to edit the Agent. Configure `DOMAIN_CLIENT` for trusted owner-review and account-link URLs. Configure a strong `CHANNEL_SERVICE_TOKEN` for the gateway-to-LibreChat service boundary; keep it server-side and distribute it only to a trusted integration process over a secure channel. It is not a browser token or a general Agent API key.
 
-The `transport` option accepts `socket_mode` (default) or `webhook`. This selects the generated Slack manifest; it does not deploy a receiver. Webhook manifests require an HTTPS `gatewayUrl` without credentials, a query, or a fragment. The gateway loads this policy from LibreChat before selecting ingress. `SLACK_TRANSPORT` is an optional deployment assertion; if supplied, it must match the server-selected mode. Missing or unsupported gateway policy prevents startup.
+The `transport` option accepts `socket_mode` (default) or `webhook`. Manual connections generate a matching Slack manifest; organization workspaces use the webhook setup below. Selecting a transport does not deploy a receiver. Webhook manifests require an HTTPS `gatewayUrl` without credentials, a query, or a fragment. The gateway loads this policy from LibreChat before selecting ingress. `SLACK_TRANSPORT` is an optional deployment assertion; if supplied, it must match the server-selected mode. Missing or unsupported gateway policy prevents startup.
 
 ### Database requirement
 
-Durable Channels and stored background Responses require MongoDB transactions. Use a MongoDB replica set or another verified transaction-capable deployment. Standalone MongoDB and FerretDB 2.7 can run ordinary LibreChat, but cannot enable this durable feature. Unsupported channel writes return `transactions_unavailable`; the Agent builder explains the setup requirement. Transactional reads use the primary even when the connection normally prefers secondary reads.
+Durable Channels and stored background Responses require MongoDB transactions. Use a MongoDB replica set or another verified transaction-capable deployment. Standalone MongoDB and FerretDB 2.7 can run ordinary LibreChat, but cannot enable this durable feature. Unsupported channel writes return `transactions_unavailable`; the Agent builder explains the setup requirement. Transactional reads use the primary even when the connection normally prefers secondary reads. The database must also support the required indexes, including partial indexes; transaction support by itself is not sufficient. [Amazon DocumentDB 4.0 lacks partial-index support](https://docs.aws.amazon.com/documentdb/latest/devguide/indexes-single-field.html) and cannot run this gateway. Other MongoDB-compatible engines need their own compatibility validation.
 
 API-key authentication must remain enabled for the gateway's bound execution credential. Linking does not grant Remote Agents permissions, Agent access, new tools or offline access to connected services.
 
@@ -77,33 +77,78 @@ No `CHANNEL_ID`, `CHANNEL_TENANT_ID` or app-level `SLACK_APP_TOKEN` is needed in
 
 ### Register an organization’s Slack app
 
-1. As an organization administrator, open **Settings → Account → Organization Slack workspaces → Add Slack app**. Create an app from scratch in Slack, or open an existing app your organization controls. Copy its app ID, client ID, client secret and signing secret from **Basic Information → App Credentials**, then save them in LibreChat. Credentials are write-only and encrypted; other members cannot read them back.
-2. Expand **Configure these URLs in your Slack app**. Apply the displayed manifest under Slack’s **App Manifest**, including its scopes and event subscriptions. Turn Socket Mode off and configure the displayed OAuth redirect, Events API and Interactivity URLs. Copy the exact URLs: event and interaction callbacks contain your organization and app IDs. Saving the app first lets Slack verify the event URL before workspace installation. If Slack reports that the manifest’s event URL is not verified, choose **Click here to verify**, wait for verification to succeed, and finish saving the Slack settings.
-3. Keep token rotation and organization-wide installation disabled. Workspace bot grants, including individual workspaces in Enterprise Grid, are supported. To install into other workspaces, complete Slack’s [distribution setup](https://docs.slack.dev/app-management/distribution/). Slack workspace approval policies still apply.
-4. Each organization may register multiple apps and install each app into multiple workspaces. Use **Replace credentials** after a Slack credential rotation. A stale edit or pending authorization cannot overwrite a newer registration; refresh before retrying a conflicted edit.
+Complete [operator setup](#one-time-operator-setup) first. The gateway must be running and reachable over public HTTPS before Slack can verify its callback. A Slack app is the bot's identity and credentials; its workspace installation is the grant that lets it operate in a particular Slack workspace. LibreChat supports **one active workspace per registered app**. Use separate Slack apps for additional workspaces.
+
+1. Open [Your Apps](https://api.slack.com/apps) in Slack and create an app from scratch (**Pick features** in the current dashboard, or **Blank app** in Slack’s quickstart). Give it a name and select the workspace where you will manage it. You can instead use an existing app your organization controls. Do not install it yet; finish its settings below first.
+2. In LibreChat, open **Settings → Account → Slack → Set up** (or **Manage**), then **Add Slack app**. Copy **App ID**, **Client ID**, **Client Secret**, and **Signing Secret** from that app's **Basic Information → App Credentials**. The optional **Name** identifies the app in LibreChat; it does not rename the bot in Slack. Save the registration. Secrets are encrypted and cannot be read back.
+3. Turn **Socket Mode off** in that Slack app before configuring HTTP callbacks. Expand the saved app in LibreChat and open the gear button, **Connection settings**. Configure all three copied URLs in that same Slack app:
+
+   | LibreChat value | Slack setting |
+   | --- | --- |
+   | OAuth redirect URL | **OAuth & Permissions → Redirect URLs**; add the URL and save |
+   | Events URL | **Event Subscriptions → Enable Events** on; paste into **Request URL** and wait for **Verified** |
+   | Interactivity URL | **Interactivity & Shortcuts → Interactivity** on; paste into **Request URL** and save |
+
+   Copy the exact URLs, including application base paths and organization/app suffixes. Saving the credentials first lets the gateway authenticate Slack's verification request before installation. If verification fails, check the matching signing secret, public gateway address, and running gateway before continuing.
+4. Under **OAuth & Permissions → Bot Token Scopes**, add all seven scopes below. No user-token scopes are required:
+
+   ```text
+   app_mentions:read
+   chat:write
+   reactions:read
+   reactions:write
+   files:write
+   im:write
+   im:history
+   ```
+
+5. Under **Event Subscriptions → Subscribe to bot events**, add `app_mention`, `message.im`, `reaction_added`, `reaction_removed`, `app_uninstalled`, and `tokens_revoked`, then save. The last two require no additional OAuth scopes. The optional [native Agent sessions](#native-agent-ui-and-final-replies) setup additionally uses `agent_session_stopped`.
+6. Under **App Home**, enable the **Messages tab** and allow users to send messages from it so direct messages can reach the bot. Leave token rotation and organization-wide installation disabled. Workspace approval policies still apply.
+
+These are manual Slack settings; LibreChat's organization app screen does not generate a manifest or create the Slack app for you. See Slack's [app setup](https://docs.slack.dev/app-management/quickstart-app-settings/) and [interactive request setup](https://docs.slack.dev/interactivity/handling-user-interaction/) for its dashboard controls.
+
+Use the pencil button, **Edit App**, to change its friendly name or credentials later. Leaving a secret blank preserves its saved value; clearing **Name** removes the custom LibreChat name. Changing the client ID requires entering the corresponding client secret again. The saved app ID cannot be edited: register another app for a different ID. After adding Slack scopes to an installed app, reconnect it through LibreChat and approve the updated grant; changing app settings alone does not upgrade existing tokens. A conflicted edit requires refreshing the registration before retrying.
+
+The organization flow does **not** ask you to paste a bot token or an app-level token. A bot token beginning `xoxb-` is used only by [manual connection activation](#set-up-a-manual-slack-app-connection); an app-level token beginning `xapp-` is used only by the manual Socket Mode gateway. Neither is the client secret, signing secret, or `CHANNEL_SERVICE_TOKEN`.
 
 ### Connect and use a workspace
 
-1. Under the registered app, select **Connect a Slack workspace**. Approve installation in Slack. Cancel from LibreChat if you do not want to finish; closing Account settings retires an unfinished attempt.
-2. In **Organization Slack workspaces**, an administrator selects **Manage bot access** on the connected workspace and adds the LibreChat users who may manage that bot. Grants apply to this app/workspace installation; they do not grant Agent access, Slack credentials or installation-administration rights. Only administrators can change the manager list.
-3. As a bot manager, save an Agent you have permission to share, then open **Channels → Add → Organization workspace** and choose an available workspace. You still need permission to use Remote Agents. Only bots you can manage are offered; installation administrators can also assign agents.
-4. Choose **Default for this bot** for that bot’s new direct messages and mentions without a channel-specific assignment, or select **For a specific channel** and enter its Slack channel ID. These choices affect the selected Slack bot, not other bots in the workspace. If another connection is already assigned, a bot manager or administrator can select **Replace default agent** or **Replace channel agent**, review the confirmation dialog, then confirm. The dialog names the current Agent only when you can view it. Existing conversations keep their original Agent.
-5. Select **Assign agent** for an unassigned destination, invite the bot to the Slack channel and mention it, or send it a direct message. Each member follows **Link your account**, signs into LibreChat, accepts there, then confirms from the same Slack account. Requests use that member's current Agent and tool permissions; installation does not authorize tools or grant offline access to connected services.
+1. Under the registered app, select **Add to workspace** and approve installation in Slack. LibreChat shows a **Connecting to Slack…** dialog while this is pending. Use **Cancel** there to abandon the attempt, or **Retry** after a failure. On success, the dialog closes and the workspace appears as **Connected** below the app. Each app can have only one active workspace; reconnect that workspace to refresh its grant, or disconnect it before installing the app elsewhere.
+2. An administrator opens the workspace's users button, **Manage access**, and adds the LibreChat users allowed to assign agents through that bot. The dialog is titled **Manage bot access**. Without explicit managers, administrators can still assign agents. These grants do not grant Agent sharing permission, Slack credentials, or installation-administration rights, and are not required just to talk to the bot.
+3. Save an Agent you have permission to share. In the Agent builder's **Channels** section, select **Add Slack channel**, choose the **Slack bot**, then **Continue**. You need Remote Agents permission as well as permission to share the Agent. The picker offers only bots you can manage; installation administrators can also assign agents.
+4. Choose **Default** for new direct messages and mentions without a channel-specific assignment, or choose **Channel Specific** and enter the **Slack channel ID**. Find the ID in Slack's channel details; it is not the channel name. Select **Assign agent**. If already assigned, **Replace default agent** or **Replace channel agent** opens a confirmation. The current Agent is named only when you can view it. Existing conversations keep their original Agent.
+5. In Slack, invite the bot to your test channel, for example `/invite @YourBot`, then mention it with `@YourBot hello`. Installing the app alone does not add it to every channel. You can also send a direct message when the Messages tab is enabled.
+6. Follow the private **Link your account** prompt. Sign into the intended LibreChat account, inspect the request, and accept it in the browser. Return to Slack and mention the bot again if no confirmation prompt is present. Confirm the account from that **same Slack account**, then send a **fresh request** to the bot. The original request is not replayed automatically.
+
+A successful first response completes setup. Each person repeats the personal linking step and runs with their own current Agent permissions, tool credentials, and approvals. Sharing a Slack thread does not lend another participant's MCP connection or authority. To verify tool access, ask for a task using a tool that the linked account is permitted to use, and complete any required approval as that account.
+
+#### If the bot does not respond
+
+| Symptom | Check |
+| --- | --- |
+| Events URL will not verify, or Slack callbacks return `401` | Gateway is running and publicly reachable over HTTPS; URL matches the saved organization/app; **Signing Secret** belongs to that same Slack app. Check clock synchronization against the signature window. Do not disable signature checks. |
+| Gateway calls to LibreChat return `401` | API and gateway use the same private `CHANNEL_SERVICE_TOKEN`, and `LIBRECHAT_INTERNAL_URL` reaches the intended LibreChat instance. This is separate from Slack signature verification. |
+| Mention produces no response | Check gateway readiness and logs, **Socket Mode off**, **Events on** with the subscriptions above, bot invited to the channel, and an Agent assigned to this bot/destination. Confirm the sender's personal link is active. |
+| Confirmation, approval, or Stop buttons do nothing | **Interactivity** is on, its exact Request URL is saved, and the gateway is reachable. The Events URL does not substitute for the Interactivity URL. |
+| Link says **Awaiting confirmation** | Browser acceptance is incomplete until that same Slack account confirms in Slack. Mention again to obtain the prompt, confirm, then send a new request. |
+| Installation reports missing permissions after scopes changed | Add all required bot scopes, then reconnect through LibreChat and approve the updated grant. Existing installations do not receive new scopes automatically. |
+
+Use the same Compose project and overlays from operator setup when checking `ps` and `logs --tail=100 api channel-gateway`. A healthy application alone does not prove the separate gateway is ready. See [gateway readiness checks](#docker-compose).
 
 ### Disconnect and remove
 
-- Administrators revoke bot management under **Manage bot access**. Removed managers cannot create or change assignments, but can still remove assignments or delete their own Agent connection. Existing assignments and conversations keep running; management access is separate from permission to talk to the bot. Disconnecting a workspace clears its manager grants; a fresh installation requires new grants. Reauthorizing an active installation preserves managers.
+- Administrators revoke bot management through the workspace’s **Manage access** users button. Removed managers cannot create or change assignments, but can still remove assignments or delete their own Agent connection. Existing assignments and conversations keep running; management access is separate from permission to talk to the bot. Disconnecting a workspace clears its manager grants; a fresh installation requires new grants. Reauthorizing an active installation preserves managers.
 
-- **Agent Builder → Channels → Manage connection** lists current assignments. Select **Add assignment** to configure another destination, or **Remove** beside an assignment and confirm **Remove assignment** to stop using it for new conversations. Select **Delete connection** and confirm to remove the connection and all its assignments atomically; existing threads retain their original identity and cannot silently move to another Agent. Disabling a connection stops execution without replacing its routing choices.
-- **Settings → Account → Your channel account links** lets a member revoke their own identity link.
-- **Settings → Account → Organization Slack workspaces → Disconnect workspace** retires the installation's access in LibreChat. It does not uninstall the app in Slack. A later installation gets a fresh identity, so old connections do not resume automatically. Reconnect an active installation to update its grant; disconnect it first if you want to retire existing connections.
-- After disconnecting an app’s active workspaces, select **Remove app** and confirm to delete its saved app credentials. This does not delete the Slack app itself.
+- **Agent Builder → Channels → Manage connection** lists current assignments. When another destination is available, select **Add assignment** to configure it, or **Remove** beside an assignment and confirm **Remove assignment** to stop using it for new conversations. Select **Delete connection** and confirm to remove the connection and all its assignments atomically; existing threads retain their original identity and cannot silently move to another Agent. Disabling a connection stops execution without replacing its routing choices.
+- **Settings → Account → Your channel account links** shows personal links once any exist. Status pills distinguish **In progress**, **Awaiting confirmation**, **Active**, **Revoked**, **Expired**, and **Unavailable**. Select **Revoke link** and confirm to withdraw your own consent, including an unavailable link. Completed actions are not undone.
+- **Settings → Account → Slack → Manage**, then the workspace’s **Disconnect workspace** icon retires the installation's access in LibreChat. It does not uninstall the app in Slack. A later installation gets a fresh identity, so old connections do not resume automatically. Reconnect an active installation to update its grant; disconnect it first if you want to retire existing connections.
+- After disconnecting an app’s active workspace, use the app’s trash button, **Remove app**, and confirm to delete its saved app credentials. This does not delete the Slack app itself.
 - Removing the configuring person does not delete the organization's installation. Their personal links and credentials are cleaned up, and their Agent connections are retired through the normal channel cleanup.
 - To stop the optional service, run the same Compose file list and project with `stop channel-gateway`, or set `channelGateway.enabled: false` and remove the shared opt-in from Helm/API configuration. Ordinary LibreChat can continue. Database topology is independent: do not remove an external replica configuration or convert existing data merely to stop the gateway.
 
 ## Set up a manual Slack app connection
 
-1. Save the Agent, then select **Channels → Add** in the Agent builder. Choose per-user or owner-only mode and continue. You need permission to share the Agent.
+1. Save the Agent, then select **Channels → Add Slack channel** in the Agent builder. Choose per-user or owner-only mode and continue. You need permission to share the Agent.
 2. Copy the read-only Slack app manifest into Slack's app setup and install the app into your workspace. Make any app changes in Slack's app settings.
 3. Under **Add Credentials**, enter the matching Slack app ID and bot token. For webhooks, also enter its signing secret. Activate the connection. LibreChat verifies the bot identity and stores credentials encrypted; normal setup responses do not return those secrets.
 4. Copy the connection ID from the connection details. Configure and start the gateway as described below. It must be able to reach the active connection before startup can complete.
@@ -228,9 +273,9 @@ The process exposes `/livez` for HTTP-process liveness, `/readyz` and `/healthz`
 
 By default, a stable working message provides Stop and, when needed, Review controls. Answers are posted after generation, rather than repeatedly replacing a growing reply. Formatting includes code, tables, links, file attachments, and qualified cost/time details; unavailable costs are not estimated.
 
-To opt into Slack's native Agent sessions, enable Agent mode in the Slack app, add the `assistant:write` bot scope and `agent_session_stopped` event subscription, and reinstall the app. These are additional to the basic generated manifest. Then set `endpoints.agents.channels.nativeSessions: true` in `librechat.yaml`. Without the required permissions or Stop subscription, the gateway falls back to durable progress controls. See [Slack Agent sessions](https://docs.slack.dev/ai/agent-sessions/) for app configuration.
+To opt into Slack's native Agent sessions, enable Agent mode in the Slack app, add the `assistant:write` bot scope and `agent_session_stopped` event subscription, and reinstall the app. These are additional to the basic bot configuration above. Then set `endpoints.agents.channels.nativeSessions: true` in `librechat.yaml`. Without the required permissions or Stop subscription, the gateway falls back to durable progress controls. See [Slack Agent sessions](https://docs.slack.dev/ai/agent-sessions/) for app configuration.
 
-Native sessions show processing or waiting-for-input status and return to active when the canonical run finishes. Completed answers can include Helpful/Not helpful controls. Optional lifecycle reactions use `endpoints.agents.channels.lifecycleReactions: true`, are separate from native sessions and require the reaction permissions already present in the basic manifest. Neither an acknowledgement nor a reaction proves a tool completed; Stop requests cancellation of the sender's authorized work, not another participant's run.
+Native sessions show processing or waiting-for-input status and return to active when the canonical run finishes. Completed answers can include Helpful/Not helpful controls. Optional lifecycle reactions use `endpoints.agents.channels.lifecycleReactions: true`, are separate from native sessions and require the reaction permissions already listed in the basic bot scopes. Neither an acknowledgement nor a reaction proves a tool completed; Stop requests cancellation of the sender's authorized work, not another participant's run.
 
 ## Kubernetes and Helm
 
@@ -461,4 +506,4 @@ Disabling a channel or changing its credential mode retires old authority; it do
 
 With the process-local job store, restarting the API while a tool approval is pending makes the review unavailable. The request stays held for reconciliation and a stale approval does not execute the tool. Durable checkpoint storage alone does not recreate the missing live execution state. Completed history and subsequent thread continuation survive restart.
 
-The gateway package is built from the LibreChat source tree; it is not published as an npm package. This integration does not promise arbitrary chat-platform support, automatic migration of legacy thread-wide identity, or restart-survival of an in-memory OAuth waiter. A restart can require a new browser sign-in; uncertain continuation must not be reported as completed or retried as new work. Legacy thread read/write bookkeeping is not a substitute for actor-scoped runs.
+The gateway package is built from the LibreChat source tree; it is not published as an npm package. This integration does not promise arbitrary chat-platform support or restart-survival of an in-memory OAuth waiter. A restart can require a new browser sign-in; uncertain continuation must not be reported as completed or retried as new work.
