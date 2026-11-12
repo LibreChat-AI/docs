@@ -1,0 +1,442 @@
+---
+date: 2026-11-12
+title: 🚀 LibreChat v0.8.9
+description: Chat Projects, Slack Agents, Tool Search, new models, and account protection
+version: '0.8.9'
+---
+
+## What's Changed
+
+This release follows [v0.8.9-rc1](/changelog/v0.8.9-rc1). Operator configuration changes in the release candidate are described in [Config v1.3.18](/changelog/config_v1.3.18).
+
+### 🏞️ Highlights
+
+- Chat Projects with shared instructions and reference files
+- Passkeys, email changes, and stronger account protection
+- Deployment themes and polished chat controls, notifications, and right-to-left layouts
+- Opt-in Slack Agents with linked accounts, approvals, and feedback
+- Background Responses API with saved results, review, cancellation, and recovery
+- MCP Apps, clearer tool approvals, and deferred system tools through Tool Search
+- Highly experimental BYOM: machine enrollment, per-chat workspaces, attachment copies, and PR status
+- Inline Ask User questions and more reliable pause, resume, stop, steer, and queue controls
+- Recoverable Subagent transcripts and clearer background-task progress
+- Langfuse prompts in the catalog, slash command, and Agent instructions
+- GPT-6.1 Terra, Claude Fable 5.2, GPT Image 2.6 Sunburst/Flare, and restricted-access Mythos 5.2/GPT-6 Cyber
+- Draft restoration, thinking settings, compaction recovery, and streaming Read Aloud
+- Faster chat loading, deferred MCP UI/export libraries, and fewer composer re-renders
+- Node.js 24.22.3 security updates and stronger request, auth, file, and tool safeguards
+
+### Upgrade Notes
+
+Slack Channels are opt-in and require a configured gateway, shared service credentials, and transaction-capable MongoDB. Shared Slack workspace setup additionally requires public HTTPS callbacks. Background Responses are separately enabled under `endpoints.agents.remoteApi.background.enabled` and require an Agent API key and durable storage/runtime support. Tool deferral requires the `deferred_tools` capability and a tool or model-spec deferral policy. GPT-6 Cyber requires approved provider access. Stateful Code sessions remain highly experimental and require compatible services.
+
+`SLACK_WORKSPACES_ENABLED=true` enables Channels, shared Slack apps, webhook transport, and background Responses together after deployment validation; it does not override explicitly disabled API-key authentication. Background Responses require transaction-capable MongoDB for terminal publication, but do not require a Slack gateway. `deferred_tools` is in the default capability list; tools still need a deferral policy. Mythos 5.2 requires provider verification and is absent from the default catalog. GPT Image 2.6 support does not change the `IMAGE_GEN_OAI_MODEL` default of `gpt-image-2.5-flare`.
+
+OpenTelemetry tool execution logs use the existing `OTEL_LOGS_ENABLED` pipeline. They report execution identity, outcome, and elapsed time without tool arguments, results, or error text. Rebuild images and recreate containers to pick up the Node.js security update.
+
+---
+
+## Changes Since v0.8.9-rc1
+
+### Configuration Changes Since RC1
+
+The published [Config v1.3.18](https://www.librechat.ai/changelog/config_v1.3.18) entry describes the RC1 baseline. The following additions and behavior changes landed afterward. The app schema constant remains `1.3.18` at the audited source commit; this list does not assign an unpublished config version.
+
+| Area | Changes and defaults |
+| --- | --- |
+| Background Responses | `endpoints.agents.remoteApi.background.enabled: false`; `acknowledgementTimeoutMs: 10000` (100–60000 ms). API-key auth and transaction-capable storage are required. |
+| Slack Channels | `endpoints.agents.channels.enabled: false`; `transport: socket_mode`; `nativeSessions: false`; `lifecycleReactions: false`; `signatureToleranceSeconds: 300`; `socketReconnectDelayMs: 5000`. Shared workspace deployment uses webhook transport and UI-managed app credentials. |
+| Shared Slack apps | `channels.slackApp.enabled: false`; `flowLifetimeMs: 600000`; `requestTimeoutMs: 10000`; `maxResponseBytes: 65536`. Gateway defaults: ingress concurrency 32, worker concurrency 4, discovery batch 32, polling 1000 ms. |
+| Channel environment and deployment | `CHANNEL_SERVICE_TOKEN` (at least 32 characters), `CHANNEL_ID`, `CHANNEL_TENANT_ID`, Socket Mode `SLACK_APP_TOKEN`, shared setup `SLACK_WORKSPACES_ENABLED`/`SLACK_GATEWAY_URL`, `CHANNEL_GATEWAY_PORT`, and release-matched `LIBRECHAT_IMAGE_TAG`. Optional Compose overlays and Helm gateway deployment do not enable themselves. |
+| Tool deferral | `modelSpecs.list[].deferLoading`: omitted/false, true for all eligible tools, or a list of equipped tool names/capabilities. Saved Agents use `tool_options.<tool>.defer_loading`. Requires `deferred_tools`; orchestration tools remain loaded. |
+| Prompt instructions | `endpoints.agents.instructions.langfuse.enabled: false`, separate from Langfuse prompt-catalog synchronization. |
+| Browser limits | `clientLimits`: refresh 30000, TTS 60000, SharePoint 300000, CloudFront 15000 ms; upload concurrency 3. |
+| Server budgets | `timeouts.directoryMs: 30000`, `toolsMs: 60000`, `speechMs: 300000`, `imageGenerationMs: 300000`; `imageFetchMs: 30000` now also bounds blob-storage reads. |
+| Lookup concurrency | `permissionPrincipalLookups: 4`, `connectedAgentLoads: 4`, `mcpCatalogLookups: 4`, `skillNameLookups: 8`, `skillFileInspections: 4`, `resumeAgentLoads: 4`; each accepts 1–32. |
+| Spreadsheet parsing | `spreadsheetParsing.timeoutMs: 5000` (100–60000 ms); `maxConcurrent: 2` (1–8 per API process). |
+| Files | `fileConfig.deletionRetryLimit: 5` persists discarded-upload retry counts across reloads. `fileConfig.stt.supportedMimeTypes` now takes effect; configure a speech provider separately. |
+| Pagination and logs | `messages.maxPageSize: 1000` (1–10000); `violationLog.maxEntries: 100`; `mcpSettings.oauthFailureRetentionMs: 86400000` (up to 30 days). |
+| Interface | `landingFooter: true` now places the footer at page bottom; `composer` restores under-composer placement. `messageAuthor: always` also accepts `whenDifferent`. `analyticsConsent: true` may be disabled by deployments that handle consent themselves. |
+| Telemetry | `telemetry.stackTraceLimit` accepts 1–1000 frames; omitted, preserves the process default. Service-version precedence is `OTEL_SERVICE_VERSION` → `BUILD_COMMIT` → package version. Logs and request spans carry a config digest; tool lifecycle logs omit payloads. |
+| Optional favorites storage | `persistence.favorites: mongo` by default; `postgres` requires PostgreSQL 16, explicit schema migration, offline import and verification, and coordinated cutover. This does not replace MongoDB or the RAG database. |
+| Override ownership | Storage, browser limits, telemetry, management API, shared Slack-app configuration, and other operator-owned fields cannot be activated through stored Base/role/group/user overrides. Inspect applied/skipped config reports. |
+| Account recovery | Password-reset credentials are emailed only; they are never displayed as a fallback. Configure email delivery. |
+
+Persistent references: [config structure](https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/config), [file configuration](https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/file_config), [model specifications](https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/model_specs), and [admin configuration](https://www.librechat.ai/docs/configuration/admin_panel).
+
+### ✨ Features
+
+- 🦂 feat: Add GPT-6 Cyber Support by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18023](https://github.com/LibreChat-AI/LibreChat/pull/18023)
+- 🚜 feat: Support Native PostgreSQL Tool Favorites by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18032](https://github.com/LibreChat-AI/LibreChat/pull/18032)
+- 🖨️ feat: Add OpenTelemetry Tool Execution Logs by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18035](https://github.com/LibreChat-AI/LibreChat/pull/18035)
+- ✨ feat: Polish Slack App and Agent Setup by [@dustinhealy](https://github.com/dustinhealy) in [#17982](https://github.com/LibreChat-AI/LibreChat/pull/17982)
+- 🔐 feat: Add Admin-Assigned Slack Bot Managers by [@dustinhealy](https://github.com/dustinhealy) in [#17836](https://github.com/LibreChat-AI/LibreChat/pull/17836)
+- 📦 feat: Package Shared Slack Workspace Deployments by [@dustinhealy](https://github.com/dustinhealy) in [#17815](https://github.com/LibreChat-AI/LibreChat/pull/17815)
+- 🌐 feat: Connect Organization Slack Workspaces to Agents by [@dustinhealy](https://github.com/dustinhealy) in [#17811](https://github.com/LibreChat-AI/LibreChat/pull/17811)
+- 🔌 feat: Add Tenant-Owned Slack Installation Storage and OAuth by [@dustinhealy](https://github.com/dustinhealy) in [#17810](https://github.com/LibreChat-AI/LibreChat/pull/17810)
+- ☸️ feat: Add Optional Channel Gateway Helm Deployment by [@dustinhealy](https://github.com/dustinhealy) in [#17786](https://github.com/LibreChat-AI/LibreChat/pull/17786)
+- 🐳 feat: Publish Release-Matched Channel Gateway Images by [@dustinhealy](https://github.com/dustinhealy) in [#17784](https://github.com/LibreChat-AI/LibreChat/pull/17784)
+- 🐳 feat: Add Optional Transactional Gateway Docker Setup by [@dustinhealy](https://github.com/dustinhealy) in [#17776](https://github.com/LibreChat-AI/LibreChat/pull/17776)
+- 🧱 feat: Render Rich Agent Messages With Slack Block Kit by [@dustinhealy](https://github.com/dustinhealy) in [#17698](https://github.com/LibreChat-AI/LibreChat/pull/17698)
+- 🚀 feat: Run the Standalone Slack Channel Gateway by [@dustinhealy](https://github.com/dustinhealy) in [#17618](https://github.com/LibreChat-AI/LibreChat/pull/17618)
+- 🎨 feat: Render Slack Replies and Private Review Controls by [@dustinhealy](https://github.com/dustinhealy) in [#17617](https://github.com/LibreChat-AI/LibreChat/pull/17617)
+- 🛠️ feat: Add Slack Gateway Transport Adapters by [@dustinhealy](https://github.com/dustinhealy) in [#17616](https://github.com/LibreChat-AI/LibreChat/pull/17616)
+- 👤 feat: Link and Revoke Personal Channel Accounts by [@dustinhealy](https://github.com/dustinhealy) in [#17615](https://github.com/LibreChat-AI/LibreChat/pull/17615)
+- 💬 feat: Configure Slack Connections in the Agent Builder by [@dustinhealy](https://github.com/dustinhealy) in [#17614](https://github.com/LibreChat-AI/LibreChat/pull/17614)
+- ⏯️ feat: Review and Stop Background Responses by [@dustinhealy](https://github.com/dustinhealy) in [#17613](https://github.com/LibreChat-AI/LibreChat/pull/17613)
+- 🌐 feat: Wire Responses and Channel Lifecycle APIs by [@dustinhealy](https://github.com/dustinhealy) in [#17611](https://github.com/LibreChat-AI/LibreChat/pull/17611)
+- 👍 feat: Record Feedback on Delivered Channel Responses by [@dustinhealy](https://github.com/dustinhealy) in [#17610](https://github.com/LibreChat-AI/LibreChat/pull/17610)
+- 📨 feat: Coordinate Channel Delivery Through Responses by [@dustinhealy](https://github.com/dustinhealy) in [#17609](https://github.com/LibreChat-AI/LibreChat/pull/17609)
+- 📎 feat: Resolve Channel Attachments and Usage Summaries by [@dustinhealy](https://github.com/dustinhealy) in [#17608](https://github.com/LibreChat-AI/LibreChat/pull/17608)
+- 🔗 feat: Configure Channels and Link Participant Accounts by [@dustinhealy](https://github.com/dustinhealy) in [#17607](https://github.com/LibreChat-AI/LibreChat/pull/17607)
+- 🧩 feat: Compose the Background Responses Host by [@dustinhealy](https://github.com/dustinhealy) in [#17606](https://github.com/LibreChat-AI/LibreChat/pull/17606)
+- 💾 feat: Persist and Continue Stored Agent Responses by [@dustinhealy](https://github.com/dustinhealy) in [#17605](https://github.com/LibreChat-AI/LibreChat/pull/17605)
+- 🧵 feat: Execute and Resume Background Responses by [@dustinhealy](https://github.com/dustinhealy) in [#17602](https://github.com/LibreChat-AI/LibreChat/pull/17602)
+- 🗳️ feat: Retain Background Response Decisions by [@dustinhealy](https://github.com/dustinhealy) in [#17601](https://github.com/LibreChat-AI/LibreChat/pull/17601)
+- 🚦 feat: Dispatch and Recover Background Responses by [@dustinhealy](https://github.com/dustinhealy) in [#17600](https://github.com/LibreChat-AI/LibreChat/pull/17600)
+- 📊 feat: Preserve Response Accounting and History by [@dustinhealy](https://github.com/dustinhealy) in [#17599](https://github.com/LibreChat-AI/LibreChat/pull/17599)
+- 🔑 feat: Bind Agent API Keys to Source Authority by [@dustinhealy](https://github.com/dustinhealy) in [#17597](https://github.com/LibreChat-AI/LibreChat/pull/17597)
+- 🪪 feat: Store Channel Connections and Account Links by [@dustinhealy](https://github.com/dustinhealy) in [#17596](https://github.com/LibreChat-AI/LibreChat/pull/17596)
+- 📬 feat: Persist Channel Events and Delivery Receipts by [@dustinhealy](https://github.com/dustinhealy) in [#17595](https://github.com/LibreChat-AI/LibreChat/pull/17595)
+- 🗄️ feat: Persist and Expire Background Responses by [@dustinhealy](https://github.com/dustinhealy) in [#17594](https://github.com/LibreChat-AI/LibreChat/pull/17594)
+- ☄️ feat: Add GPT Image 2.6 Flare Support by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18021](https://github.com/LibreChat-AI/LibreChat/pull/18021)
+- ☀️ feat: Add GPT Image 2.6 Sunburst Support by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18019](https://github.com/LibreChat-AI/LibreChat/pull/18019)
+- 🐉 feat: Add Claude Mythos 5.2 Support by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18017](https://github.com/LibreChat-AI/LibreChat/pull/18017)
+- 🏜️ feat: Add GPT-6.1 Terra Support by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18016](https://github.com/LibreChat-AI/LibreChat/pull/18016)
+- 🦊 feat: Add Claude Fable 5.2 Support by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18015](https://github.com/LibreChat-AI/LibreChat/pull/18015)
+- 🗂️ feat: Defer System Tools Behind Tool Search by [@danny-avila](https://github.com/danny-avila) in [#17864](https://github.com/LibreChat-AI/LibreChat/pull/17864)
+- 🪟 feat: Add Welcome Footer and Response Author Options and Tidy the Chat Chrome by [@berry-13](https://github.com/berry-13) in [#17879](https://github.com/LibreChat-AI/LibreChat/pull/17879)
+- 💬 feat: Show Ask-User Questions Inline in the Chat Instead of Over the Composer by [@danny-avila](https://github.com/danny-avila) in [#17839](https://github.com/LibreChat-AI/LibreChat/pull/17839)
+- 🧩 feat: Export Popover Parts From @librechat/client by [@berry-13](https://github.com/berry-13) in [#17751](https://github.com/LibreChat-AI/LibreChat/pull/17751)
+- 🪪 feat: Name the Build and Config in Telemetry, Configure Stack Depth, Keep Scoped Frames by [@danny-avila](https://github.com/danny-avila) in [#17515](https://github.com/LibreChat-AI/LibreChat/pull/17515)
+- 🔗 feat: Link Langfuse Prompts as Agent Instructions by [@AtefBellaaj](https://github.com/AtefBellaaj) in [#17294](https://github.com/LibreChat-AI/LibreChat/pull/17294)
+- 🧾 feat: Keep Every Lost Start Owed Until an Answer Resolves That Start by [@berry-13](https://github.com/berry-13) in [#17593](https://github.com/LibreChat-AI/LibreChat/pull/17593)
+- ⏳ feat: Retire Expired and Older Pauses and Reconcile the Held Pause With Sync Snapshots by [@berry-13](https://github.com/berry-13) in [#17590](https://github.com/LibreChat-AI/LibreChat/pull/17590)
+- ⏸️ feat: Answer, Restore and Stop a Paused Generation From the Chat Core by [@berry-13](https://github.com/berry-13) in [#17587](https://github.com/LibreChat-AI/LibreChat/pull/17587)
+- 🔁 feat: Reattach to a Running Generation and Keep a Dropped One Stoppable by [@berry-13](https://github.com/berry-13) in [#17584](https://github.com/LibreChat-AI/LibreChat/pull/17584)
+- 🛑 feat: Stop the Turn in Flight From the Chat Core by [@berry-13](https://github.com/berry-13) in [#17577](https://github.com/LibreChat-AI/LibreChat/pull/17577)
+- 🧱 feat: Catch Module-Load Use of Mocked Packages in @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17539](https://github.com/LibreChat-AI/LibreChat/pull/17539)
+- 📊 feat: Let Deployments Skip the Analytics Consent Prompt by [@berry-13](https://github.com/berry-13) in [#17552](https://github.com/LibreChat-AI/LibreChat/pull/17552)
+- 🔢 feat: Count Core Chat Changes and Let Hosts Replace Its Messages by [@berry-13](https://github.com/berry-13) in [#17084](https://github.com/LibreChat-AI/LibreChat/pull/17084)
+- 📐 feat: Give Dropdown the Positioning Props DropdownPopup Takes by [@berry-13](https://github.com/berry-13) in [#17461](https://github.com/LibreChat-AI/LibreChat/pull/17461)
+
+### 🐛 Fixes
+
+- 🐑 fix: Avoid Per-User Copies of Base App Config by [@dwaddle](https://github.com/dwaddle) in [#18057](https://github.com/LibreChat-AI/LibreChat/pull/18057)
+- ⏳ fix: Stop the Settings Timer From Expiring a URL Auto-Submit That Waits for the Composer by [@danny-avila](https://github.com/danny-avila) in [#18072](https://github.com/LibreChat-AI/LibreChat/pull/18072)
+- 🧶 fix: Close Two Stream Races That Untraced Mock E2E Attempts Expose by [@danny-avila](https://github.com/danny-avila) in [#18075](https://github.com/LibreChat-AI/LibreChat/pull/18075)
+- 🎯 fix: Match the GPT-6 Cyber API Mode to an Exact Endpoint URL by [@danny-avila](https://github.com/danny-avila) in [#18071](https://github.com/LibreChat-AI/LibreChat/pull/18071)
+- 🚪 fix: Refuse Interactive MCP Sign-in on Remote Agent API Runs by [@danny-avila](https://github.com/danny-avila) in [#18058](https://github.com/LibreChat-AI/LibreChat/pull/18058)
+- 💭 fix: Settle Finished Grouped Thoughts and Steady Four Flaky UI Scenarios by [@danny-avila](https://github.com/danny-avila) in [#18062](https://github.com/LibreChat-AI/LibreChat/pull/18062)
+- 🪢 fix: Resolve the Races Behind Four Intermittent Session and Scenario E2E Tests by [@danny-avila](https://github.com/danny-avila) in [#18061](https://github.com/LibreChat-AI/LibreChat/pull/18061)
+- 🧭 fix: Close the Product Races Behind Four Retried Run Scenarios by [@danny-avila](https://github.com/danny-avila) in [#18060](https://github.com/LibreChat-AI/LibreChat/pull/18060)
+- 🌄 fix: Show Skill Pills When a Turn Starts by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18036](https://github.com/LibreChat-AI/LibreChat/pull/18036)
+- 🏧 fix: Initialize Debit-Created Balances With Configured Allowances by [@danny-avila](https://github.com/danny-avila) in [#18056](https://github.com/LibreChat-AI/LibreChat/pull/18056)
+- fix: Guard Mongo Cleanup In Api Services Tests by [@berry-13](https://github.com/berry-13) in [#17990](https://github.com/LibreChat-AI/LibreChat/pull/17990)
+- fix: Guard Mongo Cleanup In Controller And Migration Tests by [@berry-13](https://github.com/berry-13) in [#17989](https://github.com/LibreChat-AI/LibreChat/pull/17989)
+- 🎨 fix: Polish ClickHouse Theme Controls, Menus and Panels by [@berry-13](https://github.com/berry-13) in [#18042](https://github.com/LibreChat-AI/LibreChat/pull/18042)
+- fix: Clear Slack Progress After Successful Delivery by [@dustinhealy](https://github.com/dustinhealy) in [#18040](https://github.com/LibreChat-AI/LibreChat/pull/18040)
+- 🔗 fix: Update Slack Account Linking in Place by [@dustinhealy](https://github.com/dustinhealy) in [#18039](https://github.com/LibreChat-AI/LibreChat/pull/18039)
+- 👥 fix: Let Members Connect Agents to Slack Workspaces by [@dustinhealy](https://github.com/dustinhealy) in [#17835](https://github.com/LibreChat-AI/LibreChat/pull/17835)
+- 🧹 fix: Remove Disconnected Slack Workspaces by [@dustinhealy](https://github.com/dustinhealy) in [#17834](https://github.com/LibreChat-AI/LibreChat/pull/17834)
+- 🔧 fix: Fence Channel Startup and Transaction Capability by [@dustinhealy](https://github.com/dustinhealy) in [#17831](https://github.com/LibreChat-AI/LibreChat/pull/17831)
+- 🎨 fix: Clarify Slack Account Linking by [@dustinhealy](https://github.com/dustinhealy) in [#17806](https://github.com/LibreChat-AI/LibreChat/pull/17806)
+- fix: Guard transactional channel writes by [@dustinhealy](https://github.com/dustinhealy) in [#17770](https://github.com/LibreChat-AI/LibreChat/pull/17770)
+- 🗄️ fix: Restore Transaction Capability Detection by [@dustinhealy](https://github.com/dustinhealy) in [#17735](https://github.com/LibreChat-AI/LibreChat/pull/17735)
+- 🔄 fix: Restore MCP Sign-In Prompts After Reload by [@dustinhealy](https://github.com/dustinhealy) in [#17604](https://github.com/LibreChat-AI/LibreChat/pull/17604)
+- 🔐 fix: Redact MCP OAuth Diagnostics by [@dustinhealy](https://github.com/dustinhealy) in [#17603](https://github.com/LibreChat-AI/LibreChat/pull/17603)
+- 🛡️ fix: Retain Execution Ownership Until Terminal Persistence by [@dustinhealy](https://github.com/dustinhealy) in [#17598](https://github.com/LibreChat-AI/LibreChat/pull/17598)
+- 🧷 fix: Promote Unapplied Steers to Durable Queued Turns at Run End by [@danny-avila](https://github.com/danny-avila) in [#18028](https://github.com/LibreChat-AI/LibreChat/pull/18028)
+- ⏭️ fix: Let Queued User Turns Go Before Completion Wake-ups at Run End by [@danny-avila](https://github.com/danny-avila) in [#18027](https://github.com/LibreChat-AI/LibreChat/pull/18027)
+- 🦪 fix: Preserve Generated File Byte Snapshots by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18009](https://github.com/LibreChat-AI/LibreChat/pull/18009)
+- 🏓 fix: Preserve MCP Server Ping Responses by [@berry-13](https://github.com/berry-13) in [#18020](https://github.com/LibreChat-AI/LibreChat/pull/18020)
+- 🔂 fix: Preserve Subagent Checkpoints Across Tool Approvals by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18007](https://github.com/LibreChat-AI/LibreChat/pull/18007)
+- 🖨️ fix: Preserve Concurrent PDF Extraction by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18008](https://github.com/LibreChat-AI/LibreChat/pull/18008)
+- 🔊 fix: Stream Manual Read Aloud Before Audio Completes by [@berry-13](https://github.com/berry-13) in [`88b07c9f96`](https://github.com/LibreChat-AI/LibreChat/commit/88b07c9f96d3fba86be67242b2411cf4bacb1093)
+- fix: Preserve Unknown-Provider MCP Display Images by [@berry-13](https://github.com/berry-13) in [#18000](https://github.com/LibreChat-AI/LibreChat/pull/18000)
+- 🪒 fix: Strip Provider Attachment Payloads From Terminal Events by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18003](https://github.com/LibreChat-AI/LibreChat/pull/18003)
+- 🦣 fix: Honor Trace Policy in Memory Runs by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18006](https://github.com/LibreChat-AI/LibreChat/pull/18006)
+- 🧭 fix: Add Context Windows for Unmapped Bedrock Models by [@berry-13](https://github.com/berry-13) in [#17995](https://github.com/LibreChat-AI/LibreChat/pull/17995)
+- ⏱️ fix: Preserve Running Tool Timers Across Disclosure Remounts by [@berry-13](https://github.com/berry-13) in [#17997](https://github.com/LibreChat-AI/LibreChat/pull/17997)
+- 🎩 fix: Dismiss Only the Topmost Dialog on Escape by [@danny-avila](https://github.com/danny-avila) in [#17977](https://github.com/LibreChat-AI/LibreChat/pull/17977)
+- 🥸 fix: Block Private IPv4-Translated IPv6 Targets by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18002](https://github.com/LibreChat-AI/LibreChat/pull/18002)
+- 🥸 fix: Resolve Directory Principals Through Trusted Integration Data by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17825](https://github.com/LibreChat-AI/LibreChat/pull/17825)
+- ⌨️ fix: Preserve User Focus During Sidebar Opening by [@berry-13](https://github.com/berry-13) in [#18001](https://github.com/LibreChat-AI/LibreChat/pull/18001)
+- fix: Serialize MCP App Theme Variables as CSS Colors by [@berry-13](https://github.com/berry-13) in [#17999](https://github.com/LibreChat-AI/LibreChat/pull/17999)
+- 📰 fix: Preview Pasted Text Without Blocking Sends by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17962](https://github.com/LibreChat-AI/LibreChat/pull/17962)
+- fix: Keep Untagged Chat Code Fences Plain by [@berry-13](https://github.com/berry-13) in [#17986](https://github.com/LibreChat-AI/LibreChat/pull/17986)
+- fix: Keep Plugin Pagination Keyboard Navigation Within Bounds by [@berry-13](https://github.com/berry-13) in [#17987](https://github.com/LibreChat-AI/LibreChat/pull/17987)
+- 🌍 fix: Use Localized Button Text for Accessible Names by [@berry-13](https://github.com/berry-13) in [#17988](https://github.com/LibreChat-AI/LibreChat/pull/17988)
+- 🟩 fix: Add Context Windows for Bedrock NVIDIA Nemotron Models by [@berry-13](https://github.com/berry-13) in [#17952](https://github.com/LibreChat-AI/LibreChat/pull/17952)
+- 📎 fix: Keep Lazily Provisioned Attachments for Code Calls After read_file by [@berry-13](https://github.com/berry-13) in [#17942](https://github.com/LibreChat-AI/LibreChat/pull/17942)
+- 🎨 fix: Move Project and PR Icons to the Left of Conversation Rows by [@berry-13](https://github.com/berry-13) in [#17747](https://github.com/LibreChat-AI/LibreChat/pull/17747)
+- 🎛️ fix: Align Agent Instruction Controls and Theme Ownership Icon by [@berry-13](https://github.com/berry-13) in [#17730](https://github.com/LibreChat-AI/LibreChat/pull/17730)
+- 🌐 fix: Localize Citation Pagination and Source Errors by [@berry-13](https://github.com/berry-13) in [`91ed9748cb`](https://github.com/LibreChat-AI/LibreChat/commit/91ed9748cbdadb8b2d1c7ad810118d83ec63f4f3)
+- 🖼️ fix: Bound Flux Tool Images and Preserve Original Attachments by [@dvorak33](https://github.com/dvorak33) in [#13749](https://github.com/LibreChat-AI/LibreChat/pull/13749)
+- ⚡ fix: Parallelize Setup Cancel Lookups and Keep Attachment Drafts on Reload by [@berry-13](https://github.com/berry-13) in [#17963](https://github.com/LibreChat-AI/LibreChat/pull/17963)
+- fix: patch glob traversal and redirect dependencies by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17964](https://github.com/LibreChat-AI/LibreChat/pull/17964)
+- ⚓ fix: Anchor Schedule Time Popovers to Their Field by [@berry-13](https://github.com/berry-13) in [#17947](https://github.com/LibreChat-AI/LibreChat/pull/17947)
+- 🍞 fix: Hold Upload Error Toasts Open Until Dismissed by [@berry-13](https://github.com/berry-13) in [#17954](https://github.com/LibreChat-AI/LibreChat/pull/17954)
+- 🎚️ fix: Forward Selected Gemini Thinking Levels as reasoning_effort on Custom Endpoints by [@berry-13](https://github.com/berry-13) in [#17951](https://github.com/LibreChat-AI/LibreChat/pull/17951)
+- 🪟 fix: Serve the OAuth Error Page for Connect Callback Failures by [@berry-13](https://github.com/berry-13) in [#17946](https://github.com/LibreChat-AI/LibreChat/pull/17946)
+- 🚪 fix: Let Users Sign Out of Required Two-Factor Enrollment by [@berry-13](https://github.com/berry-13) in [#17956](https://github.com/LibreChat-AI/LibreChat/pull/17956)
+- 📋 fix: Detach the Original Chip After Saving a Pasted Text Edit by [@berry-13](https://github.com/berry-13) in [#17955](https://github.com/LibreChat-AI/LibreChat/pull/17955)
+- ⚠️ fix: Keep Warnings That Follow a File Authoring Success Summary by [@berry-13](https://github.com/berry-13) in [#17953](https://github.com/LibreChat-AI/LibreChat/pull/17953)
+- 🔗 fix: Encode Local Storage URLs and Reject Nested File Names by [@berry-13](https://github.com/berry-13) in [#17949](https://github.com/LibreChat-AI/LibreChat/pull/17949)
+- 👥 fix: Keep Skill Call Output in Shared Transcripts by [@berry-13](https://github.com/berry-13) in [#17948](https://github.com/LibreChat-AI/LibreChat/pull/17948)
+- 🔗 fix: Open the Child Run Activity Dialog From a Shared Link by [@berry-13](https://github.com/berry-13) in [#17945](https://github.com/LibreChat-AI/LibreChat/pull/17945)
+- 🧠 fix: Hide the Reasoning Control for Hidden Enforced Model Specs by [@berry-13](https://github.com/berry-13) in [#17944](https://github.com/LibreChat-AI/LibreChat/pull/17944)
+- 📱 fix: Wrap Action Auth and API Key Expiry Controls on Narrow Screens by [@berry-13](https://github.com/berry-13) in [#17943](https://github.com/LibreChat-AI/LibreChat/pull/17943)
+- ⏱️ fix: Bound Generation Status Reads So a Silent Request Cannot Strand the Pane by [@berry-13](https://github.com/berry-13) in [#17927](https://github.com/LibreChat-AI/LibreChat/pull/17927)
+- 🚦 fix: Keep the Gateway Message on Classified Rate Limit Errors by [@berry-13](https://github.com/berry-13) in [#17903](https://github.com/LibreChat-AI/LibreChat/pull/17903)
+- 🪢 fix: Wrap Label Text Between Words Instead of Mid-Word by [@berry-13](https://github.com/berry-13) in [#17926](https://github.com/LibreChat-AI/LibreChat/pull/17926)
+- 🗑️ fix: Drain Assistants Runs Before Erasing the Account by [@berry-13](https://github.com/berry-13) in [#17937](https://github.com/LibreChat-AI/LibreChat/pull/17937)
+- 🔒 fix: Gate GET Routes That Start OAuth Flows Behind Terms Acceptance by [@berry-13](https://github.com/berry-13) in [#17935](https://github.com/LibreChat-AI/LibreChat/pull/17935)
+- 🔒 fix: Return Approved Error Text From the Remaining Structured Tools by [@berry-13](https://github.com/berry-13) in [#17934](https://github.com/LibreChat-AI/LibreChat/pull/17934)
+- ⏳ fix: Bound Blob Storage Image Reads by the Image Fetch Budget by [@berry-13](https://github.com/berry-13) in [#17932](https://github.com/LibreChat-AI/LibreChat/pull/17932)
+- 🧷 fix: Keep Agent References to File Ids Another Record Still Holds by [@berry-13](https://github.com/berry-13) in [#17931](https://github.com/LibreChat-AI/LibreChat/pull/17931)
+- 📜 fix: Skip Scheduled Fires for Owners Who Have Not Accepted the Terms by [@berry-13](https://github.com/berry-13) in [#17930](https://github.com/LibreChat-AI/LibreChat/pull/17930)
+- 🦦 fix: Bound Spreadsheet Text Extraction by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17824](https://github.com/LibreChat-AI/LibreChat/pull/17824)
+- 📪 fix: Require Email Delivery for Password Reset Links by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17823](https://github.com/LibreChat-AI/LibreChat/pull/17823)
+- 📏 fix: Measure Usage Percent Against the Allowance Each Period Granted by [@danny-avila](https://github.com/danny-avila) in [#17850](https://github.com/LibreChat-AI/LibreChat/pull/17850)
+- 🗃️ fix: Load Retention Config on the Archive Route Before Saving by [@berry-13](https://github.com/berry-13) in [#17929](https://github.com/LibreChat-AI/LibreChat/pull/17929)
+- 🔐 fix: Authorize Restored MCP Tools Before Agent Revert Writes Them by [@danny-avila](https://github.com/danny-avila) in [#17843](https://github.com/LibreChat-AI/LibreChat/pull/17843)
+- 🔎 fix: Align Custom Anthropic Model Discovery With Native Requests by [@AtefBellaaj](https://github.com/AtefBellaaj) in [#17881](https://github.com/LibreChat-AI/LibreChat/pull/17881)
+- 🍪 fix: Skip the Axios XSRF Cookie Read So Requests Are Not Stranded by [@berry-13](https://github.com/berry-13) in [#17925](https://github.com/LibreChat-AI/LibreChat/pull/17925)
+- 📦 fix: Skip Implicit npm Audits in Docker Builds by [@berry-13](https://github.com/berry-13) in [#17924](https://github.com/LibreChat-AI/LibreChat/pull/17924)
+- 🧩 fix: Match Vendor Chunk Rules Against the Module Path, Not the Checkout by [@berry-13](https://github.com/berry-13) in [#17921](https://github.com/LibreChat-AI/LibreChat/pull/17921)
+- 🛂 fix: Only Hand Out OpenID Access Tokens the Bearer Verifier Accepts by [@berry-13](https://github.com/berry-13) in [#17904](https://github.com/LibreChat-AI/LibreChat/pull/17904)
+- 📬 fix: Require a Click to Submit Email Verification Links by [@berry-13](https://github.com/berry-13) in [#17905](https://github.com/LibreChat-AI/LibreChat/pull/17905)
+- 🗄️ fix: Skip Attachments Deleted by Storage Retention Instead of Failing the Turn by [@berry-13](https://github.com/berry-13) in [#17910](https://github.com/LibreChat-AI/LibreChat/pull/17910)
+- 📦 fix: Treat Empty Sandpack Bundler URLs as Unset by [@berry-13](https://github.com/berry-13) in [#17901](https://github.com/LibreChat-AI/LibreChat/pull/17901)
+- 🌐 fix: Default the Flux Tool to the Global BFL Endpoint by [@berry-13](https://github.com/berry-13) in [#17909](https://github.com/LibreChat-AI/LibreChat/pull/17909)
+- 🛰️ fix: Poll the Flux Cluster Returned by the Global Endpoint by [@berry-13](https://github.com/berry-13) in [#17907](https://github.com/LibreChat-AI/LibreChat/pull/17907)
+- 🧩 fix: Match mcp:<server>:<tool> Tool Approval Patterns Against MCP Tool Keys by [@berry-13](https://github.com/berry-13) in [#17902](https://github.com/LibreChat-AI/LibreChat/pull/17902)
+- 🕰️ fix: Refresh Copied Client Bundle Timestamps After Build by [@berry-13](https://github.com/berry-13) in [#17906](https://github.com/LibreChat-AI/LibreChat/pull/17906)
+- 🧩 fix: Accept Content-Array Tool Outputs in the Responses API by [@berry-13](https://github.com/berry-13) in [#17900](https://github.com/LibreChat-AI/LibreChat/pull/17900)
+- 🦙 fix: Use an Available OpenRouter Title Model in the Example Config by [@berry-13](https://github.com/berry-13) in [#17899](https://github.com/LibreChat-AI/LibreChat/pull/17899)
+- 🔑 fix: Remember Tool Approvals for MCP Servers Using Env References by [@berry-13](https://github.com/berry-13) in [#17889](https://github.com/LibreChat-AI/LibreChat/pull/17889)
+- 🧮 fix: Count Memory Tokens After the o200k Encoding Loads by [@berry-13](https://github.com/berry-13) in [#17892](https://github.com/LibreChat-AI/LibreChat/pull/17892)
+- 🗑️ fix: Keep the Delete Dialog on the Chat It Was Opened For by [@berry-13](https://github.com/berry-13) in [#17891](https://github.com/LibreChat-AI/LibreChat/pull/17891)
+- 🧾 fix: Count Google Native Media Blocks in Precomputed Token Budgets by [@berry-13](https://github.com/berry-13) in [#17890](https://github.com/LibreChat-AI/LibreChat/pull/17890)
+- 🪟 fix: Stop the Sidebar Close Toggle Throwing on Click by [@berry-13](https://github.com/berry-13) in [#17893](https://github.com/LibreChat-AI/LibreChat/pull/17893)
+- 🧮 fix: Report Zeroed Summary in SharedLink Permissions Dry Run With No Links by [@berry-13](https://github.com/berry-13) in [#17888](https://github.com/LibreChat-AI/LibreChat/pull/17888)
+- 🏷️ fix: Show MCP Server Titles in the Tool Library by [@berry-13](https://github.com/berry-13) in [#17883](https://github.com/LibreChat-AI/LibreChat/pull/17883)
+- ⚖️ fix: Apply User and Group Balance Overrides on Sign-In by [@berry-13](https://github.com/berry-13) in [#17884](https://github.com/LibreChat-AI/LibreChat/pull/17884)
+- 🩺 fix: Report Union, Object, Array and Later Fields in Tool Validation Feedback by [@berry-13](https://github.com/berry-13) in [#17885](https://github.com/LibreChat-AI/LibreChat/pull/17885)
+- 🔎 fix: Name the Skipped Skill File in the Console Log by [@berry-13](https://github.com/berry-13) in [#17877](https://github.com/LibreChat-AI/LibreChat/pull/17877)
+- 🧾 fix: Read Skill Upload Filenames as UTF-8 by [@berry-13](https://github.com/berry-13) in [#17880](https://github.com/LibreChat-AI/LibreChat/pull/17880)
+- 🔤 fix: Encode Unicode Filenames in Project File Uploads by [@berry-13](https://github.com/berry-13) in [#17878](https://github.com/LibreChat-AI/LibreChat/pull/17878)
+- 📂 fix: Reject Missing Deployment Skill Files Before Upload by [@berry-13](https://github.com/berry-13) in [#17876](https://github.com/LibreChat-AI/LibreChat/pull/17876)
+- 🧠 fix: Let Native Azure Deployments Declare Their Reasoning Efforts by [@berry-13](https://github.com/berry-13) in [#17851](https://github.com/LibreChat-AI/LibreChat/pull/17851)
+- 🔐 fix: Retire Credentials by Their Committing Write and on Opt-In 2FA by [@berry-13](https://github.com/berry-13) in [#17504](https://github.com/LibreChat-AI/LibreChat/pull/17504)
+- 💶 fix: Price Mistral Large 4 by [@Alan-Billi](https://github.com/Alan-Billi) in [#17028](https://github.com/LibreChat-AI/LibreChat/pull/17028)
+- 🧷 fix: Skip Config Overrides LibreChat Never Applies and Apply librechat.yaml's `fileListLimit` by [@danny-avila](https://github.com/danny-avila) in [#17820](https://github.com/LibreChat-AI/LibreChat/pull/17820)
+- 💾 fix: Restore Send State From Saved Drafts by [@berry-13](https://github.com/berry-13) in [#17822](https://github.com/LibreChat-AI/LibreChat/pull/17822)
+- 🪤 fix: Keep the Pre-Push Hook's Git Environment Away From Its Checks by [@berry-13](https://github.com/berry-13) in [#17798](https://github.com/LibreChat-AI/LibreChat/pull/17798)
+- 🧲 fix: Match the Mobile Drawer New Chat Link by Its Exact Name by [@berry-13](https://github.com/berry-13) in [#17804](https://github.com/LibreChat-AI/LibreChat/pull/17804)
+- 🧹 fix: Simplify Tool Activity Headers by [@berry-13](https://github.com/berry-13) in [#17512](https://github.com/LibreChat-AI/LibreChat/pull/17512)
+- 🤏 fix: Keep Long Agent Names Inside Handoff Rows on Phones by [@berry-13](https://github.com/berry-13) in [#17764](https://github.com/LibreChat-AI/LibreChat/pull/17764)
+- 🚨 fix: Show a Failed Assistants Run's Error on a New Chat by [@berry-13](https://github.com/berry-13) in [#17703](https://github.com/LibreChat-AI/LibreChat/pull/17703)
+- 🪪 fix: Bind Role Delete Config Restore to the Role Identity and Audit the Members It Moved by [@berry-13](https://github.com/berry-13) in [#17501](https://github.com/LibreChat-AI/LibreChat/pull/17501)
+- 📲 fix: Close the Mobile Drawer When Selecting an Agent by [@berry-13](https://github.com/berry-13) in [#17696](https://github.com/LibreChat-AI/LibreChat/pull/17696)
+- 🪁 fix: Keep Manual Compaction Anchored and Visible Across Reloads by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17689](https://github.com/LibreChat-AI/LibreChat/pull/17689)
+- 🎋 fix: Scope Document Replay Budgets to Each Message by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17687](https://github.com/LibreChat-AI/LibreChat/pull/17687)
+- fix: patch Langfuse fanout Go certificate trust by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17663](https://github.com/LibreChat-AI/LibreChat/pull/17663)
+- 🎟️ fix: End a Pause Answer's Claim Only When Its Generation Ends by [@berry-13](https://github.com/berry-13) in [#17636](https://github.com/LibreChat-AI/LibreChat/pull/17636)
+- 🦭 fix: Require Full-Length Private Text Authentication Tags by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17646](https://github.com/LibreChat-AI/LibreChat/pull/17646)
+- 🚋 fix: Scope Document Name Traversal to Bedrock Agents by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17627](https://github.com/LibreChat-AI/LibreChat/pull/17627)
+- 🔚 fix: Bound Abandoned File Deletion Retries by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17640](https://github.com/LibreChat-AI/LibreChat/pull/17640)
+- 🐘 fix: Preserve Authored Skills Across Approval Resumes by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17630](https://github.com/LibreChat-AI/LibreChat/pull/17630)
+- 🚤 fix: Keep Host Tool Loading Independent of Worker Status by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17628](https://github.com/LibreChat-AI/LibreChat/pull/17628)
+- 🧊 fix: Fence Auth User Cache Writes After Eviction and Evict Favorite Holders by [@berry-13](https://github.com/berry-13) in [#17505](https://github.com/LibreChat-AI/LibreChat/pull/17505)
+- 🈯 fix: Accept Locale Count Placeholders in Locize Plural Forms by [@berry-13](https://github.com/berry-13) in [#17625](https://github.com/LibreChat-AI/LibreChat/pull/17625)
+- fix(metrics): preserve Insights request paths by [@upman](https://github.com/upman) in [#17151](https://github.com/LibreChat-AI/LibreChat/pull/17151)
+- 🔑 fix: Drop Legacy Langfuse Ingestion Check from Connection Test by [@upman](https://github.com/upman) in [#17581](https://github.com/LibreChat-AI/LibreChat/pull/17581)
+- 🚦 fix: Stop Queued Lookups After the First Concurrent Failure by [@berry-13](https://github.com/berry-13) in [#17557](https://github.com/LibreChat-AI/LibreChat/pull/17557)
+- ⏱️ fix: Bound Remaining Outbound Calls With Timeout Budgets by [@berry-13](https://github.com/berry-13) in [#17468](https://github.com/LibreChat-AI/LibreChat/pull/17468)
+- 📌 fix: Keep the Composer Thinking Level for the Rest of the Conversation by [@berry-13](https://github.com/berry-13) in [#17497](https://github.com/LibreChat-AI/LibreChat/pull/17497)
+- 🔐 fix: Keep the Admin OpenID State So PKCE Holds When the IdP Omits S256 by [@danny-avila](https://github.com/danny-avila) in [#17478](https://github.com/LibreChat-AI/LibreChat/pull/17478)
+- 🪢 fix: Keep Chat Rollback, Publish and Snapshot Version Coherent Across Store Boundaries by [@berry-13](https://github.com/berry-13) in [#17518](https://github.com/LibreChat-AI/LibreChat/pull/17518)
+- 🛟 fix: Promote Reconciled Compaction Snapshots to the Terminal Row by [@berry-13](https://github.com/berry-13) in [#16553](https://github.com/LibreChat-AI/LibreChat/pull/16553)
+- 🧭 fix: Honor Documented Azure Model Assistants and fileConfig.stt Keys by [@berry-13](https://github.com/berry-13) in [#17500](https://github.com/LibreChat-AI/LibreChat/pull/17500)
+- 🧯 fix: Return Approved Tool and Generation Error Text Instead of Raw Exceptions by [@berry-13](https://github.com/berry-13) in [#17508](https://github.com/LibreChat-AI/LibreChat/pull/17508)
+- 🔐 fix: Fence ACL Viewers and Surface Revocation Failures When Removing Shared MCP Servers by [@berry-13](https://github.com/berry-13) in [#17506](https://github.com/LibreChat-AI/LibreChat/pull/17506)
+- 🪶 fix: Time Out Client Refresh and Trim Lodash Imports by [@berry-13](https://github.com/berry-13) in [#17467](https://github.com/LibreChat-AI/LibreChat/pull/17467)
+- ⚛️ fix: Make Ledger, Plugin, Memory and Preset Writes Atomic by [@berry-13](https://github.com/berry-13) in [#17463](https://github.com/LibreChat-AI/LibreChat/pull/17463)
+- 🧯 fix: Guard SSE Writes and Interval Cleanups Against Crashes by [@berry-13](https://github.com/berry-13) in [#17462](https://github.com/LibreChat-AI/LibreChat/pull/17462)
+- ⌨️ fix: Close Only the Dropdown List on Escape Inside Settings by [@berry-13](https://github.com/berry-13) in [#17503](https://github.com/LibreChat-AI/LibreChat/pull/17503)
+- 📱 fix: Keep the Mobile Drawer Open When a Dialog Opened From It Takes Escape by [@berry-13](https://github.com/berry-13) in [#17502](https://github.com/LibreChat-AI/LibreChat/pull/17502)
+
+### 🔧 Refactoring and Performance
+
+- 🥇 perf: Start Critical Chat Reads Before Discovery by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18065](https://github.com/LibreChat-AI/LibreChat/pull/18065)
+- 🥽 perf: Reuse Successful Image Resize Capability Probes by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18034](https://github.com/LibreChat-AI/LibreChat/pull/18034)
+- 🪚 refactor: Separate Checkpoint Storage From Graph Runtime by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18029](https://github.com/LibreChat-AI/LibreChat/pull/18029)
+- 🧹 refactor: Consolidate Channel and Response Contracts by [@dustinhealy](https://github.com/dustinhealy) in [#17705](https://github.com/LibreChat-AI/LibreChat/pull/17705)
+- 🔌 refactor: Support Host-Provided Approval Submission by [@dustinhealy](https://github.com/dustinhealy) in [#17612](https://github.com/LibreChat-AI/LibreChat/pull/17612)
+- 🪸 refactor: Separate Shared-Link and Schedule Persistence by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18031](https://github.com/LibreChat-AI/LibreChat/pull/18031)
+- 🪶 perf: Load MCP UI and Export Libraries on Demand by [@berry-13](https://github.com/berry-13) in [#17975](https://github.com/LibreChat-AI/LibreChat/pull/17975)
+- 🧭 perf: Validate Agent Models Against Their Own Endpoint Catalog by [@berry-13](https://github.com/berry-13) in [#17972](https://github.com/LibreChat-AI/LibreChat/pull/17972)
+- 🔌 perf: Look Up MCP Server Catalogs Concurrently for Tool Definitions by [@berry-13](https://github.com/berry-13) in [#17973](https://github.com/LibreChat-AI/LibreChat/pull/17973)
+- 🌿 perf: Read Only the Active Branch for Turn History by [@berry-13](https://github.com/berry-13) in [#17971](https://github.com/LibreChat-AI/LibreChat/pull/17971)
+- ⌨️ perf: Keep the Composer Bar From Re-rendering on Keystrokes by [@berry-13](https://github.com/berry-13) in [#17974](https://github.com/LibreChat-AI/LibreChat/pull/17974)
+- 🍡 perf: Batch Sidebar Unread Cache Scans by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18004](https://github.com/LibreChat-AI/LibreChat/pull/18004)
+- 🛌 perf: Defer Search Key Dialog Initialization Until First Open by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17976](https://github.com/LibreChat-AI/LibreChat/pull/17976)
+- 🛝 perf: Render Chats Independently of Catalog Discovery by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17692](https://github.com/LibreChat-AI/LibreChat/pull/17692)
+- 🏎️ perf: Load Conversation Messages From the Chat Route by [@berry-13](https://github.com/berry-13) in [#17912](https://github.com/LibreChat-AI/LibreChat/pull/17912)
+- 🧺 refactor: Move the Composer Tray and Staged Items Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17817](https://github.com/LibreChat-AI/LibreChat/pull/17817)
+- 🧰 refactor: Move Part Helpers and activityLabels Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17771](https://github.com/LibreChat-AI/LibreChat/pull/17771)
+- 🚏 refactor: Move the Queued Follow-Up Row Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17868](https://github.com/LibreChat-AI/LibreChat/pull/17868)
+- 🌱 refactor: Move Conversation Starters Into the Chat Package With a Starter Button Variant by [@berry-13](https://github.com/berry-13) in [#17805](https://github.com/LibreChat-AI/LibreChat/pull/17805)
+- 📎 refactor: Move the Attachment Row Into @librechat/chat Behind the Files Host by [@berry-13](https://github.com/berry-13) in [#17801](https://github.com/LibreChat-AI/LibreChat/pull/17801)
+- 📜 refactor: Make the Package Scroll Button the Message List Default by [@berry-13](https://github.com/berry-13) in [#17761](https://github.com/LibreChat-AI/LibreChat/pull/17761)
+- 🧯 refactor: Retire Host Tool Outcome, Sibling, Branch Tail and Approval Members by [@berry-13](https://github.com/berry-13) in [#17867](https://github.com/LibreChat-AI/LibreChat/pull/17867)
+- 🚚 refactor: Move the Subagent Thread Panel Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17781](https://github.com/LibreChat-AI/LibreChat/pull/17781)
+- 🛰️ refactor: Read the Subagent Thread Panel's App Capabilities Through the Subagents Host by [@berry-13](https://github.com/berry-13) in [#17759](https://github.com/LibreChat-AI/LibreChat/pull/17759)
+- 🪆 refactor: Move the Subagent Conversation and Shared Activity Dialog Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17757](https://github.com/LibreChat-AI/LibreChat/pull/17757)
+- 📮 refactor: Derive a Send's Code Decision Inside @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17797](https://github.com/LibreChat-AI/LibreChat/pull/17797)
+- 🧩 refactor: Ship Icon Sizes, Status Type and the Label Sweep From @librechat/client by [@berry-13](https://github.com/berry-13) in [#17800](https://github.com/LibreChat-AI/LibreChat/pull/17800)
+- 🧩 refactor: Move the Message Rows Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17838](https://github.com/LibreChat-AI/LibreChat/pull/17838)
+- 📊 refactor: Move the Context Usage Popover Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17799](https://github.com/LibreChat-AI/LibreChat/pull/17799)
+- 🧵 refactor: Render the Package Message List by Default in ChatScreen by [@berry-13](https://github.com/berry-13) in [#17753](https://github.com/LibreChat-AI/LibreChat/pull/17753)
+- 🌿 refactor: Move Leaf Content Parts Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17756](https://github.com/LibreChat-AI/LibreChat/pull/17756)
+- 🪝 refactor: Move the Message Row Hooks Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17802](https://github.com/LibreChat-AI/LibreChat/pull/17802)
+- 🧮 refactor: Move the Code Workspace Decision Logic Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17782](https://github.com/LibreChat-AI/LibreChat/pull/17782)
+- ⏰ refactor: Move the Wake-Up Row Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17780](https://github.com/LibreChat-AI/LibreChat/pull/17780)
+- 🛂 refactor: Move the Code Approval Mode Logic Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17769](https://github.com/LibreChat-AI/LibreChat/pull/17769)
+- 🪄 refactor: Compose Chat Package Styles From Shared Primitive Variants by [@berry-13](https://github.com/berry-13) in [#17760](https://github.com/LibreChat-AI/LibreChat/pull/17760)
+- 🔎 perf: Read Dependency Usage From Source Files Only in Static Checks by [@berry-13](https://github.com/berry-13) in [#17767](https://github.com/LibreChat-AI/LibreChat/pull/17767)
+- ⏱️ perf: Share the Installed Dependency Cache and Fetch Static Check History Blobless by [@berry-13](https://github.com/berry-13) in [#17766](https://github.com/LibreChat-AI/LibreChat/pull/17766)
+- 💭 refactor: Move the Composer Thinking Control Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17754](https://github.com/LibreChat-AI/LibreChat/pull/17754)
+- 🧭 refactor: Move the Message Navigation Rail Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17758](https://github.com/LibreChat-AI/LibreChat/pull/17758)
+- 👁️ refactor: Report Conversation Seen From @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17755](https://github.com/LibreChat-AI/LibreChat/pull/17755)
+- 🛞 refactor: Run Message Scrolling Inside @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17752](https://github.com/LibreChat-AI/LibreChat/pull/17752)
+- 🧠 refactor: Move the Composer Reasoning Budget Control Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17763](https://github.com/LibreChat-AI/LibreChat/pull/17763)
+- 🏷️ refactor: Resolve the Turn Sender, Reasoning Override and Launch in @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17762](https://github.com/LibreChat-AI/LibreChat/pull/17762)
+- 🎯 refactor: Let useTurns Own Response Binding, Regenerated Focus and the History Guard by [@berry-13](https://github.com/berry-13) in [#17750](https://github.com/LibreChat-AI/LibreChat/pull/17750)
+- 🔐 style: Restyle the OAuth Success and Error Pages by [@berry-13](https://github.com/berry-13) in [#17729](https://github.com/LibreChat-AI/LibreChat/pull/17729)
+- 🛰️ refactor: Stream Assistants Turns Through @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17697](https://github.com/LibreChat-AI/LibreChat/pull/17697)
+- 🚦 refactor: Move the Tool Outcome Helpers Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17708](https://github.com/LibreChat-AI/LibreChat/pull/17708)
+- 🦶 refactor: Share One Message Footer Across Message Rows by [@berry-13](https://github.com/berry-13) in [#17706](https://github.com/LibreChat-AI/LibreChat/pull/17706)
+- 🖼️ refactor: Move the Composer Layout Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17680](https://github.com/LibreChat-AI/LibreChat/pull/17680)
+- ✍️ refactor: Move the Composer Field and Action Slot Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17679](https://github.com/LibreChat-AI/LibreChat/pull/17679)
+- 🏷️ refactor: Move the Tool Label Helpers Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17682](https://github.com/LibreChat-AI/LibreChat/pull/17682)
+- 🧮 refactor: Move the Ask Question and Tool Call Phase Helpers Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17676](https://github.com/LibreChat-AI/LibreChat/pull/17676)
+- 🧱 refactor: Draw Structured Message Rows Through ContentRow in @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17701](https://github.com/LibreChat-AI/LibreChat/pull/17701)
+- 🧷 refactor: Move the Message Row Contexts into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17674](https://github.com/LibreChat-AI/LibreChat/pull/17674)
+- 🪜 refactor: Move the Thread Renderers Into @librechat/chat as the Default Thread by [@berry-13](https://github.com/berry-13) in [#17661](https://github.com/LibreChat-AI/LibreChat/pull/17661)
+- 🎛️ refactor: Move the Message Hover Toolbar into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17660](https://github.com/LibreChat-AI/LibreChat/pull/17660)
+- 🪄 refactor: Move the Skills Popover Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17675](https://github.com/LibreChat-AI/LibreChat/pull/17675)
+- 🚦 refactor: Move the Composer Queue Rail Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17685](https://github.com/LibreChat-AI/LibreChat/pull/17685)
+- 💬 refactor: Move the Steer Part Into the Chat Package Behind Image and File Preview Slots by [@berry-13](https://github.com/berry-13) in [#17704](https://github.com/LibreChat-AI/LibreChat/pull/17704)
+- 📡 refactor: Move the Stream Event Handlers into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17677](https://github.com/LibreChat-AI/LibreChat/pull/17677)
+- 🧭 refactor: Route Stream Event Handler Effects Through Grouped Host Services by [@berry-13](https://github.com/berry-13) in [#17668](https://github.com/LibreChat-AI/LibreChat/pull/17668)
+- 🧵 refactor: Move the Thread and Lanes Helpers Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17656](https://github.com/LibreChat-AI/LibreChat/pull/17656)
+- 📋 refactor: Move the Copy Footer and Action Gate into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17585](https://github.com/LibreChat-AI/LibreChat/pull/17585)
+- 🎚️ refactor: Move the Thinking-Level Track Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17684](https://github.com/LibreChat-AI/LibreChat/pull/17684)
+- 🏷️ refactor: Paint the Provider Badge Over Media Through a Theme Role by [@berry-13](https://github.com/berry-13) in [#17681](https://github.com/LibreChat-AI/LibreChat/pull/17681)
+- 🖼️ refactor: Assemble the Chat Screen in @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17671](https://github.com/LibreChat-AI/LibreChat/pull/17671)
+- ❓ refactor: Move the Ask Question Popover Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17683](https://github.com/LibreChat-AI/LibreChat/pull/17683)
+- 📜 refactor: Move the Prompts Popover Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17670](https://github.com/LibreChat-AI/LibreChat/pull/17670)
+- 📼 refactor: Move the Subagent Transcript Into @librechat/chat Behind a Subagents Host by [@berry-13](https://github.com/berry-13) in [#17678](https://github.com/LibreChat-AI/LibreChat/pull/17678)
+- 🧭 refactor: Move the Chat Surface, Task Panel and Activity Group Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17669](https://github.com/LibreChat-AI/LibreChat/pull/17669)
+- 🪪 refactor: Move Subagent Authors Into @librechat/chat Behind a Message Icon Slot by [@berry-13](https://github.com/berry-13) in [#17635](https://github.com/LibreChat-AI/LibreChat/pull/17635)
+- 🗂️ refactor: Read the Parent Subagent Index Through the Stream Host by [@berry-13](https://github.com/berry-13) in [#17633](https://github.com/LibreChat-AI/LibreChat/pull/17633)
+- 🧷 refactor: Move Subagent Dispatch and Attachment Routing Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17632](https://github.com/LibreChat-AI/LibreChat/pull/17632)
+- 🧳 refactor: Move Ask State, Approval and File Previews, and Diff View Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17657](https://github.com/LibreChat-AI/LibreChat/pull/17657)
+- 🔎 refactor: Move the Mention Popover Into the Chat Package as a Combobox by [@berry-13](https://github.com/berry-13) in [#17659](https://github.com/LibreChat-AI/LibreChat/pull/17659)
+- 🧮 refactor: Move Error Turn and Title Helpers into Chat Core by [@berry-13](https://github.com/berry-13) in [#17658](https://github.com/LibreChat-AI/LibreChat/pull/17658)
+- 📜 refactor: Move the MessagesView Root Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17589](https://github.com/LibreChat-AI/LibreChat/pull/17589)
+- 🧭 refactor: Move the Pure Subagent Modules Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17582](https://github.com/LibreChat-AI/LibreChat/pull/17582)
+- 🪜 refactor: Move Row Mounting and the Scrollbar Gutter Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17586](https://github.com/LibreChat-AI/LibreChat/pull/17586)
+- 🏗️ refactor: Lay Out the Chat Pane Through @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17574](https://github.com/LibreChat-AI/LibreChat/pull/17574)
+- 🍴 refactor: Move the Fork and Feedback Actions into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17561](https://github.com/LibreChat-AI/LibreChat/pull/17561)
+- ⌨️ refactor: Move Composer Input Controls Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17551](https://github.com/LibreChat-AI/LibreChat/pull/17551)
+- 🔑 perf: Cache JWT Users and Batch Auth-Path Reads by [@berry-13](https://github.com/berry-13) in [#17466](https://github.com/LibreChat-AI/LibreChat/pull/17466)
+- 🛟 refactor: Move Resume-on-Load and Stream Steer State Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17565](https://github.com/LibreChat-AI/LibreChat/pull/17565)
+- 🔁 refactor: Move the Resume Helpers and Their State Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17562](https://github.com/LibreChat-AI/LibreChat/pull/17562)
+- 📎 refactor: Move Stream Content and Attachment Handlers Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17559](https://github.com/LibreChat-AI/LibreChat/pull/17559)
+- 🧮 refactor: Move Token Usage State and Its Stream Handlers Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17558](https://github.com/LibreChat-AI/LibreChat/pull/17558)
+- ✂️ refactor: Move the Markdown Block Splitter and Editable Part Checks Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17579](https://github.com/LibreChat-AI/LibreChat/pull/17579)
+- 🌊 refactor: Move the Stream Step Handler Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17555](https://github.com/LibreChat-AI/LibreChat/pull/17555)
+- 📡 refactor: Attach the Subagent Activity Feed Through the Chat Transport by [@berry-13](https://github.com/berry-13) in [#17526](https://github.com/LibreChat-AI/LibreChat/pull/17526)
+- 📎 refactor: Move Composer Attachment Components Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17533](https://github.com/LibreChat-AI/LibreChat/pull/17533)
+- 🪝 refactor: Move the Chat Session Provider Into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17580](https://github.com/LibreChat-AI/LibreChat/pull/17580)
+- 🍂 refactor: Move Tool Disclosure State and Leaf Part Components Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17560](https://github.com/LibreChat-AI/LibreChat/pull/17560)
+- 🧮 refactor: Move Pure Part Helpers Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17520](https://github.com/LibreChat-AI/LibreChat/pull/17520)
+- 🪟 refactor: Move Message Row and Timestamp into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17554](https://github.com/LibreChat-AI/LibreChat/pull/17554)
+- 🧱 refactor: Move Message Row Leaves into @librechat/chat by [@berry-13](https://github.com/berry-13) in [#17523](https://github.com/LibreChat-AI/LibreChat/pull/17523)
+- 🪝 refactor: Own Ask and Regenerate in the Chat Package by [@berry-13](https://github.com/berry-13) in [#17540](https://github.com/LibreChat-AI/LibreChat/pull/17540)
+- 🏎️ perf: Parallelize Independent Agent and Schedule Lookups by [@berry-13](https://github.com/berry-13) in [#17465](https://github.com/LibreChat-AI/LibreChat/pull/17465)
+- 🧱 refactor: Move Turn Building Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17519](https://github.com/LibreChat-AI/LibreChat/pull/17519)
+- 🎛️ refactor: Move Composer Leaf Controls and Steering Into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17521](https://github.com/LibreChat-AI/LibreChat/pull/17521)
+- 🚦 refactor: Add the Core Chat Class With a Serial Job Executor and React Query State by [@berry-13](https://github.com/berry-13) in [#17030](https://github.com/LibreChat-AI/LibreChat/pull/17030)
+- 🗂️ perf: Index Hot Lookups and Fix the Message Cursor by [@berry-13](https://github.com/berry-13) in [#17464](https://github.com/LibreChat-AI/LibreChat/pull/17464)
+- 🔗 refactor: Restyle the Connected Accounts Settings Row by [@berry-13](https://github.com/berry-13) in [#17460](https://github.com/LibreChat-AI/LibreChat/pull/17460)
+- 📡 refactor: Move the Adaptive and Resumable SSE Bindings into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17452](https://github.com/LibreChat-AI/LibreChat/pull/17452)
+- 🧰 refactor: Move useChatHelpers and ChatProvider into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17446](https://github.com/LibreChat-AI/LibreChat/pull/17446)
+- 📦 refactor: Move the useChat Facade and ChatContext into the Chat Package by [@berry-13](https://github.com/berry-13) in [#17445](https://github.com/LibreChat-AI/LibreChat/pull/17445)
+- 🏷️ refactor: Export the Dialog Parts Under Canonical Dialog Names by [@berry-13](https://github.com/berry-13) in [#17459](https://github.com/LibreChat-AI/LibreChat/pull/17459)
+
+### 🧪 Tests
+
+- 🧪 test: Close Two Input Timing Gaps Behind Intermittent Tool Timer and Pinned Drag Failures by [@danny-avila](https://github.com/danny-avila) in [#18074](https://github.com/LibreChat-AI/LibreChat/pull/18074)
+- 🔌 test: Keep Harness Connections Open for Playwright's Idle Sockets by [@danny-avila](https://github.com/danny-avila) in [#18070](https://github.com/LibreChat-AI/LibreChat/pull/18070)
+- 🧪 test: Keep Handlers Answering When a Mock Spec Removes a Route by [@danny-avila](https://github.com/danny-avila) in [#18069](https://github.com/LibreChat-AI/LibreChat/pull/18069)
+- 🧪 test: Close Three Timing Gaps Behind Intermittent Mock E2E Failures by [@danny-avila](https://github.com/danny-avila) in [#18067](https://github.com/LibreChat-AI/LibreChat/pull/18067)
+- 🧪 test: Release Route Handlers Before Mock Spec Contexts Close by [@danny-avila](https://github.com/danny-avila) in [#18064](https://github.com/LibreChat-AI/LibreChat/pull/18064)
+- 🧪 test: Let Theme Paint Route Handlers Settle Before Teardown by [@danny-avila](https://github.com/danny-avila) in [#18059](https://github.com/LibreChat-AI/LibreChat/pull/18059)
+- 🧪 test: Stabilize the RTL Prompt Counter and Undocked Dock-Back Scenarios by [@danny-avila](https://github.com/danny-avila) in [#18052](https://github.com/LibreChat-AI/LibreChat/pull/18052)
+- 🧾 test: Bill Detached Subagents Their Own Prompt in the Mock Model by [@danny-avila](https://github.com/danny-avila) in [#18050](https://github.com/LibreChat-AI/LibreChat/pull/18050)
+- 🧪 test: Stabilize the Sidebar Focus and Fold Tree Scenarios by [@berry-13](https://github.com/berry-13) in [#18030](https://github.com/LibreChat-AI/LibreChat/pull/18030)
+- 🧾 test: Bill Advertised Tool Definitions in the Mock Model's Input Tokens by [@berry-13](https://github.com/berry-13) in [#17897](https://github.com/LibreChat-AI/LibreChat/pull/17897)
+- 🧪 test: Wait for the Reply Tab's Seen Write Before Restoring the Unread Baseline by [@berry-13](https://github.com/berry-13) in [#17870](https://github.com/LibreChat-AI/LibreChat/pull/17870)
+- 🎯 test: Restore the Ask-User Arrival Focus Specs by [@berry-13](https://github.com/berry-13) in [#17869](https://github.com/LibreChat-AI/LibreChat/pull/17869)
+- 🪑 test: Verify Portable Resource Lease Ownership and Expiry by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17691](https://github.com/LibreChat-AI/LibreChat/pull/17691)
+- 🧪 test: Render the Effort Track With the Real English Copy by [@berry-13](https://github.com/berry-13) in [#17699](https://github.com/LibreChat-AI/LibreChat/pull/17699)
+- 📱 test: Reach the Composer and Child Panel on the Mobile Mock Project by [@berry-13](https://github.com/berry-13) in [#17695](https://github.com/LibreChat-AI/LibreChat/pull/17695)
+- 🦠 test: Add Portable Favorites Contracts and Mutation Testing by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17690](https://github.com/LibreChat-AI/LibreChat/pull/17690)
+- 🧪 test: Render the Consumer Spec Through the Package Message Row by [@berry-13](https://github.com/berry-13) in [#17578](https://github.com/LibreChat-AI/LibreChat/pull/17578)
+- 🧪 test: Prove the @librechat/chat Public Entries With a Consumer Spec by [@berry-13](https://github.com/berry-13) in [#17522](https://github.com/LibreChat-AI/LibreChat/pull/17522)
+- 🌳 test: Assert the Message Tree a Host Write Leaves After a Replaced Start Rolls Back by [@berry-13](https://github.com/berry-13) in [#17548](https://github.com/LibreChat-AI/LibreChat/pull/17548)
+
+### 📦 Dependencies, Chores & CI
+
+- 🧑‍⚖️ ci: Require Explicit PR Quality Decisions and Validate Reports by [@AtefBellaaj](https://github.com/AtefBellaaj) in [#18025](https://github.com/LibreChat-AI/LibreChat/pull/18025)
+- 🧯 ci: Stop Diagnostic Artifact Uploads From Failing or Stalling Test Jobs by [@danny-avila](https://github.com/danny-avila) in [#18068](https://github.com/LibreChat-AI/LibreChat/pull/18068)
+- 🦠 chore: Upgrade Node.js and Undici to Security Releases by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18066](https://github.com/LibreChat-AI/LibreChat/pull/18066)
+- 🧱 ci: Block the PWA Service Worker Across the Mock E2E Profiles by [@danny-avila](https://github.com/danny-avila) in [#18063](https://github.com/LibreChat-AI/LibreChat/pull/18063)
+- 🚦 ci: Make Dev Workflows Ready for a Merge Queue by [@danny-avila](https://github.com/danny-avila) in [#18054](https://github.com/LibreChat-AI/LibreChat/pull/18054)
+- 🍃 ci: Provision the mongod Binary Before Any Test Starts by [@danny-avila](https://github.com/danny-avila) in [#18053](https://github.com/LibreChat-AI/LibreChat/pull/18053)
+- 🎲 ci: Fail Playwright Runs When a Test Passes Only on a Retry by [@danny-avila](https://github.com/danny-avila) in [#18051](https://github.com/LibreChat-AI/LibreChat/pull/18051)
+- 🥅 ci: Run Playwright After Merges to Dev and Guard Specs Under Test Selection by [@danny-avila](https://github.com/danny-avila) in [#18049](https://github.com/LibreChat-AI/LibreChat/pull/18049)
+- 🧰 ci: Provision Pinned Redis Binaries Without a Distro Mirror by [@danny-avila](https://github.com/danny-avila) in [#18055](https://github.com/LibreChat-AI/LibreChat/pull/18055)
+- 🦕 ci: Support Older Heads in Change Quality by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#18022](https://github.com/LibreChat-AI/LibreChat/pull/18022)
+- 🌡️ ci: Report Mutation Scores and Change Risk for Edited Functions by [@AtefBellaaj](https://github.com/AtefBellaaj) in [#17965](https://github.com/LibreChat-AI/LibreChat/pull/17965)
+- 🔒 chore: Patch minimatch and qs Advisories in Nested Dev Dependencies by [@danny-avila](https://github.com/danny-avila) in [#18005](https://github.com/LibreChat-AI/LibreChat/pull/18005)
+- 🧭 chore: Bump Artifact react-router-dom to v7 by [@garfiec](https://github.com/garfiec) in [#17819](https://github.com/LibreChat-AI/LibreChat/pull/17819)
+- 🪰 chore: Bump HTTP Dependencies and Scope Security Overrides by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17688](https://github.com/LibreChat-AI/LibreChat/pull/17688)
+- 🪝 ci: Verify the Pushed Commit With the Static Checks Before Push by [@berry-13](https://github.com/berry-13) in [#17768](https://github.com/LibreChat-AI/LibreChat/pull/17768)
+- ⚖️ ci: Refresh Playwright Shard Timings From Recent Runs by [@berry-13](https://github.com/berry-13) in [#17765](https://github.com/LibreChat-AI/LibreChat/pull/17765)
+- 🧹 chore: Clear the Whole-Repo Lint Errors on Dev by [@berry-13](https://github.com/berry-13) in [#17702](https://github.com/LibreChat-AI/LibreChat/pull/17702)
+- 🦿 chore: Bump Agents SDK to 4.2.1 by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17664](https://github.com/LibreChat-AI/LibreChat/pull/17664)
+- 📦 chore: Update `re2js` to v2.9.1 and bump `@hono/node-server` to v2.1.5 by [@danny-avila](https://github.com/danny-avila) in [#17652](https://github.com/LibreChat-AI/LibreChat/pull/17652)
+- 🥐 chore: Standardize Bun-First Workspace Typechecks by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17651](https://github.com/LibreChat-AI/LibreChat/pull/17651)
+- 🧪 ci: Isolate `auth.tenant` Spec From a Local `librechat.yaml` by [@jomspk](https://github.com/jomspk) in [#17642](https://github.com/LibreChat-AI/LibreChat/pull/17642)
+- 🧗 chore: Bump ClickHouse to 26.3.62.3 LTS by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17647](https://github.com/LibreChat-AI/LibreChat/pull/17647)
+- 📵 chore: Add an Offline OSS Scanner Environment by [@lia-by-librechat](https://github.com/apps/lia-by-librechat) in [#17645](https://github.com/LibreChat-AI/LibreChat/pull/17645)
+- 🔁 ci: Skip the data-provider publish when its version is already on npm by [@danny-avila](https://github.com/danny-avila) in [#17639](https://github.com/LibreChat-AI/LibreChat/pull/17639)
+
+### 🌐 Internationalization
+
+- 🌍 i18n: Update translation.json with latest translations by [@github-actions](https://github.com/apps/github-actions) in [#17629](https://github.com/LibreChat-AI/LibreChat/pull/17629)
+- 🪷 i18n: Add Hindi, Marathi, and Tamil Languages by [@berry-13](https://github.com/berry-13) in [#17498](https://github.com/LibreChat-AI/LibreChat/pull/17498)
+
+## New Contributors
+
+- [@garfiec](https://github.com/garfiec) made their first contribution in [#17819](https://github.com/LibreChat-AI/LibreChat/pull/17819)
+- [@dvorak33](https://github.com/dvorak33) made their first contribution in [#13749](https://github.com/LibreChat-AI/LibreChat/pull/13749)
+- [@dwaddle](https://github.com/dwaddle) made their first contribution in [#18057](https://github.com/LibreChat-AI/LibreChat/pull/18057)
+
+**Full Changelog:** [v0.8.9-rc1...v0.8.9](https://github.com/LibreChat-AI/LibreChat/compare/v0.8.9-rc1...v0.8.9)

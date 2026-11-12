@@ -1796,10 +1796,11 @@ see: [Transactions Object Structure](/docs/configuration/librechat_yaml/object_s
 
 ## telemetry
 
-Controls browser real user monitoring (RUM). This block rejects unknown keys.
+Controls error stack depth and browser real user monitoring (RUM). This block rejects unknown keys. These are deployment settings read from base YAML.
 
 <OptionTable
   options={[
+    ['stackTraceLimit', 'Integer', 'Error stack frames recorded by V8. Accepts 1 to 1000. Omitted, preserves Node\'s process default (normally 10, or the NODE_OPTIONS --stack-trace-limit value).', ''],
     ['rum.enabled', 'Boolean', 'Enables browser RUM. When omitted, the RUM_ENABLED environment variable decides.', ''],
     ['rum.sessionReplay.enabled', 'Boolean', 'Enables session replay. Only takes effect when RUM itself is enabled. Defaults to false.', ''],
   ]}
@@ -1884,10 +1885,11 @@ Time budgets, in milliseconds, for outbound calls made inside a request. Each ke
 <OptionTable
   options={[
     ['ragMs', 'Integer', 'RAG API queries for file search and message context.', '30000'],
+    ['directoryMs', 'Integer', 'Entire permission-directory verification phase, including token exchange and pagination.', '30000'],
     ['ocrMs', 'Integer', 'Each OCR provider call (upload, signed URL, OCR, delete).', '300000'],
     ['actionsMs', 'Integer', 'Each action (OpenAPI tool) HTTP call.', '300000'],
     ['moderationMs', 'Integer', 'The OpenAI moderation check that runs before a chat turn.', '10000'],
-    ['imageFetchMs', 'Integer', 'Fetching a stored image by URL to encode it for a provider.', '30000'],
+    ['imageFetchMs', 'Integer', 'Reading a stored image by URL or from blob storage to encode it for a provider.', '30000'],
     ['toolsMs', 'Integer', 'Each call a built-in tool makes to its API (weather, Wolfram, web search).', '60000'],
     ['speechMs', 'Integer', 'Each text-to-speech or speech-to-text provider request.', '300000'],
     ['imageGenerationMs', 'Integer', 'Each Stable Diffusion image generation request.', '300000'],
@@ -1932,8 +1934,9 @@ Upper bounds on independent lookups a request runs at once. Each key is optional
 
 <OptionTable
   options={[
+    ['permissionPrincipalLookups', 'Integer', 'Principal verification and provisioning during permission updates.', '4'],
     ['connectedAgentLoads', 'Integer', 'Connected agents initialized together per level while discovering a handoff graph.', '4'],
-    ['mcpCatalogLookups', 'Integer', 'MCP tool catalog reads when assembling an ephemeral or added agent.', '4'],
+    ['mcpCatalogLookups', 'Integer', 'MCP tool catalog reads when assembling an agent\'s tools.', '4'],
     ['skillNameLookups', 'Integer', 'Model spec skill name resolutions.', '8'],
     ['skillFileInspections', 'Integer', 'Bundled skill file inspections before a skill is primed.', '4'],
     ['resumeAgentLoads', 'Integer', 'Agent reads while building the resume snapshot of a paused run.', '4'],
@@ -1944,6 +1947,63 @@ Upper bounds on independent lookups a request runs at once. Each key is optional
 concurrency:
   connectedAgentLoads: 4
   skillNameLookups: 8
+```
+
+## persistence
+
+Selects storage for tool favorites only. MongoDB remains required for the rest of LibreChat. This is deployment-owned configuration; admin Base, role, group, and user profiles cannot change it.
+
+`favorites` accepts `mongo` (default) or `postgres`. The PostgreSQL implementation requires PostgreSQL 16 and a migrated, verified favorites database. It does not automatically fall back to MongoDB or synchronize writes between backends.
+
+```yaml filename="persistence"
+persistence:
+  favorites: mongo
+  postgres:
+    connectionStringEnv: LIBRECHAT_POSTGRES_DSN
+    max: 10
+    maxWaiting: 100
+    acquireTimeoutMs: 5000
+    queryTimeoutMs: 15000
+    idleTimeoutMs: 30000
+```
+
+Set the actual connection string in the named environment variable; `connectionStringEnv` accepts the variable's name, not a literal DSN. The example shows pool defaults. Pool size accepts 1 to 100; `maxWaiting` accepts 1 to 1000; acquisition timeout accepts 1 to 60000 ms; query and idle timeouts accept 1 to 300000 ms.
+
+Keep `favorites: mongo` during preparation. Stop all application, worker, and migration writers before importing or verifying a snapshot:
+
+```bash
+npm run postgres -- migrate
+npm run postgres -- import --offline --dry-run
+npm run postgres -- import --offline
+npm run postgres -- verify --offline
+```
+
+After successful migration, import, and verification, set `favorites: postgres` and restart the deployment consistently. Once activated, the importer rejects replay. Do not select a new empty database to bypass migration checks; the import command's `--verified-empty` option is only for an explicitly verified empty source.
+
+Before returning to MongoDB after PostgreSQL writes, stop every writer and reconcile the current PostgreSQL snapshot back to MongoDB:
+
+```bash
+npm run postgres -- reconcile-mongo --offline --dry-run
+npm run postgres -- reconcile-mongo --offline
+```
+
+Reconciliation replaces the MongoDB favorites collection, including deletions; back up both stores first. The command does not change storage selection. Select `mongo` and restart only after reconciliation succeeds.
+
+## spreadsheetParsing
+
+Bounds spreadsheet text extraction performed by the built-in parser. The parser runs in a separate process with a deadline and an admission limit; a timed-out or saturated parse fails instead of running without a limit.
+
+<OptionTable
+  options={[
+    ['timeoutMs', 'Integer', 'Maximum parse duration in milliseconds. Accepts 100 to 60000.', '5000'],
+    ['maxConcurrent', 'Integer', 'Maximum concurrent spreadsheet parses per API process. Accepts 1 to 8.', '2'],
+  ]}
+/>
+
+```yaml filename="spreadsheetParsing"
+spreadsheetParsing:
+  timeoutMs: 5000
+  maxConcurrent: 2
 ```
 
 ## clientLimits
