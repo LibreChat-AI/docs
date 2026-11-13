@@ -1,0 +1,13 @@
+import React from 'react'
+
+export default function FutureInfraIcon({ className, ...props }: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className={className} {...props}>
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        d="M5.625 0h12.75A5.625 5.625 0 0 1 24 5.625v12.75A5.625 5.625 0 0 1 18.375 24H5.625A5.625 5.625 0 0 1 0 18.375V5.625A5.625 5.625 0 0 1 5.625 0ZM6.811 9.314l1.378-1.378L12.254 12l-4.065 4.064-1.378-1.378L9.496 12ZM13.125 15.15h3.75a.975.975 0 0 1 0 1.95h-3.75a.975.975 0 0 1 0-1.95Z"
+      />
+    </svg>
+  )
+}
