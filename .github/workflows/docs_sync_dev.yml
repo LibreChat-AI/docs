@@ -1,0 +1,174 @@
+name: Docs Sync From LibreChat dev
+
+# Weekly: review what merged to LibreChat's dev branch since the last synced
+# commit, let Claude document whatever needs it, and open (or refresh) one
+# draft pull request. Nothing merges on its own.
+#
+# State: .github/docs-sync/state.json records the last LibreChat commit the
+# docs were synced to. It only advances when the sync pull request merges, so
+# an unmerged run is regenerated from main, covering the wider range, the next
+# time the workflow runs.
+#
+# Secrets:
+#   ANTHROPIC_API_KEY  required
+#   DOCS_SYNC_TOKEN    optional; a token with contents and pull-requests write.
+#                      Pull requests opened with the default GITHUB_TOKEN do not
+#                      trigger other workflows, so CI only runs on the sync PR
+#                      when this is set.
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'LibreChat commit to start after (defaults to state.json)'
+        type: string
+        default: ''
+      max_commits:
+        description: 'Most commits to review in one run'
+        type: number
+        default: 150
+      model:
+        description: 'Claude model'
+        type: string
+        default: 'claude-opus-5-5'
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+env:
+  SYNC_BRANCH: automation/docs-sync-dev
+  STATE_FILE: .github/docs-sync/state.json
+
+concurrency:
+  group: docs-sync-dev
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # No stored credentials: the agent below reads untrusted text (commit
+          # messages, app source), so nothing it can reach should hold a token.
+          persist-credentials: false
+
+      - name: Prepare sync branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git switch -C "$SYNC_BRANCH" origin/main
+
+      - name: Clone LibreChat dev
+        run: |
+          git clone --quiet --filter=blob:none --branch dev \
+            https://github.com/LibreChat-AI/LibreChat.git .sync/librechat
+
+      - name: Collect commits to review
+        id: range
+        env:
+          SINCE: ${{ inputs.since }}
+          MAX_COMMITS: ${{ inputs.max_commits || 150 }}
+        run: |
+          since="${SINCE:-$(jq -r '.librechat.lastSyncedCommit' "$STATE_FILE")}"
+          if ! git -C .sync/librechat cat-file -e "${since}^{commit}" 2>/dev/null; then
+            echo "::error::start commit $since is not in LibreChat dev"
+            exit 1
+          fi
+          git -C .sync/librechat log --reverse --no-merges \
+            --format='%H %as %s' "${since}..origin/dev" | head -n "$MAX_COMMITS" > .sync/commits.txt
+          count=$(wc -l < .sync/commits.txt | tr -d ' ')
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          if [ "$count" -eq 0 ]; then
+            echo "No new commits on LibreChat dev since $since."
+            exit 0
+          fi
+          last=$(tail -n 1 .sync/commits.txt | cut -d' ' -f1)
+          echo "since=$since" >> "$GITHUB_OUTPUT"
+          echo "last=$last" >> "$GITHUB_OUTPUT"
+          echo "Reviewing $count commits: ${since:0:10}..${last:0:10}"
+          sha256sum .git/config > .sync/git-config.sha256
+          ls -la .git/hooks > .sync/git-hooks.list
+
+      - name: Document changes with Claude
+        id: claude
+        if: steps.range.outputs.count != '0'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Follow the instructions in .github/docs-sync/prompt.md.
+            Review the ${{ steps.range.outputs.count }} LibreChat commits listed in .sync/commits.txt
+            (range ${{ steps.range.outputs.since }}..${{ steps.range.outputs.last }}).
+          claude_args: |
+            --model ${{ inputs.model || 'claude-opus-5-5' }}
+            --max-turns 400
+            --allowedTools "Read,Glob,Grep,Task,TodoWrite,Edit(./content/docs/**),Write(./content/docs/**),Edit(./.sync/report.md),Write(./.sync/report.md),Bash(git -C .sync/librechat show:*),Bash(git -C .sync/librechat log:*),Bash(git -C .sync/librechat grep:*),Bash(git -C .sync/librechat ls-tree:*),Bash(git -C .sync/librechat diff:*),Bash(git diff:*),Bash(git status:*),Bash(ls:*),Bash(wc:*)"
+
+      - name: Check the result
+        id: check
+        if: steps.claude.outputs.conclusion == 'success'
+        run: |
+          # Refuse to go on if anything tampered with git's own config or hooks.
+          sha256sum -c --quiet .sync/git-config.sha256
+          ls -la .git/hooks | diff -q - .sync/git-hooks.list
+          git config --local core.hooksPath /dev/null
+          # Only English docs sources may change.
+          changed=$(git status --porcelain --untracked-files=all -- . ':!.sync' | awk '{print $2}')
+          bad=$(printf '%s\n' "$changed" | grep -v -E '^content/docs/' || true)
+          locale=$(printf '%s\n' "$changed" | grep -E '\.[a-z]{2}(-[A-Z]{2})?\.(mdx|json)$' || true)
+          if [ -n "$bad$locale" ]; then
+            echo "::error::unexpected files changed:"; printf '%s\n' $bad $locale
+            exit 1
+          fi
+          # No em dashes, en dashes or " -- " in added lines.
+          git add -N content/docs
+          if git diff -U0 -- content/docs | grep -E '^\+[^+]' | grep -n -E '—|–| -- '; then
+            echo "::error::added lines contain a dash used as punctuation"
+            exit 1
+          fi
+          if [ ! -s .sync/report.md ]; then
+            echo "::error::Claude did not write .sync/report.md"
+            exit 1
+          fi
+          if [ -z "$changed" ]; then
+            echo "docs_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update the sync pull request
+        if: steps.check.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN || github.token }}
+          LAST: ${{ steps.range.outputs.last }}
+          DOCS_CHANGED: ${{ steps.check.outputs.docs_changed }}
+        run: |
+          jq --arg sha "$LAST" '.librechat.lastSyncedCommit = $sha' "$STATE_FILE" > "$STATE_FILE.tmp"
+          mv "$STATE_FILE.tmp" "$STATE_FILE"
+          git add content/docs "$STATE_FILE"
+          git commit -q --no-verify -m "docs: Sync with LibreChat dev up to ${LAST:0:10}"
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic $auth" \
+            push --no-verify --force origin "HEAD:$SYNC_BRANCH"
+
+          title="📚 docs: Sync With LibreChat dev"
+          [ "$DOCS_CHANGED" = "true" ] || title="🔖 chore: Advance Docs Sync Marker (No Docs Changes)"
+          existing=$(gh pr list --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "$title" --body-file .sync/report.md
+            echo "Updated #$existing"
+          else
+            gh pr create --draft --base main --head "$SYNC_BRANCH" --title "$title" --body-file .sync/report.md
+          fi
+
+      - name: Summary
+        if: always() && steps.range.outputs.count != '0'
+        run: |
+          [ -f .sync/report.md ] && cat .sync/report.md >> "$GITHUB_STEP_SUMMARY" || true
