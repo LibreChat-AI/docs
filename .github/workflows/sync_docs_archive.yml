@@ -1,0 +1,54 @@
+name: Sync docs archive
+
+# Snapshots the docs for every LibreChat release and release candidate, and
+# drops a release's candidate snapshots once the final release is archived.
+# Opens a PR instead of pushing so every new snapshot is reviewed.
+on:
+  schedule:
+    - cron: '17 5 * * *' # daily 05:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: sync-docs-archive
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Snapshots are read from the commit that was on main when each
+          # release was published, so the full history is needed.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Sync archive with LibreChat releases
+        id: sync
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm docs:archive:sync
+
+      - name: Open pull request
+        if: steps.sync.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/sync-docs-archive
+          base: main
+          commit-message: 'docs: sync archived docs snapshots with LibreChat releases'
+          title: ${{ steps.sync.outputs.title }}
+          body: ${{ steps.sync.outputs.body }}
+          add-paths: content/docs-archive
+          delete-branch: true
