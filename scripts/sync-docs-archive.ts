@@ -99,7 +99,7 @@ export function planArchiveSync(
 }
 
 /** Every published (non-draft) release, following pagination to the last page. */
-async function fetchReleases(repository: string, token?: string): Promise<Release[]> {
+export async function fetchReleases(repository: string, token?: string): Promise<Release[]> {
   const apiUrl = process.env.GITHUB_API_URL || 'https://api.github.com'
   const releases: Release[] = []
 
