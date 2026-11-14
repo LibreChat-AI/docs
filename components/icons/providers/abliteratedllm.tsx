@@ -1,0 +1,13 @@
+import React from 'react'
+
+export default function AbliteratedLLMIcon({ className, ...props }: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" className={className} {...props}>
+      <path fill="currentColor" d="M43.8 10.7L52 27.1Q32.1 29.9 2 53.3Z" />
+      <path
+        fill="currentColor"
+        d="M54.6 32.3L62 47.1C50.8 42.4 21.1 41.6 2.9 53Q34.6 34.4 54.6 32.3Z"
+      />
+    </svg>
+  )
+}
