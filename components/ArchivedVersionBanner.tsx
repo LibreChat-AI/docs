@@ -4,17 +4,35 @@ import { Callout } from 'fumadocs-ui/components/callout'
  * Shown at the top of every archived docs page. `currentHref` is the same slug
  * on the live docs when it still exists, otherwise the live docs root. The
  * newest release is still what most deployments run, so it is introduced as
- * the latest release rather than as frozen, unmaintained docs.
+ * the latest release rather than as frozen, unmaintained docs, and a release
+ * candidate newer than it is introduced as a preview of the next release.
  */
 export function ArchivedVersionBanner({
   version,
   currentHref,
   latestRelease = false,
+  releaseCandidate = false,
 }: {
   version: string
   currentHref: string
   latestRelease?: boolean
+  releaseCandidate?: boolean
 }) {
+  if (releaseCandidate) {
+    return (
+      <Callout type="info" title="Release candidate">
+        <p className="m-0">
+          You are reading the documentation for <strong>{version}</strong>, a release candidate of
+          the next release that is still being tested. The main docs follow the development branch.{' '}
+          <a href={currentHref} className="font-medium underline">
+            Go to the latest docs
+          </a>
+          .
+        </p>
+      </Callout>
+    )
+  }
+
   if (latestRelease) {
     return (
       <Callout type="info" title="Latest release">

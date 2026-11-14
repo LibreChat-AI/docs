@@ -9,17 +9,27 @@ import { archiveDocsVersion } from './archive-docs-version'
 /**
  * Keeps content/docs-archive in step with LibreChat's published releases.
  *
- * Every release and release candidate newer than the newest snapshot is
- * archived from the docs commit that was on the branch when it was published.
- * Candidate snapshots stay until their final release is archived, then they
- * are removed: every snapshot is bundled into the build, and keeping each
- * candidate forever pushes the bundle past what webpack can emit.
+ * Every final release newer than the newest archived one, and every release
+ * candidate whose final release is not out yet, is archived from the docs
+ * commit that was on the branch when it was published. Candidate snapshots
+ * stay until their final release is archived, then they are removed: every
+ * snapshot is bundled into the build, and keeping each candidate forever
+ * pushes the bundle past what webpack can emit.
  */
 
 const execFile = promisify(execFileCallback)
 const PREFIX = '[docs-archive-sync]'
 const RELEASE_TAG_PATTERN = /^v\d+\.\d+\.\d+(?:-rc\d+)?$/
 const DEFAULT_REPOSITORY = 'LibreChat-AI/LibreChat'
+const RELEASES_PER_PAGE = 100
+const MAX_RELEASE_PAGES = 20
+
+/**
+ * webpack fails to emit the bundle with 17 archived versions (see the Docs
+ * Versions section of README.md), so a sync that would reach that many stops
+ * instead of opening a PR that cannot build.
+ */
+export const MAX_ARCHIVED_SNAPSHOTS = 16
 
 export interface Release {
   tag: string
@@ -33,71 +43,107 @@ export interface ArchivePlan {
 }
 
 const isCandidate = (id: string) => id.includes('-rc')
+const isRelease = (id: string) => RELEASE_TAG_PATTERN.test(id) && !isCandidate(id)
 const seriesOf = (id: string) => id.split('-rc')[0]
 const isNewer = (left: string, right: string) => compareDocsVersionsDescending(left, right) < 0
 
 /**
  * Decide which releases to snapshot and which candidate snapshots to drop.
  *
- * Only releases newer than the newest existing snapshot are considered, so
- * the archive never grows backwards. A candidate is skipped when its final
- * release is already out, and every candidate snapshot whose final release is
- * (or is about to be) archived is removed.
+ * Final releases are compared with the newest archived final release, so a
+ * candidate of a newer version never holds back the final release of an older
+ * one. A candidate counts as released once a final release of its version, or
+ * of any newer version, is archived or about to be; released candidates are
+ * neither archived nor kept. Hand-made series snapshots (`v0.7.x`) take no
+ * part in either decision.
  */
 export function planArchiveSync(
   releases: readonly Release[],
   archived: readonly string[],
 ): ArchivePlan {
   const existing = archived.filter((id) => DOCS_VERSION_ID_PATTERN.test(id))
-  const newestArchived = [...existing].sort(compareDocsVersionsDescending)[0]
+  const latestRelease = existing.filter(isRelease).sort(compareDocsVersionsDescending)[0]
+  if (!latestRelease) {
+    throw new Error(
+      `${PREFIX} content/docs-archive has no final release snapshot to sync from; archive the current release by hand with pnpm docs:archive`,
+    )
+  }
 
-  const pending = releases
-    .filter((release) => RELEASE_TAG_PATTERN.test(release.tag))
-    .filter((release) => !existing.includes(release.tag))
-    .filter((release) => !newestArchived || isNewer(release.tag, newestArchived))
-
-  const stableIds = [...existing, ...pending.map((release) => release.tag)].filter(
-    (id) => !isCandidate(id),
+  const published = releases.filter(
+    (release) => RELEASE_TAG_PATTERN.test(release.tag) && !existing.includes(release.tag),
   )
-  const isReleased = (candidate: string) =>
-    stableIds.some((stable) => !isNewer(seriesOf(candidate), stable))
+  const finals = published.filter(
+    (release) => !isCandidate(release.tag) && isNewer(release.tag, latestRelease),
+  )
 
-  const archive = pending
-    .filter((release) => !isCandidate(release.tag) || !isReleased(release.tag))
-    .sort((left, right) => compareDocsVersionsDescending(right.tag, left.tag))
+  const releaseIds = [...existing.filter(isRelease), ...finals.map((release) => release.tag)]
+  const isReleased = (candidate: string) =>
+    releaseIds.some((release) => !isNewer(seriesOf(candidate), release))
+
+  const candidates = published.filter(
+    (release) => isCandidate(release.tag) && !isReleased(release.tag),
+  )
+  const archive = [...finals, ...candidates].sort((left, right) =>
+    compareDocsVersionsDescending(right.tag, left.tag),
+  )
   const remove = existing.filter((id) => isCandidate(id) && isReleased(id)).sort()
+
+  const total = existing.length + archive.length - remove.length
+  if (total > MAX_ARCHIVED_SNAPSHOTS) {
+    throw new Error(
+      `${PREFIX} archiving ${archive.map((release) => release.tag).join(', ')} would leave ${total} snapshots, above the ${MAX_ARCHIVED_SNAPSHOTS} the build can bundle; retire the oldest snapshots first`,
+    )
+  }
 
   return { archive, remove }
 }
 
+/** Every published (non-draft) release, following pagination to the last page. */
 async function fetchReleases(repository: string, token?: string): Promise<Release[]> {
-  const response = await fetch(`https://api.github.com/repos/${repository}/releases?per_page=50`, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      'User-Agent': 'docs-archive-sync',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  })
-  if (!response.ok) {
-    throw new Error(`${PREFIX} GitHub releases request failed: ${response.status}`)
+  const apiUrl = process.env.GITHUB_API_URL || 'https://api.github.com'
+  const releases: Release[] = []
+
+  for (let page = 1; page <= MAX_RELEASE_PAGES; page += 1) {
+    const response = await fetch(
+      `${apiUrl}/repos/${repository}/releases?per_page=${RELEASES_PER_PAGE}&page=${page}`,
+      {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'docs-archive-sync',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      },
+    )
+    if (!response.ok) {
+      throw new Error(`${PREFIX} GitHub releases request failed: ${response.status}`)
+    }
+    const body = (await response.json()) as Array<{
+      tag_name: string
+      draft: boolean
+      published_at: string | null
+    }>
+    for (const release of body) {
+      if (!release.draft && release.published_at) {
+        releases.push({ tag: release.tag_name, publishedAt: release.published_at })
+      }
+    }
+    if (body.length < RELEASES_PER_PAGE) return releases
   }
-  const body = (await response.json()) as Array<{
-    tag_name: string
-    draft: boolean
-    published_at: string | null
-  }>
-  return body.flatMap((release) =>
-    !release.draft && release.published_at
-      ? [{ tag: release.tag_name, publishedAt: release.published_at }]
-      : [],
-  )
+
+  throw new Error(`${PREFIX} more than ${MAX_RELEASE_PAGES} pages of releases; refusing to guess`)
 }
 
-/** The last commit on `ref` at or before `timestamp`, so a snapshot matches its release day. */
+/**
+ * The last commit on `ref`'s own history at or before `timestamp`, so a
+ * snapshot matches what the branch held on release day. `--first-parent`
+ * keeps commits of branches merged later out of the running.
+ */
 export async function commitAt(timestamp: string, cwd: string, ref = 'HEAD'): Promise<string> {
-  const { stdout } = await execFile('git', ['rev-list', '-1', `--before=${timestamp}`, ref], {
-    cwd,
-  })
+  const { stdout } = await execFile(
+    'git',
+    ['rev-list', '-1', '--first-parent', `--before=${timestamp}`, ref],
+    { cwd },
+  )
   const commit = stdout.trim()
   if (!commit) {
     throw new Error(`${PREFIX} no commit on ${ref} before ${timestamp}`)
@@ -168,6 +214,9 @@ export async function main(): Promise<void> {
       ref: refs.get(release.tag),
       cwd,
     })
+    if (!result.filesWritten) {
+      throw new Error(`${PREFIX} ${result.version}: no docs at ${result.ref}, nothing to archive`)
+    }
     console.log(`${PREFIX} ${result.version}: ${result.filesWritten} files from ${result.ref}`)
   }
   for (const id of plan.remove) {

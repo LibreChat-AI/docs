@@ -13,4 +13,4 @@ The `Sync docs archive` workflow (`pnpm docs:archive:sync`) checks LibreChat's r
 
 Each snapshot is taken from the last docs commit before the release was published. To archive by hand instead: `pnpm docs:archive v0.8.9 --ref=<release-commit>`.
 
-The newest archived release is labelled as the latest release in the version switcher and gets an informational banner instead of the archived warning. The live docs at `/docs` follow LibreChat's development branch.
+The newest archived release is labelled as the latest release in the version switcher and gets an informational banner instead of the archived warning. A release candidate newer than it gets a release candidate banner, since it previews the next release rather than an old one. The live docs at `/docs` follow LibreChat's development branch.

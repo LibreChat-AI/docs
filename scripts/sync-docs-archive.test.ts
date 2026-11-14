@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { planArchiveSync, type Release } from './sync-docs-archive'
+import { MAX_ARCHIVED_SNAPSHOTS, planArchiveSync, type Release } from './sync-docs-archive'
 
 const release = (tag: string): Release => ({ tag, publishedAt: '2026-10-01T00:00:00Z' })
 const tags = (releases: Release[]) => releases.map((entry) => entry.tag)
@@ -32,7 +32,7 @@ describe('planArchiveSync', () => {
     expect(plan.remove).toEqual([])
   })
 
-  it('never archives releases older than the newest snapshot', () => {
+  it('never archives releases older than the newest archived release', () => {
     const plan = planArchiveSync(
       [release('v0.8.9-rc1'), release('v0.8.7-rc1'), release('v0.8.6')],
       ['v0.8.8', 'v0.8.9-rc1'],
@@ -51,5 +51,38 @@ describe('planArchiveSync', () => {
   it('compares versions numerically', () => {
     const plan = planArchiveSync([release('v0.10.0-rc1')], ['v0.9.12'])
     expect(tags(plan.archive)).toEqual(['v0.10.0-rc1'])
+  })
+
+  it('archives a final release below a newer archived candidate', () => {
+    const plan = planArchiveSync(
+      [release('v0.9.0-rc1'), release('v0.8.9'), release('v0.8.9-rc1')],
+      ['v0.8.8', 'v0.8.9-rc1', 'v0.9.0-rc1'],
+    )
+    expect(tags(plan.archive)).toEqual(['v0.8.9'])
+    expect(plan.remove).toEqual(['v0.8.9-rc1'])
+  })
+
+  it('lets hand-made series snapshots hold nothing back and never removes them', () => {
+    const plan = planArchiveSync(
+      [release('v0.8.9-rc1'), release('v0.8.8')],
+      ['v0.7.x', 'v0.8.8', 'v0.8.x'],
+    )
+    expect(tags(plan.archive)).toEqual(['v0.8.9-rc1'])
+    expect(plan.remove).toEqual([])
+  })
+
+  it('refuses to sync without a final release snapshot to start from', () => {
+    expect(() => planArchiveSync([release('v0.8.9')], [])).toThrow(/no final release snapshot/)
+    expect(() => planArchiveSync([release('v0.8.9')], ['v0.7.x', 'v0.8.9-rc1'])).toThrow(
+      /no final release snapshot/,
+    )
+  })
+
+  it('stops before the archive outgrows what the build can bundle', () => {
+    const finals = Array.from({ length: MAX_ARCHIVED_SNAPSHOTS }, (_, minor) => `v0.${minor}.0`)
+    expect(() => planArchiveSync([release('v1.0.0')], finals)).toThrow(/retire the oldest/)
+
+    const withCandidate = [...finals.slice(1), 'v1.0.0-rc1']
+    expect(tags(planArchiveSync([release('v1.0.0')], withCandidate).archive)).toEqual(['v1.0.0'])
   })
 })

@@ -3,6 +3,7 @@ import {
   DOCS_VERSION_ID_PATTERN,
   compareDocsVersionsDescending,
   docsVersionSortKey,
+  isUpcomingCandidate,
   latestStableVersion,
 } from './docs-version-order'
 
@@ -62,5 +63,20 @@ describe('latestStableVersion', () => {
   it('returns undefined when only release candidates exist', () => {
     expect(latestStableVersion(['v0.8.8-rc1', 'v0.8.8-rc2'])).toBeUndefined()
     expect(latestStableVersion([])).toBeUndefined()
+  })
+})
+
+describe('isUpcomingCandidate', () => {
+  it('flags candidates newer than the latest release', () => {
+    expect(isUpcomingCandidate('v0.8.9-rc1', 'v0.8.8')).toBe(true)
+    expect(isUpcomingCandidate('v0.9.0-rc2', 'v0.8.8')).toBe(true)
+    expect(isUpcomingCandidate('v0.8.9-rc1', undefined)).toBe(true)
+  })
+
+  it('does not flag releases or candidates the latest release has superseded', () => {
+    expect(isUpcomingCandidate('v0.8.8', 'v0.8.8')).toBe(false)
+    expect(isUpcomingCandidate('v0.8.7', 'v0.8.8')).toBe(false)
+    expect(isUpcomingCandidate('v0.8.8-rc4', 'v0.8.8')).toBe(false)
+    expect(isUpcomingCandidate('v0.8.7-rc1', 'v0.8.8')).toBe(false)
   })
 })
