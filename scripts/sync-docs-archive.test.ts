@@ -176,5 +176,8 @@ describe('commitAt', () => {
     )
 
     expect(await commitAt('2026-10-26T21:55:28Z', repository)).toBe(onMain)
+    await expect(commitAt('2026-10-25T00:00:00Z', repository)).rejects.toThrow(
+      /no commit on HEAD before 2026-10-25T00:00:00Z/,
+    )
   })
 })
