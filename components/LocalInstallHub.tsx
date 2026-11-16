@@ -86,7 +86,7 @@ const methods: {
       { label: 'Docker Desktop', href: 'https://www.docker.com/products/docker-desktop/' },
     ],
     commands: [
-      'git clone https://github.com/danny-avila/LibreChat.git',
+      'git clone https://github.com/LibreChat-AI/LibreChat.git',
       'cd LibreChat',
       'cp .env.example .env',
       'docker compose up -d',
@@ -102,14 +102,15 @@ const methods: {
     time: '~20 min',
     difficulty: 'Intermediate',
     prereqs: [
-      { label: 'Node.js v20.19+', href: 'https://nodejs.org/en/download' },
+      { label: 'Node.js v24.22.1', href: 'https://nodejs.org/en/download' },
       { label: 'Git', href: 'https://git-scm.com/downloads' },
       { label: 'MongoDB', href: '/docs/configuration/mongodb/mongodb_atlas' },
     ],
     commands: [
-      'git clone https://github.com/danny-avila/LibreChat.git',
-      'cd LibreChat && npm ci',
+      'git clone https://github.com/LibreChat-AI/LibreChat.git',
+      'cd LibreChat',
       'cp .env.example .env  # edit MONGO_URI',
+      'npm run reinstall',
       'npm run backend',
     ],
     included: [],
@@ -128,7 +129,7 @@ const methods: {
     ],
     commands: [
       'kubectl create secret generic librechat-credentials-env ...',
-      'helm install librechat oci://ghcr.io/danny-avila/librechat-chart/librechat',
+      'helm install librechat oci://ghcr.io/librechat-ai/librechat-chart/librechat',
     ],
     included: [],
   },

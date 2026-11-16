@@ -16,7 +16,24 @@ Before you begin, ensure you have:
 
 ## Setup
 
-Add the following Langfuse-related environment variables to your `.env` file in your LibreChat installation directory:
+Choose either an in-app connection or environment-managed credentials for a single-tenant deployment. Complete environment credentials take precedence for connection editing. Prompt settings can remain available independently when the deployment offers prompt sync.
+
+### In-App Connection
+
+An authorized administrator can open **Settings → Langfuse**, choose an approved destination, enter the project's public and secret keys, and select **Save & enable**. LibreChat verifies both keys before saving, records the verified project ID, encrypts the secret key at rest, and returns only a masked preview on later reads. A saved connection can be enabled, disabled, retested, or replaced without exposing its secret.
+
+The setting requires both `access:admin` and `manage:configs:langfuse` (or the corresponding broad/admin permissions). It is available when tracing is enabled and:
+
+- A single-tenant deployment does not have both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`.
+- A fanout deployment has an enabled collector and tenant export is not disabled by the emergency switch.
+
+Do not place a plaintext `langfuse.secretKey` directly in `librechat.yaml`; the runtime accepts the encrypted value produced by an authorized config write. Use the Settings page for the normal connection workflow.
+
+The saved connection belongs to the base configuration. Role, group, and user configuration overrides cannot replace or remove the `langfuse` section.
+
+### Environment-Managed Connection
+
+Add the following values to your `.env` file when deployment operators should own the central connection:
 
 <OptionTable
   options={[
@@ -28,6 +45,30 @@ Add the following Langfuse-related environment variables to your `.env` file in 
       'The Langfuse API base URL.',
       'LANGFUSE_BASE_URL=https://cloud.langfuse.com',
     ],
+    [
+      'LANGFUSE_PROJECT_ID',
+      'string',
+      'Optional stable project ID. When omitted, LibreChat discovers and caches it in the background for feedback routing.',
+      'LANGFUSE_PROJECT_ID=',
+    ],
+    [
+      'LANGFUSE_TRACING_ENABLED',
+      'boolean',
+      'Set to false to disable Langfuse traces and feedback scores. Default: true.',
+      'LANGFUSE_TRACING_ENABLED=true',
+    ],
+    [
+      'LANGFUSE_SAMPLE_RATE',
+      'number',
+      'Deterministic trace-level sample rate from 0 to 1. Default: 1.',
+      'LANGFUSE_SAMPLE_RATE=1',
+    ],
+    [
+      'LANGFUSE_TRACING_ENVIRONMENT',
+      'string',
+      'Optional Langfuse environment name attached to feedback scores, so they match the environment of their traces. When unset, scores are sent without an environment.',
+      'LANGFUSE_TRACING_ENVIRONMENT=production',
+    ],
   ]}
 />
 
@@ -37,6 +78,8 @@ Add the following Langfuse-related environment variables to your `.env` file in 
 # Langfuse Configuration
 LANGFUSE_PUBLIC_KEY=pk-lf-***
 LANGFUSE_SECRET_KEY=sk-lf-***
+# LANGFUSE_PROJECT_ID=project-id
+# LANGFUSE_SAMPLE_RATE=1
 
 # 🇪🇺 EU Data Region
 LANGFUSE_BASE_URL=https://cloud.langfuse.com
@@ -50,6 +93,199 @@ LANGFUSE_BASE_URL=https://cloud.langfuse.com
   `http://localhost:3000` for local development).
 </Callout>
 
+When both environment keys are present, LibreChat uses them for the central project and hides **Settings → Langfuse**. `LANGFUSE_TRACING_ENABLED=false` or `LANGFUSE_SAMPLE_RATE=0` disables both traces and feedback scores. Fractional sampling makes one deterministic decision per trace; sampled-out traces do not receive later feedback scores.
+
+`LANGFUSE_BASE_URL` is the canonical base-URL setting. The older `LANGFUSE_HOST` and `LANGFUSE_BASEURL` names remain compatibility aliases, with `LANGFUSE_BASE_URL` taking precedence when more than one is set.
+
+### Authenticated Proxies and Gateways
+
+For a self-hosted Langfuse instance behind Cloudflare Access, oauth2-proxy, or another authenticating gateway, define deployment-level custom request headers in `librechat.yaml`:
+
+```yaml filename="librechat.yaml"
+langfuse:
+  headers:
+    CF-Access-Client-Id: '${CF_ACCESS_CLIENT_ID}'
+    CF-Access-Client-Secret: '${CF_ACCESS_CLIENT_SECRET}'
+```
+
+LibreChat applies the resolved headers to every direct Langfuse surface: trace and media export, feedback-score creation and deletion, project-identity lookup, and admin credential verification. Langfuse's own `Authorization` credential remains authoritative on REST requests. Values support `${ENV_VAR}` interpolation; unresolved variables, protected infrastructure-secret references, blank values, and invalid header names are dropped with a warning. Header values are masked in startup logs and admin configuration reads, but environment references are still recommended over literal credentials.
+
+These headers are operator-owned and YAML-only. They cannot be written through the Admin Panel or configuration API, stored in MongoDB, or populated with per-user `{{...}}` placeholders. LibreChat sends them only when configuration resolves exactly one Langfuse origin. With multiple central, tenant, or collector origins, it logs a warning and sends no custom headers because the map cannot safely select a recipient.
+
+<Callout type="warning" title="Fanout limitation">
+  The fanout collector currently forwards only `Authorization` to tenant Langfuse destinations.
+  Custom `langfuse.headers` can authenticate LibreChat's direct request to a single collector or
+  Langfuse origin, but they do not authenticate the collector's upstream request to a tenant
+  destination behind another proxy.
+</Callout>
+
+### Trace User Identity and Metadata
+
+By default, Agent traces use LibreChat's internal user ID as the Langfuse `userId` and export no additional user or request metadata. Deployment operators can choose another user field and explicitly allowlist metadata under `langfuse.trace`:
+
+```yaml filename="librechat.yaml"
+langfuse:
+  trace:
+    userIdField: email
+    userMetadataFields: [email, username, role, provider]
+    conversationMetadataFields: [conversationId, endpoint, model, modelLabel, spec]
+```
+
+`userIdField` accepts `id`, `email`, `username`, `name`, `openidId`, `samlId`, `ldapId`, `googleId`, `githubId`, `discordId`, `appleId`, or `facebookId`. If the selected field is missing for a user, the internal ID remains the trace `userId`.
+
+`userMetadataFields` accepts those identity fields plus `role` and `provider`. Values are exported under `librechat.user.<field>`. `conversationMetadataFields` accepts `conversationId`, `endpoint`, `endpointType`, `provider`, `model`, `modelLabel`, and `spec`, which map to the `librechat.conversation.id`, `librechat.endpoint`, `librechat.endpoint.type`, `librechat.provider`, `librechat.model`, `librechat.model.label`, and `librechat.spec` trace attributes.
+
+All three fields are optional and no metadata field is exported merely because it exists on a user or request. Treat email, usernames, provider identities, conversation IDs, and model selections as potentially sensitive telemetry; allowlist only fields your Langfuse retention and access policies permit.
+
+### Temporary Chats
+
+[Temporary chats](/docs/features/temporary_chat) are not traced. Their prompts and responses reach no Langfuse destination, central or tenant, and rating one of their replies sends no feedback score. LibreChat deletes a temporary chat when its retention period ends, but it cannot delete a trace once Langfuse has it, so temporary chats stay out by default.
+
+Under `interface.retentionMode: "ephemeral"` every chat is temporary, so the deployment sends no traces at all unless it opts in. To trace temporary chats, set `temporaryChats`:
+
+```yaml filename="librechat.yaml"
+langfuse:
+  trace:
+    temporaryChats: true
+```
+
+The default is `false`. Only an explicit `true` opts in.
+
+## Tenant Fanout (Optional)
+
+Langfuse fanout lets a multi-tenant LibreChat deployment export each eligible trace and its media to both a central Langfuse project and a tenant-specific project. The feature is opt-in and adds a gateway plus an internal OpenTelemetry collector; normal single-project tracing above is unchanged when fanout is not deployed.
+
+Fanout uses two configuration layers:
+
+- Deployment environment variables define the central project, gateway, and allowed tenant destinations at startup.
+- **Settings → Langfuse** supplies the tenant's enabled state, public key, encrypted secret key, verified project ID, and one allowed destination. Keys can be changed at runtime without restarting the gateway.
+
+The included Compose override supports the `eu`, `us`, and `jp` Langfuse Cloud destinations:
+
+```sh filename=".env"
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+LANGFUSE_FANOUT_CENTRAL_BASE_URL=https://cloud.langfuse.com
+LANGFUSE_FANOUT_CENTRAL_AUTH_HEADER="Basic <base64-public-key-colon-secret-key>"
+LANGFUSE_FANOUT_CENTRAL_MEDIA_UPLOAD_DISABLED=false
+LANGFUSE_FANOUT_TENANT_DESTINATIONS="eu=https://cloud.langfuse.com,us=https://us.cloud.langfuse.com,jp=https://jp.cloud.langfuse.com"
+LANGFUSE_FANOUT_TRACE_DESTINATION_KEYS=eu,us,jp
+LANGFUSE_FANOUT_TENANT_EXPORT_DISABLED=false
+```
+
+Start the regular Compose stack with the fanout override:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.langfuse-fanout.yml up -d
+```
+
+The override enables `LANGFUSE_FANOUT_ENABLED`, points LibreChat at the gateway, and starts the collector and private Redis services. For the deployed stack, combine `deploy-compose.yml` with `deploy-compose.langfuse-fanout.yml` instead.
+
+The gateway listens on `:4318` by default. Custom deployments can override its bind address with `LANGFUSE_FANOUT_LISTEN_ADDR`; the included Compose and Helm configurations already route the standard gateway port.
+
+### Helm Deployment
+
+The Compose overrides build the gateway locally, but Kubernetes needs an image available from a registry. From the LibreChat repository root, build and push the gateway before installing the chart:
+
+```sh
+docker build \
+  -f otel/langfuse-fanout/Dockerfile \
+  -t registry.example.com/librechat-langfuse-fanout:<tag> .
+docker push registry.example.com/librechat-langfuse-fanout:<tag>
+```
+
+Create a Kubernetes Secret containing the full central Langfuse Basic auth header. Its value is `Basic ` followed by base64-encoded `<public-key>:<secret-key>` credentials:
+
+```sh
+kubectl create secret generic langfuse-central \
+  --from-literal=LANGFUSE_FANOUT_CENTRAL_AUTH_HEADER='Basic <base64-public-key-colon-secret-key>'
+```
+
+Enable the fanout deployment in Helm values. This example uses the bundled Redis chart; set `langfuseFanout.redis.uri` instead when using an external Redis service.
+
+```yaml filename="values.yaml"
+redis:
+  enabled: true
+
+langfuseFanout:
+  enabled: true
+  image:
+    repository: registry.example.com/librechat-langfuse-fanout
+    tag: '<tag>'
+    pullPolicy: IfNotPresent
+  central:
+    baseUrl: https://cloud.langfuse.com
+    authHeaderSecret:
+      name: langfuse-central
+      key: LANGFUSE_FANOUT_CENTRAL_AUTH_HEADER
+  metrics:
+    secret:
+      name: librechat-metrics
+      key: METRICS_SECRET
+  tenant:
+    destinations:
+      eu:
+        baseUrl: https://cloud.langfuse.com
+      us:
+        baseUrl: https://us.cloud.langfuse.com
+      jp:
+        baseUrl: https://jp.cloud.langfuse.com
+  upstreamTimeout: 30s
+  publicUrl: ''
+  otelCollector:
+    receiverEndpoint: 127.0.0.1:4319
+  redis:
+    uri: ''
+    username: ''
+    passwordSecret:
+      name: ''
+      key: REDIS_PASSWORD
+    keyPrefix: langfuse-fanout
+  memoryLimitMiB: 256
+  memorySpikeLimitMiB: 64
+  batchTimeout: 1s
+  batchSendSize: 128
+  metadataCardinalityLimit: 1000
+```
+
+The metrics Secret is optional, but `/metrics` returns `401` unless `langfuseFanout.metrics.secret` supplies a bearer token. Create it separately when metrics scraping is required:
+
+```sh
+kubectl create secret generic librechat-metrics \
+  --from-literal=METRICS_SECRET='<metrics-bearer-token>'
+```
+
+The chart renders one Deployment with a gateway container on port `4318` and an internal OpenTelemetry Collector sidecar on port `4319`; only the gateway is exposed by the Service. It also injects `LANGFUSE_FANOUT_ENABLED` and the internal `LANGFUSE_FANOUT_COLLECTOR_URL` into LibreChat unless those keys are already set in `librechat.configEnv`.
+
+Redis stores short-lived, one-time media upload plans so create and upload requests can reach different gateway replicas. For an external authenticated Redis service, set `langfuseFanout.redis.uri`, optional `username`, and `passwordSecret`; keep credentials out of the URI because the URI is rendered directly into the Deployment environment. With the bundled Redis chart and authentication enabled, provide a compatible password Secret or an explicitly authenticated external URI.
+
+Scale fanout manually with `langfuseFanout.replicaCount`; the chart does not create a fanout HPA. Liveness and readiness probes use `/healthz` and can be customized under `langfuseFanout.livenessProbe` and `langfuseFanout.readinessProbe`.
+
+Additional deployment overrides include `langfuseFanout.service` for the Service type, port, and annotations; `resources`, `podAnnotations`, and `podLabels` for the gateway Pod; and `otelCollector.image` and `otelCollector.resources` for the sidecar. If you change `langfuseFanout.traceCollectorUrl` or `otelCollector.receiverEndpoint`, keep both values pointed at the same internal collector listener.
+
+The stored top-level `langfuse` object contains `enabled`, `publicKey`, encrypted `secretKey`, verified `projectId`, server-generated `secretKeyPreview`, and `destination`. Treat it as API-managed configuration: do not submit preview fields or encrypted payloads back as secrets. The earlier `displaySecretKey` and nested `fanout.enabled` fields are no longer used.
+
+Tenant export occurs only when fanout and the collector URL are enabled, the saved connection is enabled with valid keys, and `destination` matches an allowed startup destination. Other traces can still flow to the central project. Set `LANGFUSE_FANOUT_TENANT_EXPORT_DISABLED=true` as an emergency switch to stop tenant trace and feedback-score export while retaining central export; this also hides the in-app connection setting until tenant export is restored.
+
+Set `LANGFUSE_FANOUT_CENTRAL_MEDIA_UPLOAD_DISABLED=true` to prevent the LibreChat SDK from creating media uploads for central or fallback collector traces; tenant-routed media uploads are unchanged. This app-side switch is distinct from the gateway-side `LANGFUSE_FANOUT_CENTRAL_MEDIA_EXPORT_DISABLED`, which blocks central media forwarding after an upload reaches the gateway.
+
+For media forwarding, the fanout gateway accepts only absolute HTTPS upload targets returned by the configured Langfuse authority and does not follow redirects on upload `PUT` requests. Self-hosted object storage, including private MinIO hosts, remains supported when its returned upload URL uses HTTPS. Plain HTTP or redirect-dependent media upload targets now fail closed while trace export continues independently.
+
+Trace and media traffic goes through the fanout gateway. Feedback scores are sent directly from LibreChat: central scores use `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL`, while tenant scores use tenant app configuration.
+
+See the [Langfuse fanout deployment reference](https://github.com/LibreChat-AI/LibreChat/blob/dev/otel/langfuse-fanout/README.md) for every gateway variable, custom destination setup, metrics, scaling, and Redis behavior.
+
+### Export Diagnostics
+
+Each traced request records low-cardinality OpenTelemetry attributes that explain its tenant export decision:
+
+- `librechat.tenant.id` identifies the tenant context
+- `librechat.langfuse.export_plan` is `central_only`, `tenant_fanout`, or `disabled`
+- `librechat.langfuse.export_reason` is `configured`, `collector_unconfigured`, `destination_unconfigured`, `emergency_disabled`, `fanout_disabled`, `missing_credentials`, or `tenant_disabled`
+
+The gateway also exposes `langfuse_fanout_trace_exports_total{destination,result,tenant_id}`. A batch with no tenant uses `<unknown>`, a mixed-tenant batch uses `<multiple>`, and a malformed tenant ID uses `<invalid>`. The gateway retains at most 1,000 distinct valid tenant labels per process and combines later IDs under `<overflow>`, bounding metric cardinality; unrecognized destinations are recorded as `central` rather than creating another label.
+
+Successful in-app connection changes also write the structured event `librechat.langfuse.connection.changed`. It includes the tenant, configured and enabled state, destination, verification result, primary change, and complete changed-field list without logging either key. Use these fields to distinguish an intentional central-only or disabled plan from missing collector, destination, or credential configuration.
+
 ## Restart LibreChat
 
 After adding the environment variables, restart your LibreChat instance to apply the changes:
@@ -61,11 +297,26 @@ docker compose up -d
 
 ## See Traces in Langfuse
 
+### Conversation Trace Viewer
+
+Enable [`interface.traceViewer.enabled: true`](/docs/configuration/librechat_yaml/object_structure/interface#traceviewer) in `librechat.yaml` to let users inspect a sampled
+Langfuse trace for their own conversation as a model-and-tool waterfall. It requires a Langfuse
+release with the v2 Observations API. The viewer does not appear for another user's conversation,
+unsampled traces, or traces whose user identity does not use LibreChat's internal user ID.
+
+By default, record input, output, metadata, and tool names remain hidden. Set `interface.traceViewer.showInputOutput: true` only when users may view system prompts, Agent instructions, and tool definitions that can appear in those fields. Set `interface.traceViewer.showToolNames: true` to show tool names without exposing tool input or output; this requires additional Langfuse observation reads, and only the names are retained for the response. `maxRecords`, `maxContentLength`, `requestsPerMinute`, and `requestTimeoutMs` bound each request; see [Config v1.3.16](/changelog/config_v1.3.16) for their defaults and ranges.
+
 Once LibreChat is restarted with Langfuse configured, you will see a new trace for every chat message response in the Langfuse UI:
+
+LibreChat v0.8.8-rc2 updates Agent trace shaping to use `StandardGraph`, `MultiAgentGraph`, and `AgentModelCall` runtime observation names, with activity and reasoning-label calls nested under the work they describe. Trace-level input and output are also represented on root observations. Review saved Langfuse filters, dashboards, and evaluations that depend on the earlier observation names or trace-level input/output fields.
 
 ![LibreChat example trace](https://langfuse.com/images/cookbook/integration_librechat/librechat-example-trace.png)
 
 [Link to trace in the Langfuse UI](https://cloud.langfuse.com/project/cloramnkj0002jz088vzn1ja4/traces/57b4aa20a258a2e9e2d1ce2e4eacb21c?observation=06f5341a68d723b1&timestamp=2026-02-04T13%3A02%3A54.248Z&traceId=57b4aa20a258a2e9e2d1ce2e4eacb21c)
+
+Administrators with `access:admin` and `manage:configs:langfuse` can open the conversation's **Context Usage** breakdown and select **View session in Langfuse**. The same action can appear in a shared conversation for an authenticated, same-tenant administrator with Langfuse configuration access. Public and ordinary shared-link viewers never see it.
+
+The link appears only after generation finishes and when the conversation contains at least one sampled trace sent to the active in-app Langfuse connection. It points to that connection's verified destination and project; it is not shown for environment-managed credentials, disabled connections, sampled-out conversations, cross-tenant viewers, or users without the required access.
 
 ## Message Feedback Scores
 
@@ -73,4 +324,92 @@ When Langfuse tracing is configured, LibreChat also sends message feedback to La
 
 Feedback scores include message context metadata when available, including the message ID, parent message ID, conversation/session ID, user ID, endpoint, sender, `isCreatedByUser`, token count, rating, and feedback tag. Empty metadata values are omitted before the score is sent.
 
+Feedback scores are only produced when the feedback buttons are available. Setting [`interface.feedback`](/docs/configuration/librechat_yaml/object_structure/interface#feedback) to `false` hides the buttons and rejects feedback writes, so no scores reach Langfuse.
+
 Feedback scores use the same Langfuse credentials and base URL as tracing. They also respect `LANGFUSE_TRACING_ENABLED=false`, `LANGFUSE_SAMPLE_RATE=0`, and `LANGFUSE_TRACING_ENVIRONMENT`. Score delivery is best-effort, so the feedback UI does not block if Langfuse is temporarily unavailable.
+
+## Prompt Catalog
+
+Sync makes Langfuse **text prompts** available in LibreChat's prompt library. It adds read-only references; the prompt content stays in Langfuse.
+
+![Two separate flows: catalog sync adds read-only references to LibreChat; using a prompt fetches its Production or pinned version from Langfuse, then supplies the text to the chat or agent.](/images/features/prompts/catalog-flow.svg)
+
+### Enable prompt sync
+
+<Steps>
+  <Step>Set `LANGFUSE_PROMPT_SYNC_AVAILABLE=true` on the LibreChat server.</Step>
+  <Step>Configure the Langfuse project that contains your prompts.</Step>
+  <Step>Enable prompt sync in **Settings → Langfuse**, then start synchronization.</Step>
+</Steps>
+
+The settings require admin access and Langfuse configuration management. Starting sync also requires `manage:prompts`.
+
+Prompt access does not require tracing.
+
+### Use synced prompts
+
+Choose a prompt from the library or `/` menu to fetch its **Production** or selected version from Langfuse. Agents can also [use a synced prompt as instructions](#prompts-as-agent-instructions).
+
+Edit content, manage versions, and delete prompts in **Langfuse**. Chat-type prompts are not supported.
+
+<Accordions type="single" collapsible>
+  <Accordion title="Advanced connection settings">
+
+    LibreChat can use the Langfuse credentials set on the server or a connection saved in **Settings → Langfuse**. Server credentials prevent connection editing but do not hide available prompt settings.
+
+    For deployments configured with tenant isolation, each tenant must have its own stored Langfuse connection.
+  </Accordion>
+  <Accordion title="What sync stores and what happens when prompts change">
+    Each library entry stores `source: langfuse`, `sourceDestination`, `sourceProjectId`, and `sourcePromptName`. Content remains in Langfuse.
+
+    Sync only adds entries. It does not update or delete existing groups. Deleting a prompt in Langfuse leaves its library entry in place, but that entry can no longer resolve.
+
+    Changing the stored source identity returns `source_changed`; it does not redirect the entry to another source. Editing or deleting an external group or revision, or changing Production in LibreChat, returns `read_only`. Make these changes in Langfuse.
+  </Accordion>
+  <Accordion title="Sync limits and incomplete results">
+    A sync that reaches its page cap is incomplete. Repeating it with the same cap starts again at page 1. Increase `langfuse.promptSync.maxPages` to include later pages.
+
+    `LANGFUSE_PROMPT_SYNC_TIMEOUT_MS` limits each upstream request. The default is `10000` ms; the allowed range is `1000`–`60000` ms. See [sync limits](/docs/configuration/librechat_yaml/object_structure/config#langfuse-prompt-synchronization) for more settings.
+  </Accordion>
+</Accordions>
+
+### Prompts as Agent Instructions
+
+Linking a synced Langfuse prompt group as an agent's instructions requires the prompt catalog above and the [`endpoints.agents.linkedInstructions.langfuse.enabled`](/docs/configuration/librechat_yaml/object_structure/agents#linkedinstructions) switch, which defaults to `false`:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    linkedInstructions:
+      langfuse:
+        enabled: true
+```
+
+Use the [Agent Builder](/docs/features/prompts#use-a-prompt-as-agent-instructions) to select the prompt and its version. Catalog sync must stay enabled for saved links to resolve.
+
+#### Disable or re-enable linking
+
+| Switch | Save behavior | Run behavior |
+| --- | --- | --- |
+| `false` (default) | New or changed Langfuse links are rejected. Unchanged links, removal, and switching to inline instructions remain editable. | Saved links are retained but unused. Ordinary agents run with empty instructions, without falling back to inline text. |
+| `true` | Users with the required permissions can link synced text prompts. | Saved links resolve again after the server loads the configuration. No agent edit is needed. |
+
+When disabled, the Builder hides Langfuse prompts except for the agent's saved selection, which shows a disabled-link note. See [resolution failures](/docs/configuration/librechat_yaml/object_structure/agents#resolution-failures) for the memory-agent exception.
+
+#### Rollout and downgrade
+
+<Callout type="warning" title="Update every server before enabling linking">
+  Enable the switch only after every LibreChat server runs `v0.8.9-rc1` or later.
+  **Downgrading to an older build is not supported once Langfuse links exist.**
+  Disabling the switch is different from downgrading the server. A downgrade needs a separately reviewed migration.
+</Callout>
+
+During a mixed rollout, older servers can behave differently:
+
+| Older server | Result |
+| --- | --- |
+| Does not support Langfuse links | Rejects a save with a Langfuse link with `400`. At run time, it uses the stored inline instructions. |
+| Does not support prompt links at all (`v0.8.8` and earlier) | Saves the agent but drops the link. |
+| Does not have the revisions route | Returns `404` for the Builder's version list, for both native and Langfuse prompts. |
+
+Keep linking disabled until the rollout is complete. To disable the feature on a supported build, set the switch to `false`; saved links remain available for re-enabling.

@@ -3,7 +3,7 @@ title: 'Custom Endpoint Object Structure'
 icon: Plug
 ---
 
-Each endpoint in the `custom` array should have the following structure:
+Each endpoint in the `custom` array should have the following structure. Settings shared with the other endpoints, such as `streamRate`, the `title*` settings, `activity*` settings, and `maxToolResultChars`, are described in [Shared Endpoint Settings](/docs/configuration/librechat_yaml/object_structure/shared_endpoint_settings).
 
 ## Example
 
@@ -32,6 +32,17 @@ endpoints:
       #   safe_prompt: true # Mistral specific value for moderating messages
       # NOTE: For Mistral, it is necessary to drop the following parameters or you will encounter a 422 Error:
       dropParams: ['stop', 'user', 'frequency_penalty', 'presence_penalty']
+
+    # xAI Grok 4.7 through the OpenAI-compatible API
+    - name: 'xai'
+      apiKey: '${XAI_API_KEY}'
+      baseURL: 'https://api.x.ai/v1'
+      models:
+        default: ['grok-4.7']
+        fetch: true
+      titleConvo: true
+      titleModel: 'grok-4.7'
+      modelDisplayLabel: 'xAI'
 
     # Example using the native Anthropic Messages API
     - name: 'Claude-Compatible'
@@ -71,6 +82,26 @@ endpoints:
 name: 'Mistral'
 ```
 
+## tenantId
+
+Optional tenant scope for a YAML custom endpoint. Omit `tenantId` to preserve deployment-wide availability. With a value, the endpoint, its deployment-managed credentials, and model specs referring to it are available only in that tenant's effective configuration. The authenticated request tenant takes precedence over a potentially stale tenant ID on the user record. Requests without a tenant do not receive scoped endpoints.
+
+The value must be an existing tenant's exact ID, between 1 and 128 characters, using only letters, digits, hyphens, underscores, or periods. Whitespace and the reserved `__SYSTEM__` sentinel are rejected. This field selects a scope; it does not create a tenant or grant membership. Upgrade **every API replica before adding tenant-scoped YAML entries**. Older replicas do not enforce this new field and can still treat the endpoint as deployment-wide.
+
+```yaml filename="endpoints / custom / tenantId"
+endpoints:
+  custom:
+    - name: 'Acme Gateway'
+      tenantId: 'acme'
+      apiKey: '${ACME_GATEWAY_API_KEY}'
+      baseURL: 'https://gateway.example.com/v1'
+      models:
+        default: ['gpt-6-sol']
+        fetch: false
+```
+
+Scoping applies before configuration overrides and runtime augmentation, and remains enforced on cache hits, YAML-only reads, and fallback reads. A partial override cannot inherit another tenant's gateway credentials. If filtering removes the last model spec, normal model controls are restored unless explicit YAML or database interface settings override them. Unscoped endpoints remain available as before.
+
 ## apiKey
 
 **Key:**
@@ -105,6 +136,8 @@ or
 ```yaml filename="endpoints / custom / apiKey"
 apiKey: 'user_provided'
 ```
+
+When a custom endpoint is written through the administrator configuration API, LibreChat encrypts a literal `apiKey` at rest and returns only an `apiKeyPreview`. `${ENV_VAR}` references and `user_provided` remain readable passthrough values. For endpoints defined directly in `librechat.yaml`, prefer an environment reference as shown above.
 
 ## baseURL
 
@@ -146,6 +179,7 @@ baseURL: 'user_provided'
 - If the `baseURL` you set is the full completions endpoint, you can set the [directEndpoint](#directendpoint) field to `true` to use it directly.
   - This is necessary because the app appends "/chat/completions" or "/completion" to the `baseURL` by default.
 - When using [`provider: anthropic`](#provider), set `baseURL` to the API root that the Anthropic SDK should call, such as `https://api.anthropic.com` or your gateway root. LibreChat uses the native Anthropic `/v1/messages` path for that provider.
+- On OpenAI-compatible custom endpoints, model IDs containing `claude` use Claude document restrictions: PDFs and text documents are accepted, while non-PDF binary document types are skipped before the request is sent.
 
 ## provider
 
@@ -216,7 +250,7 @@ endpoints:
 **Example:**
 
 ```yaml filename="endpoints / custom / iconURL"
-iconURL: https://github.com/danny-avila/LibreChat/raw/main/docs/assets/LibreChat.svg
+iconURL: https://github.com/LibreChat-AI/LibreChat/raw/main/docs/assets/LibreChat.svg
 ```
 
 or reuse a built-in endpoint icon:
@@ -241,6 +275,7 @@ iconURL: openAI
   - "groq"
   - "Helicone"
   - "Huggingface"
+  - "Lemonade"
   - "Mistral"
   - "MLX"
   - "Moonshot"
@@ -252,6 +287,7 @@ iconURL: openAI
   - "together.ai"
   - "Unify"
   - "Venice"
+  - "Vercel"
   - "xai"
 
 ## models
@@ -341,10 +377,17 @@ userIdQuery: true
 **Key:**
 
 <OptionTable
-  options={[['titleConvo', 'Boolean', 'Enables title conversation when set to `true`.', '']]}
+  options={[
+    [
+      'titleConvo',
+      'Boolean',
+      'Controls automatic conversation title generation. Set to false to disable it.',
+      '',
+    ],
+  ]}
 />
 
-**Default:** `false`
+**Default:** Titles are generated unless this is set to `false` (or the `TITLE_CONVO` environment variable is disabled).
 
 **Example:**
 
@@ -419,12 +462,12 @@ titleMethod: 'completion'
       'titleModel',
       'String',
       'Specifies the model to use for titles.',
-      'Defaults to "gpt-3.5-turbo" if omitted. May cause issues if "gpt-3.5-turbo" is not available. You can also dynamically use the current conversation model by setting it to "current_model".',
+      'When omitted, the conversation\'s model is used. Setting it to "current_model" selects the conversation model explicitly.',
     ],
   ]}
 />
 
-**Default:** `"gpt-3.5-turbo"`
+**Default:** The conversation's model
 
 **Example:**
 
@@ -677,8 +720,32 @@ dropParams:
     [
       'paramDefinitions',
       'Array/List',
-      'Custom setting definitions for this endpoint.',
+      'Custom setting definitions for this endpoint. See [Custom Params](/docs/configuration/librechat_yaml/object_structure/custom_params).',
       'See default parameter definitions.',
+    ],
+    [
+      'reasoningCatalogTimeoutMs',
+      'Integer',
+      "Milliseconds to wait for each request when reading an OpenRouter endpoint's per-model reasoning efforts (500-30000).",
+      'reasoningCatalogTimeoutMs: 5000',
+    ],
+    [
+      'reasoningCatalogMaxPages',
+      'Integer',
+      "Most pages of an OpenRouter endpoint's model catalog to read before treating it as unavailable (1-200).",
+      'reasoningCatalogMaxPages: 20',
+    ],
+    [
+      'reasoningCatalogFailureTtlMs',
+      'Integer',
+      'Milliseconds a failed or unreadable OpenRouter catalog is remembered before it is requested again (0-600000). 0 retries on every request.',
+      'reasoningCatalogFailureTtlMs: 30000',
+    ],
+    [
+      'reasoningCatalogTtlMs',
+      'Integer',
+      'Milliseconds a successfully read OpenRouter catalog is kept before it is read again (60000-86400000).',
+      'reasoningCatalogTtlMs: 3600000',
     ],
   ]}
 />
@@ -731,6 +798,12 @@ Each key is a model name. Each model entry supports:
     ['context', 'Number', 'Maximum context window for the model.', 'Required'],
     ['cacheRead', 'Number', 'Cached input read rate per million tokens.', 'Optional'],
     ['cacheWrite', 'Number', 'Cached input write rate per million tokens.', 'Optional'],
+    [
+      'cacheWrite1h',
+      'Number',
+      'One-hour cached input write rate per million tokens.',
+      'Optional; twice prompt',
+    ],
   ]}
 />
 
@@ -779,6 +852,8 @@ headers:
 
 **Note:** Supports dynamic environment variable values, which use the format: `"${VARIABLE_NAME}"`.
 
+At the final outbound resolution step, recognized `{{LIBRECHAT_USER_*}}`, `{{LIBRECHAT_BODY_*}}`, and `{{LIBRECHAT_OPENID_*}}` placeholders without a value become empty strings instead of being forwarded as template text. Unknown placeholder names remain unchanged so configuration typos are visible.
+
 When `models.fetch: true` is used, these headers are also resolved and forwarded to the model-list request for admin-controlled base URLs. A configured `Authorization` header takes precedence over the endpoint `apiKey` fallback, which is useful for auth-aware proxies that return per-user model lists. If `baseURL: "user_provided"` is configured, LibreChat does not forward configured header templates to the user-provided destination. For `provider: anthropic`, headers are forwarded through the native Anthropic client instead of the OpenAI-compatible client.
 
 **Available User Field Placeholders:**
@@ -802,6 +877,9 @@ When `models.fetch: true` is used, these headers are also resolved and forwarded
 | `{{LIBRECHAT_USER_EMAILVERIFIED}}`    | `emailVerified`    | Boolean → String | Email verification status ("true" or "false")               |
 | `{{LIBRECHAT_USER_TWOFACTORENABLED}}` | `twoFactorEnabled` | Boolean → String | 2FA status ("true" or "false")                              |
 | `{{LIBRECHAT_USER_TERMSACCEPTED}}`    | `termsAccepted`    | Boolean → String | Terms acceptance status ("true" or "false")                 |
+| `{{LIBRECHAT_USER_TERMSACCEPTEDAT}}`  | `termsAcceptedAt`  | Date → String    | Terms acceptance timestamp                                  |
+
+Agent model requests also support `{{LIBRECHAT_USER_TENANT_ID}}` and `{{LIBRECHAT_USER_TENANTID}}` in custom endpoint headers. Both aliases use the authoritative request-scoped tenant rather than a potentially stale user record, apply to root Agents, Subagents, and custom summarization calls, and resolve to an empty string when no tenant is present. They are not general user-field placeholders for non-Agent template consumers.
 
 **Available Request Body Placeholders:**
 

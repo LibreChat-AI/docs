@@ -39,11 +39,11 @@ const cspHeader = `
 const nonPermanentRedirects = [
   ['/discord', 'https://discord.librechat.ai'],
   ['/demo', 'https://chat.librechat.ai'],
-  ['/issue', 'https://github.com/danny-avila/LibreChat/issues/new/choose'],
-  ['/new-issue', 'https://github.com/danny-avila/LibreChat/issues/new/choose'],
-  ['/issues', 'https://github.com/danny-avila/LibreChat/issues'],
-  ['/gh-support', 'https://github.com/danny-avila/LibreChat/discussions/categories/support'],
-  ['/gh-discussions', 'https://github.com/danny-avila/LibreChat/discussions'],
+  ['/issue', 'https://github.com/LibreChat-AI/LibreChat/issues/new/choose'],
+  ['/new-issue', 'https://github.com/LibreChat-AI/LibreChat/issues/new/choose'],
+  ['/issues', 'https://github.com/LibreChat-AI/LibreChat/issues'],
+  ['/gh-support', 'https://github.com/LibreChat-AI/LibreChat/discussions/categories/support'],
+  ['/gh-discussions', 'https://github.com/LibreChat-AI/LibreChat/discussions'],
   ['/roadmap', '/blog/2026-02-18_2026_roadmap'],
   ['/features', '/docs/features'],
   ['/docs/configuration/azure', '/docs/configuration/librechat_yaml/ai_endpoints/azure'],
@@ -59,8 +59,21 @@ const nonPermanentRedirects = [
   ['/docs/features/plugins', '/docs/features/agents'],
   ['/docs/features/speech-to-text', '/docs/configuration/stt_tts'],
   ['/docs/configuration/librechat_yaml/setup', '/docs/configuration/librechat_yaml'],
-  ['/toolkit/yaml_checker', '/toolkit/yaml-checker'],
-  ['/toolkit/creds_generator', '/toolkit/creds-generator'],
+  // The toolkit pages live under /docs/toolkit; these are the pre-Fumadocs URLs
+  // still linked from older posts and bookmarks. In-page links are canonicalized
+  // at render time by lib/localize-href.ts, but a direct hit only has these, so
+  // both spellings of each slug have to land on the real page rather than on the
+  // other spelling.
+  ['/toolkit', '/docs/toolkit'],
+  ['/toolkit/yaml_checker', '/docs/toolkit/yaml-validator'],
+  ['/toolkit/yaml-checker', '/docs/toolkit/yaml-validator'],
+  ['/toolkit/creds_generator', '/docs/toolkit/credentials-generator'],
+  ['/toolkit/creds-generator', '/docs/toolkit/credentials-generator'],
+  // Nav-only folder: the section's landing page is the Config Structure reference.
+  [
+    '/docs/configuration/librechat_yaml/object_structure',
+    '/docs/configuration/librechat_yaml/object_structure/config',
+  ],
 ]
 
 /**
@@ -90,27 +103,86 @@ const OG_VERSION = computeOgVersion()
  * `private, no-store` so the CDN never caches it and therefore can never serve
  * one as a document. A cached document occasionally returned to an RSC request
  * just makes Next fall back to a full navigation, which is harmless.
+ *
+ * The same collision applies to the markdown content negotiation in proxy.ts
+ * (`isMarkdownPreferred`): a `/docs/*` request with `Accept: text/markdown`
+ * (LLM/agent tooling) gets rewritten to the raw-markdown response, but that
+ * response shares its cache key with the HTML document since Cloudflare
+ * ignores `Vary` here too. Whichever one a given edge PoP sees first for a URL
+ * gets cached for it and served to everyone else hitting that PoP, including
+ * browsers, until the entry expires. Mark those responses `private, no-store`
+ * for the same reason as the RSC flight payload.
  */
 const SHARED_CDN_CACHE = 'public, s-maxage=86400, stale-while-revalidate=604800'
-const cdnCacheHeaders = [
-  '/docs/:path*',
-  // Localized docs (/<locale>/docs/...). Without this they match no cache rule,
-  // so Cloudflare never edge-caches them and every language switch is a full
-  // origin round-trip — including the 307 that untranslated pages redirect with.
-  '/(zh|es|fr|de|ja|pt-BR|it|nl|pl|vi|ko|id|tr)/docs/:path*',
-  '/(blog|changelog|authors|privacy|tos|cookie)(.*)',
-].flatMap((source) => [
+
+/**
+ * Pages that render live data need an edge TTL matching the ISR window of the
+ * route that builds them (`revalidate` in app/blog/[slug]/page.tsx). Under the
+ * shared blog rule the CDN would keep serving a day-old document, so a post
+ * showing "live" numbers would be up to 24h stale no matter how often the origin
+ * regenerated it. Keep the two windows in step when changing either.
+ */
+const LIVE_DATA_CDN_CACHE = 'public, s-maxage=3600, stale-while-revalidate=86400'
+const LIVE_DATA_PATHS = ['/blog/2026-07-26_clickhouse-analytics']
+
+const AGENT_DISCOVERY_LINKS = [
+  '</.well-known/api-catalog>; rel="api-catalog"; type="application/linkset+json"',
+  '</openapi.json>; rel="service-desc"; type="application/vnd.oai.openapi+json;version=3.1"',
+  '</docs>; rel="service-doc"; type="text/html"',
+  '</llms.txt>; rel="describedby"; type="text/markdown"',
+].join(', ')
+
+/**
+ * Cache rules for one source: the document response stays shared-cacheable at
+ * the given TTL, while the two variants that share its cache key — the RSC
+ * flight payload and the markdown negotiation — are marked uncacheable, for the
+ * reasons in the note above.
+ */
+const cdnRulesFor = (source, cache) => [
   {
     source,
     missing: [{ type: 'header', key: 'RSC' }],
-    headers: [{ key: 'Cache-Control', value: SHARED_CDN_CACHE }],
+    headers: [{ key: 'Cache-Control', value: cache }],
   },
   {
     source,
     has: [{ type: 'header', key: 'RSC' }],
     headers: [{ key: 'Cache-Control', value: 'private, no-store' }],
   },
-])
+  {
+    source,
+    has: [{ type: 'header', key: 'accept', value: '.*text/markdown.*' }],
+    headers: [{ key: 'Cache-Control', value: 'private, no-store' }],
+  },
+]
+
+const MARKDOWN_NEGOTIATED_PATHS = [
+  '/docs/:path*',
+  // Localized docs need the same cache partitioning and edge-cache policy as English.
+  '/(zh|es|fr|de|ja|pt-BR|it|nl|pl|vi|ko|id|tr)/docs/:path*',
+]
+
+// Middleware response headers are replaced when the App Router emits its RSC
+// Vary value. Configure Accept at the route layer so Next appends its own
+// variants instead of dropping the content-negotiation cache key.
+const markdownNegotiatedVaryHeaders = MARKDOWN_NEGOTIATED_PATHS.map((source) => ({
+  source,
+  headers: [{ key: 'Vary', value: 'Accept' }],
+}))
+
+// The narrower live-data rules come last so their Cache-Control overrides the
+// shared value on the paths they match.
+const cdnCacheHeaders = [
+  ...[
+    '/docs/:path*',
+    // Localized docs (/<locale>/docs/...). Without this they match no cache rule,
+    // so Cloudflare never edge-caches them and every language switch is a full
+    // origin round-trip — including the 307 that untranslated pages redirect with.
+    '/(zh|es|fr|de|ja|pt-BR|it|nl|pl|vi|ko|id|tr)/docs/:path*',
+    '/(blog|changelog|authors|privacy|tos|cookie)(.*)',
+  ].flatMap((source) => cdnRulesFor(source, SHARED_CDN_CACHE)),
+  ...LIVE_DATA_PATHS.flatMap((source) => cdnRulesFor(source, LIVE_DATA_CDN_CACHE)),
+]
 
 /** @type {import('next').NextConfig} */
 const config = {
@@ -128,6 +200,10 @@ const config = {
       './lib/fonts/Geist-SemiBold.ttf',
       './public/librechat.png',
     ],
+    '/mcp': ['./content/docs/**/*.mdx'],
+    // ComponentPreview reads each example's source to show it under the live preview.
+    '/docs/[[...slug]]': ['./component-previews/src/examples/**/*.tsx'],
+    '/[lang]/docs/[[...slug]]': ['./component-previews/src/examples/**/*.tsx'],
   },
   typescript: {
     ignoreBuildErrors: false,
@@ -135,6 +211,8 @@ const config = {
   // Tree-shake large barrel-file packages so only the icons/animations actually
   // used are bundled, instead of the entire module.
   experimental: {
+    // Keep static page generation within the preview deployment's memory limit.
+    cpus: 3,
     optimizePackageImports: ['lucide-react', 'framer-motion'],
   },
   turbopack: {},
@@ -250,6 +328,33 @@ const config = {
           {
             key: 'Content-Security-Policy',
             value: cspHeader.replaceAll('\n', ''),
+          },
+        ],
+      },
+      {
+        source: '/',
+        headers: [
+          {
+            key: 'Link',
+            value: AGENT_DISCOVERY_LINKS,
+          },
+        ],
+      },
+      ...markdownNegotiatedVaryHeaders,
+      // The component previews are embedded in the docs' own pages, so they may be framed by
+      // this origin and no other. Later rules override earlier ones for the same header.
+      {
+        source: '/component-previews/:path*',
+        headers: [
+          {
+            key: 'x-frame-options',
+            value: 'SAMEORIGIN',
+          },
+          {
+            key: 'Content-Security-Policy',
+            value: cspHeader
+              .replace("frame-ancestors 'none'", "frame-ancestors 'self'")
+              .replaceAll('\n', ''),
           },
         ],
       },

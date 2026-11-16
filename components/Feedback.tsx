@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition, type SyntheticEvent } from 'react'
 import { ThumbsUp, ThumbsDown, Loader2 } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import { Collapsible, CollapsibleContent } from 'fumadocs-ui/components/ui/collapsible'
-import { submitFeedback } from '@/app/actions/feedback'
+import type { submitFeedback } from '@/app/actions/feedback'
 import { getUI } from '@/lib/ui-i18n'
 
 type Opinion = 'good' | 'bad'
@@ -42,7 +42,12 @@ function useStoredFeedback(url: string) {
   return { stored, save }
 }
 
-export function Feedback({ lang }: { lang?: string }) {
+/**
+ * The server action is passed in by the server page rather than imported here:
+ * a client import compiles the action, and the docs source it reads, a second
+ * time in the action layer, which pushes the build past its heap limit.
+ */
+export function Feedback({ lang, onSubmit }: { lang?: string; onSubmit: typeof submitFeedback }) {
   const t = getUI(lang).feedback
   const url = usePathname() ?? '/'
   const { stored, save } = useStoredFeedback(url)
@@ -60,7 +65,7 @@ export function Feedback({ lang }: { lang?: string }) {
     setOpinion(null)
 
     startTransition(async () => {
-      await submitFeedback(payload)
+      await onSubmit(payload)
     })
   }
 

@@ -1,0 +1,117 @@
+---
+title: Helm Chart
+icon: Ship
+description: Instructions for deploying LibreChat on Kubernetes using Helm
+---
+
+Please follow this guidance to deploy LibreChat on Kubernetes using Helm, adjusting as needed for your specific use case. Other Helm charts contributed by the community are listed below in the [Community Helm Charts](#community-helm-charts) section.
+
+## Prerequisites
+
+* A running Kubernetes cluster
+* _Local_ installations of `kubectl` and Helm
+
+## Configuration
+
+1. Use the [Credentials Generator](/toolkit/creds_generator) to generate secure values for `CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`, `JWT_REFRESH_SECRET` and `MEILI_MASTER_KEY`.
+Place them in a Kubernetes Secret like this (if you change the secret name, remember to update your Helm values):
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: librechat-credentials-env
+  namespace: <librechat-chart-namespace>
+type: Opaque
+stringData:
+  CREDS_KEY: <generated value>
+  CREDS_IV: <generated value>
+  JWT_SECRET: <generated value>
+  JWT_REFRESH_SECRET: <generated value>
+  MEILI_MASTER_KEY: <generated value>
+```
+
+Use permanent values and mount the same Secret into every replica. Do not rely on process-local or ephemeral filesystem credentials in Kubernetes: changing these values can invalidate sessions and make existing encrypted records unreadable.
+
+The Secret named by `global.librechat.existingSecretName` must exist before the LibreChat container starts. A missing or misspelled named Secret blocks pod startup instead of falling back to temporary pod-local credentials. The chart does not validate the keys inside it, so ensure it contains `CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`, and `JWT_REFRESH_SECRET`.
+
+Set `global.librechat.existingSecretName: ""` only when every LibreChat credential is supplied another way. `librechat.configEnv` accepts string values for ConfigMap data, while `global.librechat.env` accepts Kubernetes environment entries such as `valueFrom.secretKeyRef`. Prefer Secret references for production.
+
+Bundled Meilisearch has a separate dependency on `meilisearch.auth.existingMasterKeySecret`, which defaults to `librechat-credentials-env` and must contain the same `MEILI_MASTER_KEY` supplied to LibreChat. Clearing the LibreChat Secret reference does not clear this Meilisearch reference. If bundled Meilisearch is disabled, configure the external search service and its credentials separately.
+2. Add to this same secret any required API keys for LLM providers:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: librechat-credentials-env
+  namespace: <librechat-chart-namespace>
+type: Opaque
+stringData:
+  CREDS_KEY: <same generated value as above>
+  CREDS_IV: <same generated value as above>
+  JWT_SECRET: <same generated value as above>
+  JWT_REFRESH_SECRET: <same generated value as above>
+  MEILI_MASTER_KEY: <same generated value as above>
+  OPENAI_API_KEY: <your secret value>
+```
+3. Apply the Secret to the Cluster:
+
+Save the complete Secret manifest as `librechat-credentials.yaml`, using the intended namespace, then apply it:
+
+```bash
+kubectl apply -f librechat-credentials.yaml
+```
+
+## Install Helm Chart
+
+<Callout type="warning" title="Chart 2.0.16: empty config map">
+The v0.8.8 chart source defaults `librechat.configEnv` to null. If you have no ConfigMap environment overrides, set it explicitly to `{}` in your values file, or pass `--set-json 'librechat.configEnv={}'` to `helm install` or `helm template`; otherwise the template's `dig` lookups can fail. Keep credentials in the named Secret. This is a rendering workaround, not a reason to disable the Secret requirement.
+</Callout>
+
+To install the helm chart run: 
+
+`helm install <deployment-name> oci://ghcr.io/librechat-ai/librechat-chart/librechat`
+
+<details>
+  <summary>Development version</summary>
+
+In the repo's root directory, run: 
+
+`helm install <deployment-name> ./helm/librechat`
+</details>
+
+Similar to other Helm charts, there exists a [values file](https://github.com/LibreChat-AI/LibreChat/blob/main/helm/librechat/values.yaml) that outlines the default settings and indicates which configuration options can be modified.
+
+Create a `values.yaml` file populated with the values you want to modify from the default.
+
+Install the Helm chart: `helm install librechat oci://ghcr.io/librechat-ai/librechat-chart/librechat --values <values-override-filel>`
+
+Once the release is up and the service is reachable, follow [Your First Chat](/v0.8.8/docs/quick_start/first_chat) to register an account, add a model API key, and send your first message.
+
+## Uninstall the Helm Chart
+
+To uninstall the Helm Chart: `helm uninstall <deployment-name>`
+
+Example: `helm uninstall librechat`
+
+## Migrate 1.x -> 2.x
+If you used the chart before version 2.x you may need to update the `value` structure.
+
+1. Move Config to librechat.configEnv:
+```diff
+- env:
+-     ALLOW_EMAIL_LOGIN: "true"
+-     ALLOW_REGISTRATION: "true"
++ librechat:
++   configEnv:
++     ALLOW_REGISTRATION: "true"
++     ALLOW_EMAIL_LOGIN: "true"
+```
+
+2. Consolidate all Secret values to a single Secret as described in [Configuration Step 1](#configuration). 
+3. To leverage an external MongoDB instance, refer to the [values file](https://github.com/LibreChat-AI/LibreChat/blob/main/helm/librechat/values.yaml) of the Chart, deactivate the components accordingly and change the FQDN of the Mongodb instance. This is recommended if data already exists in this externally managed MongoDB instance.
+  
+## Community Helm Charts
+- [Blue Atlas Helm Charts](https://charts.blue-atlas.de/) # deprecated now that LibreChat provides an official chart
+- Submitted by [@dimaby](https://github.com/dimaby) on GitHub: [PR #2879](https://github.com/LibreChat-AI/LibreChat/pull/2879)

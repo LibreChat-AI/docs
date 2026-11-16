@@ -1,0 +1,337 @@
+---
+title: Speech Settings
+icon: Mic
+description: Configuration of the Speech to Text (STT) and Text to Speech (TTS) features
+---
+
+<Callout type="info" title="Upcoming STT/TTS Enhancements" collapsible>
+The Google Cloud STT/TTS and Deepgram services are being planned for future integration.
+</Callout>
+
+## Speech Introduction
+
+The Speech Configuration includes settings for both Speech-to-Text (STT) and Text-to-Speech (TTS) under a unified `speech:` section. Additionally, there is a new `speechTab` menu for user-specific settings.
+
+> **See Also:** For detailed YAML configuration schema and all available options, see the [Speech Object Structure](/v0.8.8/docs/configuration/librechat_yaml/object_structure/speech) documentation.
+
+### Environment Variables
+
+When using cloud-based STT/TTS services, you'll need to set API keys in your `.env` file:
+
+```bash filename=".env"
+# Speech-to-Text API key (e.g., OpenAI Whisper)
+STT_API_KEY=your-stt-api-key
+
+# Text-to-Speech API key (e.g., OpenAI TTS, ElevenLabs)
+TTS_API_KEY=your-tts-api-key
+```
+
+These keys are then referenced in your `librechat.yaml` configuration using `${STT_API_KEY}` and `${TTS_API_KEY}`.
+
+### Self-hosted engines need an allowedAddresses entry
+
+Both `speech.stt` and `speech.tts` accept an `allowedAddresses` list. Outbound speech requests are validated against their resolved IP and blocked from reaching private, loopback, and link-local address space, so a self-hosted engine on `localhost`, a LAN address, or a Docker service name is unreachable until you list it:
+
+```yaml filename="librechat.yaml"
+speech:
+  tts:
+    allowedAddresses:
+      - 'host.docker.internal:8080'
+    localai:
+      url: 'http://host.docker.internal:8080/tts'
+      # ...
+```
+
+Entries are bare `host:port` pairs: no scheme or path, port required, IPv6 bracketed as `[::1]:8080`, and IP literals must be private. Public cloud endpoints such as OpenAI, Azure, and ElevenLabs need no entry. The guard works on the resolved IP, not the hostname, so a cloud endpoint reached over Private Link, private DNS, or a VPN resolves into private address space and does need its exact `host:port` listed like any other private target. The same field and rules apply under `speech.stt`. See [SSRF protection](/v0.8.8/docs/configuration/librechat_yaml/object_structure/web_search#ssrf-protection-and-private-providers) for the full entry format.
+
+## Speech Tab (optional)
+
+The `speechTab` menu provides customizable options for conversation and advanced modes, as well as detailed settings for STT and TTS. This will set the default settings for users
+
+Use `browser` for built-in browser speech or `external` for a server-side provider configured below. Older provider-specific defaults remain accepted for compatibility and are normalized to `external`; if the matching external service is unavailable, LibreChat falls back to `browser`.
+
+example:
+
+```yaml
+speech:
+  speechTab:
+    conversationMode: true
+    advancedMode: false
+    speechToText:
+      engineSTT: "external"
+      languageSTT: "English (US)"
+      autoTranscribeAudio: true
+      decibelValue: -45
+      autoSendText: 0
+    textToSpeech:
+      engineTTS: "external"
+      voice: "alloy"
+      languageTTS: "en"
+      automaticPlayback: true
+      playbackRate: 1.0
+      cacheTTS: true
+```
+
+`speechTab` sets the initial values users see; each remains changeable per user in the speech settings tab.
+
+**Top-level keys:**
+
+<OptionTable
+  options={[
+    ['conversationMode', 'Boolean', 'Starts the speech tab in conversation mode, which chains transcription and playback for hands-free back-and-forth.', ''],
+    ['advancedMode', 'Boolean', 'Reveals the advanced speech settings in the UI instead of only the basic switches.', ''],
+    ['speechToText', 'Boolean or Object', 'Set `false` to turn STT off, `true` to enable it with app defaults, or an object to preset the fields below.', ''],
+    ['textToSpeech', 'Boolean or Object', 'Set `false` to turn TTS off, `true` to enable it with app defaults, or an object to preset the fields below.', ''],
+  ]}
+/>
+
+**`speechToText` subkeys:**
+
+<OptionTable
+  options={[
+    ['engineSTT', 'String', 'Which transcription engine to use. `browser` uses the built-in Web Speech API and needs no server config; the others use the matching provider block under `speech.stt`.', 'Options: "browser", "external", "openai", "azureOpenAI"'],
+    ['languageSTT', 'String', 'Language the transcriber should expect, as shown in the speech settings dropdown.', 'Example: "English (US)"'],
+    ['autoTranscribeAudio', 'Boolean', 'Keep the microphone listening instead of stopping at the first pause. With an external engine it also turns on silence detection, which uses `decibelValue` to decide when you have stopped speaking and ends the recording. You still start the recording yourself.', ''],
+    ['decibelValue', 'Number', 'Silence threshold in dB used by that silence detection. Lower values are more sensitive to quiet speech.', 'Range: -100 to -30. Default: -45'],
+    ['autoSendText', 'Number', 'Seconds to wait after transcription finishes before sending the message automatically. `0` sends immediately; `-1` disables auto-send.', 'Range: 0 to 60, or -1'],
+  ]}
+/>
+
+**`textToSpeech` subkeys:**
+
+<OptionTable
+  options={[
+    ['engineTTS', 'String', 'Which speech engine to use. `browser` uses the built-in Web Speech API and needs no server config; the others use the matching provider block under `speech.tts`.', 'Options: "browser", "external", "openai", "azureOpenAI", "elevenlabs", "localai"'],
+    ['voice', 'String', 'Default voice name. For external engines it must be one of the voices listed for that engine under `speech.tts`. The `browser` engine uses whatever voices the browser and operating system provide, so it needs no server-side list.', 'Example: "alloy"'],
+    ['languageTTS', 'String', 'Language used by the browser engine.', 'Example: "en"'],
+    ['automaticPlayback', 'Boolean', 'Play each response aloud as soon as it finishes generating.', ''],
+    ['playbackRate', 'Number', 'Playback speed multiplier.', 'Range: 0.25 to 4'],
+    ['cacheTTS', 'Boolean', 'Reuse previously generated audio for the same text instead of re-requesting it from the provider.', ''],
+  ]}
+/>
+
+<Callout type="info" title="engine values and the provider blocks">
+
+`engineSTT` / `engineTTS` only choose which engine the UI starts on. Anything other than `browser` still needs the corresponding provider configured under `speech.stt` or `speech.tts`. See the sections below.
+
+</Callout>
+
+## STT (Speech-to-Text)
+
+The Speech-to-Text (STT) feature converts spoken words into written text. To enable STT, click on the STT button (near the send button) or use the key combination ++Ctrl+Alt+L++ to start the transcription.
+
+### Available STT Services
+
+- **Local STT**
+  - Browser-based
+  - Whisper (tested on LocalAI)
+- **Cloud STT**
+  - OpenAI Whisper
+  - Azure Whisper
+  - Other OpenAI-compatible STT services
+
+### Configuring Local STT
+
+- #### Browser-based
+  No setup required. Ensure the "Speech To Text" switch in the speech settings tab is enabled and "Browser" is selected in the engine dropdown.
+
+- #### Whisper Local
+  Requires a local Whisper instance.
+
+```yaml
+speech:
+  stt:
+    openai:
+      url: 'http://host.docker.internal:8080/v1/audio/transcriptions'
+      model: 'whisper'
+```
+
+### Configuring Cloud STT
+
+- #### OpenAI Whisper
+
+```yaml
+speech:
+  stt:
+    openai:
+      apiKey: '${STT_API_KEY}'
+      model: 'whisper-1'
+```
+
+- #### Azure Whisper
+
+```yaml
+speech:
+  stt:
+    azureOpenAI:
+      instanceName: 'instanceName'
+      apiKey: '${STT_API_KEY}'
+      deploymentName: 'deploymentName'
+      apiVersion: 'apiVersion'
+```
+
+<Callout type="info" title="Azure Endpoint Domain Support">
+The `instanceName` field supports both Azure OpenAI domain formats:
+- **New format**: `.cognitiveservices.azure.com` (e.g., `my-instance.cognitiveservices.azure.com`)
+- **Legacy format**: `.openai.azure.com` (e.g., `my-instance.openai.azure.com`)
+
+You can specify either the full domain or just the instance name. If you provide a full domain including `.azure.com`, it will be used as-is. Otherwise, the legacy `.openai.azure.com` format will be applied for backward compatibility.
+</Callout>
+
+- #### OpenAI compatible
+
+Refer to the OpenAI Whisper section, adjusting the `url` and `model` as needed.
+
+example
+  
+```yaml
+speech:
+  stt:
+    openai:
+      url: 'http://host.docker.internal:8080/v1/audio/transcriptions'
+      model: 'whisper'
+  ```
+
+
+## TTS (Text-to-Speech)
+
+The Text-to-Speech (TTS) feature converts written text into spoken words. Various TTS services are available:
+
+### Available TTS Services
+
+- **Local TTS**
+  - Browser-based
+  - Piper (tested on LocalAI)
+  - Coqui (tested on LocalAI)
+- **Cloud TTS**
+  - OpenAI TTS
+  - Azure OpenAI
+  - ElevenLabs
+  - Other OpenAI/ElevenLabs-compatible TTS services
+
+### Configuring Local TTS
+
+- #### Browser-based
+
+No setup required. Ensure the "Text To Speech" switch in the speech settings tab is enabled and "Browser" is selected in the engine dropdown.
+
+- #### Piper
+
+Requires a local Piper instance.
+
+```yaml
+speech:
+  tts:
+    localai:
+      url: "http://host.docker.internal:8080/tts"
+      apiKey: "EMPTY"
+      voices: [
+        "en-us-amy-low.onnx",
+        "en-us-danny-low.onnx",
+        "en-us-libritts-high.onnx",
+        "en-us-ryan-high.onnx",
+      ]
+      backend: "piper"
+```
+
+- #### Coqui
+
+Requires a local Coqui instance.
+
+```yaml
+speech:
+  tts:
+    localai:
+      url: 'http://localhost:8080/v1/audio/synthesize'
+      voices: ['tts_models/en/ljspeech/glow-tts', 'tts_models/en/ljspeech/tacotron2', 'tts_models/en/ljspeech/waveglow']
+      backend: 'coqui'
+```
+
+### Configuring Cloud TTS
+
+- #### OpenAI TTS
+
+```yaml
+speech:
+  tts:
+    openai:
+      apiKey: '${TTS_API_KEY}'
+      model: 'tts-1'
+      voices: ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']
+```
+
+- #### Azure OpenAI
+
+```yaml
+speech:
+  tts:
+    azureOpenAI:
+      instanceName: ''
+      apiKey: '${TTS_API_KEY}'
+      deploymentName: ''
+      apiVersion: ''
+      model: 'tts-1'
+      voices: ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']
+```
+
+<Callout type="info" title="Azure Endpoint Domain Support">
+The `instanceName` field supports both Azure OpenAI domain formats:
+- **New format**: `.cognitiveservices.azure.com` (e.g., `my-instance.cognitiveservices.azure.com`)
+- **Legacy format**: `.openai.azure.com` (e.g., `my-instance.openai.azure.com`)
+
+You can specify either the full domain or just the instance name. If you provide a full domain including `.azure.com`, it will be used as-is. Otherwise, the legacy `.openai.azure.com` format will be applied for backward compatibility.
+</Callout>
+
+- #### ElevenLabs
+
+```yaml
+speech:
+  tts:
+    elevenlabs:
+      apiKey: '${TTS_API_KEY}'
+      model: 'eleven_multilingual_v2'
+      voices: ['202898wioas09d2', 'addwqr324tesfsf', '3asdasr3qrq44w', 'adsadsa']
+```
+
+Additional ElevenLabs-specific parameters can be added as follows:
+
+```yaml
+      voice_settings:
+        similarity_boost: '' # number
+        stability: '' # number
+        style: '' # number
+        use_speaker_boost: # boolean
+      pronunciation_dictionary_locators: [''] # list of strings (array)
+```
+
+- #### OpenAI compatible
+
+Refer to the OpenAI TTS section, adjusting the `url` variable as needed
+
+example:
+
+```yaml
+speech:
+  tts:
+    openai:
+      url: 'http://host.docker.internal:8080/v1/audio/synthesize'
+      apiKey: '${TTS_API_KEY}'
+      model: 'tts-1'
+      voices: ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']
+```
+
+- #### ElevenLabs compatible
+
+Refer to the ElevenLabs section, adjusting the `url` variable as needed
+
+example:
+
+```yaml
+speech:
+  tts:
+    elevenlabs:
+      url: 'http://host.docker.internal:8080/v1/audio/synthesize'
+      apiKey: '${TTS_API_KEY}'
+      model: 'eleven_multilingual_v2'
+      voices: ['202898wioas09d2', 'addwqr324tesfsf', '3asdasr3qrq44w', 'adsadsa']
+```
