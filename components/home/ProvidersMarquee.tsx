@@ -13,6 +13,7 @@ import GroqIcon from '@/components/icons/providers/groq'
 import AnyscaleIcon from '@/components/icons/providers/anyscale'
 import ApipieIcon from '@/components/icons/providers/apipie'
 import CloudflareIcon from '@/components/icons/providers/cloudflare'
+import CloudGPUIcon from '@/components/icons/providers/cloudgpu'
 import CohereIcon from '@/components/icons/providers/cohere'
 import DatabricksIcon from '@/components/icons/providers/databricks'
 import FireworksIcon from '@/components/icons/providers/fireworks'
@@ -48,6 +49,7 @@ const providers = [
   { id: 'anyscale', name: 'Anyscale', icon: AnyscaleIcon },
   { id: 'apipie', name: 'APIpie', icon: ApipieIcon },
   { id: 'cloudflare', name: 'Cloudflare Workers AI', icon: CloudflareIcon },
+  { id: 'cloudgpu', name: 'CloudGPU', icon: CloudGPUIcon },
   { id: 'cohere', name: 'Cohere', icon: CohereIcon },
   { id: 'databricks', name: 'Databricks', icon: DatabricksIcon },
   { id: 'fireworks', name: 'Fireworks AI', icon: FireworksIcon },
