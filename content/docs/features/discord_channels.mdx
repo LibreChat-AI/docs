@@ -1,0 +1,184 @@
+---
+title: Discord Agent Channels
+icon: MessagesSquare
+description: Connect Discord servers, threads, and direct messages to LibreChat agents with per-user account consent.
+---
+
+Discord Agent Channels let people use a LibreChat agent from a Discord server. An administrator connects an organization-owned Discord application, then an agent editor binds a server text channel to an agent. Each person links their own LibreChat account and grants consent before running the agent.
+
+<Callout type="warning" title="Requires Discord Channels support">
+  Deploy a LibreChat release that includes Discord Agent Channels, with matching API and
+  channel-gateway images. Enabling the configuration below does not add the feature to an
+  older release. Discord social login is a separate integration.
+</Callout>
+
+## Requirements
+
+- A Discord application and bot that your organization controls, plus permission to manage the intended Discord server.
+- A LibreChat agent and permission to manage installations and share that agent. Users need current agent access and permission to use Remote Agents.
+- Transaction-capable MongoDB, such as a replica set. A standalone MongoDB instance cannot perform the required channel writes.
+- Public HTTPS URLs for LibreChat and the Discord gateway. The API and gateway need private connectivity to one another.
+- The same private `CHANNEL_SERVICE_TOKEN` on the API and gateway, at least 32 characters long. Preserve the database and LibreChat encryption keys together during backup and recovery.
+
+Slack and Discord use separate gateway processes. Adding Discord does not require configuring Slack.
+
+<Callout type="info" title="Conversation isolation is not Discord privacy">
+  Each person's agent execution uses their own LibreChat access. Other members who can read
+  the Discord channel can still read messages posted there. Choose an appropriate channel
+  and do not put secrets in prompts.
+</Callout>
+
+## Enable Discord policy
+
+Merge this into your existing `librechat.yaml`, preserving its other settings:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    remoteApi:
+      background:
+        enabled: true
+    channels:
+      enabled: true
+      discord:
+        enabled: true
+        publicUrl: https://discord.example.com
+        gateway:
+          enabled: false
+          messageContent: false
+        dm:
+          enabled: false
+```
+
+The `channels.enabled` and `discord.enabled` switches enable Discord policy. Stored background Responses must also be enabled. See the [Agents API](/docs/features/agents_api) for Remote Agents access and authentication.
+
+`discord.publicUrl` is the public HTTPS base of the Discord gateway, not the LibreChat browser URL. LibreChat builds the interactions endpoint as:
+
+```text
+https://discord.example.com/discord/<applicationId>/interactions
+```
+
+A base with a prefix, such as `https://example.com/chat-discord`, needs a proxy that removes `/chat-discord` before forwarding to the gateway. The gateway receives `/discord/<applicationId>/interactions`. Keep request bodies and Discord signature headers unchanged. Expose only `/discord/` publicly; health, metrics, and internal service routes belong on the private network.
+
+Configure LibreChat's public `DOMAIN_SERVER` and `DOMAIN_CLIENT` separately. Copy the OAuth callback URL from LibreChat's setup screen rather than constructing it from the gateway URL.
+
+### Deploy the gateway
+
+From a LibreChat checkout containing the Discord overlays, set a release-matched `LIBRECHAT_IMAGE_TAG` and provision `CHANNEL_SERVICE_TOKEN` through your private environment or secret manager. Then validate and start the Compose deployment:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.discord.yml \
+  --profile channels config --quiet
+docker compose -f docker-compose.yml -f docker-compose.discord.yml \
+  --profile channels up -d
+```
+
+For source builds, add `-f docker-compose.discord-build.yml` after the Discord overlay and use `up -d --build`. The Discord overlay binds its HTTP listener to loopback on port 3082 by default, configurable with `DISCORD_GATEWAY_PORT`. Put your HTTPS proxy in front of that listener.
+
+For Kubernetes, enable `channelGateway.discord.enabled` in the LibreChat Helm chart. Its Deployment, Service, and optional Ingress are separate from Slack. The shared `channelGateway.image`, `internalUrl`, and `existingSecretName` settings supply the image, private API URL, and service token. Configure `channelGateway.discord.ingress` for the public `/discord/` route. Use a replica set or external transaction-capable MongoDB; the chart refuses shared gateways with bundled standalone MongoDB.
+
+Bot tokens and OAuth client secrets are entered through LibreChat's authenticated application setup. Do not put them in gateway environment variables, Helm values, screenshots, or support logs. The Discord social-login variables `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, and `DISCORD_CALLBACK_URL` do not configure Agent Channels.
+
+## Connect an application and server
+
+1. Create an application and bot in the [Discord Developer Portal](https://discord.com/developers/applications). Enable **Require OAuth2 Code Grant** and keep the bot token and OAuth client secret private.
+2. In LibreChat, open **Settings > Account > Discord**. Add the displayed **OAuth callback URL** to the application's OAuth2 redirect URLs in Discord.
+3. Choose **Add application**, then enter the application ID, bot token, and OAuth client secret. LibreChat verifies the application and bot identity. Saving credentials does not install the bot or register commands automatically.
+4. Copy the displayed **Interactions endpoint URL** into the Developer Portal. Discord verifies the endpoint with a signed request. If verification fails, check your proxy and gateway; do not disable signature checks.
+5. Choose **Register or update /librechat commands**. This explicitly upserts `/librechat` without replacing other command names. It supports server-installed applications in server and bot-DM contexts. Global command changes can take time to appear.
+6. Choose **Connect server** and authorize the intended server in Discord. Keep the initiating LibreChat session open. If a popup is blocked, allow it and refresh the server status before starting another attempt. The server should show **Connected**.
+
+Successful credential verification does not prove that a server is connected or that the bot can write in a particular channel. Complete the binding and personal-link steps below.
+
+## Bind a text channel to an agent
+
+1. Open the agent's **Channels** surface and select **Discord**.
+2. Choose a connected server and enter a regular text channel ID. Enable Discord Developer Mode to use **Copy Channel ID**.
+3. Give the bot **View Channel**, **Send Messages**, and **Read Message History** in that channel, including its role and channel permission overwrites.
+4. Check the current binding and choose **Connect channel**. If another agent owns the destination, review the replacement confirmation.
+
+One application/server/channel destination has one active agent binding. Threads inherit their parent text-channel binding; direct messages use an explicit selection. Neither is bound separately. Forum channels and other parent-channel types are unsupported.
+
+If LibreChat cannot confirm a save or removal, use **Check current binding** before trying another change. A lost response can follow a successful write. Replacing a binding closes the previous binding and requires new personal consent.
+
+## Link your account and run the agent
+
+In the bound server channel, run `/librechat link`. Open the private account-link URL, sign in to the intended LibreChat account, and review the consent request. Return to the original Discord channel, run `/librechat link` again, and choose **Confirm account** when prompted.
+
+Each person completes this flow independently. Browser consent alone does not authorize an earlier prompt. Send a fresh prompt after confirming in Discord.
+
+| Command | Purpose |
+| --- | --- |
+| `/librechat ask prompt:...` | Start a run using the agent for this destination |
+| `/librechat status` | Inspect your current run privately |
+| `/librechat cancel` | Request cancellation of your current run |
+| `/librechat link` | Start or confirm account linking in a server channel |
+| `/librechat select code:...` | Select an agent in a bot DM using a code from LibreChat |
+
+Agent output goes to the destination where you asked. Review links require your LibreChat authorization. When an answer exceeds the delivery budget, the bot shortens it; an authorized session link is included when available, including a link button for a one-message budget. Attachments are not delivered through this integration.
+
+Feedback buttons, when offered, apply to the delivered answer and the requesting account. Revoking consent, replacing a binding, or removing current source access prevents stale controls from granting new authority.
+
+### Native threads
+
+Use a public or private thread beneath the bound text channel. The bot needs **View Channel**, **Read Message History**, and **Send Messages in Threads**. Private threads require current membership or the applicable thread-management permission for both the bot and the acting user. Archived or locked threads are refused; LibreChat does not reopen them automatically.
+
+Slash asks and explicit bot mentions in the same thread continue the same person's conversation. Another person has a separate conversation. Server text asks outside a thread start a fresh conversation per event.
+
+Replies remain in the thread. Losing thread access never redirects an answer to the parent channel. After replacing the parent agent binding, start a new thread: an existing thread stays pinned to its original binding and does not silently switch agents.
+
+### Bot mentions
+
+Slash commands use signed HTTP interactions and do not need the WebSocket Gateway. To accept explicit bot mentions in supported server channels and threads, enable:
+
+```yaml filename="librechat.yaml (under endpoints.agents.channels.discord)"
+gateway:
+  enabled: true
+  messageContent: false
+```
+
+An implicit reply mention is insufficient. The integration does not forward every server message to the agent. Discord can include content for explicit bot mentions without privileged Message Content intent. Set `messageContent: true` only when needed, and enable or obtain approval for the corresponding intent in the Developer Portal.
+
+### Direct messages
+
+Enable `endpoints.agents.channels.discord.dm.enabled: true` to allow private agent selection and new DM execution. Signed DM slash commands do not need `discord.gateway.enabled`; ordinary DM messages require both switches.
+
+After confirming a server account link:
+
+1. Open **Settings > Account > Discord Direct Messages**.
+2. Choose **Use in Direct Messages** for the intended agent, Discord account, server, and application.
+3. Choose **Generate Code**.
+4. In a direct message with that Discord app, run `/librechat select` and enter the value in its `code` option.
+5. After confirmation, use `/librechat ask` in the DM, or send an ordinary message if Gateway ingestion is enabled.
+
+Keep the code private and use it before its displayed expiration. Generating another code invalidates the previous unused code for the same account and application. Replaying a used code cannot extend the selection or replace a newer one.
+
+A selection retains the original server-channel authority and account consent. It does not bypass permissions because the destination is a DM. Revoke it from account settings when finished. Revoked, expired, or replaced selections cannot start new work, and changing the selected agent does not transfer old conversations or controls to the replacement.
+
+Turning off `dm.enabled` blocks new DM execution. Existing response metadata and authorized controls can still settle, while any new output must pass current selection and source-permission checks.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Transactional storage is required | Configure MongoDB as a replica set or use another supported transaction-capable deployment. Do not bypass transaction checks. |
+| Discord rejects the interactions endpoint | Confirm public HTTPS reachability, the exact application path, preserved raw request bytes and signature headers, and a running gateway. |
+| Commands are missing | Explicitly register commands, allow time for global propagation, and check the application and installation context. |
+| Server authorization fails | Check Require OAuth2 Code Grant, the exact callback URL, the initiating browser session, and the Discord account's server-management permission. |
+| A channel cannot be bound | Check the server/channel pair, supported text-channel type, bot permissions, and your LibreChat agent-sharing and installation-management access. |
+| Account linking appears incomplete | Return to the original Discord channel and confirm the same account, then send a fresh prompt. |
+| Mentions or ordinary DMs are ignored | Check `gateway.enabled`, the destination binding or DM selection, explicit mention behavior, and current consent. Signed slash commands use a separate ingress path. |
+| A saved operation is uncertain | Refresh or check its current state. Do not blindly repeat it or delete deduplication records. |
+| Replies stop after permission or credential changes | Restore the required access or update credentials, then check the current binding and consent. Old revisions do not regain authority automatically. |
+
+Repeated fatal Gateway errors back off per process, starting at 30 seconds and increasing to 15 minutes. Transient failures use jittered delays capped at 60 seconds. A credential revision change allows an immediate retry. These limits are configurable under `discord.gateway.recovery`; repeatedly restarting the gateway to clear a delay does not fix invalid credentials or intents.
+
+## Rotation, rollback, and removal
+
+Use **Update credentials** to rotate application credentials. Blank secret fields retain their current values; stored secrets are not returned to the browser. Disconnecting a server stops new work for that installation. Reconnect through fresh OAuth authorization, then recreate bindings and consent.
+
+For rollback, disable `endpoints.agents.channels.discord.enabled` and apply the configuration through your deployment procedure. Leave the shared `channels.enabled` setting enabled if Slack must keep working. Remove Discord public ingress and stop the Discord gateway with its normal termination signal. Keep the API available long enough to inspect and cancel outstanding work. Cancellation cannot undo messages or external actions that already completed.
+
+Preserve MongoDB, encryption keys, run receipts, and replay records. Roll back API and gateway images together. Older gateways reject unsupported saved delivery plans; do not delete records to force replay. Keep Discord disabled when reverting to a release without Discord support.
+
+To uninstall, remove bindings and disconnect servers in LibreChat, revoke personal links and DM selections, then remove the gateway deployment and its public route. Remove the bot from Discord and revoke credentials if the application is no longer used elsewhere. Historical Discord messages follow the server's retention policy; removing the bot does not delete them.
