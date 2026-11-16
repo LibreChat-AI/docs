@@ -57,7 +57,7 @@ All numeric values below are integers. Timeouts are milliseconds and size limits
 | `recovery.retryDelayMs` | 250 | 10–10000 |
 | `recovery.maxJournalBytes` | 67108864 | 1024–268435456 |
 
-Host-tool calls use the `maxRunMs` budget; control, checkpoint, and notification calls use `rpcTimeoutMs`.
+Host-tool calls use the `maxRunMs` budget; control, checkpoint, and notification calls use `rpcTimeoutMs`. Final snapshots are transferred in ordered chunks bounded in total by `maxBufferedBytes`; individual frames still obey `maxFrameBytes`. A terminal receipt is accepted only after the complete snapshot arrives.
 
 ## Connection Recovery
 
@@ -65,11 +65,15 @@ Recovery is off when `remote.recovery` is omitted. Enable `recovery: {}` on the 
 
 Recovery reattaches to the same execution after a transport interruption. A live run requires the same worker process; a worker restart can replay a committed terminal result, but does not restart an in-flight graph. Host-process adoption and live migration between workers are unsupported.
 
+For a worker pool, give each worker a stable recovery `ownerId` and configure `remote.recovery.routes` on the host as an allowlist mapping owner IDs to direct `wss://` URLs. Initial traffic may use a pool URL, but reconnects go to the authenticated session owner. Each route must identify one worker rather than another balanced pool; missing or mismatched identities fail closed. Single-worker deployments can omit both settings. The example launcher reads `SDK_RUNTIME_OWNER_ID`; this is an example integration variable, not a built-in LibreChat requirement.
+
 Worker journals may retain sensitive data after acknowledgment. Operators must configure retention and Redis security/durability and purge journals with `journal.purge({ sessionId, scope })` when appropriate. LibreChat account or conversation deletion does not automatically purge a worker's journal. Example retention values are not library defaults.
 
 ## Host Tools and Compatibility
 
-Compatible SDK 4.2.4+ workers negotiate `hostTools: 1`. Their factory must install `input.hostTools.toolDefinitions` and preserve the supplied execution handlers. Calls go back through the host's authorized tool path, keeping credentials and configuration local and retaining applicable approval controls. Unbound tool references, changed identities, and child-Agent execution subjects are rejected. Caller-executed function tools are unsupported remotely.
+Use matching host and worker bridge versions: every remote run requires transport capability 2, and host tools additionally require `hostTools: 2` and compatible SDK 4.2.4+ support. Incompatible versions reject before constructing a worker graph; the saved Agent's `protocolVersion` remains 1. The factory must install `input.hostTools.toolDefinitions` and preserve the supplied execution handlers. Calls go back through the host's authorized tool path, keeping credentials and configuration local and retaining applicable approval controls. Unbound tool references, changed identities, and child-Agent execution subjects are rejected. Caller-executed function tools are unsupported remotely.
+
+Stop is cooperative. Invocation cancellation reaches the host immediately, but execution ownership remains held until the handler's actual asynchronous cleanup drains. Noncooperative tool code cannot be forcibly stopped or truthfully reported as drained. Session refreshes complete before a tool reply when the connection and deadline still permit delivery.
 
 Approvals require a supplied host checkpointer; durable Mongo checkpoints are needed for continuation across restarts. Builder model settings, files/artifacts, steering, billing, and tracing are not automatically inherited by a custom runtime. Remote execution rejects active model-bound content/PII protection and provider-text protection rather than silently bypassing them. Review the SDK compatibility matrix before using a native Agent feature with a custom runtime.
 
