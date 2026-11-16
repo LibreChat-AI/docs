@@ -72,16 +72,18 @@ Bot tokens and OAuth client secrets are entered through LibreChat's authenticate
 
 ### Docker Compose
 
-From a LibreChat checkout containing the Discord overlays, set a `LIBRECHAT_IMAGE_TAG` whose API and channel-gateway images include Discord Agent Channels, and add `CHANNEL_SERVICE_TOKEN` to the `.env` file next to the compose files, filled from your secret manager if you use one. With the stock files, the API reads that file through its `./.env` mount and Compose passes the same value to the gateway, so a token exported only in your shell reaches the gateway but not the API. The Discord overlay also mounts `./librechat.yaml` read-only into the API, so keep the policy from above in that file. Then validate and start the Compose deployment:
+From a LibreChat checkout containing the Discord overlays, set a `LIBRECHAT_IMAGE_TAG` whose API and channel-gateway images include Discord Agent Channels, and add `CHANNEL_SERVICE_TOKEN` to the `.env` file next to the compose files, filled from your secret manager if you use one. With the stock files, the API reads that file through its `./.env` mount and Compose passes the same value to the gateway, so a token exported only in your shell reaches the gateway but not the API. The Discord overlay also mounts `./librechat.yaml` read-only into the API, so keep the policy from above in that file.
+
+The stock Compose MongoDB is standalone and cannot perform the required channel writes. The example below opts in to `docker-compose.mongo-replica.yml`, which turns the bundled MongoDB into a single-node replica set. It reuses the existing data directory and is not a high-availability setup: read the comments at the top of that file, back up and stop an existing stack first, and do not apply it blindly to a populated standalone database. If you already use an external replica set, replace this overlay with your existing Compose override that sets the API's `MONGO_URI`.
+
+After preparing the database, validate and start the Compose deployment:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.discord.yml \
-  --profile channels config --quiet
+  -f docker-compose.mongo-replica.yml --profile channels config --quiet
 docker compose -f docker-compose.yml -f docker-compose.discord.yml \
-  --profile channels up -d
+  -f docker-compose.mongo-replica.yml --profile channels up -d
 ```
-
-The stock Compose MongoDB is standalone and cannot perform the required channel writes. Use an external replica set, or opt in to the repository's `docker-compose.mongo-replica.yml`, which turns the bundled MongoDB into a single-node replica set. It reuses the existing data directory and is not a high-availability setup: read the comments at the top of that file, back up and stop the stack first, and do not apply it blindly to a populated standalone database.
 
 For source builds, add `-f docker-compose.discord-build.yml` after the Discord overlay and use `up -d --build`. The Discord overlay binds its HTTP listener to loopback on port 3082 by default, configurable with `DISCORD_GATEWAY_PORT`. Put your HTTPS proxy in front of that listener.
 
@@ -187,12 +189,12 @@ Turning off `dm.enabled` blocks new DM execution. Existing response metadata and
 | Server authorization fails | Check Require OAuth2 Code Grant, the exact callback URL, the initiating browser session, and the Discord account's server-management permission. |
 | A channel cannot be bound | Check the server/channel pair, supported text-channel type, bot permissions, and your LibreChat agent-sharing and installation-management access. |
 | Account linking appears incomplete | Return to the original Discord channel and confirm the same account, then send a fresh prompt. A person who has not finished required two-factor enrollment cannot complete the link. |
-| Mentions or ordinary DMs are ignored | Check `gateway.enabled`, the destination binding or DM selection, explicit mention behavior, and current consent. Signed slash commands use a separate ingress path and keep working while a failed Gateway session is delayed; mentions and DMs resume when it reconnects. |
+| Mentions or ordinary DMs are ignored | Check `gateway.enabled`, the destination binding or DM selection, explicit mention behavior, and current consent. Signed slash commands use a separate ingress path that stays active while a failed Gateway session is delayed; execution and delivery still require valid bot credentials and permissions. |
 | A saved operation is uncertain | Refresh or check its current state. Do not blindly repeat it or delete deduplication records. |
 | Replies stop after permission or credential changes | Restore the required access or update credentials, then check the current binding and consent. Old revisions do not regain authority automatically. |
 | An agent stops answering in a DM, or asks you to link again | Account links last 30 days and DM selections 24 hours by default. Link again, then generate a new DM code. |
 
-A failed native Gateway session delays only that application's next native reconnect. The application keeps its lease and REST workers, so signed slash commands, private replies, and run delivery keep working while the Gateway waits. Fatal failures (rejected bot credentials, invalid shard configuration or intents, and identity mismatches) wait 30 seconds, then double up to 15 minutes. Other failures use jittered delays capped at 60 seconds. The delay is tracked per application on the gateway replica that owns it. It starts over when a session that was verified healthy for two minutes fails, when you save credentials in LibreChat, when the replica stops owning the application, and when the gateway restarts. These delays are configurable with `fatalRetryMinMs`, `fatalRetryMaxMs`, `retryMaxMs`, and `resetAfterMs` under `endpoints.agents.channels.discord.gateway.recovery`. Fix settings in the Discord Developer Portal or rotate credentials in LibreChat rather than repeatedly restarting the gateway to clear a delay.
+A failed native Gateway session delays only that application's next native reconnect. The application keeps its lease and REST workers, so signed slash command processing, private replies, and run delivery remain active while the Gateway waits. They still require valid bot credentials and permissions. Fatal failures (rejected bot credentials, invalid shard configuration or intents, and identity mismatches) wait 30 seconds, then double up to 15 minutes. Other failures use jittered delays capped at 60 seconds. The delay is tracked per application on the gateway replica that owns it. It starts over when a session that was verified healthy for two minutes fails, when you save credentials in LibreChat, when the replica stops owning the application, and when the gateway restarts. These delays are configurable with `fatalRetryMinMs`, `fatalRetryMaxMs`, `retryMaxMs`, and `resetAfterMs` under `endpoints.agents.channels.discord.gateway.recovery`. Fix settings in the Discord Developer Portal or rotate credentials in LibreChat rather than repeatedly restarting the gateway to clear a delay.
 
 ## Rotation, rollback, and removal
 
