@@ -1,0 +1,155 @@
+---
+title: Channel Gateway Reference
+description: Rich-message formatting, service routes, and delivery recovery for gateway operators and integrators.
+icon: Network
+---
+
+This reference describes rich-message formatting and the private API used by the [Slack channel gateway](/docs/configuration/channel_gateway). For app setup and everyday use, see [Agent Channels](/docs/features/agent_channels).
+
+## Rich Agent messages
+
+An Agent can return semantic presentation data in its final answer. The gateway validates the document and converts it deterministically to Slack Block Kit; it does not accept arbitrary Slack JSON, callback IDs, approval controls, file identifiers or modal definitions. Ordinary Markdown remains unchanged. This works in both ordinary threads and native Agent sessions, without a new OAuth scope or a configuration migration.
+
+To enable this behavior for an Agent, add the following to its instructions using the existing Agent editor (or include it in a request when testing):
+
+> When a chart, table, image or card would help, write a short readable answer followed by exactly one final, top-level fenced code block named `librechat-presentation`. Its JSON must be `{ "version": 1, "blocks": [...] }`. Use only the semantic components described below; never emit raw Slack blocks or interactive callback IDs. Use ordinary Markdown for other answers. Use public HTTPS URLs for images and links. The gateway generates complete text fallbacks from the data, so do not repeat every value in the introductory answer.
+
+For example, ask the Agent to compare the following measured results and show both a chart and a table. Its final answer can be:
+
+````text
+Latency fell from 20 ms to 17 ms.
+
+```librechat-presentation
+{
+  "version": 1,
+  "blocks": [
+    {
+      "type": "chart",
+      "title": "Latency",
+      "chart": {
+        "type": "line",
+        "axis_config": { "categories": ["Mon", "Tue"], "y_label": "ms" },
+        "series": [{ "name": "p95", "data": [{ "label": "Mon", "value": 20 }, { "label": "Tue", "value": 17 }] }]
+      }
+    },
+    { "type": "table", "title": "Measurements", "columns": ["Day", "p95 (ms)"], "rows": [["Mon", 20], ["Tue", 17]] }
+  ]
+}
+```
+````
+
+| Semantic component                  | Fields and constraints                                                                                                                                                                                                                            |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `text`, `header`, `context`, `code` | `text` string; maximum 3000, 150, 2000 and 3000 Unicode characters respectively. Text components use literal text, so mentions cannot grant interaction authority. Use ordinary Markdown outside the document for formatted prose.                |
+| `divider`                           | No additional fields.                                                                                                                                                                                                                             |
+| `image`                             | `url`, `alt`, optional `title` (150 characters). HTTPS URLs only; alt text is required (2000 characters). The gateway never fetches remote media.                                                                                                 |
+| `card`                              | Required `title` (150), optional `subtitle` (150), `body` (200), `image: {url, alt}`, and up to three `links: [{label, url}]`. Labels are at most 75 characters. Links navigate only; they cannot run an Agent action.                            |
+| `carousel`                          | `cards`: 1–10 cards.                                                                                                                                                                                                                              |
+| `table`                             | `title` (150), `columns`: 1–20 labels (150 each), `rows`: 1–200 rectangular rows of strings or finite numbers. Maximum 20,000 characters across cells including headers. Numeric cells retain numeric sorting.                                    |
+| `chart`                             | `title` (50), `chart` as described below.                                                                                                                                                                                                         |
+| `container`                         | `title` (150), `blocks`: 1–10 text, header, context, code, divider or image components.                                                                                                                                                           |
+| `layout`                            | `title` (150), `rows`: 1–5 arrays of 1–3 components, including containers. Charts, tables and carousels each occupy their own row. Layouts cannot nest. The gateway makes the title visible and generates explicit compatibility fallback blocks. |
+
+Charts support `line`, `bar` and `area` with `axis_config: {categories, x_label?, y_label?}` and `series: [{name, data: [{label, value}]}]`. Categories have 1–20 distinct labels; each series must have exactly one point per category. Series names are distinct; at most 12 series are allowed. Names and labels are at most 20 characters, axis titles 50. Values must be finite; negative values are supported. Pie charts instead use `chart: {type: "pie", segments: [{label, value}]}` with 1–12 distinct labels and positive finite values.
+
+A document has at most 40 components and the final answer must fit the 128,000-byte presentation parsing boundary. Malformed, incomplete, quoted, ambiguous or unrecognized documents stay on the ordinary text path. The gateway isolates components into messages, counts nested blocks, enforces two charts and 20,000 table characters per message, and preserves every value and link in generated text. Components which exceed Slack's nested block or serialized payload limits become text. The server's existing `maxDeliveryParts` policy still applies, with an explicit shortening notice when needed.
+
+The gateway freezes versioned blocks and text together before posting. Retries replay that plan. A definitive Slack `invalid_blocks` or `invalid_attachments` rejection permits a text-only retry; ambiguous network outcomes retain the existing reconciliation behavior. Clients that cannot render layouts receive the generated stable fallback blocks.
+
+This is rich **message** support. Existing app-owned Stop, approval, question and feedback workflows remain responsible for interactions. New input forms, App Home, modals, Work Objects, plan/task execution controls and embedded video are not exposed to Agent output. Authorized file attachments continue through the existing artifact delivery path. Slack may limit newer blocks by client or app availability; automated tests cover SDK payloads and rejection fallback, while live rendering requires a configured Slack workspace.
+
+## Identity and account links
+
+Organization workspace connections use personal identities. Manual connections can use `per_user` (each linked participant uses their own account) or `shared` (only the connection creator can link). Shared gateway deployment is unrelated to the manual `shared` identity mode.
+
+Each actor/link revision has its own execution lane. Sharing a Slack thread does not share a LibreChat conversation, files, OAuth state, approvals, usage, or trace session. Mode changes, unlinking, account removal and access/key revocation invalidate old authority rather than remapping it to another user.
+
+Browser routes under `/api/channels/links` preview, accept, list and revoke links using authenticated sessions and same-origin checks. Ticket lifetime defaults to 10 minutes and accepted links to 30 days; see the [channel policy](/docs/configuration/librechat_yaml/object_structure/agents#channels) to change them. Browser acceptance still requires confirmation by the same Slack actor before execution is permitted.
+
+## Gateway protocol boundary
+
+Service requests use `Authorization: Bearer <CHANNEL_SERVICE_TOKEN>` and the exact tenant/channel context. For routes without a tenant path parameter, send the channel's exact tenant in `x-tenant-id`; do not choose a tenant from untrusted message text. The service token permits this integration boundary, not arbitrary user impersonation. Never put it in client-side code, Slack messages, tracing payloads, or public logs. The credential bundle endpoint returns secrets to the trusted gateway and must not be exposed as a public discovery API.
+
+| Stage | Route under `/api/channels` | Responsibility |
+| --- | --- | --- |
+| Configuration | `GET /service/slack/{tenantId}/{channelId}` | Read the active channel and encrypted-at-rest credentials through an authenticated service boundary |
+| Identity | `/service/{channelId}/identity/{externalUserId}` and its ticket/confirm operations | Resolve explicit actor linking; never infer a principal from thread history |
+| Admission | `POST /service/{channelId}/runs` | Admit an idempotent event with verified team/app/actor identity |
+| Ownership | `POST /service/{channelId}/runs/claim`, then `/{runId}/renew` or `/{runId}/yield` | Claim, renew, or safely yield the exact polling lease |
+| Execution preparation | `POST /service/{channelId}/runs/{runId}/response/prepare` | Obtain the bound execution credential, request, and stable request key |
+| Response binding | `POST /service/{channelId}/runs/{runId}/response/bind` | Bind the returned Responses identity to the admitted run |
+| Progress and result | `/{runId}/advance`, `/{runId}/progress/*`, `/{runId}/plan`, `/{runId}/delivery/*`, `/{runId}/commit` | Project canonical state and record fenced delivery effects |
+| Review projection | `POST /service/{channelId}/runs/{runId}/review` | Reauthorize the original actor; obtain the browser fallback and, for the exact external channel, the current private question/tool-review payload |
+| Review decision | `POST /service/{channelId}/runs/{runId}/review/decision` | Submit the current actor's decision to the same canonical Response, using its immutable decision receipt and resume preflight |
+| Artifacts | `POST /service/{channelId}/runs/{runId}/artifacts/{artifactId}` | Read only an artifact bound to the authorized run |
+| Stop | `POST /service/{channelId}/runs/stop-thread` or `/{runId}/cancel` | Cancel only the authorized actor lane/run |
+| Feedback | `POST /service/{channelId}/reactions` | Apply authenticated, deduplicated reaction events to confirmed delivered replies |
+
+Run-relative paths in the table are beneath `/service/{channelId}/runs`. Lease mutations carry the exact server-issued `{ runId, owner, epoch }` fence. Treat stale leases, changed authority, and ambiguous delivery outcomes as protocol states to reconcile, not permission to mint a new run or blindly resend a Slack message.
+
+A gateway can yield a Responses-bound polling turn only after its progress writes and renewal loop have drained. The backend invalidates that polling fence and enforces a one-second reclaim cooldown; the next claim increments the epoch. This does not release the actor lane, cancel the provider, change the Response, or erase delivery evidence. Inflight or unknown remote writes cannot yield. If a host does not support yield or the request is uncertain, retain ordinary lease-expiry recovery instead of starting a new execution.
+
+Execution preparation returns an `apiKey`, `requestKey`, optional retained `responseId`, and a Responses `request` with the Agent ID, admitted input, `background: true`, `store: true`, and any authorized continuation. Submit that request to `/api/agents/v1/responses` using the bound key and `Idempotency-Key: <requestKey>`, then bind the returned response ID. Do not substitute a creator's unrestricted key, change the actor/Agent, or send the input to a channel bookkeeping route to execute it.
+
+The gateway owns Slack event verification, retry/deduplication, native message formatting, rate-limit handling, and delivery receipt reconciliation. Preserve exact event identifiers and timestamps. For feedback events, `eventTimestampUs` is an integer timestamp in microseconds; do not round it to milliseconds. Report confirmed, failed, or ambiguous side effects accurately before advancing delivery state.
+
+## Delivery recovery
+
+The gateway preserves each frozen delivery operation and its receipt. A required operation whose provider result is unknown holds its actor lane: retrying blindly could post the same answer twice. Stopping a worker or requesting cancellation does not prove whether Slack accepted an earlier request.
+
+### Reconcile a verified provider result
+
+1. Pause gateway processing for the affected channel while investigating. Keep the channel enabled and preserve its actor link and source authority; disabling these is not a recovery bypass.
+2. Inspect the frozen run plan and retained receipt. Verify in the provider that the exact operation reached the intended channel or thread. Record its message key or file ID, matching the retained attempt and any upload checkpoint. If the result cannot be verified, leave the receipt unknown and the lane held.
+3. After the old lease expires, use `POST /api/channels/service/:channelId/runs/claim` with `{ "owner": "<dedicated recovery owner>" }`, normal private service authentication and tenant binding. Verify that the returned run ID is the run being investigated; claims select eligible work and do not take a target run ID. Use the returned current fence, renewing it through `POST /renew` as needed. An expired or replaced worker's fence cannot reconcile the run.
+4. Submit the confirmed receipt through the private channel API. These endpoints confirm existing attempts; they do not send messages, replace the frozen plan, reset attempts or accept a retryable outcome.
+
+All paths below are relative to `/api/channels/service/:channelId/runs/:runId`. Send the channel service bearer token and the configured tenant header, using the same internal service URL as the gateway. Preserve the complete fence returned by the claim.
+
+For a delivery operation, `POST /delivery/reconcile`:
+
+```json
+{
+  "fence": { "runId": "<run ID>", "owner": "<current recovery owner>", "epoch": 1 },
+  "receipt": {
+    "operationId": "<frozen operation ID>",
+    "outcome": "confirmed",
+    "attempts": 1,
+    "externalMessageKey": "<provider channel ID>:<provider message timestamp>"
+  }
+}
+```
+
+Replace every illustrative value with the actual current fence and retained attempt count; do not assume the example epoch is current. Supply `externalFileId` for a verified file operation as required by its frozen operation and checkpoint. Existing provider identities are immutable; reconciliation cannot replace them with a different message or file.
+
+For a progress update, `POST /progress/reconcile` with the current `fence`, the retained progress `revision`, and a `receipt` containing `outcome: "confirmed"`, the retained `attempts` and verified `externalMessageKey`. The message identity remains fixed across progress revisions.
+
+Once every required delivery operation is confirmed, `POST /commit` with the current `fence` to complete delivery and release the actor lane. Resume normal gateway processing afterward. If any required result remains uncertain, keep the run held rather than resending or recreating it. Optional exhausted effects follow the gateway's bounded recovery policy and do not justify replaying a required answer.
+
+## Review and privacy
+
+The public run snapshot contains only an opaque action descriptor. A review request with the original verified actor, current channel revision, and exact `externalChannelId` can obtain minimal private question/tool-approval details. The backend derives the owner and Response from the run and checks the current actor link and source grant; it does not accept an arbitrary user ID. The gateway must show these details only to that actor, not publicly in a shared thread. Slack can use ephemeral choice buttons and private modals. Native tool approval is for the individual call only; unsupported/richer forms retain the browser fallback.
+
+Decision requests include that same actor, revision, external channel, and the existing Responses `decision` body. Backend decision receipts, expiry/conflict checks, full authorization preflight, and same-Response resume remain authoritative. A Slack click alone is not permission to resume work. Provider OAuth URLs remain exclusively in the authenticated browser review flow. See the [background Responses lifecycle](/docs/features/background_responses#review-a-required-action).
+
+Successful submission closes the private modal and sends a private acknowledgement; it does not claim the tool finished. Provider sign-in and unsupported forms open the authenticated browser flow. The Agent's existing approval policy determines whether a tool needs approval; connecting Slack does not make every tool manual or bypass that policy.
+
+A saved decision whose queue publication failed remains retryable with the exact immutable decision; it cannot be replaced by a different answer. Keep Stop available while work remains active and update public progress only through the fenced delivery protocol.
+
+### Files
+
+Artifacts are scoped to the authorized run and actor. User-submitted rows do not count as server-generated provenance for artifacts or trace links. Limits default to five files and 10 MiB per file. One `artifactReadTimeoutMs` budget (30 seconds by default) covers catalog queries, storage reads and final authorization rather than restarting for every file. Limits resolution is separately capped at 60 seconds, and its elapsed time counts against the selected budget once available. An expired budget omits artifacts while retaining the answer for authorized text delivery.
+
+New plain-text answer files require more than `artifactAnswerFileThresholdBytes` UTF-8 bytes (6,000 by default); fenced answers also qualify. This threshold controls new projections, while saved descriptors retain their content identity and still require current authorization, retention and maximum-size checks. Do not replace an unavailable artifact with another actor's file or an unauthenticated internal download URL. Usage and cost summaries identify incomplete or unavailable coverage instead of presenting a partial subtotal as the complete thread total.
+
+### Feedback
+
+Reaction feedback maps only to confirmed delivered assistant messages. It does not overwrite the browser's feedback field. Export is constrained by recorded sampling/destination provenance and current export policy. Temporary-chat provenance is retained; an old mapping without that provenance is not treated as a permanent chat. A policy change can suppress export even when the original trace was sampled.
+
+## Operational limits
+
+Disabling a channel or changing its credential mode retires old authority; it does not undo external tool effects. Stop can remain pending until the exact provider is drained and canonical cancellation/cleanup completes. A gateway must poll/reconcile canonical state rather than interpreting an acknowledgement as terminal completion.
+
+With the process-local job store, restarting the API while a tool approval is pending makes the review unavailable. The request stays held for reconciliation and a stale approval does not execute the tool. Durable checkpoint storage alone does not recreate the missing live execution state. Completed history and subsequent thread continuation survive restart.
+
+The gateway package is built from the LibreChat source tree; it is not published as an npm package. This integration does not promise arbitrary chat-platform support or restart-survival of an in-memory OAuth waiter. A restart can require a new browser sign-in; uncertain continuation must not be reported as completed or retried as new work.
