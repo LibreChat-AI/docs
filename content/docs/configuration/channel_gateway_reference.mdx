@@ -8,7 +8,20 @@ icon: Network
 Agent Channels and the gateway protocol are beta. Use a matching LibreChat and gateway release.
 </Callout>
 
-This reference describes rich-message formatting and the private API used by the [Slack channel gateway](/docs/configuration/channel_gateway). For app setup and everyday use, see [Agent Channels](/docs/features/agent_channels).
+Use this reference when building a gateway integration or investigating delivery behavior. It covers rich-message formatting and the private API used by the [Slack channel gateway](/docs/configuration/channel_gateway).
+
+For app setup and everyday use, start with [Agent Channels](/docs/features/agent_channels).
+
+## Terms used in this reference
+
+| Term | Meaning |
+| --- | --- |
+| Response | The agent execution and result tracked by the Responses API. |
+| Run | The channel's record of a request, its execution and its delivery. |
+| Actor | The Slack participant making the request. Their linked account determines their access. |
+| Lease | A worker's time-limited claim on a run. |
+| Fence | The `{ runId, owner, epoch }` values used to reject writes from a stale worker. |
+| Delivery receipt | The record of an external write attempt and its outcome. |
 
 ## Rich Agent messages
 
@@ -99,7 +112,11 @@ The gateway owns Slack event verification, retry/deduplication, native message f
 
 ## Delivery recovery
 
-The gateway preserves each frozen delivery operation and its receipt. A required operation whose provider result is unknown holds its actor lane: retrying blindly could post the same answer twice. Stopping a worker or requesting cancellation does not prove whether Slack accepted an earlier request.
+Slack can accept a reply even if the network connection drops before the gateway receives confirmation. Posting it again could duplicate the answer.
+
+The gateway saves each delivery operation and its receipt. If a required operation's result is unknown, it keeps that actor's execution lane held until the outcome is reconciled. Stopping the worker or requesting cancellation does not tell you whether Slack accepted the earlier request.
+
+Check what reached Slack before attempting recovery.
 
 ### Reconcile a verified provider result
 
@@ -124,7 +141,9 @@ For a delivery operation, `POST /delivery/reconcile`:
 }
 ```
 
-Replace every illustrative value with the actual current fence and retained attempt count; do not assume the example epoch is current. Supply `externalFileId` for a verified file operation as required by its frozen operation and checkpoint. Existing provider identities are immutable; reconciliation cannot replace them with a different message or file.
+Replace the example values with the run's current fence and saved attempt count. In particular, do not copy the example epoch unchanged. For a verified file operation, supply `externalFileId` as required by the saved operation and checkpoint.
+
+Reconciliation confirms an existing message or file. It cannot replace that provider identity with a different one.
 
 For a progress update, `POST /progress/reconcile` with the current `fence`, the retained progress `revision`, and a `receipt` containing `outcome: "confirmed"`, the retained `attempts` and verified `externalMessageKey`. The message identity remains fixed across progress revisions.
 
@@ -156,4 +175,6 @@ Disabling a channel or changing its credential mode retires old authority; it do
 
 With the process-local job store, restarting the API while a tool approval is pending makes the review unavailable. The request stays held for reconciliation and a stale approval does not execute the tool. Durable checkpoint storage alone does not recreate the missing live execution state. Completed history and subsequent thread continuation survive restart.
 
-The gateway package is built from the LibreChat source tree; it is not published as an npm package. This integration does not promise arbitrary chat-platform support or restart-survival of an in-memory OAuth waiter. A restart can require a new browser sign-in; uncertain continuation must not be reported as completed or retried as new work.
+Build the gateway package from the LibreChat source tree; it is not published as an npm package. The gateway is for Slack.
+
+A request waiting for sign-in may not resume after a server restart. A new browser sign-in may be needed, and signing in does not prove that the original request resumed. Check the original request and any external results. If the outcome is still uncertain, do not report completion or retry the work as a new request.
