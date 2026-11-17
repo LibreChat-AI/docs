@@ -1,7 +1,8 @@
 import { join } from 'node:path'
 import { runTranslation } from '../lib/i18n/run'
-import { createOpenRouterModel } from '../lib/i18n/engine'
-import { TARGET_LOCALES } from '../lib/i18n/config'
+import { createOpenRouterModel, type TranslateInput, type TranslateModel } from '../lib/i18n/engine'
+import { createPrefetchedModel, prefetchMisses } from '../lib/i18n/batch'
+import { TARGET_LOCALES, TRANSLATE_MODEL } from '../lib/i18n/config'
 import { progress } from '../lib/i18n/progress'
 
 const CACHE_DIR = join(process.cwd(), 'content/.i18n-cache')
@@ -24,6 +25,12 @@ const FATAL_SKIP_RE =
 /** Above this share of file×locale pairs failing, the run is broken, not degraded. */
 const MAX_SKIP_RATE = Number(process.env.TRANSLATE_MAX_SKIP_RATE) || 0.25
 
+/** A positive number from the environment, or the fallback for anything else. */
+function positiveEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name])
+  return Number.isFinite(value) && value > 0 ? value : fallback
+}
+
 function arg(name: string): string | undefined {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`))
   return hit?.split('=').slice(1).join('=')
@@ -34,6 +41,7 @@ async function main() {
   const dryRun = process.argv.includes('--dry-run')
   const locales = arg('locales')?.split(',') ?? [...TARGET_LOCALES]
   const only = arg('only') ?? null
+  const batch = process.argv.includes('--batch') && !dryRun
 
   if (!dryRun && !process.env.OPENROUTER_API_KEY) {
     console.error('OPENROUTER_API_KEY is not set')
@@ -44,18 +52,43 @@ async function main() {
   // lines under CI (no TTY). A dry run does no API work, so keep it quiet.
   progress.configure(dryRun ? 'silent' : undefined)
 
-  const stats = await runTranslation({
+  const base = {
     contentDir: join(process.cwd(), 'content/docs'),
     cacheDir: CACHE_DIR,
     locales,
-    model: createOpenRouterModel(),
     force,
-    dryRun,
     only,
-  })
+  }
+  let model: TranslateModel = createOpenRouterModel()
+  let deferred: Set<string> | undefined
+
+  if (batch) {
+    // A silent dry run sees exactly the cache misses the real run will, so the
+    // batch is asked for those and nothing else.
+    const misses: TranslateInput[] = []
+    progress.configure('silent')
+    await runTranslation({ ...base, model, dryRun: true, onMiss: (input) => misses.push(input) })
+    progress.configure()
+    const prefetched = await prefetchMisses(misses, {
+      apiKey: process.env.OPENROUTER_API_KEY ?? '',
+      model: TRANSLATE_MODEL,
+      chunkSize: Math.ceil(positiveEnv('TRANSLATE_BATCH_SIZE', 1000)),
+      waitMs: positiveEnv('TRANSLATE_BATCH_WAIT_MINUTES', 180) * 60_000,
+      pollMs: positiveEnv('TRANSLATE_BATCH_POLL_SECONDS', 60) * 1000,
+      ledgerPath: join(CACHE_DIR, 'batches.json'),
+      log: (m) => console.log(`[translate] batch: ${m}`),
+    })
+    console.log(
+      `[translate] batch: ${prefetched.answers.size} occurrence(s) answered, ${prefetched.deferred.size} string(s) still pending; the rest run live`,
+    )
+    model = createPrefetchedModel(prefetched.answers, model)
+    deferred = prefetched.deferred
+  }
+
+  const stats = await runTranslation({ ...base, model, dryRun, deferred })
 
   console.log(
-    `[translate] locales=${locales.join(',')} translated=${stats.translatedBlocks} cached=${stats.cachedBlocks} skipped=${stats.skipped.length}/${stats.attempted} quarantined=${stats.quarantined.length}`,
+    `[translate] locales=${locales.join(',')} translated=${stats.translatedBlocks} cached=${stats.cachedBlocks} deferred=${stats.deferredBlocks} skipped=${stats.skipped.length}/${stats.attempted} quarantined=${stats.quarantined.length}`,
   )
   for (const s of stats.skipped) console.warn(`[translate] skipped ${s}`)
   // Settled, not outstanding: the page serves English until its source changes, so

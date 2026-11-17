@@ -1,7 +1,6 @@
 /**
- * Retry helper for the translation pipeline. The translate model talks to
- * OpenRouter on the low-priority `flex` service tier, which returns 429s under
- * load; without retry/backoff a burst of rate-limit errors skips most pages and
+ * Retry helper for the translation pipeline. OpenRouter returns 429s under load;
+ * without retry/backoff a burst of rate-limit errors skips most pages and
  * forces the whole workflow to be re-run by hand. This converges a single run.
  */
 

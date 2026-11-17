@@ -201,6 +201,9 @@ const config = {
       './public/librechat.png',
     ],
     '/mcp': ['./content/docs/**/*.mdx'],
+    // ComponentPreview reads each example's source to show it under the live preview.
+    '/docs/[[...slug]]': ['./component-previews/src/examples/**/*.tsx'],
+    '/[lang]/docs/[[...slug]]': ['./component-previews/src/examples/**/*.tsx'],
   },
   typescript: {
     ignoreBuildErrors: false,
@@ -208,6 +211,8 @@ const config = {
   // Tree-shake large barrel-file packages so only the icons/animations actually
   // used are bundled, instead of the entire module.
   experimental: {
+    // Keep static page generation within the preview deployment's memory limit.
+    cpus: 3,
     optimizePackageImports: ['lucide-react', 'framer-motion'],
   },
   turbopack: {},
@@ -336,6 +341,23 @@ const config = {
         ],
       },
       ...markdownNegotiatedVaryHeaders,
+      // The component previews are embedded in the docs' own pages, so they may be framed by
+      // this origin and no other. Later rules override earlier ones for the same header.
+      {
+        source: '/component-previews/:path*',
+        headers: [
+          {
+            key: 'x-frame-options',
+            value: 'SAMEORIGIN',
+          },
+          {
+            key: 'Content-Security-Policy',
+            value: cspHeader
+              .replace("frame-ancestors 'none'", "frame-ancestors 'self'")
+              .replaceAll('\n', ''),
+          },
+        ],
+      },
       ...cdnCacheHeaders,
     ]
   },

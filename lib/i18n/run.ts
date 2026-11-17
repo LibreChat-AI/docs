@@ -17,7 +17,7 @@ import {
   type Segment,
 } from './segment'
 import { validatePreservedText, validateTranslation } from './validate'
-import { translate, TruncatedOutputError, type TranslateModel } from './engine'
+import { translate, TruncatedOutputError, type TranslateInput, type TranslateModel } from './engine'
 import { TM } from './tm'
 import { TARGET_LOCALES, VALIDATOR_VERSION } from './config'
 import { progress } from './progress'
@@ -30,12 +30,30 @@ export interface RunOptions {
   force?: boolean
   dryRun?: boolean
   only?: string | null
+  /**
+   * Dry runs only: called for every uncached occurrence of a string a real run
+   * would translate. The batch prefetch collects its requests this way, so it sees
+   * exactly the cache misses, give-up markers, and quarantines the real run will.
+   */
+  onMiss?: (input: TranslateInput) => void
+  /**
+   * `deferredKey`s of strings a still-running batch will answer. A real run keeps
+   * them in the source language and uncached, so a later run takes the batch's
+   * answer instead of this run buying the same translation again live.
+   */
+  deferred?: Set<string>
+}
+
+export function deferredKey(locale: string, text: string): string {
+  return `${locale}:${hashText(text)}`
 }
 
 export interface RunStats {
   files: number
   translatedBlocks: number
   cachedBlocks: number
+  /** Blocks left in the source language until a pending batch answers them. */
+  deferredBlocks: number
   /** Source files × locales this run set out to produce, so a caller can judge a
    *  skip count as a failure rate rather than an absolute number. */
   attempted: number
@@ -158,6 +176,7 @@ export async function runTranslation(opts: RunOptions): Promise<RunStats> {
     files: 0,
     translatedBlocks: 0,
     cachedBlocks: 0,
+    deferredBlocks: 0,
     attempted: 0,
     skipped: [],
     quarantined: [],
@@ -214,14 +233,19 @@ export async function runTranslation(opts: RunOptions): Promise<RunStats> {
         return text
       }
       if (opts.dryRun) {
+        opts.onMiss?.({ text, locale, kind, context })
         stats.translatedBlocks++
+        return text
+      }
+      if (opts.deferred?.has(deferredKey(locale, text))) {
+        stats.deferredBlocks++
         return text
       }
       let lastValidationError: string | undefined
       for (let attempt = 0; attempt < BLOCK_VALIDATION_ATTEMPTS; attempt++) {
         let result: string
         try {
-          result = await translate({ text, locale, kind, context, model: opts.model })
+          result = await translate({ text, locale, kind, context, model: opts.model, attempt })
         } catch (e) {
           // Truncation is deterministic for this block, so it belongs to the bounded
           // per-block budget: after the last attempt the give-up path keeps the block
