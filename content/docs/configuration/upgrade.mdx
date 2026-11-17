@@ -4,9 +4,9 @@ icon: RefreshCw
 description: Upgrade prerequisites, compatibility switches, and rollback boundaries for LibreChat operators.
 ---
 
-## Preparing for v0.8.9-rc1
+## Preparing for v0.8.9
 
-Use Node.js **24.22.1** for local installs. Back up MongoDB, `librechat.yaml`, and the encryption credentials before changing versions. Keep `CREDS_KEY` and `CREDS_IV`; replacing them is not a migration. Config `1.3.18` describes this candidate; see the [config changelog](/changelog/config_v1.3.18) for the added settings.
+Use Node.js **24.22.3** for local installs. Back up MongoDB, `librechat.yaml`, and the encryption credentials before changing versions. Keep `CREDS_KEY` and `CREDS_IV`; replacing them is not a migration. Review [Config v1.3.19](/changelog/config_v1.3.19) for changes since the candidate's [Config v1.3.18](/changelog/config_v1.3.18) baseline.
 
 Upgrade every LibreChat API replica before enabling a feature that older replicas cannot enforce. Update compatible clients, Code API services, and attached workers separately. The LibreChat image does not upgrade an independently deployed Code API or its installed language packages.
 
@@ -35,7 +35,7 @@ System-grant assignments and widening resource-sharing changes fail closed by de
 
 ### Admin configuration and secrets
 
-The active database Base profile overrides deployment YAML before role, group, and user profiles, regardless of Base's numeric priority. Other active profiles merge in ascending priority with deterministic ties. Removing an override restores inheritance; a tombstone suppresses an inherited value. Ordinary arrays are suppressed as a whole; supported keyed collections also allow hiding an individual named entry. Removing that tombstone restores inheritance.
+The active database Base profile overrides overridable deployment YAML fields before role, group, and user profiles, regardless of Base's numeric priority. Deployment-only fields still come from YAML; a stored Base value cannot override them. Other active profiles merge in ascending priority with deterministic ties. Removing an override restores inheritance; a tombstone suppresses an inherited value. Ordinary arrays are suppressed as a whole; supported keyed collections also allow hiding an individual named entry. Removing that tombstone restores inheritance.
 
 The admin config `changes` endpoint applies a batch to one profile atomically. Use `dryRun` to validate and `expectedRevision` for optimistic concurrency; a stale revision returns `409`. Inspect ignored results because protected settings may remain unapplied without rejecting the whole batch. This guarantee does not make role renames or other multi-document admin operations atomic.
 
@@ -53,6 +53,30 @@ With `TENANT_ISOLATION_STRICT=true`, authentication and account routes need a re
 
 Deployment-wide startup checks, index synchronization, and permission migrations run in explicit system scope. When a migration writes a resource, it preserves that resource's tenant partition. These checks do not grant normal authentication requests a system-tenant fallback.
 
+### Trigger delivery polling indexes
+
+Startup now uses the short name `trigger_delivery_background_poll` for new background-delivery polling indexes, avoiding the previous generated name exceeding Cosmos DB's 128-character limit. Equivalent existing indexes retain their names, keys, and effective collation; no index drop or rename is required. Incompatible index definitions and metadata/permission failures still surface as errors. This startup compatibility fix is separate from the MCP reservation migration below.
+
+### MCP name reservation migration
+
+MCP names are now reserved per tenant with a unique `{ name, tenantId }` index. Existing reservations without tenant identity remain global tombstones: their original owner cannot be recovered safely, so do not delete or reassign them.
+
+To migrate only `mcpnames` while keeping chat available:
+
+1. Back up the database and rehearse against your database engine/version. MongoDB tests and a dry run do not establish DocumentDB compatibility.
+2. Temporarily block MCP creation/deletion and account erasure at your deployment edge, including base-path aliases. Cover `POST /api/mcp/servers`, `DELETE /api/mcp/servers/:serverName`, and `DELETE /api/user/delete`; pause CLI, admin, background, and fork-specific reservation writers too. Drain admitted operations. This gate is operational, not a built-in toggle; chat and reads may remain available.
+3. Upgrade every API replica and writer before reopening writes. Verify image digests and drain old processes, jobs, and scripts; prevent rollback or autoscaling onto old images.
+4. Run one maintenance container from the updated image with the deployment's writer `MONGO_URI`, credentials, and TLS settings. From `/app`, run the commands below. `--writers-upgraded` acknowledges that every writer is upgraded; the command cannot discover or fence old replicas.
+
+```bash
+npm run migrate:mcp-reservations:dry-run
+npm run migrate:mcp-reservations -- --writers-upgraded
+```
+
+5. Require exit status zero. Check `db.mcpnames.getIndexes()`: the full unique `name_1_tenantId_1` index must exist and legacy `name_1` must be absent. Rehearse cross-tenant same-name creation and single/bulk deletion before removing the temporary gate.
+
+The command verifies the replacement constraint before dropping the old one, preserves documents and custom indexes, and disables automatic index creation in its maintenance process. The dry run reports index presence only; it does not build indexes or validate permissions. On failure, keep the gate closed, inspect the remaining indexes, and rerun after correction. A completed migration is idempotent. Index builds can still consume resources or affect latency. The broader `migrate:tenant-indexes` procedure requires all writers stopped; do not run it against a live deployment. See [upstream upgrade instructions](https://github.com/LibreChat-AI/LibreChat/blob/dev/UPGRADING.md#mcp-name-reservations).
+
 ### Shared package compatibility
 
 The refreshed shared packages use Zod 4. Custom integrations that import and compose LibreChat schemas must update their Zod usage and rebuild against the matching package versions; do not override these packages back to Zod 3. The release preserves omitted optional configuration fields and validation diagnostics; no new YAML version increment or blanket config rewrite is required for the library migration.
@@ -67,6 +91,8 @@ RUM, client logs, and session replay are independent opt-ins. YAML `telemetry.ru
 - `RUM_SESSION_REPLAY_ENABLED=true` opts in to replay when RUM is enabled. It supersedes the deprecated inverse `RUM_DISABLE_REPLAY` fallback.
 - `RUM_PROXY_BODY_LIMIT` defaults to `3mb`. Traces and logs share the authenticated-user budget: `RUM_PROXY_USER_MAX=240` per `RUM_PROXY_USER_WINDOW=1` minute. Excess requests return `429`.
 - Replay masks text and input values and excludes authentication screens, but is **not general-purpose DLP**. Validate with synthetic data before recording real users. Direct public-token ingestion bypasses the server's replay filtering and needs its own collector policy.
+
+Trace export removes authorization, cookie, API-key, token, and signature headers, including matching custom header names. It also omits request and response bodies on authentication and credential endpoints; ordinary bodies remain available with advanced capture. If advanced capture was enabled, review retained telemetry and collector access, retire exposed credentials, and remove affected data under your retention policy.
 
 `LOG_REDACTION_MAX_NODES=5000` bounds redaction work per server log record. Objects and strings weighted by length consume the budget; excess fields are replaced rather than exported unredacted. This process-level setting is read when the logger initializes.
 
