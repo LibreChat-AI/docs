@@ -1,0 +1,168 @@
+---
+title: Background Agent Responses
+description: Start agent requests in the background, check their progress, and review or stop your requests.
+icon: Workflow
+---
+
+Use background responses when your application needs to start an agent request and check its progress later. Submit the request, save the returned response ID, and use that ID to check for updates through the existing [Agents API](/docs/features/agents_api).
+
+If the agent needs an approval, an answer, or a sign-in, the response includes a review link for the owner.
+
+<Callout type="info" title="Opt-in feature">
+Background execution is disabled by default. Use a LibreChat version that supports background Responses before enabling it.
+</Callout>
+
+## Enable background execution
+
+Merge this block into your existing configuration:
+
+```yaml filename="endpoints / agents"
+endpoints:
+  agents:
+    remoteApi:
+      background:
+        enabled: true
+        acknowledgementTimeoutMs: 10000
+```
+
+`enabled` defaults to `false`. Existing Remote Agents permissions, Agent access, terms acceptance, content checks, and provider/tool policies still apply.
+
+`acknowledgementTimeoutMs` controls how long the API waits for the worker to acknowledge the request. It defaults to `10000` milliseconds and accepts integers from `100` through `60000`. It does not limit the agent's total execution time.
+
+Stored background Responses require a MongoDB replica set or another verified transaction-capable database. Standalone MongoDB and FerretDB 2.7 do not support this durable feature; ordinary LibreChat remains available. See the [local replica setup](/docs/configuration/channel_gateway#docker-compose).
+
+Background submission requires an **Agent API key**, including when ordinary inference also accepts OIDC. A management API machine token is not an execution credential. Configure [Remote Agents permissions](/docs/features/agents_api#setup) separately.
+
+If your agent needs tool approval or Ask User pauses, configure durable MongoDB checkpoint storage through the existing [`toolApproval`](/docs/configuration/librechat_yaml/object_structure/agents#toolapproval), Ask User, and [`checkpointer`](/docs/configuration/librechat_yaml/object_structure/agents#checkpointer) settings.
+
+An in-memory checkpointer cannot provide durable resume for these background pauses. Enabling background execution does not enable approval automatically or bypass a deny rule. Requests without a human pause keep their normal execution path.
+
+Set `DOMAIN_CLIENT` to the trusted public browser URL so generated review links point to your deployment. Do not construct review destinations from incoming Host headers.
+
+## Submit and poll
+
+Follow the same response from submission to completion:
+
+1. Send a background request.
+2. Save the response ID returned by the API.
+3. Use that ID to check progress and handle any required action.
+
+### Send a request
+
+```bash
+curl https://chat.example.com/api/agents/v1/responses \
+  -H 'Authorization: Bearer YOUR_AGENT_API_KEY' \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: report-request-001' \
+  -d '{"model":"AGENT_ID","input":"Summarize the latest report.","background":true,"store":true}'
+```
+
+The API returns HTTP `202` with a response object when it accepts the background request. Save its ID for the next step.
+
+Requests with `background: true` require storage: omit `store` or set it to `true`. They reject `store: false` and `stream: true`. To use ordinary synchronous or streaming Responses, omit `background` or set it to `false`.
+
+If the connection drops before you receive a response, retry the same request with the same `Idempotency-Key`. Choose a new key for new work.
+
+The key is optional, but omitting it makes each submission a new request. A retry after an uncertain network result can then start duplicate work. When supplied, the key must be nonblank and at most 256 characters.
+
+### Check progress
+
+```bash
+curl https://chat.example.com/api/agents/v1/responses/RESPONSE_ID \
+  -H 'Authorization: Bearer YOUR_AGENT_API_KEY'
+```
+
+Keep checking the same response ID until it reaches a final status:
+
+| Status | What to do |
+| --- | --- |
+| `queued`, `in_progress` | Keep checking. If `required_action` is present, [review it](#review-a-required-action). |
+| `completed`, `failed`, `incomplete`, `cancelled` | Read the final result or error. These statuses are terminal. |
+
+The server rechecks the API key that started the request and current access permissions. A response ID alone does not grant access to read or resume it.
+
+To continue a supported conversation, pass the returned ID as `previous_response_id` instead of resending the original input.
+
+### Storage and recovery
+
+A background response reports a final status after the provider has finished and the conversation history is saved with the response. If storage is temporarily unavailable, the result stays pending for recovery without running the provider again.
+
+During a rolling upgrade or rollback, keep a compatible worker available to finish pending results.
+
+Ordinary synchronous and streaming requests have a different storage contract: if optional saving fails, the generated answer can still succeed with `store: false`. Check that returned value before relying on retrieval or continuation.
+
+## Review a required action
+
+A public response can include:
+
+```json
+{
+  "status": "in_progress",
+  "required_action": {
+    "type": "librechat_review",
+    "kind": "tool_approval",
+    "action_id": "ACTION_ID",
+    "expires_at": 1800000000,
+    "review_url": "https://chat.example.com/responses/RESPONSE_ID/review"
+  }
+}
+```
+
+An `in_progress` response can be waiting for you, rather than running the model. Check `required_action` for the next step:
+
+- `kind` is `tool_approval`, `question`, or `oauth`.
+- `expires_at` is the expiry time, in Unix seconds. Act only while the action is still present and unexpired.
+- Private approval details and provider OAuth URLs are available through the authenticated review flow, rather than this public response.
+
+Open `review_url` in a browser and sign in as the response owner in the correct tenant. From there, you can inspect the pending tool call, answer a question, or continue an MCP OAuth sign-in.
+
+Access to the same agent is not enough to approve someone else's request.
+
+The browser lifecycle uses session authentication, not an Agent API key or a management token:
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/agents/responses/{id}/review` | Read the owner-only review view |
+| `POST` | `/api/agents/responses/{id}/review` | Submit the current action decision |
+| `POST` | `/api/agents/responses/{id}/cancel` | Request Stop for an owned response |
+
+Decision submissions must include the current `actionId` and the fields for that action:
+
+- **Questions:** use `answer`, or `answers` keyed by the presented question identities.
+- **Tool approvals:** use `decisions` with the exact `tool_call_id` and an allowed `decision` (`approve`, `reject`, `edit`, or `respond`). Include edited arguments or response text when needed.
+
+Use the supplied review UI to see which choices and scopes are available. A value listed in the API schema does not grant permission to use an unavailable approval scope.
+
+After a decision is accepted, the API returns HTTP `202` with `responseId`, `actionId`, `intentId`, and `status` (`queued` or `settled`). Check the review page or response again to see what happened next; acceptance does not mean execution has finished.
+
+If the submission result is uncertain, do not resubmit it with a different intent or reuse a stale action after a conflict. Before resuming, the server rechecks access to the agent, model, tools, project and files, together with the saved execution context.
+
+## OAuth recovery limits
+
+Complete MCP OAuth sign-in through the supplied provider flow. The prompt remains available only to its owner until its deadline. An approval decision cannot replace the provider's OAuth callback.
+
+A successful sign-in can continue the waiting request while that request's sign-in handler is still active.
+
+### If the server restarts during sign-in
+
+A request waiting for sign-in may not resume after a server restart, even if its prompt is still visible. OAuth sign-in handlers are kept in memory; durable question and tool-approval checkpoints use a different mechanism.
+
+If the saved execution state is missing or no longer matches, the response keeps a non-final status, includes `recovery: "execution_state_unavailable"`, and removes stale actionable prompts. The request has not been confirmed complete or cancelled, and work is not replayed.
+
+Signing in may save your credentials without resuming the original request. Before retrying:
+
+1. Check the original request and any external results, such as a tool action that may already have completed.
+2. If the execution state remains unknown, ask an administrator to reconcile the held run before clearing it.
+3. Avoid reusing an old authorization URL or assuming sign-in restarted the model.
+
+See [MCP authentication](/docs/features/mcp#sign-in-with-oauth) for the sign-in flow.
+
+## Stop and recovery
+
+API-key clients can request cancellation with `POST /api/agents/v1/responses/{id}/cancel`. Owners can use **Stop** in the review UI. Both paths operate on the same durable response; neither starts a replacement execution.
+
+After requesting Stop, keep checking until the response reports `cancelled` or another final status. It may take time for the provider to stop, checkpoints to be cleaned up, and the final status to be saved.
+
+Completed tool actions will not be undone. Check their results before repeating work, even if the response was cancelled.
+
+Revoked source keys, changed channel/account bindings, missing authority, stale checkpoint identities, and changed privileged code targets fail closed. Temporary storage outages can delay terminal publication and cleanup; do not force-delete execution proof or manually replay tools to make the status change.
