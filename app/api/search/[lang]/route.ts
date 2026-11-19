@@ -38,22 +38,24 @@ export function generateStaticParams() {
 // the documents were indexed.
 //
 // Restrict each non-default locale's index to pages that have a real translated
-// file (path ends `.<locale>.mdx`). getLanguages() otherwise includes the English
-// fallback for every untranslated page, and those hits resolve to /<locale>/docs/...
-// URLs that immediately redirect to English (see the docs page route) — so
-// localized search would surface results that bounce. Filtering keeps each locale's
-// search consistent with what actually renders under /<locale>/docs/. The default
-// language keeps every page.
+// file (path ends `.<locale>.mdx`). The loader otherwise fills every locale with
+// the English fallback for each untranslated page, and those hits resolve to
+// /<locale>/docs/... URLs that immediately redirect to English (see the docs page
+// route), so localized search would surface results that bounce. Filtering keeps
+// each locale's search consistent with what actually renders under /<locale>/docs/,
+// and keeps each prerendered index under Vercel's 20 MB response body limit
+// (FALLBACK_BODY_TOO_LARGE). The default language keeps every page.
+//
+// createFromSource indexes loader.getPages() (every language, grouped by
+// page.locale) and never calls getLanguages(), so the filter has to wrap getPages().
 const localeFilteredSource: typeof docsSource = {
   ...docsSource,
-  getLanguages: () =>
-    docsSource.getLanguages().map((entry) => ({
-      language: entry.language,
-      pages:
-        entry.language === i18n.defaultLanguage
-          ? entry.pages
-          : entry.pages.filter((page) => page.path.endsWith(`.${entry.language}.mdx`)),
-    })),
+  getPages: (language) =>
+    docsSource
+      .getPages(language)
+      .filter(
+        (page) => page.locale === i18n.defaultLanguage || page.path.endsWith(`.${page.locale}.mdx`),
+      ),
 }
 
 const searchServer = createFromSource(localeFilteredSource, {
