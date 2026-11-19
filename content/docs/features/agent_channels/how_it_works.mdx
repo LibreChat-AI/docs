@@ -1,0 +1,142 @@
+---
+title: How It Works
+description: The architecture behind Agent Channels, from an incoming message to a delivered reply, and how conversations, identities, and deployments fit together.
+icon: Workflow
+---
+
+Agent Channels add three things to LibreChat: a **gateway** that talks to the messaging app, **account links** that tie each external user to a LibreChat account, and **durable runs** that make sure every request is executed and answered exactly once. This page explains each of them using Slack, the currently supported platform.
+
+## The building blocks
+
+<FlowDiagram summary="Components of Agent Channels, from the messaging app to the database" direction="both">
+  <FlowNode icon="Slack" title="Slack app" label="Provides the bot identity and sends events" />
+  <FlowNode icon="Network" title="Channel gateway" label="Separate service; verifies requests, formats and posts replies" />
+  <FlowNode icon="Server" title="LibreChat API" label="Private channel routes plus the background Responses API" />
+  <FlowNode icon="Database" title="MongoDB" label="Connections, links, runs, and delivery records; needs transactions" />
+</FlowDiagram>
+
+| Component | Role |
+| --- | --- |
+| Slack app | The bot people talk to. Its credentials and permissions decide what the bot can see and post. |
+| Channel gateway | A standalone Node.js service (`packages/channel-gateway` in the LibreChat source). It receives Slack events, checks their signatures, asks LibreChat to admit and run each request, and delivers the result back to Slack. It never reads the database directly. |
+| LibreChat API | Owns every decision: who is linked, who may use which agent, and what the agent answered. The gateway reaches it over a private, token-protected API. |
+| Background Responses | Each request runs as a stored, asynchronous [background Response](/docs/features/background_responses), so long runs, approvals, and Stop work the same way they do in the Agents API. |
+| Database | Stores connections, assignments, account links, runs, and delivery receipts. Updates span several documents, so the database must support transactions. |
+
+## Two ways to deploy
+
+Slack can be connected in two ways. Both use the same gateway code and the same runtime behavior once a request arrives.
+
+| | Organization workspaces | Manual connection |
+| --- | --- | --- |
+| Best for | Organizations that want one Slack bot for many agents, managed from LibreChat | A single agent, or a deployment that cannot expose a public HTTPS endpoint |
+| Slack app | Registered once by an administrator in **Settings → Account → Slack** | Created from a manifest that LibreChat generates for the agent |
+| Gateway | One shared gateway for every registered app | One gateway process per connection |
+| Transport | Webhook (public HTTPS) | Socket Mode (default, no inbound traffic) or webhook |
+| Who can use it | Every linked member, each with their own account | Every linked member, or only the connection owner |
+| Agents | Assign a default agent and per-channel agents to the same bot | One agent per Slack app |
+
+The [Slack overview](/docs/features/agent_channels/slack) helps you choose.
+
+## The life of a request
+
+<Steps>
+<Step>
+
+**Slack sends an event.** Someone mentions the bot in a channel, or sends it a direct message. Slack delivers the event over HTTPS (webhook) or a Socket Mode connection.
+
+</Step>
+<Step>
+
+**The gateway verifies it.** In webhook mode it checks Slack's request signature and timestamp. It confirms that the event belongs to the installed workspace and app, ignores messages from bots and edits, removes the bot mention from the text, and acknowledges the event to Slack within two seconds.
+
+</Step>
+<Step>
+
+**The gateway finds the agent.** For organization workspaces, a channel-specific assignment wins over the bot's default assignment. Direct messages use the default. If nothing is assigned, the person gets a private notice instead of an answer.
+
+</Step>
+<Step>
+
+**LibreChat checks the person.** If the sender has no active account link, they receive a private **Link account** prompt and the request stops here. Otherwise LibreChat checks, at that moment, that their account is active, that their role still allows the request, and that they have Remote Access to the agent.
+
+</Step>
+<Step>
+
+**LibreChat records the run.** The request is stored once, keyed by Slack's own event identity, so a retried delivery from Slack never runs the agent twice.
+
+</Step>
+<Step>
+
+**The agent runs in the background.** The gateway starts a background Response using a short-lived credential bound to that person and that agent. While it runs, Slack shows a working message with **Stop**, plus **Review request** when the agent needs an answer or an approval.
+
+</Step>
+<Step>
+
+**The reply is delivered.** The final answer is converted to Slack formatting, files are uploaded, and a short footer shows cost and time. Each post is recorded with a receipt, so a network failure never produces a duplicate answer.
+
+</Step>
+</Steps>
+
+## Conversations and threads
+
+A Slack thread maps to a LibreChat conversation, but each person in it has their own.
+
+- **A new mention starts a new conversation.** A top-level mention in a channel, or a new top-level direct message, begins a fresh conversation with the agent.
+- **Mention the bot again to follow up in a channel thread.** The bot only receives channel messages that mention it, so a thread reply without `@bot` is not sent to the agent. A reply that mentions the bot continues the conversation.
+- **Each person has their own lane**, a private sequence of requests and answers within the thread. When two people mention the bot in the same thread, each continues their own conversation, with their own files, approvals, and history. Nobody can continue, stop, or approve another person's request.
+- **The agent sees the triggering message only.** It does not read earlier thread messages from Slack. Context comes from that person's previous requests and answers in the thread.
+- **Requests run in order.** A person's second request in the same thread starts after the first one finishes. Requests from different people or threads run in parallel.
+
+A conversation also starts fresh when the person links their account again, or when the connection is reconfigured.
+
+## Identities and account links
+
+Messaging apps know people by their platform user ID, not their LibreChat account. An account link connects the two, and nothing runs without one.
+
+Linking takes two confirmations, one on each side, so neither a leaked link nor a spoofed message can attach the wrong account:
+
+1. In Slack, the bot sends a private **Link account** button. It opens LibreChat, where the person signs in and accepts the link.
+2. Back in Slack, the person selects **Confirm account** from the same Slack account.
+
+| Setting | Default | Configured by |
+| --- | --- | --- |
+| Link prompt lifetime | 10 minutes | `ticketLifetimeMs` |
+| Account link lifetime | 30 days | `linkLifetimeMs` |
+
+Links are personal. They end when they expire, when the person disconnects them in **Settings → Account**, or when the connection is disabled or reconfigured. See [Security and permissions](/docs/features/agent_channels/security#account-links) for everything that invalidates a link.
+
+### Identity modes
+
+Organization workspaces always use **per-user accounts**. Manual connections can choose:
+
+| Mode | Who can use the bot | Whose account runs the agent |
+| --- | --- | --- |
+| Per-user accounts | Anyone who links their LibreChat account | The person who sent the message |
+| Channel owner only | Only the person who created the connection | The connection owner, and only for their own messages |
+
+Channel owner only does not lend the owner's account to anyone else. Other people simply cannot use that bot.
+
+## Reliability
+
+Messaging platforms retry events, networks drop responses, and servers restart. Agent Channels are built to keep one rule through all of it: each accepted request runs once and is answered once.
+
+- **Leases.** A gateway worker claims a run for a limited time (`leaseMs`, 60 seconds by default) and renews it while working. If the worker disappears, another one picks the run up after the lease expires.
+- **Delivery receipts.** Every Slack post is recorded before and after it is attempted. If the result is unknown, the gateway checks instead of posting again, and holds that person's lane until the outcome is known.
+- **Stop is a request.** **Stop** asks LibreChat to cancel the run. Work a tool already finished is not undone, and the thread shows the final status once cancellation completes.
+
+Operators can find the recovery procedure in the [gateway reference](/docs/features/agent_channels/deployment/reference#delivery-recovery).
+
+## Related pages
+
+<Cards num={3}>
+  <Card title="Security and permissions" href="/docs/features/agent_channels/security" arrow>
+    Roles, permissions, and what each person can and cannot do.
+  </Card>
+  <Card title="Background Responses" href="/docs/features/background_responses" arrow>
+    The execution model that channel runs are built on.
+  </Card>
+  <Card title="Gateway reference" href="/docs/features/agent_channels/deployment/reference" arrow>
+    The private API, delivery recovery, and operational limits.
+  </Card>
+</Cards>

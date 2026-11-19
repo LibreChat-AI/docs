@@ -1,0 +1,346 @@
+---
+title: Deploy the Gateway
+description: Prerequisites, Docker Compose and source setup, and verification for the channel gateway, in organization workspace or manual connection mode.
+icon: Server
+---
+
+The channel gateway is a separate service that connects LibreChat to Slack. This guide is for the operator who runs LibreChat. Once the gateway is ready, administrators and agent owners continue in the [Slack guides](/docs/features/agent_channels/slack).
+
+<Callout type="warning" title="Beta and opt-in">
+Agent Channels ship with LibreChat **v0.8.9** and later. Use the same release for LibreChat and the gateway. A deployment that does not use channels needs none of this.
+</Callout>
+
+## Choose a mode
+
+| | Organization workspaces | Manual connection |
+| --- | --- | --- |
+| Gateway processes | One shared gateway for every registered Slack app | One gateway per connection |
+| Slack transport | Webhook, so the gateway needs a public HTTPS address | Socket Mode (no inbound traffic) or webhook |
+| Slack credentials | Entered by administrators in LibreChat | Entered by the agent owner in the Agent Builder, plus an app-level token in the gateway for Socket Mode |
+| Turned on by | `SLACK_WORKSPACES_ENABLED=true` | `endpoints.agents.channels` in `librechat.yaml` |
+
+**Socket Mode** means the gateway opens an outbound connection to Slack, so nothing needs to reach it from the internet. **Webhook** means Slack sends HTTPS requests to the gateway, which needs a public address.
+
+Pick **organization workspaces** unless you cannot expose a public HTTPS endpoint. It needs no per-connection deployment work, and administrators manage everything from the UI. Using Kubernetes? Read this page for the prerequisites, then follow [Kubernetes and Helm](/docs/features/agent_channels/deployment/kubernetes).
+
+## Prerequisites
+
+<Callout type="info" title="Checklist">
+- A **transaction-capable MongoDB** deployment, such as a replica set. See the [database requirement](#database-requirement).
+- The **Remote Agents** use permission granted to every role that will use the bot, in the [Admin Panel](/docs/features/admin_panel) or with [`interface.remoteAgents`](/docs/configuration/librechat_yaml/object_structure/interface#remoteagents). The default `USER` role does not have it.
+- Agents API key authentication left enabled (the default), because the gateway runs each request with a short-lived bound key.
+- A private **`CHANNEL_SERVICE_TOKEN`** of at least 32 characters, identical in LibreChat and the gateway. Generate one with `openssl rand -hex 32`.
+- **`DOMAIN_CLIENT`** set to LibreChat's public address, so account-link and review links open the right site.
+- For organization workspaces: public **HTTPS** addresses for LibreChat and for the gateway's Slack callbacks.
+</Callout>
+
+The service token only lets the gateway call LibreChat's private channel API. It cannot be used as a browser session or as a general Agents API key, and it should never appear in client code, Slack messages, or logs.
+
+### Database requirement
+
+Channels write connections, runs, and delivery receipts together, so the database must support **transactions** and **partial indexes**. Stored [background Responses](/docs/features/background_responses) have the same requirement.
+
+| Database | Can run Agent Channels? |
+| --- | --- |
+| MongoDB replica set, including a single-member local replica set | Yes |
+| MongoDB Atlas | Yes |
+| Standalone MongoDB | No. LibreChat runs normally, but channels and stored background Responses are unavailable. |
+| FerretDB 2.7 | No |
+| Amazon DocumentDB 4.0 | No. [Partial indexes are not supported](https://docs.aws.amazon.com/documentdb/latest/devguide/indexes-single-field.html). |
+
+Other MongoDB-compatible engines need to be validated first. When transactions are unavailable, channel requests fail with `transactions_unavailable` and the Agent Builder explains the requirement. Transactional reads always go to the primary, even if your connection prefers secondaries.
+
+For Docker Compose, the `docker-compose.mongo-replica.yml` overlay turns the bundled MongoDB into a single-member replica set. Read [Existing local data](#existing-local-data) before applying it to a database that already holds data.
+
+## Organization workspaces
+
+One shared gateway serves every Slack app your administrators register. No per-workspace process, token, or deployment change is needed after this one-time setup.
+
+<FlowDiagram summary="Routing for organization workspaces: Slack callbacks go to the gateway through your HTTPS proxy, while the app and OAuth callback go to LibreChat" direction="both">
+  <FlowNode icon="Slack" title="Slack" label="Sends events and button clicks over HTTPS" />
+  <FlowNode icon="Shield" title="HTTPS proxy" label="Routes /slack/events/ and /slack/interactions/ to the gateway" />
+  <FlowNode icon="Network" title="Channel gateway" label="Port 8080 in the container, 127.0.0.1:3081 on the host" />
+  <FlowNode icon="Server" title="LibreChat API" label="Serves the app and the Slack OAuth callback" />
+</FlowDiagram>
+
+<Steps>
+<Step>
+
+**Set the environment.** Add these values to LibreChat's `.env`, replacing the localhost defaults. Keep the file out of version control.
+
+```dotenv filename=".env"
+DOMAIN_SERVER=https://chat.example.com
+DOMAIN_CLIENT=https://chat.example.com
+CHANNEL_SERVICE_TOKEN=<output of openssl rand -hex 32>
+LIBRECHAT_IMAGE_TAG=v0.8.9
+# Optional: a separate public origin for Slack callbacks
+SLACK_GATEWAY_URL=https://slack.example.com
+```
+
+`DOMAIN_SERVER`, `DOMAIN_CLIENT`, and `SLACK_GATEWAY_URL` must be public HTTPS URLs without surrounding whitespace, including any base path. LibreChat refuses to start with localhost or private addresses in this mode. Without `SLACK_GATEWAY_URL`, Slack callbacks use `DOMAIN_SERVER`.
+
+</Step>
+<Step>
+
+**Start LibreChat and the gateway.** From the LibreChat directory, with `librechat.yaml` prepared as usual:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.channels.yml \
+  -f docker-compose.slack-workspaces.yml -f docker-compose.mongo-replica.yml \
+  --profile channels up -d api meilisearch channel-gateway
+```
+
+Omit `docker-compose.mongo-replica.yml` if you use an external transaction-capable database, and supply its connection through your usual Compose override. Use the same files and project name for every later command.
+
+</Step>
+<Step>
+
+**Route the Slack callbacks.** Configure your HTTPS proxy to forward `/slack/events/` and `/slack/interactions/` to the gateway, keeping the full path. Everything else, including the OAuth callback at `/api/channels/workspaces/oauth/callback`, goes to LibreChat.
+
+<Tabs items={['Caddy', 'nginx']}>
+<Tabs.Tab>
+
+```text filename="Caddyfile"
+chat.example.com {
+  handle /slack/events/* {
+    reverse_proxy 127.0.0.1:3081
+  }
+  handle /slack/interactions/* {
+    reverse_proxy 127.0.0.1:3081
+  }
+  handle {
+    reverse_proxy 127.0.0.1:3080
+  }
+}
+```
+
+</Tabs.Tab>
+<Tabs.Tab>
+
+```nginx filename="nginx.conf"
+location /slack/events/ {
+  proxy_pass http://127.0.0.1:3081;
+}
+location /slack/interactions/ {
+  proxy_pass http://127.0.0.1:3081;
+}
+location / {
+  proxy_pass http://127.0.0.1:3080;
+}
+```
+
+</Tabs.Tab>
+</Tabs>
+
+The shared overlay publishes the gateway on `127.0.0.1:3081`; set `CHANNEL_GATEWAY_PORT` to change it. A proxy on the same Compose network can use `http://channel-gateway:8080` instead. Keep the gateway's health and metrics paths private.
+
+</Step>
+<Step>
+
+**Check readiness**, as described in [Verify the gateway](#verify-the-gateway). Then hand over to an administrator to [connect a Slack workspace](/docs/features/agent_channels/slack/organization_setup).
+
+</Step>
+</Steps>
+
+<Accordions type="single" collapsible>
+<Accordion title="What SLACK_WORKSPACES_ENABLED turns on">
+
+The shared overlay sets `SLACK_WORKSPACES_ENABLED=true` on the API. It forces these settings, while keeping the rest of your `librechat.yaml`:
+
+- `endpoints.agents.channels.enabled: true`
+- `endpoints.agents.channels.transport: webhook`
+- `endpoints.agents.channels.slackApp.enabled: true`
+- `endpoints.agents.remoteApi.background.enabled: true`
+
+Without the variable, YAML alone controls these settings. Because the transport becomes webhook, any existing manual connection on the same deployment must use webhook too.
+
+In shared mode the gateway needs no `CHANNEL_ID`, `CHANNEL_TENANT_ID`, or `SLACK_APP_TOKEN`; the overlay clears them. Slack app credentials are entered by administrators and stored encrypted in the database.
+
+</Accordion>
+<Accordion title="Build from an unreleased checkout">
+
+Add `-f docker-compose.channels-build.yml` right after `-f docker-compose.channels.yml` on **every** Compose command, and use `up -d --build` instead of pulling images. This builds both LibreChat and the gateway from your checkout.
+
+</Accordion>
+</Accordions>
+
+## Manual connection
+
+Each manual connection gets its own gateway process, bound to that connection's ID. The connection is created by an agent owner first, so setup goes back and forth once between you and them.
+
+<Steps>
+<Step>
+
+**Enable Channels in `librechat.yaml`.** Both settings default to `false`:
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    remoteApi:
+      background:
+        enabled: true
+    channels:
+      enabled: true
+      transport: socket_mode # or webhook
+      # Required for webhook: the gateway's public HTTPS origin
+      # gatewayUrl: https://gateway.example.com
+```
+
+With `socket_mode`, the gateway opens an outbound connection to Slack and needs no public URL. With `webhook`, set `gatewayUrl` to an HTTPS origin without credentials, query, or fragment; the generated Slack manifest points there.
+
+</Step>
+<Step>
+
+**Start LibreChat.** Set `CHANNEL_SERVICE_TOKEN` and `LIBRECHAT_IMAGE_TAG` in `.env`, then start the application:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.channels.yml \
+  -f docker-compose.mongo-replica.yml up -d --pull always api meilisearch
+```
+
+</Step>
+<Step>
+
+**Have the agent owner create the connection.** They follow [Manual connection](/docs/features/agent_channels/slack/manual_setup) and send you the **Connection ID**. For Socket Mode, they also give you the Slack app-level token (`xapp-`, with `connections:write`).
+
+</Step>
+<Step>
+
+**Configure and start the gateway.** Add the connection to `.env`:
+
+```dotenv filename=".env"
+CHANNEL_ID=<connection ID from the Agent Builder>
+CHANNEL_TENANT_ID=_
+# Socket Mode only
+SLACK_APP_TOKEN=xapp-...
+```
+
+Leave `CHANNEL_TENANT_ID` as `_` unless you run LibreChat in multi-tenant mode, in which case use the connection's exact tenant ID. Then start the gateway:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.channels.yml \
+  -f docker-compose.mongo-replica.yml --profile channels up -d --pull always channel-gateway
+```
+
+</Step>
+<Step>
+
+**For webhook transport**, route these paths to the gateway through your HTTPS proxy. In this mode the overlay publishes no host port, so run the proxy on the same Compose network and forward to `http://channel-gateway:8080`, or add a `ports` entry for `channel-gateway` in your Compose override. The IDs are URL-encoded:
+
+```text
+https://gateway.example.com/slack/events/<tenantId>/<connectionId>
+https://gateway.example.com/slack/interactions/<tenantId>/<connectionId>
+```
+
+</Step>
+<Step>
+
+**Check readiness** as described in [Verify the gateway](#verify-the-gateway).
+
+</Step>
+</Steps>
+
+The gateway fetches the bot token and signing secret from LibreChat, so they never go in its environment. The bundled `channel-gateway` service serves one manual connection. Each additional connection needs its own gateway process with its own `CHANNEL_ID` (and `SLACK_APP_TOKEN` for Socket Mode), for example [run from source](#run-from-source) or as a service you define in your own Compose override. If you expect several bots, organization workspaces serve all of them from one gateway.
+
+### Run from source
+
+The gateway can also run as a plain Node.js 24 process. It talks to LibreChat over HTTP and never connects to MongoDB.
+
+```sh
+npm ci
+npm run build:packages
+npm run build --workspace @librechat/channel-gateway
+node --env-file=/secure/channel-gateway.env packages/channel-gateway/dist/main.cjs
+```
+
+```dotenv filename="channel-gateway.env"
+LIBRECHAT_INTERNAL_URL=http://127.0.0.1:3080
+CHANNEL_SERVICE_TOKEN=<same value as LibreChat>
+CHANNEL_TENANT_ID=_
+CHANNEL_ID=<connection ID>
+SLACK_TRANSPORT=socket_mode
+SLACK_APP_TOKEN=xapp-...
+```
+
+For organization workspaces, leave `CHANNEL_ID` and `SLACK_APP_TOKEN` out; an empty `CHANNEL_ID` selects shared mode. `npm run backend:dev` starts only LibreChat, not the gateway. If you reuse LibreChat's `.env`, set `PORT=8080` explicitly so the gateway does not try to take LibreChat's port.
+
+## Existing local data
+
+The replica overlay can convert the bundled MongoDB in place, but treat it like any database migration:
+
+1. Back up the database.
+2. Stop LibreChat, every gateway, and then MongoDB.
+3. Keep the existing `data-node` directory and its volume. Do not delete them.
+4. Start again with the same data directory and the replica overlay.
+5. Check that existing users and conversations are intact before enabling the gateway, and keep the overlay on every future restart.
+
+Initialization only configures an unconfigured local `rs0` member at `mongodb:27017`, keeps existing documents, and refuses to change a different replica configuration. A single-member replica set enables transactions but provides no high availability. For production, follow MongoDB's [standalone to replica set conversion](https://www.mongodb.com/docs/manual/tutorial/convert-standalone-to-replica-set/) with your usual security and backup practices. Never run the local initializer against an external database.
+
+## Gateway settings
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `CHANNEL_SERVICE_TOKEN` | Required | Shared secret for the private channel API. At least 32 characters, same value in LibreChat. |
+| `LIBRECHAT_INTERNAL_URL` | `http://localhost:3080` | How the gateway reaches LibreChat. Inside a container, `localhost` is the container itself; the Compose overlay uses `http://api:3080`. |
+| `CHANNEL_ID` | Empty (shared mode) | Manual mode: the connection ID from the Agent Builder. Not a Slack channel ID or agent ID. |
+| `CHANNEL_TENANT_ID` | `_` in the Compose overlay | Manual mode: the connection's exact tenant. Use `_` for single-tenant deployments. |
+| `SLACK_TRANSPORT` | From LibreChat | Optional check: `webhook` or `socket_mode`. Startup fails if it differs from `librechat.yaml`. |
+| `SLACK_APP_TOKEN` | None | Manual Socket Mode only: the app-level token for the same Slack app. |
+| `PORT` | `8080` | HTTP port. |
+| `LISTEN_HOST` | `0.0.0.0` | Listen address. Use `127.0.0.1` for a host-only process. |
+| `APP_TITLE` | `LibreChat` | Name in buttons such as **Open in LibreChat**. 1-40 characters, without `<`, `>`, or `\|`. |
+| `API_CALL_TIMEOUT_MS` | `10000` | Timeout for each call to LibreChat or Slack. |
+| `AGENT_INVOKE_TIMEOUT_MS` | `120000` | Timeout for starting a background Response. The agent run itself can take longer. |
+
+Behavior settings such as native agent sessions, lifecycle reactions, and the signature window live under `endpoints.agents.channels` in `librechat.yaml`; the gateway loads them from LibreChat at startup. The old `SLACK_NATIVE_SESSIONS`, `SLACK_LIFECYCLE_REACTIONS`, and `SLACK_SIGNATURE_TOLERANCE_SECS` variables stop the gateway with an error. See the full [`channels` configuration reference](/docs/configuration/librechat_yaml/object_structure/agents#channels).
+
+## Verify the gateway
+
+The gateway exposes these endpoints on its port:
+
+| Endpoint | Public? | Purpose |
+| --- | --- | --- |
+| `/slack/events/...` | Yes, for webhook transport | Slack event callbacks |
+| `/slack/interactions/...` | Yes, for webhook transport | Slack button and form callbacks |
+| `/livez` | No | The process is alive. |
+| `/readyz`, `/healthz` | No | Startup finished and the Slack transport is ready. Returns `503` until then. |
+| `/metrics` | No | Prometheus metrics. |
+
+Check the containers and their logs with the same Compose files you started them with:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.channels.yml \
+  -f docker-compose.slack-workspaces.yml -f docker-compose.mongo-replica.yml \
+  --profile channels ps -a
+docker compose -f docker-compose.yml -f docker-compose.channels.yml \
+  -f docker-compose.slack-workspaces.yml -f docker-compose.mongo-replica.yml \
+  --profile channels logs --tail=100 api mongodb-init channel-gateway
+```
+
+For a manual connection, leave out `docker-compose.slack-workspaces.yml`. `mongodb-init` exiting with status `0` is expected. The API and gateway should be running and healthy.
+
+| Problem | Likely cause |
+| --- | --- |
+| Gateway calls to LibreChat return `401` | `CHANNEL_SERVICE_TOKEN` differs between the two, or `LIBRECHAT_INTERNAL_URL` points at another instance. |
+| Gateway stays unready | The transport does not match `librechat.yaml`, the manual connection is not active, or the Socket Mode token belongs to another app. Restart the gateway after changing the transport or the Slack app. |
+| LibreChat fails with "Invalid shared Slack setup" | A domain or gateway URL is not public HTTPS. |
+
+The final check is end to end: link an account in Slack and send the bot a new request. See [Use agents in Slack](/docs/features/agent_channels/slack/using_slack).
+
+## Stop or remove the gateway
+
+Stop it with the same Compose files and `stop channel-gateway`. To turn channels off entirely, also remove `SLACK_WORKSPACES_ENABLED` or set `endpoints.agents.channels.enabled: false`. Keep the replica set: stopping the gateway does not require converting or deleting any data.
+
+## Next steps
+
+<Cards num={3}>
+  <Card title="Kubernetes and Helm" href="/docs/features/agent_channels/deployment/kubernetes" arrow>
+    Deploy the gateway with the LibreChat Helm chart.
+  </Card>
+  <Card title="Connect a Slack workspace" href="/docs/features/agent_channels/slack/organization_setup" arrow>
+    Hand over to an administrator to register the app.
+  </Card>
+  <Card title="Gateway reference" href="/docs/features/agent_channels/deployment/reference" arrow>
+    The private API and delivery recovery.
+  </Card>
+</Cards>

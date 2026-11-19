@@ -1,0 +1,102 @@
+---
+title: Rich Messages
+description: Let an agent answer with native charts, tables, cards, and layouts in messaging apps by ending its reply with a small JSON document.
+icon: LayoutDashboard
+---
+
+By default, an agent's Markdown answer is converted to the messaging app's formatting: headings, lists, code blocks, links, and tables. When a picture says more, an agent can also return **presentation data**: a small JSON document describing charts, tables, cards, and layouts. The gateway validates it and renders native components, with a readable text fallback for every value.
+
+In Slack, these components become Block Kit messages. They work in regular threads and in native agent sessions, without any extra Slack permissions or configuration.
+
+## Enable it for an agent
+
+<Steps>
+<Step>
+
+Open the agent in the Agent Builder.
+
+</Step>
+<Step>
+
+Add the following to its **Instructions**:
+
+```text
+When a chart, table, image or card would help, write a short readable answer followed by exactly one final, top-level fenced code block named `librechat-presentation`. Its JSON must be `{ "version": 1, "blocks": [...] }`. Use only the semantic components described below; never emit raw Slack blocks or interactive callback IDs. Use ordinary Markdown for other answers. Use public HTTPS URLs for images and links. The gateway generates complete text fallbacks from the data, so do not repeat every value in the introductory answer.
+```
+
+For best results, also paste the [component reference](#components) below into the instructions, or the parts of it your agent needs.
+
+</Step>
+<Step>
+
+Save the agent and ask it a question that benefits from a chart or table, such as "Compare last week's p95 latency by day as a chart and a table."
+
+</Step>
+</Steps>
+
+You can also include the instruction in a single request to try it out before changing the agent.
+
+## Example
+
+This answer renders as a short sentence, a line chart, and a sortable table:
+
+````text
+Latency fell from 20 ms to 17 ms.
+
+```librechat-presentation
+{
+  "version": 1,
+  "blocks": [
+    {
+      "type": "chart",
+      "title": "Latency",
+      "chart": {
+        "type": "line",
+        "axis_config": { "categories": ["Mon", "Tue"], "y_label": "ms" },
+        "series": [{ "name": "p95", "data": [{ "label": "Mon", "value": 20 }, { "label": "Tue", "value": 17 }] }]
+      }
+    },
+    { "type": "table", "title": "Measurements", "columns": ["Day", "p95 (ms)"], "rows": [["Mon", 20], ["Tue", 17]] }
+  ]
+}
+```
+````
+
+The document must be the **last** thing in the answer and the only `librechat-presentation` block. Anything malformed, incomplete, quoted, or ambiguous is shown as ordinary text instead, so a mistake never hides the answer.
+
+## Components
+
+| Component | Fields and limits |
+| --- | --- |
+| `text`, `header`, `context`, `code` | A `text` string of at most 3,000, 150, 2,000, and 3,000 characters respectively. Text is shown literally, so mentions inside it cannot trigger actions. Use Markdown outside the document for formatted prose. |
+| `divider` | No fields. |
+| `image` | `url` and `alt` (required, up to 2,000 characters), optional `title` (150). HTTPS URLs only. The gateway never downloads the image. |
+| `card` | Required `title` (150), optional `subtitle` (150), `body` (200), `image: {url, alt}`, and up to three `links: [{label, url}]` with labels up to 75 characters. Links only navigate; they cannot run an agent action. |
+| `carousel` | `cards`: 1-10 cards. |
+| `table` | `title` (150), `columns`: 1-20 labels (150 each), `rows`: 1-200 rows of strings or finite numbers, all the same length. At most 20,000 characters across all cells. Numeric cells sort numerically. |
+| `chart` | `title` (50) and a `chart` object, described below. |
+| `container` | `title` (150) and `blocks`: 1-10 text, header, context, code, divider, or image components. |
+| `layout` | `title` (150) and `rows`: 1-5 rows of 1-3 components each, including containers. Charts, tables, and carousels each take a full row. Layouts cannot be nested. |
+
+### Charts
+
+| Chart type | Shape |
+| --- | --- |
+| `line`, `bar`, `area` | `axis_config: {categories, x_label?, y_label?}` and `series: [{name, data: [{label, value}]}]`. 1-20 distinct categories; every series has exactly one point per category; up to 12 series with distinct names. |
+| `pie` | `segments: [{label, value}]` with 1-12 distinct labels and positive values. |
+
+Series names and labels are at most 20 characters, axis titles at most 50. Values must be finite numbers; negative values are allowed except in pie charts.
+
+## Limits and fallbacks
+
+- A document holds at most 40 top-level components, and the whole answer must fit within 128,000 bytes.
+- Each Slack message holds at most two charts and 20,000 table characters; the gateway splits components across messages as needed.
+- Components that exceed Slack's limits become text, and every value and link is kept in the generated fallback.
+- If Slack rejects the blocks, the gateway posts the text version instead.
+- The deployment's `maxDeliveryParts` limit still applies. Very long answers are shortened with a notice.
+
+## What it cannot do
+
+Presentation data is for display only. Approvals, questions, Stop, and feedback stay under LibreChat's control, and agent output cannot create forms, modals, App Home views, or other interactive controls. Raw Slack JSON is never accepted. Files the agent generates are delivered as regular attachments.
+
+Some newer Slack components may not render in every Slack client; those clients receive the text fallback.
