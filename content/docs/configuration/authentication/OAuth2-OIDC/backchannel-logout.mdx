@@ -1,0 +1,140 @@
+---
+title: OpenID Back-Channel Logout
+icon: LogOut
+description: End a LibreChat session when its OpenID provider sends a logout notification.
+---
+
+When a user signs out at an OpenID provider, LibreChat needs a notification to end the matching session. Back-channel logout sends that notification directly from the provider to LibreChat. LibreChat then refuses to restore or renew that session.
+
+For example, a user signs in on a laptop and a phone with separate provider sessions. A logout notification for the laptop session makes LibreChat deny that session's next renewal. The phone session continues to work.
+
+<Callout type="info" title="Required LibreChat version">
+  Use a LibreChat build that includes [PR #17856](https://github.com/LibreChat-AI/LibreChat/pull/17856). Check your deployed version before adding this configuration.
+</Callout>
+
+## How logout reaches LibreChat
+
+At login, LibreChat links its credentials to the provider's session ID, called `sid`. This link is the **session binding**. A valid logout notification marks the linked provider session as revoked:
+
+![Sequence diagram: login links credentials to the provider session; a signed logout notification revokes it; the next renewal is denied and the browser signs out.](/images/authentication/openid-backchannel-logout.svg)
+
+The diagram shows `record` or `enforce` mode. Select it to zoom in. [Download the diagram](/images/authentication/openid-backchannel-logout.svg) or its [Mermaid source](/images/authentication/openid-backchannel-logout.mmd).
+
+An access token already issued remains valid until it expires. LibreChat does not check the provider-session record on every request. `SESSION_EXPIRY` sets the lifetime of LibreChat-issued access tokens. With [OpenID token reuse](/docs/configuration/authentication/OAuth2-OIDC/token-reuse), the provider sets token expiry.
+
+The binding uses the provider's issuer, client ID, and `sid`. A logout affects every LibreChat credential linked to that key, including credentials in different LibreChat tenants. Other provider sessions for the same user remain active.
+
+## Configure LibreChat
+
+Add this block to your existing `librechat.yaml`. Keep `off` while you deploy the new code to every replica, meaning every running LibreChat server.
+
+```yaml filename="librechat.yaml"
+registration:
+  openidBackchannelLogout:
+    mode: off
+```
+
+Settings are loaded once per process. Restart every replica after a change. The [registration reference](/docs/configuration/librechat_yaml/object_structure/registration#openidbackchannellogout) lists all settings, defaults, and limits.
+
+### Choose a mode
+
+| Situation | `off` (default) | `record` | `enforce` |
+| --- | --- | --- | --- |
+| Provider sends a logout | Receiver returns 404 | Validates and records it | Validates and records it |
+| Session is known to be revoked | No check | Denies restoration or renewal | Denies restoration or renewal |
+| Binding or provider-session record is missing | No check | Allows | Requires a new login |
+| Provider-session authorization database check fails | No database operation | Allows | Temporary failure; retry |
+
+**`record` can sign users out.** Use it to test delivery while allowing older sessions that have no binding. Both enabled modes deny known revoked sessions and reject a subject that conflicts with the stored identity.
+
+`record` also allows login or renewal when the provider-session creation or authorization database operation fails. Other failures can still stop authentication. These include configuration errors and failures when the admin panel coordinates refresh requests or recovers a rotated refresh token.
+
+The logout receiver returns 503 when validation or storage is temporarily unavailable. This applies in both enabled modes. A failed storage operation never produces a success response.
+
+A fresh OpenID login creates a binding. Renewing an older unbound session does not add one. Under `enforce`, a new login without `sid` fails with `OPENID_SESSION_ID_MISSING`.
+
+## Provider setup
+
+Complete your provider's normal OpenID login setup. Then set its back-channel logout URL to your LibreChat server:
+
+```text
+https://chat.example.com/oauth/openid/backchannel-logout
+```
+
+Allow the provider's requests through your reverse proxy and firewall. The provider sends an HTTP `POST` with `Content-Type: application/x-www-form-urlencoded` and a signed `logout_token` field. The token must contain the same `sid` that LibreChat received at login.
+
+Keep the login callback at `/oauth/openid/callback`. The back-channel URL receives server notifications; the post-logout redirect returns the browser to a page. Configure each URL in its own provider setting.
+
+`OPENID_USE_END_SESSION_ENDPOINT` sends the browser to the provider when a user signs out of LibreChat. To receive provider notifications, also configure `registration.openidBackchannelLogout` as shown above.
+
+### Keycloak
+
+Open the LibreChat client's logout settings. Turn **Front channel logout** off. Set **Backchannel logout URL** to the URL above, then turn **Backchannel logout session required** on. This includes `sid` in logout tokens. See the [Keycloak logout settings](https://www.keycloak.org/docs/latest/server_admin/index.html#_oidc_clients).
+
+### Auth0
+
+Check that your tenant supports back-channel logout. Auth0 documents it for Enterprise plans and requires a publicly reachable HTTPS endpoint. Open **Applications → your application → Settings → OpenID Connect Back-Channel Logout**. Set **Back-Channel Logout URI** to the URL above. See [Auth0 setup and availability](https://auth0.com/docs/authenticate/login/logout/back-channel-logout/configure-back-channel-logout).
+
+## Rollout and verification
+
+Run these checks with your provider before enabling `enforce`. Test the logout actions your users will take, including logout from another application that shares the provider session. Confirm that each action sends a notification with the matching `sid`.
+
+1. **Deploy with `off`.** Update every replica before enabling the feature. Older replicas can lose bindings when they rotate credentials.
+2. **Enable `record`.** Configure the provider URL, change the mode, and restart every replica. Sign in again through OpenID to create bindings.
+3. **Check session isolation.** Sign in to LibreChat using two separate provider sessions. End one at the provider. Confirm that the receiver returns 200 and that LibreChat denies renewal of that session. The other session must still work. An access token already issued may work until it expires.
+4. **Check recovery and failed delivery.** Confirm that the user can sign in again after the denial. In a test environment, send a duplicate valid notification and test a temporary storage failure. The duplicate should be harmless. The storage failure must return a server error.
+5. **Check each login path you use.** Cover LibreChat-issued refresh tokens, OpenID token reuse, and admin-panel login and refresh where enabled. When a check returns a temporary failure, confirm that the browser keeps its credentials and lets the user retry.
+6. **Enable `enforce`.** After the checks pass, change the mode and restart every replica. Tell users with older unbound sessions to expect a new login at their next restoration or renewal. Waiting in `record` does not bind those sessions through renewal alone.
+
+A 200 response confirms that LibreChat recorded the logout. Also check the denied renewal: the response alone does not prove that the user's credentials carry the matching binding.
+
+## Rollback
+
+Choose the mode based on which checks you need to relax:
+
+| Change | Result |
+| --- | --- |
+| `enforce` to `record` | Allows missing bindings or records. Still denies known revoked sessions. |
+| Either enabled mode to `off` | Disables provider-session checks and the logout receiver. |
+| Return to older LibreChat code | Removes logout enforcement. Older code ignores the optional binding fields. |
+
+Restart every replica after changing modes. Neither mode change clears stored revocations.
+
+Existing browser bindings survive renewal while `off`. Admin sessions created or rotated while `off` have no binding. They work in `record`, but require a new login in `enforce`.
+
+### How long records remain
+
+Each provider-session record has a stored expiry time, `expiresAt`. Login, renewal, and logout can extend it. Duplicate logout delivery keeps the earliest revocation time and never shortens retention. A logout that arrives before login completes also creates a revoked record to cover the pending callback.
+
+Time spent in `off` does not extend retention. Database expiry cleanup removes expired records. If a revocation record is gone, `record` can no longer deny the session based on it. `enforce` requires a new login when the record is missing. Retention therefore depends on the stored expiry time, not a fixed window after a mode change.
+
+## Troubleshooting
+
+| Result | What to check or do |
+| --- | --- |
+| Receiver returns 404 | The mode is `off`, or no OpenID client is available. Check the deployed version, provider setup, configuration, and restart. |
+| Receiver returns 400 | The request or token is invalid. Check the token requirements below. |
+| Receiver returns 413 or 429 | The body-size or request-rate limit was exceeded. Check the configured limits and how your proxy forwards the client IP. |
+| Receiver returns 503 | Validation, storage, configuration, or processing is temporarily unavailable. Check server logs and the provider's delivery status. |
+| Browser renewal returns `401 OPENID_SESSION_ENDED` | The session is revoked or conflicts with its stored identity. Under `enforce`, a missing binding or record also causes this response. The browser signs out; start a fresh login. |
+| `503 AUTH_SESSION_CHECK_UNAVAILABLE` | A check could not complete. Restore the unavailable dependency and retry. The browser keeps its credentials. It shows Retry during startup or a notification during an active session. Admin APIs return the code in `error_code`. |
+| Login reports `OPENID_SESSION_ID_MISSING` | `enforce` requires `sid` in the login ID token. Check the provider configuration. |
+
+Login callback failures redirect to the login page. The responses above describe renewal failures and receiver requests.
+
+### Logout token requirements
+
+LibreChat checks the signature and token claims before recording a logout. A claim is a named value in the token.
+
+| Token field | Requirement |
+| --- | --- |
+| Signature | Uses one of the configured asymmetric signing algorithms. |
+| `iss` and `aud` | Match the provider issuer and include the LibreChat client ID as an audience. |
+| `sid` | Contains a nonempty provider session ID. LibreChat records the logout for this ID, even if its login callback is still pending. Subject-only logout without `sid` is rejected. |
+| `iat` | States when the token was issued. It must be within the configured token age and clock tolerance. |
+| `jti` | Contains a nonempty token ID. |
+| `events` | Contains the back-channel logout event. |
+| `nonce` | Must be absent. |
+| `sub`, when supplied | Must match the subject already stored for that session, if one exists. |
+
+Check the provider's delivery status when no notification arrives. LibreChat cannot enforce a notification it never receives, and it does not poll the provider to recover missed notifications. Access tokens already issued remain valid until expiry.
