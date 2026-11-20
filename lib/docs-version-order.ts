@@ -51,3 +51,14 @@ export function compareDocsVersionsDescending(left: string, right: string): numb
 export function latestStableVersion(ids: readonly string[]): string | undefined {
   return [...ids].sort(compareDocsVersionsDescending).find((id) => !id.includes('-rc'))
 }
+
+/**
+ * A release candidate newer than the latest archived release: a preview of
+ * the next release that is still being tested, not frozen history.
+ */
+export function isUpcomingCandidate(id: string, latestRelease: string | undefined): boolean {
+  return (
+    id.includes('-rc') &&
+    (latestRelease === undefined || compareDocsVersionsDescending(id, latestRelease) < 0)
+  )
+}

@@ -13,6 +13,7 @@ import { LLMCopyButton, ViewOptions } from '@/components/page-actions'
 import { CredentialsGeneratorMDX } from '@/components/tools/CredentialsGeneratorMDX'
 import { YAMLValidatorMDX } from '@/components/tools/YAMLValidatorMDX'
 import { archivedDocsSource, archivedVersions, latestReleasedVersion } from '@/lib/docs-archive'
+import { isUpcomingCandidate } from '@/lib/docs-version-order'
 import { i18n, localizedDocsHref } from '@/lib/i18n'
 import { mdxComponents } from '@/lib/mdx-components'
 import { ogImageUrl } from '@/lib/og'
@@ -221,6 +222,7 @@ export async function renderArchivedDocsPage({
           version={version}
           currentHref={currentHref}
           latestRelease={version === latestReleasedVersion}
+          releaseCandidate={isUpcomingCandidate(version, latestReleasedVersion)}
         />
         <MDX components={localizedMdxComponents(i18n.defaultLanguage)} />
       </DocsBody>
