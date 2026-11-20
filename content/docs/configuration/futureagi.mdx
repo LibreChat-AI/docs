@@ -1,0 +1,304 @@
+---
+title: Future AGI Tracing
+icon: Activity
+description: Send LibreChat agent runs and backend spans to a Future AGI Observe project using the built-in Langfuse exporter and an OpenTelemetry Collector.
+---
+
+[Future AGI](https://docs.futureagi.com) is a platform to evaluate and observe AI applications. LibreChat can send its agent runs to a Future AGI Observe project without code changes: the [Langfuse exporter](/docs/configuration/langfuse) points at an OpenTelemetry Collector on the Docker Compose network, and the collector forwards the traces to Future AGI. The configuration on this page follows the [Future AGI LibreChat guide](https://docs.futureagi.com/docs/integrations/no-code/librechat), which also covers captured fields, privacy, volume filtering and troubleshooting.
+
+## How It Works
+
+LibreChat has two trace exports, and the collector accepts both:
+
+- **Agent runs** (model, token usage, tools, session, user) come from the Langfuse exporter, configured with `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL`.
+- **Backend spans** (HTTP, Express, MongoDB, reply stream timing) come from [OpenTelemetry tracing](/docs/configuration/logging#opentelemetry-tracing). They are optional.
+
+The collector sets the Observe project, maps the Langfuse span attributes to the ones Future AGI reads, and keeps prompts, replies, tool arguments and results out unless you opt in. It stores no keys: LibreChat sends the Future AGI keys to the collector, and the collector passes them on.
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+1. A LibreChat instance running with Docker Compose (see [Quick Start](/docs/quick_start))
+2. A Future AGI API key and secret key (see [Setup Observability](https://docs.futureagi.com/docs/quickstart/setup-observability))
+
+The Future AGI guide documents this setup with LibreChat v0.8.8 and OpenTelemetry Collector contrib 0.162.0.
+
+<Callout type="note" title="One Langfuse-style destination">
+  If LibreChat already sends traces to Langfuse with `LANGFUSE_PUBLIC_KEY`, this setup replaces
+  that destination. LibreChat sends agent runs to one Langfuse-style destination at a time.
+</Callout>
+
+## Setup
+
+### 1. Add the Collector Service
+
+Create a `docker-compose.override.yml` next to LibreChat's `docker-compose.yml`, or merge the service into your existing override file (see [Docker Compose Override](/docs/configuration/docker_override)). Set `FI_PROJECT_NAME` to the Observe project name you want. Future AGI creates the project on the first export if it does not exist yet. For a self-hosted Future AGI, set `FI_TRACES_URL` to your Future AGI collector's `/v1/traces` URL on port 4318.
+
+```yaml filename="docker-compose.override.yml"
+# Add the Future AGI collector to LibreChat's Docker Compose stack.
+# Copy next to LibreChat's docker-compose.yml as docker-compose.override.yml (or merge into yours),
+# and save the collector config from the next step next to it as futureagi-otelcol.yaml.
+services:
+  api:
+    depends_on:
+      - futureagi-otelcol
+
+  futureagi-otelcol:
+    image: otel/opentelemetry-collector-contrib:0.162.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    restart: always
+    volumes:
+      - ./futureagi-otelcol.yaml:/etc/otelcol/config.yaml:ro
+    environment:
+      # Hosted Future AGI. Self-hosted: your Future AGI collector's /v1/traces URL on port 4318
+      - FI_TRACES_URL=https://api.futureagi.com/tracer/v1/traces
+      - FI_PROJECT_NAME=librechat
+      # true sends prompts, replies, tool arguments and results and provider error text
+      - FI_CAPTURE_CONTENT=false
+    # No `ports:`. LibreChat reaches it on the Compose network; do not publish 4318 or 4319.
+```
+
+### 2. Add the Collector Config
+
+Save this file as `futureagi-otelcol.yaml` next to `docker-compose.override.yml`. Each part is commented.
+
+```yaml filename="futureagi-otelcol.yaml"
+# OpenTelemetry Collector (contrib) between LibreChat and Future AGI.
+#
+# LibreChat has two trace exports and this collector takes both:
+#   - agent runs (model, tokens, tools, session, user) from LibreChat's built-in Langfuse exporter,
+#     which posts OTLP/HTTP to ${LANGFUSE_BASE_URL}/api/public/otel/v1/traces  -> port 4319
+#   - backend spans (HTTP, Express, MongoDB, SSE stream) from OTEL_TRACING_ENABLED -> port 4318
+# The agent-run export cannot set the Future AGI `project_name` and posts to a URL path Future AGI does
+# not serve. This collector:
+#   1. accepts both on a private network,
+#   2. sets the Observe project,
+#   3. maps the Langfuse span shape (langfuse.observation.*) to the attributes Future AGI reads,
+#   4. keeps prompts, replies, tool arguments and results, and error text OUT unless you opt in,
+#   5. drops client IP addresses, user agents and host or process details,
+#   6. forwards uncompressed OTLP to Future AGI with the caller's own credentials.
+# It stores no Future AGI keys: LibreChat sends them (LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY as Basic
+# auth, OTEL_EXPORTER_OTLP_HEADERS as X-Api-Key / X-Secret-Key) and the collector passes them on.
+#
+# Environment:
+#   FI_TRACES_URL       Future AGI traces URL, for example https://api.futureagi.com/tracer/v1/traces
+#                       or a self-hosted collector's /v1/traces URL on port 4318
+#   FI_PROJECT_NAME     Observe project every LibreChat trace goes to (created on first export)
+#   FI_CAPTURE_CONTENT  optional, default false. `true` lets prompts, replies, tool arguments and results
+#                       and provider error text through to Future AGI.
+
+extensions:
+  # Pass the caller's Future AGI credentials through to Future AGI, one credential shape per route.
+  # Agent runs: LANGFUSE_PUBLIC_KEY:LANGFUSE_SECRET_KEY as HTTP Basic, which Future AGI accepts.
+  headers_setter/basic:
+    headers:
+      - action: upsert
+        key: Authorization
+        from_context: authorization
+  # Backend spans: the X-Api-Key and X-Secret-Key headers from OTEL_EXPORTER_OTLP_HEADERS.
+  headers_setter/keys:
+    headers:
+      - action: upsert
+        key: X-Api-Key
+        from_context: x-api-key
+      - action: upsert
+        key: X-Secret-Key
+        from_context: x-secret-key
+
+receivers:
+  # Keep both ports on a private network (the LibreChat Docker network); do not publish them.
+  otlp/langfuse:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4319
+        traces_url_path: /api/public/otel/v1/traces
+        include_metadata: true
+  otlp/backend:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        include_metadata: true
+
+processors:
+  resource/future_agi:
+    attributes:
+      - key: project_name
+        value: ${env:FI_PROJECT_NAME}
+        action: upsert
+      - key: project_type
+        value: observe
+        action: upsert
+      # Host, OS, process and container details (host name, user name, file paths). LibreChat's backend
+      # export adds them unless OTEL_NODE_RESOURCE_DETECTORS=env is set; this is the safety net.
+      - pattern: ^(host|os|process|container)\..*
+        action: delete
+
+  transform/langfuse:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          # Span types in Observe.
+          - set(attributes["fi.span.kind"], "LLM") where attributes["langfuse.observation.type"] == "generation"
+          - set(attributes["fi.span.kind"], "AGENT") where attributes["langfuse.observation.type"] == "agent"
+          - set(attributes["fi.span.kind"], "TOOL") where attributes["langfuse.observation.type"] == "tool" or name == "tool-dispatch"
+          - set(attributes["fi.span.kind"], "RETRIEVER") where attributes["langfuse.observation.type"] == "retriever"
+          - set(attributes["fi.span.kind"], "EMBEDDING") where attributes["langfuse.observation.type"] == "embedding"
+          - set(attributes["fi.span.kind"], "CHAIN") where attributes["fi.span.kind"] == nil and attributes["langfuse.observation.type"] != nil
+          # Model and provider.
+          - set(attributes["gen_ai.request.model"], attributes["langfuse.observation.model.name"]) where attributes["langfuse.observation.model.name"] != nil
+          - set(attributes["llm.model_name"], attributes["langfuse.observation.model.name"]) where attributes["langfuse.observation.model.name"] != nil
+          - set(attributes["gen_ai.system"], attributes["langfuse.observation.metadata.ls_provider"]) where attributes["langfuse.observation.metadata.ls_provider"] != nil
+          # Token usage: Langfuse sends one JSON string, {"input":..,"output":..,"total":..}.
+          - merge_maps(cache, ParseJSON(attributes["langfuse.observation.usage_details"]), "upsert") where attributes["langfuse.observation.usage_details"] != nil
+          - set(attributes["gen_ai.usage.input_tokens"], cache["input"]) where cache["input"] != nil
+          - set(attributes["gen_ai.usage.input_tokens"], cache["input_tokens"]) where cache["input"] == nil and cache["input_tokens"] != nil
+          - set(attributes["gen_ai.usage.output_tokens"], cache["output"]) where cache["output"] != nil
+          - set(attributes["gen_ai.usage.output_tokens"], cache["output_tokens"]) where cache["output"] == nil and cache["output_tokens"] != nil
+          - set(attributes["llm.token_count.total"], cache["total"]) where cache["total"] != nil
+          # Tool name of a tool dispatch (the first call when the model asked for several at once).
+          - set(cache["calls"], ParseJSON(attributes["langfuse.observation.input"])) where name == "tool-dispatch" and attributes["langfuse.observation.input"] != nil
+          - set(attributes["tool.name"], cache["calls"][0]["name"]) where name == "tool-dispatch" and cache["calls"] != nil
+          - set(attributes["gen_ai.tool.name"], attributes["tool.name"]) where attributes["tool.name"] != nil
+          # Errors: Langfuse marks a failed observation with level ERROR and leaves the span status unset.
+          - set(status.code, STATUS_CODE_ERROR) where attributes["langfuse.observation.level"] == "ERROR"
+          # Content ON (FI_CAPTURE_CONTENT=true): fill the Input and Output panes and keep the error text.
+          - set(attributes["input.value"], attributes["langfuse.observation.input"]) where attributes["langfuse.observation.input"] != nil and "${env:FI_CAPTURE_CONTENT:-false}" == "true"
+          - set(attributes["output.value"], attributes["langfuse.observation.output"]) where attributes["langfuse.observation.output"] != nil and "${env:FI_CAPTURE_CONTENT:-false}" == "true"
+          - set(status.message, attributes["langfuse.observation.status_message"]) where attributes["langfuse.observation.status_message"] != nil and "${env:FI_CAPTURE_CONTENT:-false}" == "true"
+          # Content OFF (the default): prompts, replies, tool arguments and results, error text, and any
+          # user profile field a LibreChat admin chose to add as trace metadata (name, email, username).
+          - set(status.message, "error") where status.code == STATUS_CODE_ERROR and "${env:FI_CAPTURE_CONTENT:-false}" != "true"
+          - delete_matching_keys(attributes, "^langfuse\\.(observation|trace)\\.(input|output|status_message)$") where "${env:FI_CAPTURE_CONTENT:-false}" != "true"
+          - delete_matching_keys(attributes, "^langfuse\\.(observation|trace)\\.metadata\\.librechat\\.user\\..*") where "${env:FI_CAPTURE_CONTENT:-false}" != "true"
+      - context: spanevent
+        statements:
+          - delete_key(attributes, "exception.message") where "${env:FI_CAPTURE_CONTENT:-false}" != "true"
+          - delete_key(attributes, "exception.stacktrace") where "${env:FI_CAPTURE_CONTENT:-false}" != "true"
+
+  transform/backend:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          # Same user id the agent-run spans carry (LibreChat's internal user id, not an email).
+          - set(attributes["user.id"], attributes["enduser.id"]) where attributes["enduser.id"] != nil
+          # Who called LibreChat and which host name they used: client IP, user agent, LibreChat's own
+          # host name and address. Outgoing calls keep the provider or database they went to.
+          - delete_matching_keys(attributes, "^(net\\.peer\\.ip|net\\.sock\\.peer\\..*|network\\.peer\\..*|client\\..*|http\\.client_ip|http\\.user_agent|user_agent\\..*|http\\.host|net\\.host\\..*)$")
+          - delete_key(attributes, "net.peer.name") where kind == SPAN_KIND_SERVER
+          - delete_key(attributes, "net.peer.port") where kind == SPAN_KIND_SERVER
+          - delete_key(attributes, "server.address") where kind == SPAN_KIND_SERVER
+          - delete_key(attributes, "server.port") where kind == SPAN_KIND_SERVER
+      - context: spanevent
+        statements:
+          # LibreChat already withholds error details here; keep it that way whatever the version.
+          - delete_key(attributes, "exception.message")
+          - delete_key(attributes, "exception.stacktrace")
+
+  # Volume: database calls that belong to no request, that is LibreChat's startup work and its background
+  # pollers (for example mongoose.AgentTriggerDelivery.find every few seconds). They are trace roots, so
+  # dropping them cannot orphan any other span. Remove this processor from the pipeline to keep them.
+  # Do not drop Express middleware spans the same way: database spans of a request can be their children.
+  filter/background:
+    error_mode: ignore
+    traces:
+      span:
+        - IsMatch(name, "^mongoose\\.") and IsRootSpan()
+
+  # Keep each caller's credentials with its own spans (headers_setter reads them from this metadata).
+  batch:
+    send_batch_size: 256
+    timeout: 2s
+    metadata_keys: [authorization, x-api-key, x-secret-key]
+
+exporters:
+  otlp_http/future_agi_agent_runs:
+    traces_endpoint: ${env:FI_TRACES_URL}
+    encoding: proto
+    compression: none          # optional: Future AGI cloud and self-hosted v1.56.0+ also accept gzip
+    auth:
+      authenticator: headers_setter/basic
+  otlp_http/future_agi_backend:
+    traces_endpoint: ${env:FI_TRACES_URL}
+    encoding: proto
+    compression: none
+    auth:
+      authenticator: headers_setter/keys
+
+service:
+  extensions: [headers_setter/basic, headers_setter/keys]
+  telemetry:
+    metrics:
+      level: none              # no self-metrics endpoint
+    logs:
+      level: warn
+  pipelines:
+    traces/langfuse:
+      receivers: [otlp/langfuse]
+      processors: [resource/future_agi, transform/langfuse, batch]
+      exporters: [otlp_http/future_agi_agent_runs]
+    traces/backend:
+      receivers: [otlp/backend]
+      processors: [filter/background, resource/future_agi, transform/backend, batch]
+      exporters: [otlp_http/future_agi_backend]
+```
+
+### 3. Point LibreChat at the Collector
+
+Add this block to LibreChat's `.env` and restart LibreChat (`docker compose up -d`). Use the same Future AGI API key and secret key in both places: put the API key in `LANGFUSE_PUBLIC_KEY` and after `X-Api-Key=`, and the secret key in `LANGFUSE_SECRET_KEY` and after `X-Secret-Key=`.
+
+```sh filename=".env"
+# Future AGI tracing for LibreChat. Add to LibreChat's .env and restart LibreChat.
+# Collector: the `futureagi-otelcol` service from docker-compose.override.yml.
+
+# Agent runs: model, token usage, tools, session and user. LibreChat's built-in Langfuse exporter,
+# pointed at the collector. Use your Future AGI API key and secret key here.
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
+LANGFUSE_BASE_URL=http://futureagi-otelcol:4319
+# Any label. Set it so LibreChat skips a Langfuse project lookup the collector cannot answer.
+LANGFUSE_PROJECT_ID=future-agi
+
+# Backend spans (optional): HTTP routes, MongoDB, SSE stream timing. No prompts or replies.
+OTEL_TRACING_ENABLED=true
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://futureagi-otelcol:4318/v1/traces
+OTEL_EXPORTER_OTLP_HEADERS=X-Api-Key=,X-Secret-Key=
+OTEL_SERVICE_NAME=librechat
+# Only resource attributes from the environment: no host name, user name or file paths.
+OTEL_NODE_RESOURCE_DETECTORS=env
+# Future AGI takes traces only. Without these the Node SDK starts an OTLP metrics exporter by default.
+OTEL_METRICS_EXPORTER=none
+OTEL_LOGS_EXPORTER=none
+```
+
+- The agent-run lines are what most teams want. The backend lines are optional; leave them out if you only want agent runs.
+- `LANGFUSE_PROJECT_ID` can be any value. Without it, LibreChat asks the collector for a Langfuse project at start-up, gets a 404 and logs `[langfuse] Could not resolve central project identity`. Nothing else breaks.
+- `OTEL_NODE_RESOURCE_DETECTORS=env` stops the Node SDK from adding the host name, the OS user, the process command line and file paths to every span. The collector removes them too, as a safety net.
+- `OTEL_METRICS_EXPORTER=none` and `OTEL_LOGS_EXPORTER=none`: with tracing on, the Node SDK otherwise starts an OTLP metrics exporter as well, and Future AGI takes traces only. Do not set `OTEL_LOGS_ENABLED`.
+
+### 4. Send a Chat and Open Observe
+
+Send a message in LibreChat, ideally one that uses a tool. LibreChat batches agent runs for about five seconds and the collector batches for two seconds, then the traces appear in your Observe project.
+
+One chat turn produces two separate traces: the agent run and the backend request. Every agent-run span carries `session.id` (the LibreChat conversation ID, so a conversation is one session in Observe) and `user.id` (LibreChat's internal user ID, not an email).
+
+Prompts, replies, tool arguments and results stay out of Future AGI by default. To send them, set `FI_CAPTURE_CONTENT=true` on the collector service.
+
+### Token Usage from Custom Endpoints
+
+For custom OpenAI-compatible endpoints, LibreChat turns streamed token usage off unless you ask for it, so their agent runs can arrive without token counts. If the endpoint supports `stream_options.include_usage` (the OpenAI API does), add `streamUsage: true` under that endpoint's [`addParams`](/docs/configuration/librechat_yaml/object_structure/custom_endpoint#addparams) in `librechat.yaml` and restart LibreChat:
+
+```yaml filename="librechat.yaml"
+# Inside the existing endpoints.custom entry; keep its other settings.
+addParams:
+  streamUsage: true
+```
+
+## Learn More
+
+- [Future AGI LibreChat guide](https://docs.futureagi.com/docs/integrations/no-code/librechat): captured fields, privacy, volume filtering, troubleshooting and limits
+- [Langfuse Tracing](/docs/configuration/langfuse): the LibreChat exporter this setup uses
+- [Logging System](/docs/configuration/logging#opentelemetry-tracing): LibreChat's OpenTelemetry tracing settings
