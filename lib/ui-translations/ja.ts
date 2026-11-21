@@ -132,6 +132,12 @@ export const ja: UIStrings = {
         prereqs: ['Railway アカウント', 'GitHub アカウント'],
       },
     },
+    tryDemo: {
+      title: 'まずは試してみたいですか？',
+      description:
+        'chat.librechat.ai の無料ホスト型デモでチャットできます。インストール不要です。評価専用であり、本番環境での利用は想定していません。',
+      newTab: '（新しいタブで開きます）',
+    },
     afterInstallationHeading: 'インストール後',
     connectProviders: {
       title: 'AI プロバイダーを接続',

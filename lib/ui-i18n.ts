@@ -156,6 +156,12 @@ const en = {
         prereqs: ['Railway account', 'GitHub account'],
       },
     },
+    tryDemo: {
+      title: 'Just want to try it?',
+      description:
+        'Chat in the free hosted demo at chat.librechat.ai. No installation needed. For evaluation only, not for production use.',
+      newTab: '(opens in a new tab)',
+    },
     afterInstallationHeading: 'After Installation',
     connectProviders: {
       title: 'Connect AI Providers',

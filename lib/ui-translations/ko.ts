@@ -128,6 +128,12 @@ export const ko: UIStrings = {
         prereqs: ['Railway 계정', 'GitHub 계정'],
       },
     },
+    tryDemo: {
+      title: '일단 사용해 보고 싶으신가요?',
+      description:
+        'chat.librechat.ai의 무료 호스팅 데모에서 채팅해 보세요. 설치가 필요 없습니다. 평가용으로만 제공되며 프로덕션용이 아닙니다.',
+      newTab: '(새 탭에서 열림)',
+    },
     afterInstallationHeading: '설치 후',
     connectProviders: {
       title: 'AI 제공자 연결',

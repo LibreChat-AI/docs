@@ -127,6 +127,12 @@ export const tr: UIStrings = {
         prereqs: ['Railway hesabı', 'GitHub hesabı'],
       },
     },
+    tryDemo: {
+      title: 'Sadece denemek mi istiyorsunuz?',
+      description:
+        'chat.librechat.ai adresindeki ücretsiz barındırılan demoda sohbet edin. Kurulum gerekmez. Yalnızca değerlendirme amaçlıdır, üretim kullanımı için değildir.',
+      newTab: '(yeni sekmede açılır)',
+    },
     afterInstallationHeading: 'Kurulumdan sonra',
     connectProviders: {
       title: 'AI sağlayıcılarını bağla',

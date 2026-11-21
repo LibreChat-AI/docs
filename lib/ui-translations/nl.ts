@@ -128,6 +128,12 @@ export const nl: UIStrings = {
         prereqs: ['Railway-account', 'GitHub-account'],
       },
     },
+    tryDemo: {
+      title: 'Wil je het gewoon proberen?',
+      description:
+        'Chat in de gratis gehoste demo op chat.librechat.ai. Geen installatie nodig. Alleen voor evaluatie, niet voor productiegebruik.',
+      newTab: '(opent in een nieuw tabblad)',
+    },
     afterInstallationHeading: 'Na installatie',
     connectProviders: {
       title: 'AI-providers verbinden',

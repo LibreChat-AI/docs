@@ -128,6 +128,12 @@ export const vi: UIStrings = {
         prereqs: ['Tài khoản Railway', 'Tài khoản GitHub'],
       },
     },
+    tryDemo: {
+      title: 'Chỉ muốn dùng thử?',
+      description:
+        'Trò chuyện trên bản demo được lưu trữ miễn phí tại chat.librechat.ai. Không cần cài đặt. Chỉ dùng để đánh giá, không dành cho môi trường production.',
+      newTab: '(mở trong tab mới)',
+    },
     afterInstallationHeading: 'Sau khi cài đặt',
     connectProviders: {
       title: 'Kết nối nhà cung cấp AI',
