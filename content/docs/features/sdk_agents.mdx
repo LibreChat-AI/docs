@@ -1,0 +1,94 @@
+---
+title: SDK Agents
+icon: Code
+description: Register trusted SDK runtimes for saved LibreChat Agents, locally or on a separate worker.
+---
+
+SDK-backed Agents are **experimental**. They keep a saved LibreChat identity and normal Agent access checks, but dispatch execution through a registered SDK runtime instead of the native graph. This is an operator integration, separate from [BYOM Code workspaces](/docs/features/code_interpreter).
+
+## Register a Runtime
+
+Configure `endpoints.agents.sdkRuntimes` in deployment YAML. Registration IDs must start with a letter or digit, contain only letters, digits, dots, underscores, and hyphens, and be at most 128 characters. Each entry selects either a trusted local `module` or a `remote` worker, never both. `roles` defaults to `['ADMIN']`; users also need access to the saved Agent.
+
+```yaml filename="librechat.yaml"
+endpoints:
+  agents:
+    sdkRuntimes:
+      local-agent:
+        module: './runtimes/my-agent.cjs'
+        roles: ['ADMIN']
+      remote-agent:
+        remote:
+          url: 'wss://runtime.example.com/agents'
+          secret: '${SDK_RUNTIME_SECRET}'
+        roles: ['ADMIN']
+```
+
+`SDK_RUNTIME_SECRET` is an example environment-variable name, not a built-in setting. Its resolved value must be at least 32 characters; unresolved references fail closed. Use `wss://`; plaintext `ws://` is accepted only for loopback. URLs cannot include credentials, query strings, or fragments. The worker must independently authorize the signed runtime, Agent, run, tenant, and user identity.
+
+Local modules are trusted server code loaded relative to the server working directory. They must export `protocolVersion: 1` and a compatible `createRun` factory. Restart after replacing a module. Remote workers own their provider credentials and model configuration. See the maintained [SDK contract](https://github.com/LibreChat-AI/LibreChat/blob/main/docs/sdk/agents.md) and [runtime examples](https://github.com/LibreChat-AI/LibreChat/tree/main/examples/sdk-runtime) for factory and server implementation.
+
+Registrations are deployment-owned: stored Base, role, group, and user profiles cannot introduce or replace executable runtime registrations.
+
+## Bind a Saved Agent
+
+Use the [Agent Management API](/docs/features/agents_api#agent-management-api) to set the binding on an Agent the caller may edit:
+
+```json
+{
+  "sdk_runtime": { "id": "remote-agent", "protocolVersion": 1 }
+}
+```
+
+The binding's registration must exist and permit the caller's role. Omitting `sdk_runtime` in an update preserves it; sending `null` removes it. A bound Agent can then be selected in normal chat. Native chains and configured Subagent compositions containing these bindings are rejected.
+
+## Remote Limits
+
+All numeric values below are integers. Timeouts are milliseconds and size limits are bytes, under `endpoints.agents.sdkRuntimes.<id>.remote`.
+
+| Key | Default | Range |
+| --- | --- | --- |
+| `connectTimeoutMs` | 10000 | 100–120000 |
+| `rpcTimeoutMs` | 60000 | 100–600000 |
+| `maxRunMs` | 600000 | 1000–86400000 |
+| `maxFrameBytes` | 1048576 | 1024–16777216 |
+| `maxBufferedBytes` | 4194304 | 1024–67108864 |
+| `recovery.maxDisconnectMs` | 15000 | 100–120000 |
+| `recovery.retryDelayMs` | 250 | 10–10000 |
+| `recovery.maxJournalBytes` | 67108864 | 1024–268435456 |
+
+Host-tool calls use the `maxRunMs` budget; control, checkpoint, and notification calls use `rpcTimeoutMs`. Final snapshots are transferred in ordered chunks bounded in total by `maxBufferedBytes`; individual frames still obey `maxFrameBytes`. A terminal receipt is accepted only after the complete snapshot arrives.
+
+## Connection Recovery
+
+Recovery is off when `remote.recovery` is omitted. Enable `recovery: {}` on the host and configure a compatible worker with `createRemoteSdkServer({ recovery: { journal, maxDisconnectMs } })`. The recovery window must be shorter than `rpcTimeoutMs`.
+
+Recovery reattaches to the same execution after a transport interruption. A live run requires the same worker process; a worker restart can replay a committed terminal result, but does not restart an in-flight graph. Host-process adoption and live migration between workers are unsupported.
+
+Failed reattachment attempts do not abort or release the existing execution. This includes a socket that closes before its WebSocket upgrade completes; a later authorized reconnect can still recover within the configured recovery window. This is not permission to restart the graph or extend the recovery deadline.
+
+For a worker pool, give each worker a stable recovery `ownerId` and configure `remote.recovery.routes` on the host as an allowlist mapping owner IDs to direct `wss://` URLs. Initial traffic may use a pool URL, but reconnects go to the authenticated session owner. Each route must identify one worker rather than another balanced pool; missing or mismatched identities fail closed. Single-worker deployments can omit both settings. The example launcher reads `SDK_RUNTIME_OWNER_ID`; this is an example integration variable, not a built-in LibreChat requirement.
+
+Worker journals may retain sensitive data after acknowledgment. Operators must configure retention and Redis security/durability and purge journals with `journal.purge({ sessionId, scope })` when appropriate. LibreChat account or conversation deletion does not automatically purge a worker's journal. Example retention values are not library defaults.
+
+## Host Tools and Compatibility
+
+Use matching host and worker bridge versions: every remote run requires transport capability 2, and host tools additionally require `hostTools: 2` and compatible SDK 4.2.4+ support. Incompatible versions reject before constructing a worker graph; the saved Agent's `protocolVersion` remains 1. The factory must install `input.hostTools.toolDefinitions` and preserve the supplied execution handlers. Calls go back through the host's authorized tool path, keeping credentials and configuration local and retaining applicable approval controls. Unbound tool references, changed identities, and child-Agent execution subjects are rejected. Caller-executed function tools are unsupported remotely.
+
+Stop is cooperative. Invocation cancellation reaches the host immediately, but execution ownership remains held until the handler's actual asynchronous cleanup drains. Noncooperative tool code cannot be forcibly stopped or truthfully reported as drained. Session refreshes complete before a tool reply when the connection and deadline still permit delivery.
+
+Approvals require a supplied host checkpointer; durable Mongo checkpoints are needed for continuation across restarts. Builder model settings, files/artifacts, steering, billing, and tracing are not automatically inherited by a custom runtime. Saved-Agent remote dispatch still rejects active model-bound content/PII protection; the programmatic provider-text adapter below does not remove that guard. Review the SDK compatibility matrix before using a native Agent feature with a custom runtime.
+
+## Host Provider-Text Protection
+
+Programmatic integrations can pass `hostServices.providerText` to `createRemoteSdkRun`, using the binding returned by `createHostProviderTextService` from `@librechat/agents`. Build it from authenticated identity and a trusted host policy, with an explicit inspection deadline and a shared `ProviderTextAdmission` quota retained across runs and reconnects. This is a host integration API, not a YAML switch or automatic protection for saved-Agent runtimes.
+
+Both host and worker require SDK 4.2.7 and bridge capability `providerText: 1`. The worker factory must preserve the supplied `config.providerTextProtection` on its SDK graph; incompatible workers or missing policy bindings fail before model execution. The worker buffers each complete model attempt for host inspection, and only approved canonical text reaches normal events and the terminal snapshot. This does not protect model calls made outside the SDK or supply input/model filtering, builder model selection, or host provider credentials.
+
+Candidate inspection requests are encrypted before entering transport queues and recovery journals; the host retains a per-execution private key only in memory. Journals retain ciphertext and public keys, not raw candidate text or the host private key. Signed execution identity and TLS remain required. Ciphertext still needs retention, deletion, and access controls; unrelated event and checkpoint retention is unchanged. Same-host recovery can replay a request or approved reply without repeating inspection, but host-process adoption remains unsupported.
+
+Existing frame and buffering limits also apply to encrypted envelopes; encoding overhead reduces the candidate size that fits. Oversized attempts fail closed. Cancelled or timed-out inspections retain admission and memory charges until the underlying work settles; quotas are process-local. Do not replace the quota object to bypass stuck work. See the [SDK integration contract](https://github.com/LibreChat-AI/LibreChat/blob/dev/docs/sdk/agents.md#host-provider-text-service) for setup and rollout limitations.
+
+## Rollout and Rollback
+
+Upgrade every API replica before registering bindings. Before downgrading to servers without binding support, disable runtime registrations, clear affected bindings with `sdk_runtime: null`, and drain dependent runs. Older servers may otherwise treat a bound Agent as a native Agent.
