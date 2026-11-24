@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react'
 import {
+  AIStupidLevelIcon,
   AnthropicIcon,
   AnyscaleIcon,
   ApipieIcon,
@@ -258,6 +259,7 @@ const icons: Record<string, ReactElement> = {
   UserPlus: <UserPlus />,
   Settings2: <Settings2 />,
   // Brand icons (Simple Icons paths, local components)
+  AIStupidLevel: <AIStupidLevelIcon />,
   Anthropic: <AnthropicIcon />,
   Anyscale: <AnyscaleIcon />,
   Apipie: <ApipieIcon />,
