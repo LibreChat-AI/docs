@@ -89,9 +89,22 @@ endpoints:
 
 Browse all compatible providers in the [AI Endpoints](/docs/configuration/librechat_yaml/ai_endpoints) section. For the full field reference, see [Custom Endpoint Object Structure](/docs/configuration/librechat_yaml/object_structure/custom_endpoint).
 
+With `models.fetch: true`, `models.default` can be empty or omitted. Successful discovery replaces the defaults, including when it returns an empty list. If discovery fails, LibreChat uses the configured defaults. Without defaults, the final list is empty. Providers with empty final lists are hidden from selection.
+
+For a provider that supports discovery, this `models` block uses only discovered models:
+
+```yaml filename="endpoints / custom / models"
+models:
+  fetch: true
+```
+
+Without discovery (`fetch: false` or omitted), list at least one model under `models.default`.
+
 <Callout type="note" title="Anthropic-Compatible Endpoints">
 
 Use `provider: "anthropic"` only for endpoints that speak the native Anthropic Messages API. For OpenAI-compatible gateways that merely expose Anthropic models, omit `provider` and use the regular OpenAI-compatible custom endpoint shape.
+
+Keep explicit `models.default` entries for native Anthropic custom endpoints, as shown above.
 
 </Callout>
 
@@ -100,7 +113,7 @@ Use `provider: "anthropic"` only for endpoints that speak the native Anthropic M
 When configuring API keys in custom endpoints, you have three options:
 
 1. **Environment variable** (recommended): `apiKey: '${OPENROUTER_KEY}'` reads one shared key from `.env`, so the key needs a matching entry in [Step 3](#step-3-set-environment-variables).
-2. **User provided**: `apiKey: 'user_provided'` asks each user for their own key in the LibreChat UI instead of reading one from `.env`. No `.env` entry is needed for the key itself. LibreChat stores each user's key encrypted and prompts for it the first time they select the endpoint.
+2. **User provided**: `apiKey: 'user_provided'` lets each user supply their own key in the LibreChat UI. No `.env` entry is needed for the key itself. LibreChat stores each user's key encrypted. Users can set or replace it through **Settings → Data & Privacy → API keys → Provider API keys → Manage**. This works even when empty discovery hides the provider or `interface.modelSelect` is `false`. The settings list still follows the configured provider scope and the user's permissions.
 3. **Direct value** (not recommended): `apiKey: 'sk-your-actual-key'` hardcodes the key in `librechat.yaml` in plain text.
 
 `baseURL` accepts `user_provided` in the same way, which lets each user point the endpoint at their own gateway.
@@ -120,7 +133,7 @@ OPENROUTER_KEY=your_openrouter_api_key
 ANTHROPIC_API_KEY=your_anthropic_api_key
 ```
 
-Every `${VARIABLE_NAME}` in `librechat.yaml` needs a matching entry. A missing one does not drop the endpoint: it still appears in the selector, and the problem only surfaces once someone sends a message through it. An unresolved `apiKey` fails with `Missing API Key for <endpoint>`, and an unresolved `baseURL` with `Missing Base URL for <endpoint>`. An unresolved `headers` value behaves differently: it is sent upstream as the literal text `${VARIABLE_NAME}`, so the failure comes back from the provider rather than from LibreChat.
+Every `${VARIABLE_NAME}` in `librechat.yaml` needs a matching entry. A missing one does not remove the endpoint configuration. It can cause discovery to fail, so the provider is hidden if there are no fallback models. If a user sends a message, an unresolved `apiKey` fails with `Missing API Key for <endpoint>`, and an unresolved `baseURL` with `Missing Base URL for <endpoint>`. An unresolved `headers` value behaves differently: it is sent upstream as the literal text `${VARIABLE_NAME}`, so the failure comes back from the provider rather than from LibreChat.
 
 ## Step 4. Restart and Verify
 
@@ -145,7 +158,7 @@ npm run backend
   </Tabs.Tab>
 </Tabs>
 
-Open LibreChat in your browser. Your custom endpoints should appear in the endpoint selector dropdown.
+Open LibreChat in your browser. Custom endpoints with nonempty final model lists should appear in the endpoint selector, if your interface settings allow them.
 
 <Callout type="warning" title="Not Seeing Your Endpoint? An Incomplete Block Is Dropped Silently">
 
@@ -157,12 +170,13 @@ docker compose logs api
 
 **But do not stop there.** LibreChat keeps a custom endpoint only if `name`, `baseURL`, `apiKey`, and `models` are all present. An entry missing any of them is removed from the endpoint list with **no error and no log line at all**: the provider simply never appears, and the logs look clean.
 
-A `models` block is different: `models.default` must list at least one model even when `fetch: true` is set. An empty or missing `default` is a validation error that stops startup.
+A `models` block is different: with `fetch: true`, `models.default` can be empty or omitted. Otherwise, it must list at least one model. An empty or missing `default` without discovery is a validation error that stops startup.
 
 So when an endpoint is missing, check the block itself before hunting through logs:
 
 - Is every one of `name`, `baseURL`, `apiKey`, `models` spelled correctly? A single typo drops the whole entry.
-- Does `models.default` list at least one model (required even with `fetch: true`)?
+- Does `models` enable `fetch: true` or list at least one default model?
+- Did discovery return an empty list, or fail with no configured defaults? Either leaves the provider hidden. See [chat recovery and cache timing](/docs/quick_start/first_chat#if-no-model-answers).
 - Is the block indented **inside** the `endpoints.custom` list, rather than at the top level?
 - Is the `name` unique? A second endpoint with the same name (case-insensitively) silently replaces the first.
 
