@@ -50,6 +50,7 @@ import {
   TrueFoundryIcon,
   VLLMIcon,
   VultrIcon,
+  WeflayrIcon,
   WolframIcon,
   XAIIcon,
 } from '../components/icons/providers'
@@ -308,6 +309,7 @@ const icons: Record<string, ReactElement> = {
   TrueFoundry: <TrueFoundryIcon />,
   VLLM: <VLLMIcon />,
   Vultr: <VultrIcon />,
+  Weflayr: <WeflayrIcon />,
   Wolfram: <WolframIcon />,
   XAI: <XAIIcon />,
 }
