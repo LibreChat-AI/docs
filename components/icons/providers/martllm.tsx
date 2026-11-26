@@ -1,7 +1,7 @@
 import React from 'react'
 
-// Mark from https://uberllm.dev/logo.svg
-export default function UberLLMIcon({ className, ...props }: React.SVGProps<SVGSVGElement>) {
+// Mark from https://martllm.com/logo.svg
+export default function MartLLMIcon({ className, ...props }: React.SVGProps<SVGSVGElement>) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
