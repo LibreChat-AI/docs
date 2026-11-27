@@ -179,7 +179,11 @@ Only pages listed in the `pages` array appear in the sidebar, in the order given
 `/v0.8.5/docs/quick_start`. Version ids match `v<major>.<minor>[.<patch>|.x][-rc<n>]`; the
 switcher orders them newest-first, with a release ranked above its own candidates.
 
-Publish one with:
+Snapshots are published automatically: the daily `Sync docs archive` workflow runs
+`pnpm docs:archive:sync`, which archives every LibreChat release and release candidate newer than
+the newest snapshot, each from the last docs commit before that release was published, and opens a
+PR. A release's candidate snapshots stay until the final release is archived, then that PR removes
+them. To publish one by hand:
 
 ```bash
 pnpm docs:archive v0.8.5 --ref=<commit-or-tag>
@@ -205,8 +209,9 @@ Two limits are worth knowing:
   (`next/image`, `@/components/...`) from the docs they snapshot, which on-demand compilation
   cannot resolve, so the collection is bundled like the live docs. `pnpm build` therefore runs with
   `--max-old-space-size=8192`. The bundle also has a hard ceiling: with 17 archived versions webpack
-  fails with `RangeError: Invalid string length`, so only final releases are archived and a
-  release's candidate snapshots are deleted once it ships (see `content/docs-archive/README.md`).
+  fails with `RangeError: Invalid string length`, so only final releases stay archived: a
+  release's candidate snapshots are kept while it is in testing and deleted once it ships (see
+  `content/docs-archive/README.md`).
 
 ## Available Scripts
 
@@ -228,6 +233,7 @@ Two limits are worth knowing:
 | `pnpm web-bot-auth:keygen`  | Generate an Ed25519 Web Bot Auth private JWK                 |
 | `pnpm translate`            | Generate translations from the English source                |
 | `pnpm docs:archive`         | Snapshot the English docs into `content/docs-archive`        |
+| `pnpm docs:archive:sync`    | Archive new LibreChat releases, drop superseded candidates   |
 
 The config version is sourced from the newest `content/changelog/config_v*.mdx` entry, whose
 `version:` frontmatter must match its filename. Never hand-edit the `version:` line in a docs
