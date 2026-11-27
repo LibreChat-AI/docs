@@ -49,6 +49,11 @@ const nonPermanentRedirects = [
   ['/docs/configuration/azure', '/docs/configuration/librechat_yaml/ai_endpoints/azure'],
   ['/docs/user_guides/artifacts', '/docs/features/artifacts'],
   ['/docs/user_guides/fork', '/docs/features/fork'],
+  ['/docs/configuration/channel_gateway', '/docs/features/agent_channels/deployment'],
+  [
+    '/docs/configuration/channel_gateway_reference',
+    '/docs/features/agent_channels/deployment/reference',
+  ],
   ['/docs/user_guides/authentication', '/docs/features/authentication'],
   ['/docs/user_guides/mod_system', '/docs/features/mod_system'],
   ['/docs/user_guides/search', '/docs/features/search'],

@@ -1,0 +1,90 @@
+---
+title: Kubernetes and Helm
+description: Deploy the channel gateway with the LibreChat Helm chart, for shared organization workspaces or a manual connection.
+icon: Ship
+---
+
+The LibreChat Helm chart can deploy the channel gateway next to LibreChat, in shared mode for organization workspaces or in single mode for one manual connection. Read the [prerequisites](/docs/features/agent_channels/deployment#prerequisites) first: both modes need a transaction-capable database, and the chart's default standalone MongoDB cannot run channels. See [Helm configuration](/docs/local/helm_chart) for the application's own environment, credentials, and database setup.
+
+Enabling the gateway requires an explicit `image.tag` selecting a published LibreChat release containing Channels (v0.8.9 or later); the chart refuses to silently use its older application-version default. The gateway image tag defaults to that same selected release. Earlier releases have no gateway image. A custom `channelGateway.image.tag` is available for deliberate image overrides.
+
+## Shared workspace deployment
+
+Select a release containing organization workspaces and provide an existing Secret with `CHANNEL_SERVICE_TOKEN`. The service token is shared with LibreChat. No Slack app credentials belong in this Secret: organization admins register their apps in the UI after deployment. Existing explicit API environment entries take precedence over the generated service-token reference.
+
+The example below selects a replica set for a **fresh bundled MongoDB**. For an existing standalone database, plan and complete its data migration before changing topology; a Helm value does not migrate existing data. For an external transaction-capable database, supply its connection through your normal application configuration and disable the unused bundled database with `mongodb.enabled: false`. Shared mode refuses to render when LibreChat would use a bundled standalone MongoDB; existing external connection overrides remain supported.
+
+```yaml filename="shared-workspace-values.yaml"
+image:
+  tag: v0.8.9
+mongodb:
+  architecture: replicaset
+channelGateway:
+  enabled: true
+  mode: shared
+  replicaCount: 2
+  existingSecretName: gateway-service-credentials
+  ingress:
+    enabled: true
+    host: slack.example.com
+    tls:
+      - hosts: [slack.example.com]
+        secretName: slack-gateway-tls
+```
+
+Set public HTTPS `DOMAIN_SERVER` and `DOMAIN_CLIENT` through the application's normal environment settings. Shared mode supplies the app enablement flag and derives `SLACK_GATEWAY_URL` from its ingress host unless explicitly configured in `librechat.configEnv`. It omits connection IDs, tenant IDs and the Socket Mode token. Shared replicas use rolling updates and the existing durable claims; `mode: single` requires one replica and uses replacement updates. After deployment, organization admins register their apps and configure the displayed Slack URLs through Account settings, then use Agent Builder; no per-workspace Helm values or pods are required.
+
+## Manual connection deployment
+
+First upgrade the application to a published release containing Channels with the gateway disabled. Configure the [manual channel policy](/docs/features/agent_channels/deployment#manual-connection) in the `librechat.yaml` you supply to the chart (`librechat.configYamlContent` or `librechat.existingConfigYaml`), then create and activate the connection in the Agent builder. Enable the gateway after obtaining its connection ID:
+
+```yaml filename="channel-values.yaml"
+image:
+  tag: v0.8.9
+channelGateway:
+  enabled: true
+  channelId: <connection-ID-from-Agent-builder>
+  tenantId: "_"
+  # Defaults to global.librechat.existingSecretName.
+  existingSecretName: librechat-credentials-env
+```
+
+To set the name used in gateway messages, configure `channelGateway.appTitle`. It defaults to `librechat.configEnv.APP_TITLE`, then `LibreChat`. Set it explicitly if the API obtains `APP_TITLE` through a Secret or `global.librechat.env`.
+
+The gateway title must:
+
+- Be nonempty after trimming.
+- Have at most 40 UTF-16 characters.
+- Contain no `<`, `>`, `|` or control characters.
+
+If the application name does not fit, choose a shorter gateway title. Helm rejects incompatible inherited titles before deployment; the application can keep its existing longer name.
+
+For manual Socket Mode, the existing Secret must contain `CHANNEL_SERVICE_TOKEN` matching LibreChat's server configuration and `SLACK_APP_TOKEN` for the matching app. By default, the application's existing Secret supplies the same service token to LibreChat. The gateway references only these individual keys, not all provider/database credentials. If you choose a separate gateway Secret, keep its service token identical to the API's. Rotate through your normal secret-management process and restart the API and gateway after rotation; changing an existing Secret does not automatically restart pods.
+
+The gateway derives the API URL from the chart's internal Service and port. Override `channelGateway.internalUrl` for a deliberately different service boundary. Configure gateway resources and annotations through `channelGateway`. Pod identity, `enableServiceLinks`, DNS, host aliases, image pull secrets, node selectors, tolerations and affinity follow the chart's shared platform settings. The configured ServiceAccount is reused while the gateway keeps its Kubernetes API token automount disabled. Manual single mode installs one gateway with replacement updates, so an upgrade may briefly interrupt Slack connectivity; it does not create another channel or Slack app.
+
+For webhook transport, set the server policy to `webhook`, configure its public HTTPS gateway URL and clear `channelGateway.slackAppTokenKey`. Enable the dedicated gateway Ingress using your installed ingress controller and a trusted TLS certificate:
+
+```yaml filename="channel-values.yaml"
+channelGateway:
+  slackAppTokenKey: ""
+  ingress:
+    enabled: true
+    host: gateway.example.com
+    # Empty inherits ingress.className; set this for a different controller.
+    className: nginx
+    annotations: {}
+    tls:
+      - hosts: [gateway.example.com]
+        secretName: gateway-tls
+```
+
+Combine these settings with the enabled gateway and explicit application release above. Set the server's `gatewayUrl` to `https://gateway.example.com`, with no path prefix. The new Ingress routes only `/slack/events` and `/slack/interactions` to the gateway Service on port 8080; its health and metrics routes remain private. It can share the application's hostname: the more specific Slack paths route to the gateway while the existing application Ingress keeps its own backend. Gateway annotations are separate so application rewrite rules cannot silently change callback paths. The gateway Ingress requires Kubernetes 1.19+.
+
+The chart does not install an ingress controller or issue a TLS certificate. Configure TLS through the example Secret, your normal certificate controller/annotations, or an existing HTTPS termination layer. Slack needs a publicly trusted HTTPS endpoint. If you manage a separate external Ingress or need a custom base-path rewrite, leave `channelGateway.ingress.enabled: false` and route the callback paths to the rendered gateway Service yourself; do not add them as paths on the main application Ingress, whose backend is LibreChat. Socket Mode needs no public ingress.
+
+By default, the gateway runs without an automatically mounted Kubernetes API token, as a non-root user with a read-only filesystem and dropped capabilities. The chart's global pod/container security contexts are honored for platform-specific overrides. Gateway version labels follow its selected image tag. `/livez` drives liveness and `/readyz` drives readiness. Startup before the API or channel is available fails closed; Kubernetes retries the process, and it becomes ready after validating the shared app policy or its bound active connection and transport.
+
+After the Helm upgrade, check the gateway Deployment, pod events, logs and readiness. Missing Secret keys block pod startup; incorrect credentials or channel bindings prevent readiness.
+
+Once it is ready, [connect the Slack workspace](/docs/features/agent_channels/slack/organization_setup) (shared mode), [assign an agent](/docs/features/agent_channels/slack/assign_agents), and [link your account](/docs/features/agent_channels/slack/using_slack#link-your-account). Send the bot a new request to test the complete setup.

@@ -21,6 +21,7 @@ import { CompatibilityMatrix } from '@/components/CompatibilityMatrix'
 import { ComponentPreview } from '@/components/component-preview'
 import { AnalyticsArchitecture } from '@/components/blog/AnalyticsArchitecture'
 import { SiteStats } from '@/components/blog/SiteStats'
+import { FlowDiagram, FlowNode } from '@/components/diagram/FlowDiagram'
 import type { ReactNode } from 'react'
 
 function mapCalloutType(type?: string): 'info' | 'warn' | 'error' {
@@ -262,6 +263,8 @@ export const mdxComponents = {
   CompatibilityMatrix,
   AnalyticsArchitecture,
   SiteStats,
+  FlowDiagram,
+  FlowNode,
   Frame,
   ThemeImage,
   Video,
