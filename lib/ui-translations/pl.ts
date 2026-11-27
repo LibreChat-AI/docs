@@ -129,6 +129,12 @@ export const pl: UIStrings = {
         prereqs: ['Konto Railway', 'Konto GitHub'],
       },
     },
+    tryDemo: {
+      title: 'Chcesz tylko wypróbować?',
+      description:
+        'Rozmawiaj w bezpłatnym hostowanym demo na chat.librechat.ai. Bez instalacji. Tylko do oceny, nie do użytku produkcyjnego.',
+      newTab: '(otwiera się w nowej karcie)',
+    },
     afterInstallationHeading: 'Po instalacji',
     connectProviders: {
       title: 'Połącz dostawców AI',

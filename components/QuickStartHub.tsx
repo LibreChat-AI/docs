@@ -9,6 +9,7 @@ import {
   MessageSquare,
   Sparkles,
   BookOpen,
+  ExternalLink,
 } from 'lucide-react'
 import type { ComponentProps } from 'react'
 import { localizedDocsHref } from '@/lib/i18n'
@@ -75,11 +76,39 @@ const resources: { icon: typeof FileText; key: ResourceKey; href: string }[] = [
   { icon: MessageSquare, key: 'discord', href: 'https://discord.librechat.ai' },
 ]
 
+const DEMO_URL = 'https://chat.librechat.ai/'
+
 export function QuickStartHub({ lang }: { lang?: string }) {
   const ui = getUI(lang)
   const t = ui.quickStartHub
   return (
     <nav className="not-prose space-y-8" aria-label={t.ariaLabel}>
+      {/* Hosted demo, for visitors who want to chat without installing */}
+      <Link
+        href={DEMO_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="group flex items-center gap-4 rounded-xl border border-fd-border px-5 py-4 transition-colors hover:border-fd-foreground/20 hover:bg-fd-accent"
+      >
+        <div className="shrink-0 rounded-md bg-fd-accent p-2 transition-colors group-hover:bg-fd-background">
+          <MessageSquare
+            className="size-4 text-fd-muted-foreground transition-colors group-hover:text-fd-foreground"
+            aria-hidden="true"
+          />
+        </div>
+        <div className="min-w-0 flex-1">
+          <span className="text-sm font-medium text-fd-foreground">
+            {t.tryDemo.title}
+            <span className="sr-only"> {t.tryDemo.newTab}</span>
+          </span>
+          <p className="text-xs text-fd-muted-foreground">{t.tryDemo.description}</p>
+        </div>
+        <ExternalLink
+          className="size-4 shrink-0 text-fd-muted-foreground/40 transition-colors group-hover:text-fd-foreground"
+          aria-hidden="true"
+        />
+      </Link>
+
       {/* Installation methods */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {methods.map((method) => {

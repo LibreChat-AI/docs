@@ -129,6 +129,12 @@ export const id: UIStrings = {
         prereqs: ['Akun Railway', 'Akun GitHub'],
       },
     },
+    tryDemo: {
+      title: 'Hanya ingin mencoba?',
+      description:
+        'Mengobrol di demo hosting gratis di chat.librechat.ai. Tanpa instalasi. Hanya untuk evaluasi, bukan untuk penggunaan produksi.',
+      newTab: '(terbuka di tab baru)',
+    },
     afterInstallationHeading: 'Setelah instalasi',
     connectProviders: {
       title: 'Hubungkan penyedia AI',

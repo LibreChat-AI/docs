@@ -124,6 +124,12 @@ export const zh: UIStrings = {
         prereqs: ['Railway 账户', 'GitHub 账户'],
       },
     },
+    tryDemo: {
+      title: '只想先试试？',
+      description:
+        '在 chat.librechat.ai 的免费托管演示中直接聊天，无需安装。仅供评估使用，不适用于生产环境。',
+      newTab: '（在新标签页中打开）',
+    },
     afterInstallationHeading: '安装之后',
     connectProviders: {
       title: '连接 AI 服务商',
