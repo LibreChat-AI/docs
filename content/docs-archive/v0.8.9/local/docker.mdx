@@ -1,0 +1,231 @@
+---
+title: Docker
+icon: Docker
+description: How to install LibreChat locally with Docker, verify your setup, and configure custom endpoints
+---
+
+For most scenarios, Docker Compose is the recommended installation method due to its simplicity, ease of use, and reliability.
+
+## Prerequisites
+
+- [`Git`](https://git-scm.com/downloads)
+- [`Docker`](https://www.docker.com/products/docker-desktop/)
+
+Docker Desktop is recommended for most users. For remote server installations, see the [Ubuntu Docker Deployment Guide](/v0.8.9/docs/remote/docker_linux).
+
+### System Requirements
+
+LibreChat does not run AI models itself; it sends requests to the providers you configure, so it does not need a GPU.
+
+LibreChat's containers need at least 1 GiB of RAM and 1 vCPU, the same [minimum](/v0.8.9/docs/remote#minimum-requirements) as on a server. The default Docker Compose file starts MongoDB, Meilisearch (conversation search), and the RAG API with a PostgreSQL/pgvector database (file search) alongside LibreChat. It also defines the admin panel, which only starts once `ADMIN_PANEL_SESSION_SECRET` is set in `.env` (see [Admin Panel](/v0.8.9/docs/features/admin_panel)). With everything running, make at least 2 GB of memory available to Docker for smoother operation.
+
+If you use Docker Desktop, it runs containers inside its own virtual machine, so your computer also has to meet Docker Desktop's requirements. At the time of writing, those are at least 4 GB of system RAM on [macOS](https://docs.docker.com/desktop/setup/install/mac-install/) and [Linux](https://docs.docker.com/desktop/setup/install/linux/), and 8 GB on [Windows](https://docs.docker.com/desktop/setup/install/windows-install/), plus hardware virtualization. Check the linked pages for the current requirements. The memory available to containers is set in Docker Desktop's [resource settings](https://docs.docker.com/desktop/settings-and-maintenance/settings/) on macOS, Linux, and Windows with Hyper-V; with the Windows WSL 2 backend, it is set on the WSL 2 virtual machine instead (see [Docker's WSL guidance](https://docs.docker.com/desktop/features/wsl/best-practices/)). Docker Engine installed directly on Linux runs containers on the host and has no separate virtual machine.
+
+If you connect LibreChat to models running on the same machine, such as [Ollama](/v0.8.9/docs/configuration/librechat_yaml/ai_endpoints/ollama), size the hardware for the model you choose. That model runtime needs far more memory, and often a GPU, than LibreChat does.
+
+<Callout type="warn" title="CPUs without AVX support">
+
+The MongoDB image used by LibreChat's default Docker Compose setup requires a CPU with AVX instructions. On older x86 CPUs without AVX (and on some virtual machines that do not expose AVX to the guest), MongoDB crashes on startup.
+
+**Fix:** Create a `docker-compose.override.yml` to use an older MongoDB image that does not require AVX:
+
+```yaml filename="docker-compose.override.yml"
+services:
+  mongodb:
+    image: mongo:4.4.18
+```
+
+See the [Docker Override guide](/v0.8.9/docs/configuration/docker_override) for more details.
+
+</Callout>
+
+## Installation
+
+<Steps>
+  <Step>
+
+### Clone the Repository
+
+```bash
+git clone https://github.com/LibreChat-AI/LibreChat.git
+cd LibreChat
+```
+
+  </Step>
+  <Step>
+
+### Create Your Environment File
+
+```bash
+cp .env.example .env
+```
+
+The default `.env` file works out of the box for a basic setup. For in-depth configuration, see the [.env reference](/v0.8.9/docs/configuration/dotenv).
+
+<Callout type="info" title="Windows">
+
+On Windows, use `copy .env.example .env` if `cp` is not available.
+
+</Callout>
+
+  </Step>
+  <Step>
+
+### Start LibreChat
+
+```bash
+docker compose up -d
+```
+
+The first launch pulls Docker images and may take a few minutes. Subsequent starts are much faster.
+
+  </Step>
+  <Step>
+
+### Verify and Log In
+
+Open your browser and visit [http://localhost:3080](http://localhost:3080). You should see the LibreChat login page.
+
+<Callout type="info" title="First Account = Admin in Single-Tenant Deployments">
+
+In an unscoped single-tenant deployment, the first account you register becomes the admin account. There are no default credentials; you create your own username and password during registration. Tenant-scoped deployments do not auto-promote the first user in each tenant; provision tenant administrators through a trusted administrative flow.
+
+</Callout>
+
+Click **Sign up** to create your account, then follow [Your First Chat](/v0.8.9/docs/quick_start/first_chat) to add a model API key and send your first message.
+
+  </Step>
+</Steps>
+
+## Mounting librechat.yaml
+
+To use a custom `librechat.yaml` configuration file with Docker, you need to mount it as a volume so the container can access it.
+
+Copy the example override file and edit it:
+
+```bash
+cp docker-compose.override.yml.example docker-compose.override.yml
+```
+
+Ensure the librechat.yaml volume mount is uncommented in `docker-compose.override.yml`:
+
+```yaml filename="docker-compose.override.yml"
+services:
+  api:
+    volumes:
+      - type: bind
+        source: ./librechat.yaml
+        target: /app/librechat.yaml
+```
+
+Restart for changes to take effect:
+
+```bash
+docker compose down && docker compose up -d
+```
+
+For full setup instructions including creating the file from scratch, see the [librechat.yaml guide](/v0.8.9/docs/configuration/librechat_yaml). For more override options, see the [Docker override guide](/v0.8.9/docs/configuration/docker_override).
+
+## Updating LibreChat
+
+The following commands will fetch the latest LibreChat project changes, including any necessary changes to the docker compose files, as well as the latest prebuilt images.
+
+<Callout type="info" title="Permissions">
+
+You may need to prefix commands with `sudo` according to your environment permissions.
+
+</Callout>
+
+<Callout type="info" title="Update script">
+
+The repository's `npm run update:docker` script rebuilds locally built images but does not pull the prebuilt images that the default `docker-compose.yml` uses, so follow the manual steps below to update a default install.
+
+</Callout>
+
+```bash filename="Stop the running container(s)"
+docker compose down
+```
+
+```bash filename="Remove all existing docker images"
+# Linux/Mac
+docker images -a | grep "librechat" | awk '{print $3}' | xargs docker rmi
+
+# Windows (PowerShell)
+docker images -a --filter "reference=registry.librechat.ai/librechat-ai/librechat*" --format "{{.ID}}" | ForEach-Object { docker rmi $_ }
+docker images -a --filter "reference=ghcr.io/librechat-ai/librechat*" --format "{{.ID}}" | ForEach-Object { docker rmi $_ }
+```
+
+```bash filename="Pull latest project changes"
+git pull
+```
+
+```bash filename="Pull the latest LibreChat image"
+docker compose pull
+```
+
+```bash filename="Start LibreChat"
+docker compose up
+```
+
+## Troubleshooting
+
+### Port Already in Use
+
+If you see an error like `bind: address already in use` for port 3080, another application is using that port.
+
+Either stop the conflicting application, or change the port LibreChat uses. The default `docker-compose.yml` publishes `"${PORT}:${PORT}"`, and ports added in an override file are appended to that list instead of replacing it, so an override alone does not free port 3080.
+
+The simplest fix is to set `PORT` in your `.env` file, which changes both the port LibreChat listens on and the published port:
+
+```bash filename=".env"
+PORT=3081
+```
+
+Alternatively, with Docker Compose 2.24.4 or later, replace the published port in `docker-compose.override.yml` with the `!override` tag (the container keeps listening on 3080):
+
+```yaml filename="docker-compose.override.yml"
+services:
+  api:
+    ports: !override
+      - "3081:3080"
+```
+
+Restart with `docker compose down && docker compose up -d`, then visit `http://localhost:3081` instead.
+
+### Container Crashes on Startup
+
+If containers exit immediately after starting, check the logs:
+
+```bash
+docker compose logs api
+```
+
+Common causes:
+
+- Invalid `librechat.yaml` syntax: validate with the [YAML Validator](/toolkit/yaml_checker)
+- Missing `.env` file -- ensure `.env` exists in the project root
+- Docker not running -- ensure Docker Desktop is open and running
+
+### Missing Environment Variables
+
+If features are not working as expected, check that required environment variables are set in your `.env` file.
+
+```bash
+docker compose exec api env | grep -i "your_variable"
+```
+
+See the [.env reference](/v0.8.9/docs/configuration/dotenv) for all available variables and their defaults.
+
+## Next Steps
+
+<Cards num={3}>
+  <Cards.Card title="Custom Endpoints" href="/v0.8.9/docs/quick_start/custom_endpoints" arrow>
+    Add OpenRouter, Ollama, and other AI providers
+  </Cards.Card>
+  <Cards.Card title="Configuration Overview" href="/v0.8.9/docs/configuration" arrow>
+    Understand how LibreChat's config files work together
+  </Cards.Card>
+  <Cards.Card title="Authentication Setup" href="/v0.8.9/docs/configuration/authentication" arrow>
+    Configure OAuth, LDAP, and other login methods
+  </Cards.Card>
+</Cards>

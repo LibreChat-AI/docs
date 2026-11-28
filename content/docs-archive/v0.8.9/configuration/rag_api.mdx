@@ -1,0 +1,223 @@
+---
+title: RAG API
+icon: Brain
+description: Configure Retrieval-Augmented Generation (RAG) API for document indexing and retrieval using Langchain and FastAPI. This API integrates with LibreChat to provide context-aware responses based on user-uploaded files.
+---
+
+The RAG API indexes user-uploaded files and retrieves relevant passages to augment your prompts, giving LibreChat context-aware responses grounded in your documents. It runs as a separate FastAPI service backed by a PostgreSQL + pgvector database.
+
+<Callout type="info" title="What users see">
+[Chat with Files](/v0.8.9/docs/features/rag_api) covers uploading for file search, reusing files, and file search in agents. This page covers setup and configuration.
+</Callout>
+
+<Callout type="info" title="Do I need both MongoDB and PostgreSQL?">
+MongoDB is required: LibreChat stores users, conversations, messages, and settings in it. PostgreSQL is optional: only the RAG API uses it, to store document embeddings, and LibreChat itself never connects to it. The default Docker Compose files start both because they include the RAG API (and its `vectordb` service) out of the box. For a [local npm install](/v0.8.9/docs/local/npm), you only need PostgreSQL if you set up the RAG API; without `RAG_API_URL`, LibreChat runs normally but file search uploads are unavailable.
+</Callout>
+
+## Availability
+
+File search through the RAG API works in [Agents](/v0.8.9/docs/features/agents) and in regular chats on every endpoint except Assistants. OpenAI Assistants use OpenAI's own file storage and retrieval instead, and files uploaded there cannot be attached elsewhere.
+
+Users only see **Upload for File Search** when the `file_search` agent capability is enabled (it is by default) and their role has the File Search permission ([`interface.fileSearch`](/v0.8.9/docs/configuration/librechat_yaml/object_structure/interface#filesearch)).
+
+## Docker Quick Start
+
+For Docker, the RAG API is already wired up in both the default `docker-compose.yml` and `deploy-compose.yml` files, including the `RAG_API_URL` value. You only need to make sure you are running the latest image and compose files. See the [Updating LibreChat guide for Docker](/v0.8.9/docs/local/docker#updating-librechat) if you are unsure how to update.
+
+<Callout type="warning" title="Shared .env file">
+With the default Docker setup, the `.env` file is shared between LibreChat and the RAG API. Define the RAG variables in that same file. The full list lives in the [RAG API README](https://github.com/LibreChat-AI/rag-api/blob/main/README.md).
+</Callout>
+
+The default `docker-compose.yml` and `deploy-compose.yml` files set `RAG_API_URL=http://rag_api:${RAG_PORT:-8000}` on the `api` service. Environment variables set on the service take precedence over the `.env` file, so you do not need to add `RAG_API_URL` to `.env` for the bundled setup, and setting it there has no effect. To point a Docker deployment at an external RAG API, override the value on the `api` service instead, for example for a RAG API running on the Docker host:
+
+```yaml filename="docker-compose.override.yml"
+services:
+  api:
+    environment:
+      - RAG_API_URL=http://host.docker.internal:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+```
+
+The `extra_hosts` entry is needed on Linux, where Docker does not define `host.docker.internal` itself.
+
+Compose loads `docker-compose.override.yml` automatically only with the default `docker-compose.yml`. With `deploy-compose.yml`, pass both files: `docker compose -f deploy-compose.yml -f docker-compose.override.yml up -d`.
+
+Outside Docker, set `RAG_API_URL` in your `.env` file.
+
+Pick the embeddings provider you want to use.
+
+<Tabs items={['OpenAI (default)', 'Hugging Face', 'Ollama']}>
+<Tabs.Tab>
+
+**Use RAG with OpenAI embeddings.** This is the default configuration.
+
+<Steps>
+<Step>
+
+**Provide an OpenAI API key (if needed).** If your OpenAI API key is set to `user_provided`, add a key for embeddings. Skip this step if you already supply the OpenAI key in your `.env` file.
+
+```bash filename=".env"
+RAG_OPENAI_API_KEY=sk-your-openai-api-key-example
+```
+
+</Step>
+<Step>
+
+**Start the containers.**
+
+```bash
+docker compose up -d
+```
+
+</Step>
+</Steps>
+
+</Tabs.Tab>
+<Tabs.Tab>
+
+**Use RAG with Hugging Face embeddings.**
+
+<Steps>
+<Step>
+
+**Configure the provider.** Add the following to your `.env` file:
+
+```bash filename=".env"
+EMBEDDINGS_PROVIDER=huggingface
+HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxx
+```
+
+</Step>
+<Step>
+
+**Switch to the full RAG API image.** Update your `docker-compose.override.yml` file:
+
+```yaml filename="docker-compose.override.yml"
+services:
+  rag_api:
+    image: registry.librechat.ai/librechat-ai/librechat-rag-api-dev:latest
+```
+
+</Step>
+<Step>
+
+**Start the containers.**
+
+```bash
+docker compose up -d
+```
+
+</Step>
+</Steps>
+
+</Tabs.Tab>
+<Tabs.Tab>
+
+**Use RAG with Ollama local embeddings.**
+
+<Callout type="info" title="Prerequisite">
+You need Ollama and the `nomic-embed-text` embedding model. Pull it with `ollama pull nomic-embed-text`.
+</Callout>
+
+<Steps>
+<Step>
+
+**Configure the provider.** Add the following to your `.env` file:
+
+```bash filename=".env"
+EMBEDDINGS_PROVIDER=ollama
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+EMBEDDINGS_MODEL=nomic-embed-text
+```
+
+</Step>
+<Step>
+
+**Switch to the full RAG API image.** Update your `docker-compose.override.yml` file:
+
+```yaml filename="docker-compose.override.yml"
+services:
+  rag_api:
+    image: registry.librechat.ai/librechat-ai/librechat-rag-api-dev:latest
+    # If running on Linux
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+```
+
+</Step>
+<Step>
+
+**Start the containers.**
+
+```bash
+docker compose up -d
+```
+
+</Step>
+</Steps>
+
+</Tabs.Tab>
+</Tabs>
+
+### Lite vs. full image
+
+Docker uses the "lite" image of the RAG API by default (`registry.librechat.ai/librechat-ai/librechat-rag-api-dev-lite:latest`), which only supports remote embeddings from OpenAI or a remote HuggingFace/Ollama service you have configured.
+
+For local embeddings, switch the image in the compose file to the full build, `registry.librechat.ai/librechat-ai/librechat-rag-api-dev:latest`. Make this change in your [Docker Compose Override File](/v0.8.9/docs/configuration/docker_override). See `docker-compose.override.yml.example` at the root of the project for an example.
+
+If you want a compose file that includes only the PostgreSQL + pgvector database and the Python API, see `rag.yml` at the root of the project.
+
+### Database storage
+
+The default compose files store the pgvector/PostgreSQL data in the Docker-managed `pgdata2` volume. This is intentional: the database files don't need to be edited directly from the host, and a managed volume avoids common ownership and permission problems. User-facing, editable files (uploads, logs, images, MongoDB data, and NGINX config) are bind-mounted to project folders where direct host access is useful.
+
+## Local Setup
+
+A non-container setup is more hands-on. Follow the instructions in the [RAG API repo](https://github.com/LibreChat-AI/rag-api/).
+
+Set `RAG_API_URL` in your LibreChat `.env` file to wherever the API is reachable from your setup. This differs from the bundled Docker setup, where the value is already set on the `api` service in the default `docker-compose.yml` and `deploy-compose.yml` files.
+
+## Configuration
+
+Set RAG API options through environment variables in an `.env` file accessible to the API. Most are optional, aside from the credentials and paths required by your chosen provider. In the default setup, only `RAG_OPENAI_API_KEY` is required.
+
+### Environment Variables
+
+<OptionTable
+  options={[
+    ['RAG_API_URL', 'string', 'URL of the RAG API service. The default Docker compose files set it on the api service, which takes precedence over .env, so override it there with docker-compose.override.yml. Outside Docker, set it in .env.', 'RAG_API_URL=http://host.docker.internal:8000'],
+    ['RAG_OPENAI_API_KEY', 'string', 'OpenAI API key for embeddings. Overrides OPENAI_API_KEY for RAG.', '# RAG_OPENAI_API_KEY=sk-your-key'],
+    ['RAG_OPENAI_BASEURL', 'string', 'Custom OpenAI base URL for RAG embeddings.', '# RAG_OPENAI_BASEURL='],
+    ['RAG_USE_FULL_CONTEXT', 'boolean', 'Fetch entire file context instead of top 4 results. Default: false.', '# RAG_USE_FULL_CONTEXT=true'],
+    ['EMBEDDINGS_PROVIDER', 'string', 'Embeddings provider: openai, azure, huggingface, huggingfacetei, or ollama. Default: openai.', '# EMBEDDINGS_PROVIDER=openai'],
+    ['EMBEDDINGS_MODEL', 'string', 'Embeddings model to use. Default depends on provider.', '# EMBEDDINGS_MODEL=text-embedding-3-small'],
+    ['RAG_PORT', 'number', 'Port where RAG API runs. Default: 8000.', '# RAG_PORT=8000'],
+    ['RAG_HOST', 'string', 'Hostname for RAG API. Default: 0.0.0.0.', '# RAG_HOST=0.0.0.0'],
+    ['COLLECTION_NAME', 'string', 'Vector store collection name. Default: testcollection.', '# COLLECTION_NAME=testcollection'],
+    ['CHUNK_SIZE', 'number', 'Size of text chunks. Default: 1500.', '# CHUNK_SIZE=1500'],
+    ['CHUNK_OVERLAP', 'number', 'Overlap between chunks. Default: 100.', '# CHUNK_OVERLAP=100'],
+    ['OLLAMA_BASE_URL', 'string', 'Ollama base URL when using Ollama embeddings.', '# OLLAMA_BASE_URL=http://host.docker.internal:11434'],
+  ]}
+/>
+
+<Callout type="info" title="Credential precedence">
+`OPENAI_API_KEY` works for RAG embeddings, but `RAG_OPENAI_API_KEY` overrides it to avoid credential conflicts.
+</Callout>
+
+For the complete list of variables and their descriptions, see the [RAG API repo](https://github.com/LibreChat-AI/rag-api/).
+
+## Usage
+
+Once the RAG API is reachable, there is nothing else to switch on in LibreChat. Users upload with **Upload for File Search**, and the model queries the index through the `file_search` tool when a question calls for it. If `RAG_API_URL` is not set or the service is down, those uploads fail; LibreChat logs a warning at startup when it cannot reach the RAG API health check. See [Chat with Files](/v0.8.9/docs/features/rag_api) for the user side.
+
+## Troubleshooting
+
+If you run into issues setting up or using the RAG API:
+
+- Confirm all required environment variables are set correctly in your `.env` file.
+- Make sure the vector database is configured and accessible.
+- Verify that the OpenAI API key or other provider credentials are valid.
+- Check both the LibreChat and RAG API logs for errors or warnings.
+
+If the problem persists, refer to the RAG API documentation or ask the LibreChat community on GitHub Discussions or Discord.
