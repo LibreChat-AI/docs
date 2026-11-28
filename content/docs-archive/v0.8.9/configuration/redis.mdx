@@ -1,0 +1,454 @@
+---
+title: Redis
+icon: Redis
+description: Setting up Redis for caching, session storage, and horizontal scaling in LibreChat
+---
+
+This guide covers how to configure Redis for caching and session storage in LibreChat. Redis provides significant performance improvements and is **required for horizontal scaling**: if you're running multiple LibreChat instances behind a load balancer, Redis ensures consistent state across all instances.
+
+## Table of Contents
+
+- [Basic Setup](#basic-setup)
+- [Connection Types](#connection-types)
+- [Security Configuration](#security-configuration)
+- [Advanced Options](#advanced-options)
+- [Replica Failover Recovery](#replica-failover-recovery)
+- [Health Checks](#health-checks)
+- [Performance Tuning](#performance-tuning)
+- [Advanced Connection Tuning](#advanced-connection-tuning)
+- [Configuration Examples](#configuration-examples)
+- [Resumable Streams](#resumable-streams)
+- [Generation Protocol Compatibility](#generation-protocol-compatibility)
+- [Stream Delta Coalescing](#stream-delta-coalescing)
+- [MCP Catalog Coordination](#mcp-catalog-coordination)
+
+## Basic Setup
+
+### Enable Redis
+
+To enable Redis in LibreChat, set the following environment variable in your `.env` file:
+
+```bash
+USE_REDIS=true
+```
+
+**Important**: When `USE_REDIS=true`, you must also provide a `REDIS_URI`. The application will throw an error if Redis is enabled without a connection URI.
+
+## Connection Types
+
+### Single Redis Instance
+
+For a standard single Redis server setup:
+
+```bash
+# Local Redis instance
+REDIS_URI=redis://127.0.0.1:6379
+
+# Remote Redis instance
+REDIS_URI=redis://your-redis-host:6379
+```
+
+### Redis Cluster
+
+For Redis cluster deployments with multiple nodes:
+
+```bash
+# Multiple Redis cluster nodes
+REDIS_URI=redis://127.0.0.1:7001,redis://127.0.0.1:7002,redis://127.0.0.1:7003
+```
+
+The application automatically detects cluster mode when multiple URIs are provided.
+
+If your redis cluster only has a single URI, you can use the `USE_REDIS_CLUSTER` environment variable to enable cluster mode:
+
+```bash
+# Redis cluster with single URI
+REDIS_URI=redis://127.0.0.1:7001
+USE_REDIS_CLUSTER=true
+```
+
+### Single-Endpoint Managed Redis Services
+
+Some managed Redis services, including AWS ElastiCache Serverless and Redis Enterprise Cloud on AWS, expose a single connection endpoint while sharding keys internally. In that setup, keep LibreChat in single-node connection mode, but enable cluster-safe deletes if cache clears fail with `CROSSSLOT Keys in request don't hash to the same slot`.
+
+```bash
+USE_REDIS=true
+REDIS_URI=rediss://your-managed-redis-endpoint:6379
+USE_REDIS_CLUSTER=false
+REDIS_CLUSTER_SAFE_DELETE=true
+```
+
+`REDIS_CLUSTER_SAFE_DELETE=true` makes LibreChat delete matching cache keys one at a time instead of sending multi-key `DEL` commands. This avoids `CROSSSLOT` errors without changing how LibreChat connects to Redis.
+
+Use `USE_REDIS_CLUSTER=true` only when LibreChat should create a Redis Cluster client. For single-endpoint managed services, `REDIS_CLUSTER_SAFE_DELETE=true` is the safer option.
+
+### Redis with TLS/SSL
+
+For secure Redis connections:
+
+```bash
+# Redis with TLS encryption
+REDIS_URI=rediss://127.0.0.1:6380
+
+# Path to CA certificate for TLS verification
+REDIS_CA=/path/to/ca-cert.pem
+```
+
+## Security Configuration
+
+### Authentication
+
+Configure Redis authentication credentials:
+
+```bash
+# Method 1: Include credentials in URI
+# With both username and password
+REDIS_URI=redis://myuser:mypassword@127.0.0.1:6379
+
+
+# Method 2: Separate environment variables
+REDIS_URI=redis://127.0.0.1:6379
+REDIS_USERNAME=your_redis_username
+REDIS_PASSWORD=your_redis_password
+```
+
+**Note**: Credentials embedded in `REDIS_URI` take precedence. `REDIS_USERNAME` and `REDIS_PASSWORD` are only used as a fallback when the URI has no username or password.
+
+### TLS Configuration
+
+For encrypted connections:
+
+```bash
+# Enable TLS with rediss:// protocol
+REDIS_URI=rediss://your-redis-host:6380
+
+# Provide CA certificate for verification
+REDIS_CA=/path/to/your/ca-certificate.pem
+```
+
+### TLS with Elasticache
+
+Elasticache may need to use an alternate dnsLookup for TLS connections. see "Special Note: Aws Elasticache Clusters with TLS" on this webpage: https://www.npmjs.com/package/ioredis
+
+```bash
+# Enable redis alternate dnsLookup
+REDIS_USE_ALTERNATIVE_DNS_LOOKUP=true
+```
+
+## Advanced Options
+
+### Key Prefixing
+
+Redis key prefixing prevents cross-deployment contamination by isolating cache data between different environments, versions, or instances sharing the same Redis server. This is essential for:
+
+- **Multi-tenant deployments**: Separate staging, production, and development environments
+- **Blue-green deployments**: Isolate cache between different application versions
+
+```bash
+# Option 1: Dynamic prefix from environment variable (recommended for cloud)
+
+# Google Cloud Platform - Cloud Run
+REDIS_KEY_PREFIX_VAR=K_REVISION
+
+# AWS - ECS/Fargate
+REDIS_KEY_PREFIX_VAR=AWS_EXECUTION_ENV
+
+# Azure Container Instances
+REDIS_KEY_PREFIX_VAR=CONTAINER_NAME
+
+# Kubernetes - Pod name or deployment
+REDIS_KEY_PREFIX_VAR=HOSTNAME
+REDIS_KEY_PREFIX_VAR=POD_NAME
+
+# Kubernetes - Custom deployment identifier
+REDIS_KEY_PREFIX_VAR=DEPLOYMENT_ID
+
+# Heroku
+REDIS_KEY_PREFIX_VAR=DYNO
+
+# Option 2: Static prefix (for manual control)
+REDIS_KEY_PREFIX=librechat-prod-v2
+REDIS_KEY_PREFIX=staging-branch-feature-x
+REDIS_KEY_PREFIX=dev-john-local
+```
+
+**Important**: You cannot set both `REDIS_KEY_PREFIX_VAR` and `REDIS_KEY_PREFIX` simultaneously.
+
+**Examples of contamination without prefixing**:
+
+- Production cache overwritten by staging deployment
+- Feature branch tests corrupting main branch cache
+- Old deployment versions serving stale cached data
+
+**Key prefixing format**:
+
+- IoRedis client: `{prefix}::{key}`
+- Keyv client: Handled by the store layer
+
+### Connection Limits
+
+Configure Redis connection limits:
+
+```bash
+# Maximum number of event listeners (default: 40)
+REDIS_MAX_LISTENERS=40
+```
+
+### Connection Keep-Alive
+
+Configure deadline-bounded Redis heartbeats and TCP keepalive:
+
+```bash
+# Redis ping interval in seconds (default: 0 = disabled)
+# When set to a positive integer (in seconds), Redis clients will ping the server at this interval
+# When unset or 0, no pinging is performed (recommended for most use cases)
+# Example: 300 = ping every 5 minutes
+REDIS_PING_INTERVAL=300
+
+# Maximum time an enabled heartbeat PING may go unanswered (default: 5000 ms)
+REDIS_PING_TIMEOUT=5000
+
+# Dedicated pub/sub subscriber heartbeat (default: 15 seconds, 0 = disabled)
+REDIS_SUBSCRIBER_PING_INTERVAL=15
+
+# TCP keepalive idle delay for ioredis sockets (default: 10000 ms, 0 = kernel default)
+REDIS_KEEP_ALIVE=10000
+```
+
+**Important**:
+
+- Setting `REDIS_PING_INTERVAL=0` or omitting it disables pinging entirely
+- Only set a positive value (in seconds) if you experience connection timeout issues
+- `REDIS_PING_INTERVAL` is specified in seconds and controls the optional main ioredis heartbeat
+- Dedicated pub/sub subscribers use their own default-on interval because an idle dead socket may otherwise remain undetected; set `REDIS_SUBSCRIBER_PING_INTERVAL=0` to disable that heartbeat
+- Every enabled heartbeat uses `REDIS_PING_TIMEOUT` as its response deadline and reconnects the socket when a PING remains unanswered
+- `REDIS_KEEP_ALIVE` configures the ioredis TCP socket independently from application-level PINGs
+- Example values: `300` (5 minutes), `600` (10 minutes), `60` (1 minute)
+
+### Replica Failover Recovery
+
+During a Sentinel failover, a demoted Redis replica can keep an existing socket open while rejecting writes with `READONLY`. LibreChat detects this response on the non-cluster Keyv client, tears down the stale connection, and reconnects so the current primary can be resolved without restarting the application.
+
+```bash
+# Minimum interval between forced recovery attempts, in milliseconds
+# Default: 5000
+REDIS_READONLY_RECOVERY_INTERVAL=5000
+```
+
+The interval debounces reconnect attempts during a burst of failed writes. Redis Cluster clients are excluded because they use native cluster topology and redirect handling.
+
+### Health Checks
+
+LibreChat serves three probe endpoints. Only `/readyz` reflects Redis:
+
+| Endpoint | Returns `200 OK` | Returns `503 NOT_READY` |
+| --- | --- | --- |
+| `/livez` | Whenever the process is serving requests | Never |
+| `/health` | Whenever the process is serving requests | Never |
+| `/readyz` | After startup completes and, with `USE_REDIS=true`, while Redis is connected | Before startup completes, or while Redis is enabled but disconnected |
+
+When Redis restarts, fails over, or becomes unreachable for longer than the client's retry window, requests that depend on it (sign-in, sessions, rate limits) fail until the connection returns. During that time `/readyz` answers `503`, so a load balancer or Kubernetes readiness probe stops routing traffic to the instance. It returns to `200` as soon as Redis reconnects, without a restart. With Redis enabled, every Redis client must be connected; for a Redis Cluster, that includes every primary node.
+
+Point readiness checks at `/readyz` and liveness checks at `/livez`. Keep Redis out of the liveness check: a liveness probe that fails during a Redis outage restarts every pod at once and cannot bring Redis back.
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /livez
+    port: 3080
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 3080
+  periodSeconds: 10
+  failureThreshold: 3
+```
+
+`/readyz` does not wait out short reconnects on its own, so use `failureThreshold` to decide how long an outage lasts before traffic is withdrawn.
+
+### Selective In-Memory Caching
+
+Force specific cache namespaces to use in-memory storage even when Redis is enabled:
+
+```bash
+# Comma-separated list of cache keys
+FORCED_IN_MEMORY_CACHE_NAMESPACES=CONFIG_STORE,APP_CONFIG,ROLES
+```
+
+When unset, the default is `CONFIG_STORE,APP_CONFIG`, so configuration derived from `librechat.yaml` stays per-container. Setting this variable **replaces** the default rather than adding to it, so include `CONFIG_STORE,APP_CONFIG` in your list unless you want those namespaces in Redis. Set it to an empty string to route every namespace through Redis.
+
+Valid cache keys (from the `CacheKeys` enum in `librechat-data-provider`):
+
+| Key | Description |
+| --- | --- |
+| `CONFIG_STORE` | Configuration store |
+| `TOOL_CACHE` | Tool cache (plugins, MCP tools, tool definitions) |
+| `ROLES` | User roles |
+| `USER_PRINCIPALS` | Group memberships used to resolve ACL principals |
+| `PROMPT_GROUPS_ACCESS` | Prompt group access ID sets |
+| `AGENT_LINKED_INSTRUCTIONS` | Resolved instructions of an agent's linked prompt groups |
+| `SANDBOX_PREWARM` | Per-conversation code sandbox prewarm state |
+| `GEN_TITLE` | Generated titles |
+| `TOOLS` | Tools data |
+| `MODELS_CONFIG` | Models configuration |
+| `MODEL_QUERIES` | Model queries |
+| `STARTUP_CONFIG` | Startup configuration |
+| `ENDPOINT_CONFIG` | Endpoint configuration |
+| `TOKEN_CONFIG` | Token configuration |
+| `REASONING_CAPABILITIES` | Per-model reasoning effort for OpenRouter endpoints |
+| `PULL_REQUESTS` | Pull request lookups and GitHub rate limit cooldowns |
+| `APP_CONFIG` | Application configuration |
+| `ABORT_KEYS` | Abort keys |
+| `BANS` | Ban data |
+| `ENCODED_DOMAINS` | Encoded domains |
+| `AUDIO_RUNS` | Audio processing runs |
+| `MESSAGES` | In-progress messages |
+| `FLOWS` | In-progress flow states |
+| `PENDING_REQ` | Pending requests |
+| `S3_EXPIRY_INTERVAL` | S3 expiry intervals |
+| `OPENID_EXCHANGED_TOKENS` | OpenID exchanged tokens |
+| `AUTH_USER_DOC` | Cached authenticated user documents |
+| `OPENID_SESSION` | OpenID sessions |
+| `SAML_SESSION` | SAML sessions |
+| `ADMIN_OAUTH_EXCHANGE` | Admin panel OAuth exchange codes |
+| `PASSKEY_CHALLENGE` | Pending passkey ceremony challenges |
+
+<Callout type="warn" title="Invalid keys">
+  Using an invalid key (e.g., the deprecated `STATIC_CONFIG`) will cause a startup error. Only use
+  keys from the table above.
+</Callout>
+
+## Performance Tuning
+
+### Connection Keep-Alive
+
+The application implements configurable connection keep-alive:
+
+- Main-client PINGs are controlled by `REDIS_PING_INTERVAL` and disabled by default
+- Dedicated subscriber PINGs are controlled by `REDIS_SUBSCRIBER_PING_INTERVAL` and default to 15 seconds
+- Heartbeats use `REDIS_PING_TIMEOUT` to detect silently dead sockets and force reconnection
+- TCP keepalive uses `REDIS_KEEP_ALIVE`, independently of application-level heartbeats
+- Heartbeat timers are cleared on disconnect or close events
+
+### Cache Strategy
+
+The application uses a dual-client approach:
+
+- **IoRedis client**: Primary Redis operations with automatic prefixing
+- **Keyv Redis client**: Store-layer operations with prefix handling in `cacheFactory.js`
+
+### Advanced Connection Tuning
+
+These optional variables tune connection behavior and bulk cache operations. The defaults suit most deployments.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `REDIS_CONNECT_TIMEOUT` | `10000` | Connection timeout in milliseconds. |
+| `REDIS_RETRY_MAX_ATTEMPTS` | `10` | Maximum reconnection attempts before giving up. `0` retries indefinitely. |
+| `REDIS_RETRY_MAX_DELAY` | `3000` | Maximum delay between reconnection attempts, in milliseconds. |
+| `REDIS_ENABLE_OFFLINE_QUEUE` | `true` | Queue commands while disconnected. Set to `false` to fail them immediately. |
+| `REDIS_SCAN_COUNT` | `1000` | `COUNT` hint for `SCAN` operations when finding keys by pattern. |
+| `REDIS_DELETE_CHUNK_SIZE` | `1000` | Number of keys deleted per batch in bulk deletes. |
+| `MCP_REGISTRY_CACHE_TTL` | `5000` | Milliseconds MCP registry caches are kept. Cross-instance staleness can reach twice this value. `0` disables the local snapshot, so every read goes to Redis. |
+
+### Memory Optimization
+
+Use `FORCED_IN_MEMORY_CACHE_NAMESPACES` to optimize performance by keeping frequently accessed, small datasets in memory while using Redis for larger caches.
+
+## Configuration Examples
+
+### Development Setup
+
+```bash
+USE_REDIS=true
+REDIS_URI=redis://127.0.0.1:6379
+REDIS_KEY_PREFIX=librechat-dev
+```
+
+### Production Setup
+
+```bash
+USE_REDIS=true
+REDIS_URI=rediss://prod-redis.company.com:6380
+REDIS_USERNAME=librechat_user
+REDIS_PASSWORD=secure_password_here
+REDIS_CA=/etc/ssl/redis-ca.pem
+REDIS_KEY_PREFIX_VAR=DEPLOYMENT_ID
+REDIS_MAX_LISTENERS=100
+REDIS_PING_INTERVAL=300
+FORCED_IN_MEMORY_CACHE_NAMESPACES=CONFIG_STORE,APP_CONFIG,ROLES,MESSAGES
+```
+
+### Cluster Setup
+
+```bash
+USE_REDIS=true
+REDIS_URI=redis://cluster-node1:7001,redis://cluster-node2:7002,redis://cluster-node3:7003
+REDIS_USERNAME=cluster_user
+REDIS_PASSWORD=cluster_password
+REDIS_KEY_PREFIX=librechat-cluster
+```
+
+## Resumable Streams
+
+[Resumable Streams](/v0.8.9/docs/features/resumable_streams) keep each in-progress response in a job store so a client can reconnect and catch up. A single LibreChat instance keeps that store in memory and needs nothing configured. With several instances behind a load balancer, a reconnect can reach a different instance than the one generating, so the store has to be shared through Redis.
+
+Streams use Redis automatically when `USE_REDIS=true`. `USE_REDIS_STREAMS` overrides that: set it to `false` to keep streams in memory while Redis serves the caches, or to `true` to state it explicitly.
+
+```bash filename=".env"
+USE_REDIS=true
+REDIS_URI=redis://127.0.0.1:6379
+
+# Optional: defaults to the value of USE_REDIS
+# USE_REDIS_STREAMS=true
+```
+
+With Redis, stream chunks are written to Redis Streams, job metadata to hashes, and live events go through Pub/Sub, so any instance can serve a reconnect.
+
+Scheduled agent runs that can pause for tool approval or a question to the user require Redis streams; without them those runs fail with an error asking you to set `USE_REDIS_STREAMS=true`.
+
+### Generation Protocol Compatibility
+
+Current LibreChat clients negotiate generation protocol v2 automatically with every built-in generation store. No deployment setting is required. Existing generations with an explicit or stored protocol-v1 marker keep their immutable v1 behavior through steering, pause/resume, retry, and recovery until they finish.
+
+For a rolling upgrade, every running API and worker image must include the v2 compatibility bridge:
+
+- Every API and worker image runs LibreChat `v0.8.8-rc1` or newer.
+- Helm chart `2.0.8` or newer selects a compatible default image; a custom image override must still meet the image requirement above.
+
+When upgrading from an older release, perform a cold handoff: stop every old API and worker replica before starting the new image. This prevents pre-v2 and automatic-v2 binaries from sharing generation state in Redis.
+
+<Callout type="warning" title="Rolling deployment safety">
+  Do not run a release older than `v0.8.8-rc1` against the same Redis generation state as current replicas. Before rolling back below that compatibility floor, first ensure current replicas and protocol-v2 generations have drained.
+</Callout>
+
+In-memory generation streams also negotiate protocol v2 automatically and do not share generation state across processes.
+
+### Stream Delta Coalescing
+
+`STREAM_DELTA_COALESCE_MS` groups streamed deltas into windowed Redis writes to cut round trips at high token rates. It defaults to `25` (milliseconds), `0` publishes every delta on its own, and values are capped at `1000`. A larger window adds up to one window of delivery latency, and deltas still buffered when an instance crashes are lost. Keep it at or below the stream smoothing cadence (`streamRate`, 25 ms by default). Individual chunk frames are still published alongside batches, so subscribers that do not understand batches keep working. In-memory streams are not affected.
+
+```bash filename=".env"
+STREAM_DELTA_COALESCE_MS=25
+```
+
+### Cluster Configuration
+
+For Redis Cluster deployments, LibreChat uses hash-tagged keys so that a stream's keys stay in the same cluster slot:
+
+```bash
+USE_REDIS=true
+USE_REDIS_STREAMS=true
+USE_REDIS_CLUSTER=true
+REDIS_URI=redis://node1:7001,redis://node2:7002,redis://node3:7003
+```
+
+### Troubleshooting
+
+If responses do not resume after a reconnect in a multi-instance deployment, check that every instance has the same `USE_REDIS` and `USE_REDIS_STREAMS` values and can reach Redis, for example with `redis-cli ping` from the LibreChat host.
+
+## MCP Catalog Coordination
+
+When Redis is enabled, LibreChat coordinates application-level MCP tool catalogs across replicas. Startup publication, reconnect synchronization, and `notifications/tools/list_changed` updates use generation and revision markers so a stale replica cannot overwrite a newer catalog.
+
+Redis Cluster deployments use slot-safe catalog keys and update operations; no separate MCP Redis setting is required. See [MCP server configuration](/v0.8.9/docs/configuration/librechat_yaml/object_structure/mcp_servers#additional-information) for dynamic catalog and OAuth readiness behavior.
